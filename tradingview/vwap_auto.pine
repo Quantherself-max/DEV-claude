@@ -3,71 +3,49 @@ indicator("VWAP Auto TF", "VWAP Auto", overlay = true, max_lines_count = 100, ma
 
 // 1) VWAP dont la periode de reset s'adapte au timeframe du graphique.
 //    Mode Auto : TF <= 60m -> Jour | <= 4h -> Semaine | <= 1D -> Mois | sinon Annee
-// 2) VWAP glissante sur N jours (365 par defaut).
-// 3) VWAP ancrees calendrier (Weekly, pWeekly, cMonth, pMonthly, Quarterly,
-//    pQuarter, Yearly) + une VWAP ancree a une date libre.
-// 4) Volume Profile par periode : POC / VAH / VAL en Weekly, Monthly, Yearly
-//    + precedents (lignes pointillees, calculees sur les bougies du graphique).
+// 2) VWAP calendrier : Weekly, cMonth, Yearly + une VWAP ancree a une date libre.
+//    Une ligne identique a la VWAP principale n'est pas retracee (pas de doublon).
+// 3) Volume Profile par periode : POC en cours, POC / VAH / VAL de la periode precedente.
+// Un niveau est masque si sa periode contient moins de N barres (profil peu fiable).
 // Lignes pleines = VWAP | pointilles = Volume Profile.
 // Periodes calendaires basees sur le fuseau de l'echange (UTC pour le crypto).
 
-G1 = "VWAP"
+G1 = "VWAP principale"
 mode    = input.string("Auto", "Periode de reset", group = G1,
      options = ["Auto", "Jour", "Semaine", "Mois", "Trimestre", "Annee"])
 src     = input.source(hlc3, "Source", group = G1)
 col     = input.color(#FFB300, "Couleur", group = G1)
-showBnd = input.bool(true, "Afficher les bandes", group = G1)
-k1      = input.float(1.0, "Bande 1 (x ecart-type)", minval = 0.1, step = 0.1, group = G1)
-k2      = input.float(2.0, "Bande 2 (x ecart-type)", minval = 0.1, step = 0.1, group = G1)
+showBnd = input.bool(true, "Afficher les bandes +/- 1 ecart-type", group = G1)
+k1      = input.float(1.0, "Bande (x ecart-type)", minval = 0.1, step = 0.1, group = G1)
 
 G2 = "Seuils du mode Auto (TF du graphique, en minutes)"
 dayMax   = input.int(60, "Jour si TF <=", minval = 1, group = G2)
 weekMax  = input.int(240, "Semaine si TF <=", minval = 1, group = G2)
 monthMax = input.int(1440, "Mois si TF <=", minval = 1, group = G2)
+minBars  = input.int(20, "Masquer si moins de N barres dans la periode", minval = 1, group = G2)
 
-G3 = "VWAP glissante (longue duree)"
-show365 = input.bool(true, "Afficher la VWAP glissante", group = G3)
-lenDays = input.int(365, "Longueur (jours)", minval = 1, group = G3)
-col365  = input.color(#26C6DA, "Couleur", group = G3)
-
-G4 = "VWAP ancrees (calendrier)"
-anBnd = input.bool(false, "Afficher les bandes", group = G4)
-anK   = input.float(1.0, "Bandes (x ecart-type)", minval = 0.1, step = 0.1, group = G4)
-onW   = input.bool(true, "Weekly (semaine en cours)", inline = "w", group = G4)
-cW    = input.color(#4CAF50, "", inline = "w", group = G4)
-onPW  = input.bool(true, "pWeekly (semaine precedente)", inline = "pw", group = G4)
-cPW   = input.color(#A5D6A7, "", inline = "pw", group = G4)
-onM   = input.bool(true, "cMonth (mois en cours)", inline = "m", group = G4)
-cM    = input.color(#42A5F5, "", inline = "m", group = G4)
-onPM  = input.bool(true, "pMonthly (mois precedent)", inline = "pm", group = G4)
-cPM   = input.color(#90CAF9, "", inline = "pm", group = G4)
-onQ   = input.bool(true, "Quarterly (trimestre en cours)", inline = "q", group = G4)
-cQ    = input.color(#AB47BC, "", inline = "q", group = G4)
-onPQ  = input.bool(true, "pQuarter (trimestre precedent)", inline = "pq", group = G4)
-cPQ   = input.color(#CE93D8, "", inline = "pq", group = G4)
-onY   = input.bool(true, "Yearly (annee en cours)", inline = "y", group = G4)
-cY    = input.color(#EC407A, "", inline = "y", group = G4)
-onD   = input.bool(true, "VWAP ancree a une date", inline = "d", group = G4)
-cD    = input.color(#E0E0E0, "", inline = "d", group = G4)
-dT    = input.time(timestamp("01 Jan 2024 00:00 +0000"), "Date ancrage", group = G4)
-dNm   = input.string("2024 VWAP", "Nom", group = G4)
+G4 = "VWAP calendrier"
+onW = input.bool(true, "Weekly", inline = "w", group = G4)
+cW  = input.color(#4CAF50, "", inline = "w", group = G4)
+onM = input.bool(true, "cMonth", inline = "m", group = G4)
+cM  = input.color(#42A5F5, "", inline = "m", group = G4)
+onY = input.bool(true, "Yearly", inline = "y", group = G4)
+cY  = input.color(#EC407A, "", inline = "y", group = G4)
+onD = input.bool(true, "VWAP ancree a une date", inline = "d", group = G4)
+cD  = input.color(#E0E0E0, "", inline = "d", group = G4)
+dT  = input.time(timestamp("01 Jan 2024 00:00 +0000"), "Date ancrage", group = G4)
+dNm = input.string("2024 VWAP", "Nom", group = G4)
 
 G5 = "Volume Profile (POC / VAH / VAL)"
 vaPct  = input.float(70.0, "Value Area (%)", minval = 10.0, maxval = 99.0, step = 1.0, group = G5)
 binPct = input.float(0.10, "Taille de bin (% du prix)", minval = 0.05, maxval = 2.0, step = 0.05, group = G5)
 vpLbl  = input.bool(true, "Afficher les noms", group = G5)
-onVW   = input.bool(true, "Weekly (semaine en cours)", inline = "vw", group = G5)
+onVW   = input.bool(true, "Weekly", inline = "vw", group = G5)
 cVW    = input.color(#4CAF50, "", inline = "vw", group = G5)
-onVPW  = input.bool(true, "pWeekly (semaine precedente)", inline = "vpw", group = G5)
-cVPW   = input.color(#A5D6A7, "", inline = "vpw", group = G5)
-onVM   = input.bool(true, "Monthly (mois en cours)", inline = "vm", group = G5)
+onVM   = input.bool(true, "Monthly", inline = "vm", group = G5)
 cVM    = input.color(#42A5F5, "", inline = "vm", group = G5)
-onVPM  = input.bool(true, "pMonthly (mois precedent)", inline = "vpm", group = G5)
-cVPM   = input.color(#90CAF9, "", inline = "vpm", group = G5)
-onVY   = input.bool(true, "Yearly (annee en cours)", inline = "vy", group = G5)
+onVY   = input.bool(true, "Yearly", inline = "vy", group = G5)
 cVY    = input.color(#EC407A, "", inline = "vy", group = G5)
-onVPY  = input.bool(true, "pYearly (annee precedente)", inline = "vpy", group = G5)
-cVPY   = input.color(#F48FB1, "", inline = "vpy", group = G5)
 
 // Grille de prix du profil : bins logarithmiques de binPct % (de mintick a mintick x 1e9)
 float lnStep = math.log(1.0 + binPct / 100.0)
@@ -83,24 +61,16 @@ periodName(string tf) =>
         "3M" => "Trimestre"
         => "Annee"
 
-// VWAP + bandes d'une periode, et valeurs finales de la periode precedente
-calendarVwap(float s, bool newP, float k) =>
-    [v, u, d] = ta.vwap(s, newP, k)
-    var float pv = na
-    var float pu = na
-    var float pd = na
-    if newP
-        pv := v[1]
-        pu := u[1]
-        pd := d[1]
-    [v, u, d, pv, pu, pd]
+// VWAP remise a zero quand newP est vrai
+curVwap(float s, bool newP) =>
+    [v, u, d] = ta.vwap(s, newP, 1.0)
+    v
 
-// VWAP + bandes ancrees a la premiere bougie dont l'heure >= t
-dateVwap(float s, int t, float k) =>
+// VWAP ancree a la premiere bougie dont l'heure >= t
+dateVwap(float s, int t) =>
     bool hit = time >= t and nz(time[1]) < t
-    [v, u, d] = ta.vwap(s, hit, k)
-    bool live = time >= t
-    [live ? v : na, live ? u : na, live ? d : na]
+    [v, u, d] = ta.vwap(s, hit, 1.0)
+    time >= t ? v : na
 
 // Etiquette "nom prix" collee a la derniere bougie
 tag(string nm, float lvl, color c, bool show) =>
@@ -211,8 +181,8 @@ vpDisplay(array<float> bins, array<int> m, float pPoc, float pVah, float pVal, i
             cSt := st
     [cPoc, cVah, cVal, cSt, qPoc, qVah, qVal, qSt]
 
-// Trace POC (tirets) + VAH / VAL (pointilles), prolonges a droite
-vpLevels(string nm, float poc, float vah, float val, int x1, bool show, color c) =>
+// Trace le POC (tirets) et, si full, VAH / VAL (pointilles), prolonges a droite
+vpLevels(string nm, float poc, float vah, float val, int x1, bool show, color c, bool full) =>
     var line lp = na
     var line lh = na
     var line ll = na
@@ -229,18 +199,20 @@ vpLevels(string nm, float poc, float vah, float val, int x1, bool show, color c)
         if show and not na(poc)
             lp := line.new(x1, poc, bar_index, poc, extend = extend.right, color = c,
                  style = line.style_dashed, width = 1)
-            lh := line.new(x1, vah, bar_index, vah, extend = extend.right, color = c,
-                 style = line.style_dotted, width = 1)
-            ll := line.new(x1, val, bar_index, val, extend = extend.right, color = c,
-                 style = line.style_dotted, width = 1)
+            if full
+                lh := line.new(x1, vah, bar_index, vah, extend = extend.right, color = c,
+                     style = line.style_dotted, width = 1)
+                ll := line.new(x1, val, bar_index, val, extend = extend.right, color = c,
+                     style = line.style_dotted, width = 1)
             if vpLbl
                 string part = x1 == 0 ? " (partiel)" : ""
                 tp := label.new(bar_index, poc, nm + "POC " + str.tostring(poc, "#.##") + part,
                      style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
-                th := label.new(bar_index, vah, nm + "VAH " + str.tostring(vah, "#.##"),
-                     style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
-                tl := label.new(bar_index, val, nm + "VAL " + str.tostring(val, "#.##"),
-                     style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
+                if full
+                    th := label.new(bar_index, vah, nm + "VAH " + str.tostring(vah, "#.##"),
+                         style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
+                    tl := label.new(bar_index, val, nm + "VAL " + str.tostring(val, "#.##"),
+                         style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
     true
 
 var int firstBarTime = time
@@ -259,28 +231,28 @@ string tfPick = switch mode
 
 bool newPeriod = timeframe.change(tfPick)
 [vw, up1, dn1] = ta.vwap(src, newPeriod, k1)
-float sd  = (up1 - vw) / k1
-float up2 = vw + k2 * sd
-float dn2 = vw - k2 * sd
 
-// VWAP glissante : nombre de bougies couvrant lenDays jours (crypto 24/7)
-int len365 = math.max(2, math.round(lenDays * 86400.0 / tfSec))
-float vw365 = ta.vwma(src, len365)
+// Un niveau n'est affiche que si sa periode contient assez de barres du graphique
+bool okW = 604800.0 / tfSec >= minBars
+bool okM = 2592000.0 / tfSec >= minBars
+bool okY = 31536000.0 / tfSec >= minBars
 
-// ---------------- VWAP ancrees calendrier ----------------
+// ---------------- VWAP calendrier ----------------
 int dayId  = int(math.floor(time / 86400000))
 int weekId = int(math.floor((dayId + 3) / 7))
-int qId    = year * 4 + int(math.floor((month - 1) / 3))
 bool nW = weekId != weekId[1]
 bool nM = month != month[1]
-bool nQ = qId != qId[1]
 bool nY = year != year[1]
 
-[wV, wU, wD, pwV, pwU, pwD]   = calendarVwap(src, nW, anK)
-[mV, mU, mD, pmV, pmU, pmD]   = calendarVwap(src, nM, anK)
-[qV, qU, qD, pqV, pqU, pqD]   = calendarVwap(src, nQ, anK)
-[yV, yU, yD, pyV, pyU, pyD]   = calendarVwap(src, nY, anK)
-[dV, dU, dD] = dateVwap(src, dT, anK)
+float wV = curVwap(src, nW)
+float mV = curVwap(src, nM)
+float yV = curVwap(src, nY)
+float dV = dateVwap(src, dT)
+
+// pas de doublon avec la VWAP principale, pas de ligne sur une periode trop courte pour le TF
+bool sW = onW and okW and tfPick != "W"
+bool sM = onM and okM and tfPick != "M"
+bool sY = onY and okY and tfPick != "12M"
 
 // ---------------- Volume Profile : calcul par periode ----------------
 var array<float> binsW = array.new_float(nBins, 0.0)
@@ -337,83 +309,44 @@ bool livePend = not barstate.isconfirmed
 [cPocY, cVahY, cValY, cStY, qPocY, qVahY, qValY, qStY] = vpDisplay(binsY, metaY,
      pPocY, pVahY, pValY, pStY, livePend and nY)
 
-// ---------------- Trace : VWAP principale + glissante ----------------
+// ---------------- Trace : VWAP ----------------
 bool bands = showBnd and not newPeriod
 plot(newPeriod ? na : vw, "VWAP", color = col, linewidth = 2, style = plot.style_linebr)
-plot(bands ? up1 : na, "Bande +1", color = color.new(col, 60), style = plot.style_linebr)
-plot(bands ? dn1 : na, "Bande -1", color = color.new(col, 60), style = plot.style_linebr)
-plot(bands ? up2 : na, "Bande +2", color = color.new(col, 80), style = plot.style_linebr)
-plot(bands ? dn2 : na, "Bande -2", color = color.new(col, 80), style = plot.style_linebr)
-plot(show365 ? vw365 : na, "VWAP glissante", color = col365, linewidth = 1,
-     style = plot.style_linebr)
-
-// ---------------- Trace : VWAP ancrees ----------------
-plot(onW and not nW ? wV : na, "Weekly", color = cW, linewidth = 1, style = plot.style_linebr)
-plot(onW and anBnd and not nW ? wU : na, "Weekly +", color = color.new(cW, 65),
-     style = plot.style_linebr)
-plot(onW and anBnd and not nW ? wD : na, "Weekly -", color = color.new(cW, 65),
-     style = plot.style_linebr)
-
-plot(onPW and not nW ? pwV : na, "pWeekly", color = cPW, linewidth = 1, style = plot.style_linebr)
-
-plot(onM and not nM ? mV : na, "cMonth", color = cM, linewidth = 1, style = plot.style_linebr)
-plot(onM and anBnd and not nM ? mU : na, "cMonth +", color = color.new(cM, 65),
-     style = plot.style_linebr)
-plot(onM and anBnd and not nM ? mD : na, "cMonth -", color = color.new(cM, 65),
-     style = plot.style_linebr)
-
-plot(onPM and not nM ? pmV : na, "pMonthly", color = cPM, linewidth = 1, style = plot.style_linebr)
-
-plot(onQ and not nQ ? qV : na, "Quarterly", color = cQ, linewidth = 1, style = plot.style_linebr)
-plot(onQ and anBnd and not nQ ? qU : na, "Quarterly +", color = color.new(cQ, 65),
-     style = plot.style_linebr)
-plot(onQ and anBnd and not nQ ? qD : na, "Quarterly -", color = color.new(cQ, 65),
-     style = plot.style_linebr)
-
-plot(onPQ and not nQ ? pqV : na, "pQuarter", color = cPQ, linewidth = 1, style = plot.style_linebr)
-
-plot(onY and not nY ? yV : na, "Yearly", color = cY, linewidth = 1, style = plot.style_linebr)
-plot(onY and anBnd and not nY ? yU : na, "Yearly +", color = color.new(cY, 65),
-     style = plot.style_linebr)
-plot(onY and anBnd and not nY ? yD : na, "Yearly -", color = color.new(cY, 65),
-     style = plot.style_linebr)
-
-plot(onD ? dV : na, "VWAP date", color = cD, linewidth = 1, style = plot.style_linebr)
-plot(onD and anBnd ? dU : na, "VWAP date +", color = color.new(cD, 65),
-     style = plot.style_linebr)
-plot(onD and anBnd ? dD : na, "VWAP date -", color = color.new(cD, 65),
-     style = plot.style_linebr)
+plot(bands ? up1 : na, "Bande +1", color = color.new(col, 60), style = plot.style_linebr,
+     display = display.pane)
+plot(bands ? dn1 : na, "Bande -1", color = color.new(col, 60), style = plot.style_linebr,
+     display = display.pane)
+plot(sW and not nW ? wV : na, "Weekly", color = cW, linewidth = 1, style = plot.style_linebr,
+     display = display.pane)
+plot(sM and not nM ? mV : na, "cMonth", color = cM, linewidth = 1, style = plot.style_linebr,
+     display = display.pane)
+plot(sY and not nY ? yV : na, "Yearly", color = cY, linewidth = 1, style = plot.style_linebr,
+     display = display.pane)
+plot(onD ? dV : na, "VWAP date", color = cD, linewidth = 1, style = plot.style_linebr,
+     display = display.pane)
 
 // ---------------- Etiquettes VWAP ----------------
-tag("Weekly", wV, cW, onW)
-tag("pWeekly", pwV, cPW, onPW)
-tag("cMonth", mV, cM, onM)
-tag("pMonthly", pmV, cPM, onPM)
-tag("Quarterly", qV, cQ, onQ)
-tag("pQuarter", pqV, cPQ, onPQ)
-tag("Yearly", yV, cY, onY)
+tag("Weekly", wV, cW, sW)
+tag("cMonth", mV, cM, sM)
+tag("Yearly", yV, cY, sY)
 tag(dNm + (dT < firstBarTime ? " (historique insuffisant)" : ""), dV, cD, onD)
 
 // ---------------- Lignes Volume Profile ----------------
-vpLevels("w", cPocW, cVahW, cValW, cStW, onVW, cVW)
-vpLevels("pw", qPocW, qVahW, qValW, qStW, onVPW, cVPW)
-vpLevels("m", cPocM, cVahM, cValM, cStM, onVM, cVM)
-vpLevels("pm", qPocM, qVahM, qValM, qStM, onVPM, cVPM)
-vpLevels("y", cPocY, cVahY, cValY, cStY, onVY, cVY)
-vpLevels("py", qPocY, qVahY, qValY, qStY, onVPY, cVPY)
+bool vW = onVW and okW
+bool vM = onVM and okM
+bool vY = onVY and okY
+vpLevels("w", cPocW, cVahW, cValW, cStW, vW, cVW, false)
+vpLevels("pw", qPocW, qVahW, qValW, qStW, vW, color.new(cVW, 40), true)
+vpLevels("m", cPocM, cVahM, cValM, cStM, vM, cVM, false)
+vpLevels("pm", qPocM, qVahM, qValM, qStM, vM, color.new(cVM, 40), true)
+vpLevels("y", cPocY, cVahY, cValY, cStY, vY, cVY, false)
+vpLevels("py", qPocY, qVahY, qValY, qStY, vY, color.new(cVY, 40), true)
 
-// Etiquettes de la VWAP principale (periode utilisee) et de la glissante
+// Etiquette de la VWAP principale (periode utilisee)
 var label info = na
-var label info365 = na
 if barstate.islast
     label.delete(info)
     bool tooBig = timeframe.in_seconds(tfPick) <= tfSec
     string txt = "VWAP " + periodName(tfPick) + (tooBig ? " (TF trop grand)" : "")
     info := label.new(bar_index, nz(vw, close), txt, style = label.style_label_left,
          color = color.new(color.black, 100), textcolor = col)
-    label.delete(info365)
-    if show365
-        bool noHist = bar_index + 1 < len365
-        string txt365 = "VWAP " + str.tostring(lenDays) + "j" + (noHist ? " (historique insuffisant)" : "")
-        info365 := label.new(bar_index, nz(vw365, close), txt365, style = label.style_label_left,
-             color = color.new(color.black, 100), textcolor = col365)
