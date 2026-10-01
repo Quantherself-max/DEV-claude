@@ -5,7 +5,8 @@ indicator("VWAP Auto TF", "VWAP Auto", overlay = true)
 //    Mode Auto : TF <= 60m -> Jour | <= 4h -> Semaine | <= 1D -> Mois | sinon Annee
 // 2) VWAP glissante sur N jours (365 par defaut).
 // 3) VWAP ancrees calendrier (Weekly, pWeekly, cMonth, pMonthly, Quarterly,
-//    pQuarter, Yearly) + une VWAP ancree a une date libre, avec bandes et etiquettes.
+//    pQuarter, Yearly) + une VWAP ancree a une date libre, avec etiquettes.
+//    Bandes sur les periodes en cours et la date (pas sur les p* : limite de 64 plots).
 // Periodes calendaires basees sur le fuseau de l'echange (UTC pour le crypto).
 
 G1 = "VWAP"
@@ -144,11 +145,6 @@ wdP = plot(onW and anBnd and not nW ? wD : na, "Weekly -", color = color.new(cW,
 fill(wuP, wdP, color = color.new(cW, 93), title = "Weekly zone")
 
 plot(onPW and not nW ? pwV : na, "pWeekly", color = cPW, linewidth = 2, style = plot.style_linebr)
-pwuP = plot(onPW and anBnd and not nW ? pwU : na, "pWeekly +", color = color.new(cPW, 55),
-     style = plot.style_linebr)
-pwdP = plot(onPW and anBnd and not nW ? pwD : na, "pWeekly -", color = color.new(cPW, 55),
-     style = plot.style_linebr)
-fill(pwuP, pwdP, color = color.new(cPW, 93), title = "pWeekly zone")
 
 plot(onM and not nM ? mV : na, "cMonth", color = cM, linewidth = 2, style = plot.style_linebr)
 muP = plot(onM and anBnd and not nM ? mU : na, "cMonth +", color = color.new(cM, 55),
@@ -158,11 +154,6 @@ mdP = plot(onM and anBnd and not nM ? mD : na, "cMonth -", color = color.new(cM,
 fill(muP, mdP, color = color.new(cM, 93), title = "cMonth zone")
 
 plot(onPM and not nM ? pmV : na, "pMonthly", color = cPM, linewidth = 2, style = plot.style_linebr)
-pmuP = plot(onPM and anBnd and not nM ? pmU : na, "pMonthly +", color = color.new(cPM, 55),
-     style = plot.style_linebr)
-pmdP = plot(onPM and anBnd and not nM ? pmD : na, "pMonthly -", color = color.new(cPM, 55),
-     style = plot.style_linebr)
-fill(pmuP, pmdP, color = color.new(cPM, 93), title = "pMonthly zone")
 
 plot(onQ and not nQ ? qV : na, "Quarterly", color = cQ, linewidth = 2, style = plot.style_linebr)
 quP = plot(onQ and anBnd and not nQ ? qU : na, "Quarterly +", color = color.new(cQ, 55),
@@ -172,11 +163,6 @@ qdP = plot(onQ and anBnd and not nQ ? qD : na, "Quarterly -", color = color.new(
 fill(quP, qdP, color = color.new(cQ, 93), title = "Quarterly zone")
 
 plot(onPQ and not nQ ? pqV : na, "pQuarter", color = cPQ, linewidth = 2, style = plot.style_linebr)
-pquP = plot(onPQ and anBnd and not nQ ? pqU : na, "pQuarter +", color = color.new(cPQ, 55),
-     style = plot.style_linebr)
-pqdP = plot(onPQ and anBnd and not nQ ? pqD : na, "pQuarter -", color = color.new(cPQ, 55),
-     style = plot.style_linebr)
-fill(pquP, pqdP, color = color.new(cPQ, 93), title = "pQuarter zone")
 
 plot(onY and not nY ? yV : na, "Yearly", color = cY, linewidth = 2, style = plot.style_linebr)
 yuP = plot(onY and anBnd and not nY ? yU : na, "Yearly +", color = color.new(cY, 55),
