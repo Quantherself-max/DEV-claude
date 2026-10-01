@@ -1,0 +1,249 @@
+//@version=6
+indicator("BTC VWAP + AVWAP Confluence", "VWAP/AVWAP", overlay = true, max_labels_count = 100)
+
+// ════════════════════════════════════════════════════════════════════════════
+//  VWAP de session (00:00 UTC) + VWAP hebdo (lundi 00:00 UTC) + 4 VWAP ancrées
+//  + bandes σ pondérées par le volume, zones de confluence, delta/CVD, signaux.
+//
+//  Précision : le calcul se fait sur les bougies du graphique.
+//    · intraday (VWAP de session, ancres récentes) -> graphique 5m à 15m
+//    · ancres longues (ETF, halving, ...)          -> graphique 1h à 4h, sinon l'historique
+//      chargé par TradingView ne remonte pas jusqu'à l'ancre (le tableau l'indique).
+//  Delta : TradingView n'expose pas le volume taker réel. Le delta est approximé
+//  avec les bougies d'une TF inférieure (volume signé par la couleur de la bougie).
+// ════════════════════════════════════════════════════════════════════════════
+
+// ───────────────────────────── Inputs ─────────────────────────────
+G1 = "VWAP session / hebdo (reset en UTC)"
+showSess  = input.bool(true, "VWAP de session (00:00 UTC)", group = G1)
+sessCol   = input.color(#FFB300, "Couleur session", group = G1)
+showWeek  = input.bool(true, "VWAP hebdo (lundi 00:00 UTC)", group = G1)
+weekCol   = input.color(#26C6DA, "Couleur hebdo", group = G1)
+showBands = input.bool(true, "Bandes σ du VWAP de session", group = G1)
+k1        = input.float(1.0, "Bande 1 (× σ)", minval = 0.1, step = 0.1, group = G1)
+k2        = input.float(2.0, "Bande 2 (× σ)", minval = 0.1, step = 0.1, group = G1)
+
+G2 = "VWAP ancrées (date en UTC)"
+a1On = input.bool(true, "1", inline = "a1", group = G2)
+a1Nm = input.string("ETF spot", "", inline = "a1", group = G2)
+a1T  = input.time(timestamp("11 Jan 2024 00:00 +0000"), "", inline = "a1", group = G2)
+a1C  = input.color(#AB47BC, "", inline = "a1", group = G2)
+a2On = input.bool(true, "2", inline = "a2", group = G2)
+a2Nm = input.string("Halving", "", inline = "a2", group = G2)
+a2T  = input.time(timestamp("20 Apr 2024 00:00 +0000"), "", inline = "a2", group = G2)
+a2C  = input.color(#EC407A, "", inline = "a2", group = G2)
+a3On = input.bool(true, "3", inline = "a3", group = G2)
+a3Nm = input.string("YTD", "", inline = "a3", group = G2)
+a3T  = input.time(timestamp("01 Jan 2026 00:00 +0000"), "", inline = "a3", group = G2)
+a3C  = input.color(#42A5F5, "", inline = "a3", group = G2)
+a4On = input.bool(true, "4", inline = "a4", group = G2)
+a4Nm = input.string("Event 10/10/25", "", inline = "a4", group = G2)
+a4T  = input.time(timestamp("10 Oct 2025 20:00 +0000"), "", inline = "a4", group = G2)
+a4C  = input.color(#66BB6A, "", inline = "a4", group = G2)
+showAB = input.bool(false, "Bandes ±1ère σ sur les AVWAP", group = G2)
+
+G3 = "Confluence & signaux"
+confK     = input.float(0.5, "Seuil de confluence (× ATR)", minval = 0.05, step = 0.05, group = G3,
+     tooltip = "Confluence = un autre niveau (VWAP hebdo ou AVWAP) à moins de ce seuil du VWAP de session.")
+atrLen    = input.int(14, "Longueur ATR", minval = 1, group = G3)
+showConfl = input.bool(true, "Teinter le fond en confluence", group = G3)
+showSigs  = input.bool(true, "Afficher les signaux", group = G3)
+sigSess   = input.bool(true, "Signaux sur VWAP de session", group = G3)
+sigWeek   = input.bool(false, "Signaux sur VWAP hebdo", group = G3)
+sigAnch   = input.bool(true, "Signaux sur AVWAP", group = G3)
+needFlow  = input.bool(true, "Exiger le delta dans le sens du signal", group = G3)
+needConf  = input.bool(false, "Signaux uniquement en confluence", group = G3)
+flowLen   = input.int(10, "EMA du delta (flux)", minval = 1, group = G3)
+
+G4 = "Delta / CVD"
+ltf = input.timeframe("1", "TF inférieure pour le delta", group = G4,
+     tooltip = "Doit être strictement inférieure au timeframe du graphique, sinon le delta est approximé avec la bougie du graphique.")
+
+G5 = "Affichage"
+showLabels = input.bool(true, "Noms des niveaux à droite", group = G5)
+showTable  = input.bool(true, "Tableau de bord", group = G5)
+tblPos     = input.string(position.top_right, "Position du tableau", group = G5,
+     options = [position.top_right, position.top_left, position.bottom_right, position.bottom_left])
+
+// ───────────────────────────── Fonctions ─────────────────────────────
+// VWAP avec remise à zéro quand `newPeriod` est vrai ; retourne [vwap, σ pondéré par le volume]
+resetVwap(float src, bool newPeriod) =>
+    var float sPV  = 0.0
+    var float sV   = 0.0
+    var float sPV2 = 0.0
+    float v = nz(volume)
+    if newPeriod
+        sPV  := 0.0
+        sV   := 0.0
+        sPV2 := 0.0
+    sPV  += src * v
+    sV   += v
+    sPV2 += src * src * v
+    float vw = sV > 0 ? sPV / sV : na
+    float sd = sV > 0 ? math.sqrt(math.max(sPV2 / sV - vw * vw, 0.0)) : na
+    [vw, sd]
+
+// VWAP ancrée : cumule à partir de la première bougie dont l'heure >= anchorTime
+anchoredVwap(float src, int anchorTime) =>
+    var float sPV  = 0.0
+    var float sV   = 0.0
+    var float sPV2 = 0.0
+    float v = nz(volume)
+    if time >= anchorTime
+        sPV  += src * v
+        sV   += v
+        sPV2 += src * src * v
+    float vw = sV > 0 ? sPV / sV : na
+    float sd = sV > 0 ? math.sqrt(math.max(sPV2 / sV - vw * vw, 0.0)) : na
+    [vw, sd]
+
+// close repasse au-dessus / en dessous du niveau
+reclaim(float lvl) =>
+    not na(lvl) and not na(lvl[1]) and close > lvl and close[1] <= lvl[1]
+
+reject(float lvl) =>
+    not na(lvl) and not na(lvl[1]) and close < lvl and close[1] >= lvl[1]
+
+// étiquette collée à la dernière bougie
+tag(string txt, float lvl, color c, bool show) =>
+    var label lb = label.new(x = na, y = na, text = "", xloc = xloc.bar_index, yloc = yloc.price,
+         color = color.new(color.black, 100), style = label.style_label_left, textcolor = c, size = size.small)
+    if barstate.islast
+        label.set_xy(lb, bar_index, nz(lvl, close))
+        label.set_text(lb, show and not na(lvl) ? txt : "")
+
+// ───────────────────────────── Calculs ─────────────────────────────
+var int firstBarTime = time
+
+// jour et semaine UTC (epoch = jeudi, d'où le +3 pour démarrer la semaine le lundi)
+int  dayId   = int(math.floor(time / 86400000))
+int  weekId  = int(math.floor((dayId + 3) / 7))
+bool newDay  = dayId != dayId[1]
+bool newWeek = weekId != weekId[1]
+
+float src = hlc3
+
+[sVw, sSd] = resetVwap(src, newDay)
+[wVw, wSd] = resetVwap(src, newWeek)
+[a1Vw, a1Sd] = anchoredVwap(src, a1T)
+[a2Vw, a2Sd] = anchoredVwap(src, a2T)
+[a3Vw, a3Sd] = anchoredVwap(src, a3T)
+[a4Vw, a4Sd] = anchoredVwap(src, a4T)
+
+// Delta de la barre : somme sur la TF inférieure du volume signé par la couleur de la bougie
+bool ltfOk = timeframe.in_seconds(ltf) < timeframe.in_seconds(timeframe.period)
+array<float> dArr = array.new<float>(0)
+if ltfOk
+    dArr := request.security_lower_tf(syminfo.tickerid, ltf, close > open ? volume : close < open ? -volume : 0.0)
+float barDelta = ltfOk ? (array.size(dArr) > 0 ? array.sum(dArr) : 0.0) : (close > open ? nz(volume) : close < open ? -nz(volume) : 0.0)
+
+var float cvd = 0.0
+if newDay
+    cvd := 0.0
+cvd += barDelta
+float flow = ta.ema(barDelta, flowLen)
+
+// Confluence : un autre niveau à moins de confK × ATR du VWAP de session
+float atr = ta.atr(atrLen)
+float tol = confK * atr
+bool cW = not na(wVw)  and not na(sVw) and math.abs(sVw - wVw)  <= tol
+bool c1 = not na(a1Vw) and not na(sVw) and math.abs(sVw - a1Vw) <= tol
+bool c2 = not na(a2Vw) and not na(sVw) and math.abs(sVw - a2Vw) <= tol
+bool c3 = not na(a3Vw) and not na(sVw) and math.abs(sVw - a3Vw) <= tol
+bool c4 = not na(a4Vw) and not na(sVw) and math.abs(sVw - a4Vw) <= tol
+bool confl = (showWeek and cW) or (a1On and c1) or (a2On and c2) or (a3On and c3) or (a4On and c4)
+
+// Signaux (les fonctions sont appelées à chaque barre, sans court-circuit)
+bool rS  = reclaim(sVw)
+bool rW  = reclaim(wVw)
+bool r1  = reclaim(a1Vw)
+bool r2  = reclaim(a2Vw)
+bool r3  = reclaim(a3Vw)
+bool r4  = reclaim(a4Vw)
+bool jS  = reject(sVw)
+bool jW  = reject(wVw)
+bool j1  = reject(a1Vw)
+bool j2  = reject(a2Vw)
+bool j3  = reject(a3Vw)
+bool j4  = reject(a4Vw)
+
+bool anyUp = (sigSess and showSess and rS) or (sigWeek and showWeek and rW) or (sigAnch and ((a1On and r1) or (a2On and r2) or (a3On and r3) or (a4On and r4)))
+bool anyDn = (sigSess and showSess and jS) or (sigWeek and showWeek and jW) or (sigAnch and ((a1On and j1) or (a2On and j2) or (a3On and j3) or (a4On and j4)))
+bool flowUp = not needFlow or (barDelta > 0 and flow > 0)
+bool flowDn = not needFlow or (barDelta < 0 and flow < 0)
+bool confOk = not needConf or confl
+bool longSig  = anyUp and flowUp and confOk
+bool shortSig = anyDn and flowDn and confOk
+
+// ───────────────────────────── Tracés ─────────────────────────────
+bool bandsOn = showSess and showBands
+plot(showSess ? sVw : na, "VWAP session", color = sessCol, linewidth = 2, style = plot.style_linebr)
+pU1 = plot(bandsOn ? sVw + k1 * sSd : na, "VWAP session +1", color = color.new(sessCol, 55), style = plot.style_linebr)
+pD1 = plot(bandsOn ? sVw - k1 * sSd : na, "VWAP session -1", color = color.new(sessCol, 55), style = plot.style_linebr)
+plot(bandsOn ? sVw + k2 * sSd : na, "VWAP session +2", color = color.new(sessCol, 75), style = plot.style_linebr)
+plot(bandsOn ? sVw - k2 * sSd : na, "VWAP session -2", color = color.new(sessCol, 75), style = plot.style_linebr)
+fill(pU1, pD1, color = color.new(sessCol, 92), title = "Zone ±1σ")
+
+plot(showWeek ? wVw : na, "VWAP hebdo", color = weekCol, linewidth = 2, style = plot.style_linebr)
+
+plot(a1On ? a1Vw : na, "AVWAP 1", color = a1C, linewidth = 2, style = plot.style_linebr)
+plot(a2On ? a2Vw : na, "AVWAP 2", color = a2C, linewidth = 2, style = plot.style_linebr)
+plot(a3On ? a3Vw : na, "AVWAP 3", color = a3C, linewidth = 2, style = plot.style_linebr)
+plot(a4On ? a4Vw : na, "AVWAP 4", color = a4C, linewidth = 2, style = plot.style_linebr)
+
+plot(a1On and showAB ? a1Vw + k1 * a1Sd : na, "AVWAP 1 +σ", color = color.new(a1C, 65), style = plot.style_linebr)
+plot(a1On and showAB ? a1Vw - k1 * a1Sd : na, "AVWAP 1 -σ", color = color.new(a1C, 65), style = plot.style_linebr)
+plot(a2On and showAB ? a2Vw + k1 * a2Sd : na, "AVWAP 2 +σ", color = color.new(a2C, 65), style = plot.style_linebr)
+plot(a2On and showAB ? a2Vw - k1 * a2Sd : na, "AVWAP 2 -σ", color = color.new(a2C, 65), style = plot.style_linebr)
+plot(a3On and showAB ? a3Vw + k1 * a3Sd : na, "AVWAP 3 +σ", color = color.new(a3C, 65), style = plot.style_linebr)
+plot(a3On and showAB ? a3Vw - k1 * a3Sd : na, "AVWAP 3 -σ", color = color.new(a3C, 65), style = plot.style_linebr)
+plot(a4On and showAB ? a4Vw + k1 * a4Sd : na, "AVWAP 4 +σ", color = color.new(a4C, 65), style = plot.style_linebr)
+plot(a4On and showAB ? a4Vw - k1 * a4Sd : na, "AVWAP 4 -σ", color = color.new(a4C, 65), style = plot.style_linebr)
+
+bgcolor(showConfl and confl ? color.new(color.yellow, 92) : na, title = "Confluence")
+plotshape(showSigs and longSig, "Long (reclaim + flux)", shape.triangleup, location.belowbar, color.new(color.lime, 0), size = size.small)
+plotshape(showSigs and shortSig, "Short (rejet + flux)", shape.triangledown, location.abovebar, color.new(color.red, 0), size = size.small)
+
+tag("VWAP", sVw, sessCol, showLabels and showSess)
+tag("VWAP W", wVw, weekCol, showLabels and showWeek)
+tag(a1Nm, a1Vw, a1C, showLabels and a1On)
+tag(a2Nm, a2Vw, a2C, showLabels and a2On)
+tag(a3Nm, a3Vw, a3C, showLabels and a3On)
+tag(a4Nm, a4Vw, a4C, showLabels and a4On)
+
+alertcondition(longSig, "Long : reclaim VWAP/AVWAP + flux acheteur", "{{ticker}} {{interval}} : close repasse au-dessus d'un VWAP/AVWAP avec delta positif")
+alertcondition(shortSig, "Short : rejet VWAP/AVWAP + flux vendeur", "{{ticker}} {{interval}} : close repasse sous un VWAP/AVWAP avec delta négatif")
+alertcondition(confl and not confl[1], "Entrée en confluence", "{{ticker}} {{interval}} : VWAP de session en confluence avec un autre niveau")
+
+// ───────────────────────────── Tableau de bord ─────────────────────────────
+var table tb = table.new(tblPos, 3, 11, border_width = 1, border_color = color.new(color.gray, 60), frame_width = 1, frame_color = color.new(color.gray, 60))
+color bg = color.new(color.black, 25)
+
+f_row(int r, string nm, float lvl, color c, bool on, int anchorTime) =>
+    if on
+        bool up = not na(lvl) and close >= lvl
+        string outTxt = anchorTime > 0 and anchorTime < firstBarTime ? "⚠ avant l'historique" : ""
+        string dist = na(lvl) ? "" : str.tostring((close / lvl - 1) * 100, "#.##") + "%"
+        table.cell(tb, 0, r, nm, text_color = c, text_halign = text.align_left, text_size = size.small, bgcolor = bg)
+        table.cell(tb, 1, r, na(lvl) ? "—" : str.tostring(lvl, format.mintick), text_color = color.white, text_halign = text.align_right, text_size = size.small, bgcolor = bg)
+        table.cell(tb, 2, r, outTxt != "" ? outTxt : dist, text_color = outTxt != "" ? color.orange : (up ? color.lime : color.red), text_halign = text.align_right, text_size = size.small, bgcolor = bg)
+
+if barstate.islast and showTable
+    table.cell(tb, 0, 0, "Niveau", text_color = color.gray, text_halign = text.align_left, text_size = size.small, bgcolor = bg)
+    table.cell(tb, 1, 0, "Prix", text_color = color.gray, text_halign = text.align_right, text_size = size.small, bgcolor = bg)
+    table.cell(tb, 2, 0, "Close vs niveau", text_color = color.gray, text_halign = text.align_right, text_size = size.small, bgcolor = bg)
+    f_row(1, "VWAP session", sVw, sessCol, showSess, 0)
+    f_row(2, "VWAP hebdo", wVw, weekCol, showWeek, 0)
+    f_row(3, a1Nm, a1Vw, a1C, a1On, a1T)
+    f_row(4, a2Nm, a2Vw, a2C, a2On, a2T)
+    f_row(5, a3Nm, a3Vw, a3C, a3On, a3T)
+    f_row(6, a4Nm, a4Vw, a4C, a4On, a4T)
+    table.cell(tb, 0, 8, "CVD session", text_color = color.silver, text_halign = text.align_left, text_size = size.small, bgcolor = bg)
+    table.cell(tb, 1, 8, str.tostring(cvd, "#.#"), text_color = cvd >= 0 ? color.lime : color.red, text_halign = text.align_right, text_size = size.small, bgcolor = bg)
+    table.cell(tb, 2, 8, "", bgcolor = bg)
+    table.cell(tb, 0, 9, "Δ barre / flux", text_color = color.silver, text_halign = text.align_left, text_size = size.small, bgcolor = bg)
+    table.cell(tb, 1, 9, str.tostring(barDelta, "#.#"), text_color = barDelta >= 0 ? color.lime : color.red, text_halign = text.align_right, text_size = size.small, bgcolor = bg)
+    table.cell(tb, 2, 9, str.tostring(flow, "#.#"), text_color = flow >= 0 ? color.lime : color.red, text_halign = text.align_right, text_size = size.small, bgcolor = bg)
+    table.cell(tb, 0, 10, "Confluence", text_color = color.silver, text_halign = text.align_left, text_size = size.small, bgcolor = bg)
+    table.cell(tb, 1, 10, confl ? "OUI" : "non", text_color = confl ? color.yellow : color.gray, text_halign = text.align_right, text_size = size.small, bgcolor = bg)
+    table.cell(tb, 2, 10, ltfOk ? "delta TF " + ltf : "delta approx.", text_color = color.gray, text_halign = text.align_right, text_size = size.small, bgcolor = bg)
