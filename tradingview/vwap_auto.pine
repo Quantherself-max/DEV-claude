@@ -1,10 +1,12 @@
 //@version=6
 indicator("VWAP Auto TF", "VWAP Auto", overlay = true)
 
-// VWAP dont la periode de reset s'adapte au timeframe du graphique.
-// Mode Auto : TF <= 60m -> Jour | <= 4h -> Semaine | <= 1D -> Mois | sinon Annee
-// Reset base sur les periodes de l'echange (00:00 UTC pour le crypto).
-// + VWAP glissante sur N jours (365 par defaut), activable / desactivable.
+// 1) VWAP dont la periode de reset s'adapte au timeframe du graphique.
+//    Mode Auto : TF <= 60m -> Jour | <= 4h -> Semaine | <= 1D -> Mois | sinon Annee
+// 2) VWAP glissante sur N jours (365 par defaut).
+// 3) VWAP ancrees calendrier (Weekly, pWeekly, cMonth, pMonthly, Quarterly,
+//    pQuarter, Yearly) + une VWAP ancree a une date libre, avec bandes et etiquettes.
+// Periodes calendaires basees sur le fuseau de l'echange (UTC pour le crypto).
 
 G1 = "VWAP"
 mode    = input.string("Auto", "Periode de reset", group = G1,
@@ -25,6 +27,28 @@ show365 = input.bool(true, "Afficher la VWAP glissante", group = G3)
 lenDays = input.int(365, "Longueur (jours)", minval = 1, group = G3)
 col365  = input.color(#26C6DA, "Couleur", group = G3)
 
+G4 = "VWAP ancrees (calendrier)"
+anBnd = input.bool(true, "Afficher les bandes", group = G4)
+anK   = input.float(1.0, "Bandes (x ecart-type)", minval = 0.1, step = 0.1, group = G4)
+onW   = input.bool(true, "Weekly (semaine en cours)", inline = "w", group = G4)
+cW    = input.color(#4CAF50, "", inline = "w", group = G4)
+onPW  = input.bool(true, "pWeekly (semaine precedente)", inline = "pw", group = G4)
+cPW   = input.color(#A5D6A7, "", inline = "pw", group = G4)
+onM   = input.bool(true, "cMonth (mois en cours)", inline = "m", group = G4)
+cM    = input.color(#42A5F5, "", inline = "m", group = G4)
+onPM  = input.bool(true, "pMonthly (mois precedent)", inline = "pm", group = G4)
+cPM   = input.color(#90CAF9, "", inline = "pm", group = G4)
+onQ   = input.bool(true, "Quarterly (trimestre en cours)", inline = "q", group = G4)
+cQ    = input.color(#AB47BC, "", inline = "q", group = G4)
+onPQ  = input.bool(true, "pQuarter (trimestre precedent)", inline = "pq", group = G4)
+cPQ   = input.color(#CE93D8, "", inline = "pq", group = G4)
+onY   = input.bool(true, "Yearly (annee en cours)", inline = "y", group = G4)
+cY    = input.color(#EC407A, "", inline = "y", group = G4)
+onD   = input.bool(true, "VWAP ancree a une date", inline = "d", group = G4)
+cD    = input.color(#E0E0E0, "", inline = "d", group = G4)
+dT    = input.time(timestamp("01 Jan 2024 00:00 +0000"), "Date ancrage", group = G4)
+dNm   = input.string("2024 VWAP", "Nom", group = G4)
+
 periodName(string tf) =>
     switch tf
         "D"  => "Jour"
@@ -33,6 +57,37 @@ periodName(string tf) =>
         "3M" => "Trimestre"
         => "Annee"
 
+// VWAP + bandes d'une periode, et valeurs finales de la periode precedente
+calendarVwap(float s, bool newP, float k) =>
+    [v, u, d] = ta.vwap(s, newP, k)
+    var float pv = na
+    var float pu = na
+    var float pd = na
+    if newP
+        pv := v[1]
+        pu := u[1]
+        pd := d[1]
+    [v, u, d, pv, pu, pd]
+
+// VWAP + bandes ancrees a la premiere bougie dont l'heure >= t
+dateVwap(float s, int t, float k) =>
+    bool hit = time >= t and nz(time[1]) < t
+    [v, u, d] = ta.vwap(s, hit, k)
+    bool live = time >= t
+    [live ? v : na, live ? u : na, live ? d : na]
+
+// Etiquette "nom prix" collee a la derniere bougie
+tag(string nm, float lvl, color c, bool show) =>
+    var label lb = na
+    if barstate.islast
+        label.delete(lb)
+        if show and not na(lvl)
+            lb := label.new(bar_index, lvl, nm + " " + str.tostring(lvl, "#.##"),
+                 style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
+
+var int firstBarTime = time
+
+// ---------------- VWAP principale (periode selon le TF) ----------------
 int tfSec = timeframe.in_seconds(timeframe.period)
 string autoTf = tfSec <= dayMax * 60 ? "D" : tfSec <= weekMax * 60 ? "W" : tfSec <= monthMax * 60 ? "M" : "12M"
 
@@ -54,6 +109,22 @@ float dn2 = vw - k2 * sd
 int len365 = math.max(2, math.round(lenDays * 86400.0 / tfSec))
 float vw365 = ta.vwma(src, len365)
 
+// ---------------- VWAP ancrees calendrier ----------------
+int dayId  = int(math.floor(time / 86400000))
+int weekId = int(math.floor((dayId + 3) / 7))
+int qId    = year * 4 + int(math.floor((month - 1) / 3))
+bool nW = weekId != weekId[1]
+bool nM = month != month[1]
+bool nQ = qId != qId[1]
+bool nY = year != year[1]
+
+[wV, wU, wD, pwV, pwU, pwD]   = calendarVwap(src, nW, anK)
+[mV, mU, mD, pmV, pmU, pmD]   = calendarVwap(src, nM, anK)
+[qV, qU, qD, pqV, pqU, pqD]   = calendarVwap(src, nQ, anK)
+[yV, yU, yD, pyV, pyU, pyD]   = calendarVwap(src, nY, anK)
+[dV, dU, dD] = dateVwap(src, dT, anK)
+
+// ---------------- Trace : VWAP principale + glissante ----------------
 bool bands = showBnd and not newPeriod
 plot(newPeriod ? na : vw, "VWAP", color = col, linewidth = 2, style = plot.style_linebr)
 p1u = plot(bands ? up1 : na, "Bande +1", color = color.new(col, 50), style = plot.style_linebr)
@@ -61,9 +132,77 @@ p1d = plot(bands ? dn1 : na, "Bande -1", color = color.new(col, 50), style = plo
 plot(bands ? up2 : na, "Bande +2", color = color.new(col, 75), style = plot.style_linebr)
 plot(bands ? dn2 : na, "Bande -2", color = color.new(col, 75), style = plot.style_linebr)
 fill(p1u, p1d, color = color.new(col, 92), title = "Zone 1 ecart-type")
-plot(show365 ? vw365 : na, "VWAP glissante", color = col365, linewidth = 2, style = plot.style_linebr)
+plot(show365 ? vw365 : na, "VWAP glissante", color = col365, linewidth = 2,
+     style = plot.style_linebr)
 
-// Etiquettes : periode utilisee (avertit si le TF du graphique est trop grand pour elle)
+// ---------------- Trace : VWAP ancrees ----------------
+plot(onW and not nW ? wV : na, "Weekly", color = cW, linewidth = 2, style = plot.style_linebr)
+wuP = plot(onW and anBnd and not nW ? wU : na, "Weekly +", color = color.new(cW, 55),
+     style = plot.style_linebr)
+wdP = plot(onW and anBnd and not nW ? wD : na, "Weekly -", color = color.new(cW, 55),
+     style = plot.style_linebr)
+fill(wuP, wdP, color = color.new(cW, 93), title = "Weekly zone")
+
+plot(onPW and not nW ? pwV : na, "pWeekly", color = cPW, linewidth = 2, style = plot.style_linebr)
+pwuP = plot(onPW and anBnd and not nW ? pwU : na, "pWeekly +", color = color.new(cPW, 55),
+     style = plot.style_linebr)
+pwdP = plot(onPW and anBnd and not nW ? pwD : na, "pWeekly -", color = color.new(cPW, 55),
+     style = plot.style_linebr)
+fill(pwuP, pwdP, color = color.new(cPW, 93), title = "pWeekly zone")
+
+plot(onM and not nM ? mV : na, "cMonth", color = cM, linewidth = 2, style = plot.style_linebr)
+muP = plot(onM and anBnd and not nM ? mU : na, "cMonth +", color = color.new(cM, 55),
+     style = plot.style_linebr)
+mdP = plot(onM and anBnd and not nM ? mD : na, "cMonth -", color = color.new(cM, 55),
+     style = plot.style_linebr)
+fill(muP, mdP, color = color.new(cM, 93), title = "cMonth zone")
+
+plot(onPM and not nM ? pmV : na, "pMonthly", color = cPM, linewidth = 2, style = plot.style_linebr)
+pmuP = plot(onPM and anBnd and not nM ? pmU : na, "pMonthly +", color = color.new(cPM, 55),
+     style = plot.style_linebr)
+pmdP = plot(onPM and anBnd and not nM ? pmD : na, "pMonthly -", color = color.new(cPM, 55),
+     style = plot.style_linebr)
+fill(pmuP, pmdP, color = color.new(cPM, 93), title = "pMonthly zone")
+
+plot(onQ and not nQ ? qV : na, "Quarterly", color = cQ, linewidth = 2, style = plot.style_linebr)
+quP = plot(onQ and anBnd and not nQ ? qU : na, "Quarterly +", color = color.new(cQ, 55),
+     style = plot.style_linebr)
+qdP = plot(onQ and anBnd and not nQ ? qD : na, "Quarterly -", color = color.new(cQ, 55),
+     style = plot.style_linebr)
+fill(quP, qdP, color = color.new(cQ, 93), title = "Quarterly zone")
+
+plot(onPQ and not nQ ? pqV : na, "pQuarter", color = cPQ, linewidth = 2, style = plot.style_linebr)
+pquP = plot(onPQ and anBnd and not nQ ? pqU : na, "pQuarter +", color = color.new(cPQ, 55),
+     style = plot.style_linebr)
+pqdP = plot(onPQ and anBnd and not nQ ? pqD : na, "pQuarter -", color = color.new(cPQ, 55),
+     style = plot.style_linebr)
+fill(pquP, pqdP, color = color.new(cPQ, 93), title = "pQuarter zone")
+
+plot(onY and not nY ? yV : na, "Yearly", color = cY, linewidth = 2, style = plot.style_linebr)
+yuP = plot(onY and anBnd and not nY ? yU : na, "Yearly +", color = color.new(cY, 55),
+     style = plot.style_linebr)
+ydP = plot(onY and anBnd and not nY ? yD : na, "Yearly -", color = color.new(cY, 55),
+     style = plot.style_linebr)
+fill(yuP, ydP, color = color.new(cY, 93), title = "Yearly zone")
+
+plot(onD ? dV : na, "VWAP date", color = cD, linewidth = 2, style = plot.style_linebr)
+duP = plot(onD and anBnd ? dU : na, "VWAP date +", color = color.new(cD, 55),
+     style = plot.style_linebr)
+ddP = plot(onD and anBnd ? dD : na, "VWAP date -", color = color.new(cD, 55),
+     style = plot.style_linebr)
+fill(duP, ddP, color = color.new(cD, 93), title = "VWAP date zone")
+
+// ---------------- Etiquettes ----------------
+tag("Weekly", wV, cW, onW)
+tag("pWeekly", pwV, cPW, onPW)
+tag("cMonth", mV, cM, onM)
+tag("pMonthly", pmV, cPM, onPM)
+tag("Quarterly", qV, cQ, onQ)
+tag("pQuarter", pqV, cPQ, onPQ)
+tag("Yearly", yV, cY, onY)
+tag(dNm + (dT < firstBarTime ? " (historique insuffisant)" : ""), dV, cD, onD)
+
+// Etiquettes de la VWAP principale (periode utilisee) et de la glissante
 var label info = na
 var label info365 = na
 if barstate.islast
