@@ -4,6 +4,7 @@ indicator("VWAP Auto TF", "VWAP Auto", overlay = true)
 // VWAP dont la periode de reset s'adapte au timeframe du graphique.
 // Mode Auto : TF <= 60m -> Jour | <= 4h -> Semaine | <= 1D -> Mois | sinon Annee
 // Reset base sur les periodes de l'echange (00:00 UTC pour le crypto).
+// + VWAP glissante sur N jours (365 par defaut), activable / desactivable.
 
 G1 = "VWAP"
 mode    = input.string("Auto", "Periode de reset", group = G1,
@@ -18,6 +19,11 @@ G2 = "Seuils du mode Auto (TF du graphique, en minutes)"
 dayMax   = input.int(60, "Jour si TF <=", minval = 1, group = G2)
 weekMax  = input.int(240, "Semaine si TF <=", minval = 1, group = G2)
 monthMax = input.int(1440, "Mois si TF <=", minval = 1, group = G2)
+
+G3 = "VWAP glissante (longue duree)"
+show365 = input.bool(true, "Afficher la VWAP glissante", group = G3)
+lenDays = input.int(365, "Longueur (jours)", minval = 1, group = G3)
+col365  = input.color(#26C6DA, "Couleur", group = G3)
 
 periodName(string tf) =>
     switch tf
@@ -44,6 +50,10 @@ float sd  = (up1 - vw) / k1
 float up2 = vw + k2 * sd
 float dn2 = vw - k2 * sd
 
+// VWAP glissante : nombre de bougies couvrant lenDays jours (crypto 24/7)
+int len365 = math.max(2, math.round(lenDays * 86400.0 / tfSec))
+float vw365 = ta.vwma(src, len365)
+
 bool bands = showBnd and not newPeriod
 plot(newPeriod ? na : vw, "VWAP", color = col, linewidth = 2, style = plot.style_linebr)
 p1u = plot(bands ? up1 : na, "Bande +1", color = color.new(col, 50), style = plot.style_linebr)
@@ -51,12 +61,20 @@ p1d = plot(bands ? dn1 : na, "Bande -1", color = color.new(col, 50), style = plo
 plot(bands ? up2 : na, "Bande +2", color = color.new(col, 75), style = plot.style_linebr)
 plot(bands ? dn2 : na, "Bande -2", color = color.new(col, 75), style = plot.style_linebr)
 fill(p1u, p1d, color = color.new(col, 92), title = "Zone 1 ecart-type")
+plot(show365 ? vw365 : na, "VWAP glissante", color = col365, linewidth = 2, style = plot.style_linebr)
 
-// Etiquette : periode utilisee (avertit si le TF du graphique est trop grand pour elle)
+// Etiquettes : periode utilisee (avertit si le TF du graphique est trop grand pour elle)
 var label info = na
+var label info365 = na
 if barstate.islast
     label.delete(info)
     bool tooBig = timeframe.in_seconds(tfPick) <= tfSec
     string txt = "VWAP " + periodName(tfPick) + (tooBig ? " (TF trop grand)" : "")
     info := label.new(bar_index, nz(vw, close), txt, style = label.style_label_left,
          color = color.new(color.black, 100), textcolor = col)
+    label.delete(info365)
+    if show365
+        bool noHist = bar_index + 1 < len365
+        string txt365 = "VWAP " + str.tostring(lenDays) + "j" + (noHist ? " (historique insuffisant)" : "")
+        info365 := label.new(bar_index, nz(vw365, close), txt365, style = label.style_label_left,
+             color = color.new(color.black, 100), textcolor = col365)
