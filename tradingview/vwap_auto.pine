@@ -1,0 +1,62 @@
+//@version=6
+indicator("VWAP Auto TF", "VWAP Auto", overlay = true)
+
+// VWAP dont la periode de reset s'adapte au timeframe du graphique.
+// Mode Auto : TF <= 60m -> Jour | <= 4h -> Semaine | <= 1D -> Mois | sinon Annee
+// Reset base sur les periodes de l'echange (00:00 UTC pour le crypto).
+
+G1 = "VWAP"
+mode    = input.string("Auto", "Periode de reset", group = G1,
+     options = ["Auto", "Jour", "Semaine", "Mois", "Trimestre", "Annee"])
+src     = input.source(hlc3, "Source", group = G1)
+col     = input.color(#FFB300, "Couleur", group = G1)
+showBnd = input.bool(true, "Afficher les bandes", group = G1)
+k1      = input.float(1.0, "Bande 1 (x ecart-type)", minval = 0.1, step = 0.1, group = G1)
+k2      = input.float(2.0, "Bande 2 (x ecart-type)", minval = 0.1, step = 0.1, group = G1)
+
+G2 = "Seuils du mode Auto (TF du graphique, en minutes)"
+dayMax   = input.int(60, "Jour si TF <=", minval = 1, group = G2)
+weekMax  = input.int(240, "Semaine si TF <=", minval = 1, group = G2)
+monthMax = input.int(1440, "Mois si TF <=", minval = 1, group = G2)
+
+periodName(string tf) =>
+    switch tf
+        "D"  => "Jour"
+        "W"  => "Semaine"
+        "M"  => "Mois"
+        "3M" => "Trimestre"
+        => "Annee"
+
+int tfSec = timeframe.in_seconds(timeframe.period)
+string autoTf = tfSec <= dayMax * 60 ? "D" : tfSec <= weekMax * 60 ? "W" : tfSec <= monthMax * 60 ? "M" : "12M"
+
+string tfPick = switch mode
+    "Jour"      => "D"
+    "Semaine"   => "W"
+    "Mois"      => "M"
+    "Trimestre" => "3M"
+    "Annee"     => "12M"
+    => autoTf
+
+bool newPeriod = timeframe.change(tfPick)
+[vw, up1, dn1] = ta.vwap(src, newPeriod, k1)
+float sd  = (up1 - vw) / k1
+float up2 = vw + k2 * sd
+float dn2 = vw - k2 * sd
+
+bool bands = showBnd and not newPeriod
+plot(newPeriod ? na : vw, "VWAP", color = col, linewidth = 2, style = plot.style_linebr)
+p1u = plot(bands ? up1 : na, "Bande +1", color = color.new(col, 50), style = plot.style_linebr)
+p1d = plot(bands ? dn1 : na, "Bande -1", color = color.new(col, 50), style = plot.style_linebr)
+plot(bands ? up2 : na, "Bande +2", color = color.new(col, 75), style = plot.style_linebr)
+plot(bands ? dn2 : na, "Bande -2", color = color.new(col, 75), style = plot.style_linebr)
+fill(p1u, p1d, color = color.new(col, 92), title = "Zone 1 ecart-type")
+
+// Etiquette : periode utilisee (avertit si le TF du graphique est trop grand pour elle)
+var label info = na
+if barstate.islast
+    label.delete(info)
+    bool tooBig = timeframe.in_seconds(tfPick) <= tfSec
+    string txt = "VWAP " + periodName(tfPick) + (tooBig ? " (TF trop grand)" : "")
+    info := label.new(bar_index, nz(vw, close), txt, style = label.style_label_left,
+         color = color.new(color.black, 100), textcolor = col)
