@@ -6,8 +6,10 @@ indicator("VWAP Auto TF", "VWAP Auto", overlay = true, max_lines_count = 100, ma
 // 2) VWAP calendrier : Weekly, cMonth, Yearly + une VWAP ancree a une date libre.
 //    Une ligne identique a la VWAP principale n'est pas retracee (pas de doublon).
 // 3) Volume Profile par periode : POC en cours, POC / VAH / VAL de la periode precedente.
+// 4) Opens Weekly / Monthly / Yearly (en crypto 24/7, l'open = la cloture precedente).
+// 5) Tableau des confluences : zones ou plusieurs niveaux (sources differentes) se regroupent.
 // Un niveau est masque si sa periode contient moins de N barres (profil peu fiable).
-// Lignes pleines = VWAP | pointilles = Volume Profile.
+// VWAP = lignes pleines | Volume Profile = pointilles | Opens = traits horizontaux pleins.
 // Periodes calendaires basees sur le fuseau de l'echange (UTC pour le crypto).
 
 G1 = "VWAP principale"
@@ -39,7 +41,7 @@ dNm = input.string("2024 VWAP", "Nom", group = G4)
 G5 = "Volume Profile (POC / VAH / VAL)"
 vaPct  = input.float(70.0, "Value Area (%)", minval = 10.0, maxval = 99.0, step = 1.0, group = G5)
 binPct = input.float(0.10, "Taille de bin (% du prix)", minval = 0.05, maxval = 2.0, step = 0.05, group = G5)
-vpLbl  = input.bool(true, "Afficher les noms", group = G5)
+vpLbl  = input.bool(true, "Afficher les noms (VP et Opens)", group = G5)
 onVW   = input.bool(true, "Weekly", inline = "vw", group = G5)
 cVW    = input.color(#4CAF50, "", inline = "vw", group = G5)
 onVM   = input.bool(true, "Monthly", inline = "vm", group = G5)
@@ -47,11 +49,36 @@ cVM    = input.color(#42A5F5, "", inline = "vm", group = G5)
 onVY   = input.bool(true, "Yearly", inline = "vy", group = G5)
 cVY    = input.color(#EC407A, "", inline = "vy", group = G5)
 
+G6 = "Opens de periode"
+onOW = input.bool(true, "Weekly open", inline = "ow", group = G6)
+cOW  = input.color(#9CCC65, "", inline = "ow", group = G6)
+onOM = input.bool(true, "Monthly open", inline = "om", group = G6)
+cOM  = input.color(#64B5F6, "", inline = "om", group = G6)
+onOY = input.bool(true, "Yearly open", inline = "oy", group = G6)
+cOY  = input.color(#F06292, "", inline = "oy", group = G6)
+
+G7 = "Tableau des confluences"
+showTbl  = input.bool(true, "Afficher le tableau", group = G7)
+tblPosIn = input.string("Haut droite", "Position", group = G7,
+     options = ["Haut droite", "Haut gauche", "Bas droite", "Bas gauche"])
+confAtr  = input.float(0.30, "Tolerance (x ATR)", minval = 0.05, step = 0.05, group = G7)
+confMin  = input.float(0.15, "Tolerance minimale (% du prix)", minval = 0.01, step = 0.01, group = G7)
+
 // Grille de prix du profil : bins logarithmiques de binPct % (de mintick a mintick x 1e9)
 float lnStep = math.log(1.0 + binPct / 100.0)
 float minPx  = syminfo.mintick
 int lnBase   = int(math.floor(math.log(minPx) / lnStep))
 int nBins    = int(math.ceil(math.log(1000000000.0) / lnStep)) + 2
+
+string tblPos = switch tblPosIn
+    "Haut gauche" => position.top_left
+    "Bas droite"  => position.bottom_right
+    "Bas gauche"  => position.bottom_left
+    => position.top_right
+
+var table cf = table.new(tblPos, 3, 5, border_width = 1, border_color = color.new(color.gray, 75),
+     frame_width = 1, frame_color = color.new(color.gray, 75))
+color cfBg = color.new(color.black, 15)
 
 periodName(string tf) =>
     switch tf
@@ -80,6 +107,20 @@ tag(string nm, float lvl, color c, bool show) =>
         if show and not na(lvl)
             lb := label.new(bar_index, lvl, nm + " " + str.tostring(lvl, "#.##"),
                  style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
+
+// Open de la periode en cours : trait horizontal prolonge a droite
+openLine(string nm, float lvl, int x1, bool show, color c) =>
+    var line ol = na
+    var label olb = na
+    if barstate.islast
+        line.delete(ol)
+        label.delete(olb)
+        if show and not na(lvl)
+            ol := line.new(x1, lvl, bar_index, lvl, extend = extend.right, color = c, width = 1)
+            if vpLbl
+                olb := label.new(bar_index, lvl, nm + " " + str.tostring(lvl, "#.##"),
+                     style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
+    true
 
 // ---------------- Volume Profile : fonctions ----------------
 idxOf(float p) =>
@@ -215,6 +256,21 @@ vpLevels(string nm, float poc, float vah, float val, int x1, bool show, color c,
                          style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
     true
 
+// ---------------- Confluences : fonctions ----------------
+// Ajoute un niveau (prix, nom, source) a la liste si il est actif et defini
+cfAdd(array<float> p, array<string> n, array<int> g, float price, string name, int grp, bool on) =>
+    if on and not na(price)
+        array.push(p, price)
+        array.push(n, name)
+        array.push(g, grp)
+    true
+
+// Ecrit une cellule du tableau
+cfCell(int cc, int row, string t, color tc, bool left) =>
+    table.cell(cf, cc, row, t, text_color = tc, text_halign = left ? text.align_left : text.align_right,
+         text_size = size.small, bgcolor = cfBg)
+    true
+
 var int firstBarTime = time
 
 // ---------------- VWAP principale (periode selon le TF) ----------------
@@ -231,6 +287,7 @@ string tfPick = switch mode
 
 bool newPeriod = timeframe.change(tfPick)
 [vw, up1, dn1] = ta.vwap(src, newPeriod, k1)
+float atr14 = ta.atr(14)
 
 // Un niveau n'est affiche que si sa periode contient assez de barres du graphique
 bool okW = 604800.0 / tfSec >= minBars
@@ -253,6 +310,23 @@ float dV = dateVwap(src, dT)
 bool sW = onW and okW and tfPick != "W"
 bool sM = onM and okM and tfPick != "M"
 bool sY = onY and okY and tfPick != "12M"
+
+// ---------------- Opens de periode ----------------
+var float wOpen = na
+var float mOpen = na
+var float yOpen = na
+var int wStart = 0
+var int mStart = 0
+var int yStart = 0
+if nW
+    wOpen := open
+    wStart := bar_index
+if nM
+    mOpen := open
+    mStart := bar_index
+if nY
+    yOpen := open
+    yStart := bar_index
 
 // ---------------- Volume Profile : calcul par periode ----------------
 var array<float> binsW = array.new_float(nBins, 0.0)
@@ -341,6 +415,120 @@ vpLevels("m", cPocM, cVahM, cValM, cStM, vM, cVM, false)
 vpLevels("pm", qPocM, qVahM, qValM, qStM, vM, color.new(cVM, 40), true)
 vpLevels("y", cPocY, cVahY, cValY, cStY, vY, cVY, false)
 vpLevels("py", qPocY, qVahY, qValY, qStY, vY, color.new(cVY, 40), true)
+
+// ---------------- Lignes d'open ----------------
+openLine("wOpen", wOpen, wStart, onOW, cOW)
+openLine("mOpen", mOpen, mStart, onOM, cOM)
+openLine("yOpen", yOpen, yStart, onOY, cOY)
+
+// ---------------- Tableau des confluences ----------------
+var array<float> cfP = array.new_float()
+var array<string> cfN = array.new_string()
+var array<int> cfG = array.new_int()
+
+if barstate.islast and showTbl
+    // 1) liste des niveaux actifs (nom, prix, source : un profil = une seule source)
+    array.clear(cfP)
+    array.clear(cfN)
+    array.clear(cfG)
+    cfAdd(cfP, cfN, cfG, vw, "VWAP", 1, true)
+    cfAdd(cfP, cfN, cfG, wV, "wVWAP", 2, sW)
+    cfAdd(cfP, cfN, cfG, mV, "mVWAP", 3, sM)
+    cfAdd(cfP, cfN, cfG, yV, "yVWAP", 4, sY)
+    cfAdd(cfP, cfN, cfG, dV, dNm, 5, onD)
+    cfAdd(cfP, cfN, cfG, wOpen, "wOpen", 6, onOW)
+    cfAdd(cfP, cfN, cfG, mOpen, "mOpen", 7, onOM)
+    cfAdd(cfP, cfN, cfG, yOpen, "yOpen", 8, onOY)
+    cfAdd(cfP, cfN, cfG, cPocW, "wPOC", 9, vW)
+    cfAdd(cfP, cfN, cfG, qPocW, "pwPOC", 10, vW)
+    cfAdd(cfP, cfN, cfG, qVahW, "pwVAH", 10, vW)
+    cfAdd(cfP, cfN, cfG, qValW, "pwVAL", 10, vW)
+    cfAdd(cfP, cfN, cfG, cPocM, "mPOC", 11, vM)
+    cfAdd(cfP, cfN, cfG, qPocM, "pmPOC", 12, vM)
+    cfAdd(cfP, cfN, cfG, qVahM, "pmVAH", 12, vM)
+    cfAdd(cfP, cfN, cfG, qValM, "pmVAL", 12, vM)
+    cfAdd(cfP, cfN, cfG, cPocY, "yPOC", 13, vY)
+    cfAdd(cfP, cfN, cfG, qPocY, "pyPOC", 14, vY)
+    cfAdd(cfP, cfN, cfG, qVahY, "pyVAH", 14, vY)
+    cfAdd(cfP, cfN, cfG, qValY, "pyVAL", 14, vY)
+
+    // 2) zones : niveaux tries par prix, regroupes dans une fenetre <= tolerance,
+    //    gardees si elles contiennent au moins 2 sources differentes
+    int n = array.size(cfP)
+    array<int> ord = array.sort_indices(cfP)
+    float tol = math.max(confAtr * atr14, confMin / 100.0 * close)
+    array<float> zMid = array.new_float()
+    array<float> zLo = array.new_float()
+    array<float> zHi = array.new_float()
+    array<string> zTxt = array.new_string()
+    array<int> zCnt = array.new_int()
+    int i = 0
+    while i < n
+        float b0 = array.get(cfP, array.get(ord, i))
+        int j = i
+        bool go = true
+        while go
+            if j + 1 < n
+                if array.get(cfP, array.get(ord, j + 1)) - b0 <= tol
+                    j += 1
+                else
+                    go := false
+            else
+                go := false
+        if j > i
+            array<int> seen = array.new_int()
+            string zt = ""
+            float zs = 0.0
+            for k = i to j
+                int idx = array.get(ord, k)
+                int g = array.get(cfG, idx)
+                if not array.includes(seen, g)
+                    array.push(seen, g)
+                zs += array.get(cfP, idx)
+                zt := zt + (k > i ? " + " : "") + array.get(cfN, idx)
+            if array.size(seen) >= 2
+                array.push(zMid, zs / (j - i + 1))
+                array.push(zLo, array.get(cfP, array.get(ord, i)))
+                array.push(zHi, array.get(cfP, array.get(ord, j)))
+                array.push(zTxt, zt)
+                array.push(zCnt, j - i + 1)
+        i := j + 1
+
+    // 3) les 4 zones les plus proches du prix
+    int nz = array.size(zMid)
+    array<float> zd = array.new_float()
+    if nz > 0
+        for q = 0 to nz - 1
+            float qlo = array.get(zLo, q)
+            float qhi = array.get(zHi, q)
+            bool qin = close >= qlo and close <= qhi
+            array.push(zd, qin ? 0.0 : math.min(math.abs(qlo - close), math.abs(qhi - close)))
+    array<int> zo = array.sort_indices(zd)
+
+    // 4) tableau
+    cfCell(0, 0, "Confluences", color.gray, true)
+    cfCell(1, 0, "Zone", color.gray, false)
+    cfCell(2, 0, "Prix vs zone", color.gray, false)
+    for r = 1 to 4
+        if r - 1 < nz
+            int z = array.get(zo, r - 1)
+            float zl = array.get(zLo, z)
+            float zh = array.get(zHi, z)
+            float zm = array.get(zMid, z)
+            bool inside = close >= zl and close <= zh
+            float dist = zl > close ? (zl / close - 1) * 100 : (zh / close - 1) * 100
+            string fmt = zm >= 1000 ? "#" : "#.##"
+            string side = zm > close ? "R +" : "S "
+            string rel = inside ? "DANS LA ZONE" : side + str.tostring(dist, "#.##") + "%"
+            color rc = inside ? color.yellow : zm > close ? color.red : color.lime
+            string lbl = array.get(zTxt, z) + " (" + str.tostring(array.get(zCnt, z)) + ")"
+            cfCell(0, r, lbl, color.white, true)
+            cfCell(1, r, str.tostring(zl, fmt) + " - " + str.tostring(zh, fmt), color.silver, false)
+            cfCell(2, r, rel, rc, false)
+        else
+            cfCell(0, r, r == 1 ? "Aucune confluence" : "", color.gray, true)
+            cfCell(1, r, "", color.gray, false)
+            cfCell(2, r, "", color.gray, false)
 
 // Etiquette de la VWAP principale (periode utilisee)
 var label info = na
