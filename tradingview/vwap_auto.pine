@@ -10,6 +10,8 @@ indicator("VWAP Auto TF", "VWAP Auto", overlay = true, max_lines_count = 100, ma
 //    Une ligne identique a la VWAP principale n'est pas retracee (pas de doublon).
 //    Zones tres legeres autour des VWAP ancrees (VWAP -> 1 ecart-type -> 2), de plus en plus
 //    transparentes vers l'exterieur, pour voir la VWAP se dessiner sans bruit.
+//    Historique : les VWAP Mois et Annee gardent leurs periodes precedentes ; Jour et Semaine
+//    ne montrent que la periode en cours. Chaque ligne porte son nom (VWAP / AVWAP) a son extremite.
 // 3) Volume Profile par periode (Jour, Semaine, Mois, Annee) : POC, VAH / VAL de la periode
 //    precedente. Les HVN sont visibles dans l'histogramme et pris en compte dans le tableau.
 //    Le profil est regroupe en un nombre de lignes qui suit la densite de donnees : plus le
@@ -34,7 +36,10 @@ col     = input.color(#FFB300, "Couleur", group = G1)
 showBnd = input.bool(true, "Zones legeres autour des VWAP ancrees", group = G1)
 k1      = input.float(1.0, "Zone 1 (x ecart-type)", minval = 0.1, step = 0.1, group = G1)
 k2      = input.float(2.0, "Zone 2 (x ecart-type)", minval = 0.2, step = 0.1, group = G1)
-anTr    = input.int(88, "Transparence des zones (%)", minval = 60, maxval = 98, group = G1)
+bandCur = input.bool(true, "Zones : periode en cours seulement", group = G1)
+anTr    = input.int(94, "Transparence des zones (%)", minval = 60, maxval = 98, group = G1)
+lnTr    = input.int(25, "Transparence des lignes VWAP ancrees (%)", minval = 0, maxval = 90, group = G1)
+prevOn  = input.bool(true, "Garder les periodes precedentes des VWAP Mois et Annee", group = G1)
 
 G2 = "Seuils du mode Auto (TF du graphique, en minutes)"
 dayMax   = input.int(60, "Jour si TF <=", minval = 1, group = G2)
@@ -140,10 +145,13 @@ string tblPos = switch tblPosIn
     "Bas gauche"  => position.bottom_left
     => position.top_right
 
-var table cf = table.new(tblPos, 3, 7, border_width = 1, border_color = color.new(color.gray, 75),
+var table cf = table.new(tblPos, 3, 8, border_width = 1, border_color = color.new(color.gray, 75),
      frame_width = 1, frame_color = color.new(color.gray, 75))
 color cfBg = color.new(color.black, 15)
 color cfPriceBg = color.new(color.gray, 70)
+if barstate.isfirst
+    table.cell(cf, 0, 7, "")
+    table.merge_cells(cf, 0, 7, 2, 7)
 
 periodName(string tf) =>
     switch tf
@@ -164,14 +172,22 @@ dateVwap(float s, int t) =>
     [v, u, d] = ta.vwap(s, hit, 1.0)
     time >= t ? v : na
 
-// Etiquette "nom prix" collee a la derniere bougie
+// Nom de la ligne, colle a la derniere barre juste au-dessus de la ligne
 tag(string nm, float lvl, color c, bool show) =>
     var label lb = na
     if barstate.islast
         label.delete(lb)
-        if show and near(lvl)
-            lb := label.new(bar_index, lvl, nm + " " + str.tostring(lvl, "#.##"),
-                 style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
+        if show and not na(lvl)
+            lb := label.new(bar_index, lvl, nm, style = label.style_label_lower_right, size = size.tiny,
+                 color = color.new(color.black, 100), textcolor = color.new(c, 15))
+    true
+
+// Nom d'une periode precedente, pose au-dessus de la fin de son segment (barre precedente)
+prevTag(string nm, bool ended, float lvl, color c) =>
+    if ended and not na(lvl)
+        label.new(bar_index - 1, lvl, nm, style = label.style_label_lower_right, size = size.tiny,
+             color = color.new(color.black, 100), textcolor = color.new(c, 35))
+    true
 
 // Open de la periode en cours : trait horizontal prolonge a droite
 openLine(string nm, float lvl, int x1, bool show, color c) =>
@@ -557,6 +573,13 @@ bool nW = weekId != weekId[1]
 bool nM = month != month[1]
 bool nY = year != year[1]
 
+// Periode en cours = celle de la derniere barre du graphique
+int lbDay = int(math.floor(last_bar_time / 86400000))
+bool curD = dayId == lbDay
+bool curW = weekId == int(math.floor((lbDay + 3) / 7))
+bool curM = year == year(last_bar_time) and month == month(last_bar_time)
+bool curY = year == year(last_bar_time)
+
 [wV, wSd] = curVwap(src, nW)
 [mV, mSd] = curVwap(src, nM)
 [yV, ySd] = curVwap(src, nY)
@@ -652,77 +675,88 @@ bool livePend = not barstate.isconfirmed
 [cPocY, cVahY, cValY, cH1Y, cH2Y, cStY, qPocY, qVahY, qValY, qH1Y, qH2Y, qStY] = periodView(binsY, metaY,
      wkRows, tgY, pvY, pnY, livePend and nY)
 
-// ---------------- Trace : VWAP ancrees + zones legeres ----------------
-// Zone 1 (VWAP -> k1 ecarts-types) et zone 2 (k1 -> k2) : de plus en plus transparentes vers l'exterieur.
-int anTr2 = math.min(98, anTr + 6)
-bool bM = showBnd and not newPeriod
-bool bW = showBnd and sW and not nW
-bool bMo = showBnd and sM and not nM
-bool bY = showBnd and sY and not nY
-pM0 = plot(newPeriod ? na : vw, "VWAP", color = col, linewidth = 2, style = plot.style_linebr)
-pM1u = plot(bM ? vw + k1 * sdM : na, "VWAP +1", color = color.new(col, 82),
+// ---------------- Trace : VWAP + VWAP ancrees + zones legeres ----------------
+// Jour et Semaine : periode en cours seulement. Mois et Annee : periodes precedentes gardees (prevOn).
+// Zones (VWAP -> k1 ecarts-types -> k2) tres transparentes, sur la periode en cours par defaut.
+int anTr2 = math.min(98, anTr + 3)
+bool curMain = tfPick == "D" ? curD : tfPick == "W" ? curW : tfPick == "M" ? curM : curY
+bool prevMain = prevOn and (tfPick == "M" or tfPick == "12M")
+bool shMain = not newPeriod and (prevMain or curMain)
+bool shW = sW and not nW and curW
+bool shM = sM and not nM and (prevOn or curM)
+bool shY = sY and not nY and (prevOn or curY)
+bool bM = showBnd and shMain and (curMain or not bandCur)
+bool bW = showBnd and shW
+bool bMo = showBnd and shM and (curM or not bandCur)
+bool bY = showBnd and shY and (curY or not bandCur)
+pM0 = plot(shMain ? vw : na, "VWAP", color = col, linewidth = 2, style = plot.style_linebr)
+pM1u = plot(bM ? vw + k1 * sdM : na, "VWAP +1", color = color.new(col, 90),
      style = plot.style_linebr, display = display.pane)
-pM1d = plot(bM ? vw - k1 * sdM : na, "VWAP -1", color = color.new(col, 82),
+pM1d = plot(bM ? vw - k1 * sdM : na, "VWAP -1", color = color.new(col, 90),
      style = plot.style_linebr, display = display.pane)
-pM2u = plot(bM ? vw + k2 * sdM : na, "VWAP +2", color = color.new(col, 88),
+pM2u = plot(bM ? vw + k2 * sdM : na, "VWAP +2", color = color.new(col, 94),
      style = plot.style_linebr, display = display.pane)
-pM2d = plot(bM ? vw - k2 * sdM : na, "VWAP -2", color = color.new(col, 88),
+pM2d = plot(bM ? vw - k2 * sdM : na, "VWAP -2", color = color.new(col, 94),
      style = plot.style_linebr, display = display.pane)
 fill(pM0, pM1u, color = color.new(col, anTr), title = "VWAP zone +1")
 fill(pM1u, pM2u, color = color.new(col, anTr2), title = "VWAP zone +2")
 fill(pM0, pM1d, color = color.new(col, anTr), title = "VWAP zone -1")
 fill(pM1d, pM2d, color = color.new(col, anTr2), title = "VWAP zone -2")
 
-pW0 = plot(sW and not nW ? wV : na, "Weekly", color = cW, linewidth = 1, style = plot.style_linebr)
-pW1u = plot(bW ? wV + k1 * wSd : na, "Weekly +1", color = color.new(cW, 82),
+pW0 = plot(shW ? wV : na, "Weekly", color = color.new(cW, lnTr), linewidth = 1, style = plot.style_linebr)
+pW1u = plot(bW ? wV + k1 * wSd : na, "Weekly +1", color = color.new(cW, 90),
      style = plot.style_linebr, display = display.pane)
-pW1d = plot(bW ? wV - k1 * wSd : na, "Weekly -1", color = color.new(cW, 82),
+pW1d = plot(bW ? wV - k1 * wSd : na, "Weekly -1", color = color.new(cW, 90),
      style = plot.style_linebr, display = display.pane)
-pW2u = plot(bW ? wV + k2 * wSd : na, "Weekly +2", color = color.new(cW, 88),
+pW2u = plot(bW ? wV + k2 * wSd : na, "Weekly +2", color = color.new(cW, 94),
      style = plot.style_linebr, display = display.pane)
-pW2d = plot(bW ? wV - k2 * wSd : na, "Weekly -2", color = color.new(cW, 88),
+pW2d = plot(bW ? wV - k2 * wSd : na, "Weekly -2", color = color.new(cW, 94),
      style = plot.style_linebr, display = display.pane)
 fill(pW0, pW1u, color = color.new(cW, anTr), title = "Weekly zone +1")
 fill(pW1u, pW2u, color = color.new(cW, anTr2), title = "Weekly zone +2")
 fill(pW0, pW1d, color = color.new(cW, anTr), title = "Weekly zone -1")
 fill(pW1d, pW2d, color = color.new(cW, anTr2), title = "Weekly zone -2")
 
-pO0 = plot(sM and not nM ? mV : na, "cMonth", color = cM, linewidth = 1, style = plot.style_linebr)
-pO1u = plot(bMo ? mV + k1 * mSd : na, "cMonth +1", color = color.new(cM, 82),
+pO0 = plot(shM ? mV : na, "cMonth", color = color.new(cM, lnTr), linewidth = 1, style = plot.style_linebr)
+pO1u = plot(bMo ? mV + k1 * mSd : na, "cMonth +1", color = color.new(cM, 90),
      style = plot.style_linebr, display = display.pane)
-pO1d = plot(bMo ? mV - k1 * mSd : na, "cMonth -1", color = color.new(cM, 82),
+pO1d = plot(bMo ? mV - k1 * mSd : na, "cMonth -1", color = color.new(cM, 90),
      style = plot.style_linebr, display = display.pane)
-pO2u = plot(bMo ? mV + k2 * mSd : na, "cMonth +2", color = color.new(cM, 88),
+pO2u = plot(bMo ? mV + k2 * mSd : na, "cMonth +2", color = color.new(cM, 94),
      style = plot.style_linebr, display = display.pane)
-pO2d = plot(bMo ? mV - k2 * mSd : na, "cMonth -2", color = color.new(cM, 88),
+pO2d = plot(bMo ? mV - k2 * mSd : na, "cMonth -2", color = color.new(cM, 94),
      style = plot.style_linebr, display = display.pane)
 fill(pO0, pO1u, color = color.new(cM, anTr), title = "cMonth zone +1")
 fill(pO1u, pO2u, color = color.new(cM, anTr2), title = "cMonth zone +2")
 fill(pO0, pO1d, color = color.new(cM, anTr), title = "cMonth zone -1")
 fill(pO1d, pO2d, color = color.new(cM, anTr2), title = "cMonth zone -2")
 
-pY0 = plot(sY and not nY ? yV : na, "Yearly", color = cY, linewidth = 1, style = plot.style_linebr)
-pY1u = plot(bY ? yV + k1 * ySd : na, "Yearly +1", color = color.new(cY, 82),
+pY0 = plot(shY ? yV : na, "Yearly", color = color.new(cY, lnTr), linewidth = 1, style = plot.style_linebr)
+pY1u = plot(bY ? yV + k1 * ySd : na, "Yearly +1", color = color.new(cY, 90),
      style = plot.style_linebr, display = display.pane)
-pY1d = plot(bY ? yV - k1 * ySd : na, "Yearly -1", color = color.new(cY, 82),
+pY1d = plot(bY ? yV - k1 * ySd : na, "Yearly -1", color = color.new(cY, 90),
      style = plot.style_linebr, display = display.pane)
-pY2u = plot(bY ? yV + k2 * ySd : na, "Yearly +2", color = color.new(cY, 88),
+pY2u = plot(bY ? yV + k2 * ySd : na, "Yearly +2", color = color.new(cY, 94),
      style = plot.style_linebr, display = display.pane)
-pY2d = plot(bY ? yV - k2 * ySd : na, "Yearly -2", color = color.new(cY, 88),
+pY2d = plot(bY ? yV - k2 * ySd : na, "Yearly -2", color = color.new(cY, 94),
      style = plot.style_linebr, display = display.pane)
 fill(pY0, pY1u, color = color.new(cY, anTr), title = "Yearly zone +1")
 fill(pY1u, pY2u, color = color.new(cY, anTr2), title = "Yearly zone +2")
 fill(pY0, pY1d, color = color.new(cY, anTr), title = "Yearly zone -1")
 fill(pY1d, pY2d, color = color.new(cY, anTr2), title = "Yearly zone -2")
 
-plot(onD ? dV : na, "VWAP date", color = cD, linewidth = 1, style = plot.style_linebr,
+plot(onD ? dV : na, "VWAP date", color = color.new(cD, lnTr), linewidth = 1, style = plot.style_linebr,
      display = display.pane)
 
-// ---------------- Etiquettes VWAP ----------------
-tag("Weekly", wV, cW, sW)
-tag("cMonth", mV, cM, sM)
-tag("Yearly", yV, cY, sY)
+// ---------------- Noms des lignes ----------------
+tag("VWAP " + periodName(tfPick), vw, col, shMain)
+tag("AVWAP Semaine", wV, cW, shW)
+tag("AVWAP Mois", mV, cM, shM)
+tag("AVWAP Annee", yV, cY, shY)
 tag(dNm + (dT < firstBarTime ? " (historique insuffisant)" : ""), dV, cD, onD)
+prevTag("VWAP " + periodName(tfPick) + " prec.", prevMain and newPeriod, vw[1], col)
+prevTag("AVWAP Mois prec.", prevOn and sM and nM, mV[1], cM)
+prevTag("AVWAP Annee prec.", prevOn and sY and nY, yV[1], cY)
 
 // ---------------- Histogramme du volume profile ----------------
 int histAvail = 0
@@ -927,17 +961,14 @@ if barstate.islast and showTbl
         cfBlank(rr)
         rr += 1
 
-// Etiquette de la VWAP principale (periode utilisee)
-var label info = na
-if barstate.islast
-    label.delete(info)
+    // 5) pied du tableau : VWAP principale et profil affiche
     bool tooBig = timeframe.in_seconds(tfPick) <= tfSec
-    string txt = "VWAP " + periodName(tfPick) + (tooBig ? " (TF trop grand)" : "")
+    string ft = "VWAP " + periodName(tfPick) + (tooBig ? " (TF trop grand)" : "")
     if hp > 0
         string hpn = periodName(hp == 1 ? "D" : hp == 2 ? "W" : hp == 3 ? "M" : "12M")
         int shown = math.min(histCount, histAvail + 1)
-        string lack = shown < histCount ? ", historique insuffisant" : ""
-        string cnt = "x" + str.tostring(shown) + " (" + str.tostring(histRowsUsed) + " lignes max" + lack + ")"
-        txt := txt + "\nVP " + hpn + " " + cnt
-    info := label.new(bar_index, nz(vw, close), txt, style = label.style_label_left,
-         color = color.new(color.black, 100), textcolor = col)
+        string lack = shown < histCount ? " (histo. insuffisant)" : ""
+        string vpt = " | VP " + hpn + " x" + str.tostring(shown) + " (" + str.tostring(histRowsUsed) + " l.)"
+        ft := ft + vpt + lack
+    table.cell(cf, 0, 7, ft, text_color = color.gray, text_halign = text.align_left,
+         text_size = size.tiny, bgcolor = cfBg)
