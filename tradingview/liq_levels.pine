@@ -64,6 +64,8 @@ lenPct   = input.float(28.0, "Auto : longueur max (% de l'ecran)", minval = 5.0,
 maxLen   = input.int(60, "Fixe : longueur max (barres)", minval = 10, maxval = 600, group = G4)
 thkAtr   = input.float(0.15, "Epaisseur minimale (x ATR)", minval = 0.02, maxval = 1.0, step = 0.01,
      group = G4)
+intens   = input.float(1.0, "Intensite des barres (opacite)", minval = 0.4, maxval = 2.0, step = 0.1,
+     group = G4)
 lblN     = input.int(2, "Etiquettes : poches par cote (0 = aucune)", minval = 0, maxval = 8, group = G4)
 showTbl  = input.bool(true, "Afficher le tableau de bord", group = G4)
 tblPosIn = input.string("Milieu droite", "Position du tableau", group = G4,
@@ -380,7 +382,7 @@ if barstate.islast
 
                 // barre : ancree sur la bougie actuelle ; longueur et opacite selon la taille
                 int blen = math.max(6, int(math.round(maxL * math.pow(rel, 0.7))))
-                float amax = math.min(0.9, 0.22 + 0.55 * math.pow(rel, 0.8) + (mag ? 0.1 : 0.0))
+                float amax = math.min(0.9, (0.22 + 0.55 * math.pow(rel, 0.8) + (mag ? 0.1 : 0.0)) * intens)
                 bool fade = styleIn == "Degrade"
                 int nSeg = fade ? math.min(12, blen) : 1
                 color pc = pd > 0 ? colL : colS
