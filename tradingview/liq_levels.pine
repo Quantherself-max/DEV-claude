@@ -1,0 +1,273 @@
+//@version=6
+indicator("Liquidation Levels (estime)", "LiqLevels", overlay = true, max_lines_count = 500,
+     max_labels_count = 60)
+
+// Niveaux de liquidation ESTIMES : longs sous le prix (vert), shorts au-dessus (rouge), en pointilles.
+// Plus un niveau est fonce, plus la liquidation estimee a ce prix est grosse.
+// Methode : chaque hausse d'Open Interest = nouvelles positions ouvertes au prix d'entree estime.
+// Elles sont reparties longs / shorts (direction de la bougie), puis par levier (100x, 50x, 25x, 10x
+// par defaut) ; le prix de liquidation de chaque groupe est calcule (formule isolee + marge de
+// maintenance). Les niveaux proches au meme prix s'additionnent. Un niveau s'arrete quand le prix le
+// touche (positions liquidees). Quand l'OI baisse (positions fermees), les niveaux restants sont
+// reduits d'autant.
+// Ce n'est PAS le carnet d'ordres et PAS les donnees d'un fournisseur : une estimation a partir de
+// l'OI public et d'hypotheses de levier, a ajuster dans les reglages.
+
+G1 = "Donnees"
+modeIn   = input.string("Open Interest", "Source de la taille", group = G1,
+     options = ["Open Interest", "Volume"])
+oiCustom = input.string("", "Symbole OI (vide = BINANCE:<coin>USDT.P_OI)", group = G1)
+oiTfIn   = input.timeframe("", "Timeframe de l'OI (vide = graphique)", group = G1)
+entrySrc = input.source(hlc3, "Prix d'entree estime", group = G1)
+lookback = input.int(3000, "Barres analysees", minval = 200, maxval = 20000, group = G1)
+
+G2 = "Leviers et marge (poids = part estimee des positions)"
+lev1 = input.int(100, "Levier haut 1", minval = 2, maxval = 200, inline = "l1", group = G2)
+wt1  = input.float(10.0, "poids", minval = 0.0, inline = "l1", group = G2)
+lev2 = input.int(50, "Levier haut 2", minval = 2, maxval = 200, inline = "l2", group = G2)
+wt2  = input.float(20.0, "poids", minval = 0.0, inline = "l2", group = G2)
+lev3 = input.int(25, "Levier moyen 1", minval = 2, maxval = 200, inline = "l3", group = G2)
+wt3  = input.float(30.0, "poids", minval = 0.0, inline = "l3", group = G2)
+lev4 = input.int(10, "Levier moyen 2", minval = 2, maxval = 200, inline = "l4", group = G2)
+wt4  = input.float(40.0, "poids", minval = 0.0, inline = "l4", group = G2)
+mmrIn = input.float(0.4, "Marge de maintenance (%) - BTC Binance palier 1 : 0.4", minval = 0.0,
+     maxval = 5.0, step = 0.05, group = G2)
+splitMode = input.string("Direction de la bougie", "Repartition longs / shorts", group = G2,
+     options = ["Direction de la bougie", "50 / 50"])
+shrink = input.bool(true, "Reduire les niveaux quand l'OI baisse", group = G2)
+
+G3 = "Affichage"
+showL    = input.bool(true, "Longs (sous le prix)", inline = "sl", group = G3)
+colL     = input.color(#00E676, "", inline = "sl", group = G3)
+showS    = input.bool(true, "Shorts (au-dessus du prix)", inline = "ss", group = G3)
+colS     = input.color(#FF5252, "", inline = "ss", group = G3)
+showDone = input.bool(true, "Garder les niveaux deja touches", group = G3)
+maxLines = input.int(120, "Nombre max de niveaux affiches", minval = 10, maxval = 450, group = G3)
+minPct   = input.float(12.0, "Masquer sous X % du plus gros niveau actif", minval = 0.0, maxval = 90.0,
+     step = 1.0, group = G3)
+maxDist  = input.float(6.0, "Distance max des niveaux actifs (% du prix, 0 = tout)", minval = 0.0,
+     step = 0.5, group = G3)
+trWeak   = input.int(88, "Transparence niveau faible (%)", minval = 0, maxval = 98, group = G3)
+trStrong = input.int(12, "Transparence niveau fort (%)", minval = 0, maxval = 98, group = G3)
+gamma    = input.float(0.6, "Contraste (petit = plus de niveaux visibles)", minval = 0.2, maxval = 2.0,
+     step = 0.1, group = G3)
+lw       = input.int(2, "Epaisseur", minval = 1, maxval = 4, group = G3)
+lblN     = input.int(3, "Etiquettes : niveaux actifs les plus forts par cote (0 = aucune)", minval = 0,
+     maxval = 5, group = G3)
+
+// Grille de prix : bins logarithmiques de 0.05 % (de mintick a mintick x 1e9)
+float lnStep = math.log(1.0 + 0.05 / 100.0)
+float minPx  = syminfo.mintick
+int lnBase   = int(math.floor(math.log(minPx) / lnStep))
+int nBins    = int(math.ceil(math.log(1000000000.0) / lnStep)) + 2
+int REC_CAP  = 4000
+float mmr    = mmrIn / 100.0
+float wSum   = math.max(wt1 + wt2 + wt3 + wt4, 0.0001)
+
+// Open Interest du coin sur Binance (USDT perp), ou symbole choisi
+string oiSym = oiCustom != "" ? oiCustom : "BINANCE:" + syminfo.basecurrency + "USDT.P_OI"
+string oiTf  = oiTfIn == "" ? timeframe.period : oiTfIn
+float oi     = request.security(oiSym, oiTf, close, ignore_invalid_symbol = true)
+float oiPrev = nz(oi[1], oi)
+float oiD    = oi - oiPrev
+float oiRatio = oiPrev > 0 ? oi / oiPrev : 1.0
+bool useOi   = modeIn == "Open Interest"
+
+// Etat : taille / barre de depart par bin, bins actifs, niveaux deja touches
+var array<float> lSz = array.new_float(nBins, 0.0)
+var array<int> lSt = array.new_int(nBins, 0)
+var array<int> lAct = array.new_int()
+var array<float> sSz = array.new_float(nBins, 0.0)
+var array<int> sSt = array.new_int(nBins, 0)
+var array<int> sAct = array.new_int()
+var array<float> rP = array.new_float()
+var array<float> rSz = array.new_float()
+var array<int> rSt = array.new_int()
+var array<int> rEn = array.new_int()
+var array<int> rSd = array.new_int()
+var array<float> levA = array.from(float(lev1), float(lev2), float(lev3), float(lev4))
+var array<float> wA = array.from(wt1, wt2, wt3, wt4)
+var array<line> drawn = array.new_line()
+var array<label> lbls = array.new_label()
+var int oiBars = 0
+var table stBox = table.new(position.bottom_right, 1, 1)
+
+idxOf(float p) =>
+    int i = int(math.floor(math.log(math.max(p, minPx)) / lnStep)) - lnBase
+    math.max(0, math.min(nBins - 1, i))
+
+priceOf(int i, float off) =>
+    math.exp((i + lnBase + off) * lnStep)
+
+// Ajoute une taille a un bin de prix (le bin devient actif s'il ne l'etait pas)
+addLvl(array<float> sz, array<int> st, array<int> act, float price, float amt) =>
+    int i = idxOf(price)
+    if array.get(sz, i) <= 0.0
+        array.push(act, i)
+        array.set(st, i, bar_index)
+    array.set(sz, i, array.get(sz, i) + amt)
+    true
+
+// Memorise un niveau termine (touche par le prix)
+pushRec(float p, float s, int a, int b, int side) =>
+    array.push(rP, p)
+    array.push(rSz, s)
+    array.push(rSt, a)
+    array.push(rEn, b)
+    array.push(rSd, side)
+    if array.size(rP) > REC_CAP
+        array.shift(rP)
+        array.shift(rSz)
+        array.shift(rSt)
+        array.shift(rEn)
+        array.shift(rSd)
+    true
+
+// Retire les niveaux touches par la bougie (longs : low <= niveau | shorts : high >= niveau)
+// Renvoie le nombre de niveaux consommes
+sweep(array<float> sz, array<int> st, array<int> act, int side) =>
+    int hit = 0
+    int k = array.size(act) - 1
+    while k >= 0
+        int i = array.get(act, k)
+        float p = priceOf(i, 0.5)
+        bool touched = side > 0 ? low <= p : high >= p
+        if touched
+            pushRec(p, array.get(sz, i), array.get(st, i), bar_index, side)
+            array.set(sz, i, 0.0)
+            array.remove(act, k)
+            hit += 1
+        k -= 1
+    hit
+
+// Multiplie la taille de tous les niveaux actifs (positions fermees)
+scaleAll(array<float> sz, array<int> act, float f) =>
+    int k = 0
+    while k < array.size(act)
+        int i = array.get(act, k)
+        array.set(sz, i, array.get(sz, i) * f)
+        k += 1
+    true
+
+// ---------------- Mise a jour a la cloture de chaque barre ----------------
+bool inWin = bar_index > last_bar_index - lookback
+if barstate.isconfirmed and inWin
+    if useOi and not na(oi)
+        oiBars += 1
+    int hits = sweep(lSz, lSt, lAct, 1) + sweep(sSz, sSt, sAct, -1)
+    if useOi and shrink and hits == 0 and not na(oiD) and oiD < 0
+        scaleAll(lSz, lAct, oiRatio)
+        scaleAll(sSz, sAct, oiRatio)
+    float amt = useOi ? math.max(nz(oiD), 0.0) : nz(volume)
+    if amt > 0
+        float rng = high - low
+        float clv = rng > 0 ? ((close - low) - (high - close)) / rng : 0.0
+        float lSh = splitMode == "50 / 50" ? 0.5 : math.max(0.2, math.min(0.8, 0.5 + 0.5 * clv))
+        for q = 0 to 3
+            float lev = array.get(levA, q)
+            float wq = array.get(wA, q) / wSum
+            if lev > 1.0 and wq > 0
+                float pl = entrySrc * (1.0 - 1.0 / lev + mmr)
+                float ps = entrySrc * (1.0 + 1.0 / lev - mmr)
+                if pl < low
+                    addLvl(lSz, lSt, lAct, pl, amt * lSh * wq)
+                if ps > high
+                    addLvl(sSz, sSt, sAct, ps, amt * (1.0 - lSh) * wq)
+
+// ---------------- Trace (derniere barre) ----------------
+int nShown = 0
+if barstate.islast
+    int di = array.size(drawn) - 1
+    while di >= 0
+        line.delete(array.get(drawn, di))
+        di -= 1
+    array.clear(drawn)
+    int dl = array.size(lbls) - 1
+    while dl >= 0
+        label.delete(array.get(lbls, dl))
+        dl -= 1
+    array.clear(lbls)
+
+    // candidats : niveaux touches + niveaux actifs proches du prix
+    array<float> kP = array.new_float()
+    array<float> kZ = array.new_float()
+    array<int> kA = array.new_int()
+    array<int> kE = array.new_int()
+    array<int> kD = array.new_int()
+    float refA = 0.0
+    float refAll = 0.0
+    if showDone
+        int r = 0
+        while r < array.size(rP)
+            int sd = array.get(rSd, r)
+            if (sd > 0 and showL) or (sd < 0 and showS)
+                array.push(kP, array.get(rP, r))
+                array.push(kZ, array.get(rSz, r))
+                array.push(kA, array.get(rSt, r))
+                array.push(kE, array.get(rEn, r))
+                array.push(kD, sd)
+                refAll := math.max(refAll, array.get(rSz, r))
+            r += 1
+    int ia = 0
+    while ia < array.size(lAct)
+        int bi = array.get(lAct, ia)
+        float pa = priceOf(bi, 0.5)
+        if showL and (maxDist <= 0 or math.abs(pa / close - 1.0) * 100.0 <= maxDist)
+            array.push(kP, pa)
+            array.push(kZ, array.get(lSz, bi))
+            array.push(kA, array.get(lSt, bi))
+            array.push(kE, bar_index)
+            array.push(kD, 1)
+            refA := math.max(refA, array.get(lSz, bi))
+        ia += 1
+    int ib = 0
+    while ib < array.size(sAct)
+        int bj = array.get(sAct, ib)
+        float pb = priceOf(bj, 0.5)
+        if showS and (maxDist <= 0 or math.abs(pb / close - 1.0) * 100.0 <= maxDist)
+            array.push(kP, pb)
+            array.push(kZ, array.get(sSz, bj))
+            array.push(kA, array.get(sSt, bj))
+            array.push(kE, bar_index)
+            array.push(kD, -1)
+            refA := math.max(refA, array.get(sSz, bj))
+        ib += 1
+
+    // les plus gros d'abord ; l'intensite est relative au plus gros niveau actif
+    float ref = refA > 0 ? refA : refAll
+    int nC = array.size(kZ)
+    int nLabL = 0
+    int nLabS = 0
+    if nC > 0 and ref > 0
+        array<int> ord = array.sort_indices(kZ, order.descending)
+        for t = 0 to nC - 1
+            int c = array.get(ord, t)
+            float s = array.get(kZ, c)
+            if nShown < maxLines and s >= ref * minPct / 100.0
+                int sd = array.get(kD, c)
+                float p = array.get(kP, c)
+                int x1 = array.get(kA, c)
+                int x2 = math.max(array.get(kE, c), x1 + 1)
+                float fr = math.min(1.0, s / ref)
+                int trn = int(math.round(trWeak - (trWeak - trStrong) * math.pow(fr, gamma)))
+                color clr = sd > 0 ? colL : colS
+                array.push(drawn, line.new(x1, p, x2, p, color = color.new(clr, trn),
+                     style = line.style_dotted, width = lw))
+                nShown += 1
+                bool live = array.get(kE, c) == bar_index
+                bool wantLab = live and ((sd > 0 and nLabL < lblN) or (sd < 0 and nLabS < lblN))
+                if wantLab
+                    if sd > 0
+                        nLabL += 1
+                    else
+                        nLabS += 1
+                    string wtxt = str.tostring(int(math.round(1.0 + 4.0 * fr))) + "/5"
+                    array.push(lbls, label.new(bar_index, p, str.tostring(p, format.mintick) + "  " + wtxt,
+                         style = label.style_label_left, color = color.new(color.black, 100),
+                         textcolor = color.new(clr, 15), size = size.small))
+
+    // etat des donnees (pour verifier que l'OI est bien recu)
+    string oiTxt = oiBars > 0 ? "OI " + oiSym : "OI INDISPONIBLE (" + oiSym + ") : essaie Volume"
+    string statusTxt = useOi ? oiTxt : "Volume"
+    table.cell(stBox, 0, 0, statusTxt + " | " + str.tostring(nShown) + " niveaux", text_color = color.gray,
+         text_size = size.tiny, bgcolor = color.new(color.black, 30))
