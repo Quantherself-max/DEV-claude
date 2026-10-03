@@ -47,8 +47,8 @@ keepPct   = input.float(35.0, "Garder les poches >= X % de la plus grosse", minv
 perSide   = input.int(3, "Poches max par cote", minval = 1, maxval = 8, group = G3)
 clustPct  = input.float(0.25, "Regrouper les niveaux a moins de X % l'un de l'autre", minval = 0.05,
      maxval = 2.0, step = 0.05, group = G3)
-magnetPct = input.float(70.0, "AIMANT : la plus forte de chaque cote, si >= X %", minval = 10.0, maxval = 100.0,
-     step = 5.0, group = G3)
+magnetPct = input.float(70.0, "AIMANT : la plus forte par cote, si >= X %", minval = 10.0,
+     maxval = 100.0, step = 5.0, group = G3)
 
 G4 = "Affichage"
 showL    = input.bool(true, "Longs (sous le prix)", inline = "sl", group = G4)
