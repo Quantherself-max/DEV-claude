@@ -1,20 +1,19 @@
 //@version=6
-indicator("Liquidation Levels (estime)", "LiqLevels", overlay = true, max_lines_count = 500,
-     max_labels_count = 80)
+indicator("Liquidation Levels (estime)", "LiqLevels", overlay = true, max_boxes_count = 100,
+     max_lines_count = 100, max_labels_count = 60)
 
-// Niveaux de liquidation ESTIMES : longs sous le prix (vert), shorts au-dessus (rouge).
-// Methode : chaque hausse d'Open Interest = nouvelles positions ouvertes au prix d'entree estime.
-// Elles sont reparties longs / shorts (direction de la bougie), puis par levier (100x, 50x, 25x, 10x
-// par defaut) ; le prix de liquidation de chaque groupe est calcule (formule isolee + marge de
-// maintenance). Un niveau s'arrete quand le prix le touche (positions liquidees). Quand l'OI baisse
-// (positions fermees), les niveaux restants sont reduits d'autant.
-// Precision : les calculs sont faits sur des donnees plus fines que le graphique (ex : 15 min dans une
-// bougie 4h), avec le prix, l'OI et la direction de chaque sous-bougie.
-// Lecture : points fins = liquidite simple | tirets = poche notable | trait epais plein = AIMANT
-// (grosse poche de liquidation : somme des niveaux voisins, par rapport a la plus grosse poche).
-// Ce n'est PAS le carnet d'ordres et PAS les donnees d'un fournisseur : une estimation a partir de
-// l'OI public et d'hypotheses de levier, a ajuster dans les reglages. "Aimant" = hypothese de lecture
-// (le prix est attire par les grosses poches), non validee statistiquement.
+// Poches de liquidation ESTIMEES, affichees en barres horizontales ancrees sur la bougie actuelle :
+// plus la poche est grosse, plus la barre est longue et opaque. Rouge = shorts (au-dessus du prix),
+// vert = longs (sous le prix). Seules les poches assez fortes et assez proches pour compter sont gardees.
+// DONNEES (proxy, pas de vraies liquidations) : l'Open Interest Binance USDT perp fourni par
+// TradingView (request.security sur <coin>USDT.P_OI) + prix / volume du meme perp. Chaque hausse d'OI
+// = nouvelles positions, ouvertes au prix de la sous-bougie. Hypotheses (reglables) : repartition
+// longs / shorts selon la direction de la bougie, puis leviers 100x / 50x / 25x / 10x ; le prix de
+// liquidation de chaque groupe vient de la formule isolee avec marge de maintenance. Un niveau
+// disparait quand le prix le touche ; quand l'OI baisse, les niveaux restants sont reduits d'autant.
+// Filtre : fenetre autour du prix en ATR du graphique, seuil en % de la plus grosse poche, nombre
+// maximum de poches par cote. L'historique est en jours (pas en barres) : meme lecture a tous les TF.
+// "Aimant" = hypothese de lecture (une grosse poche attire le prix), non validee statistiquement.
 
 G1 = "Donnees"
 modeIn   = input.string("Open Interest", "Source de la taille", group = G1,
@@ -22,7 +21,7 @@ modeIn   = input.string("Open Interest", "Source de la taille", group = G1,
 oiCustom = input.string("", "Symbole OI (vide = BINANCE:<coin>USDT.P_OI)", group = G1)
 ltfIn    = input.string("Auto", "Precision : donnees fines (timeframe en minutes)", group = G1,
      options = ["Auto", "Aucun (graphique)", "1", "5", "15", "30", "60", "240"])
-lookback = input.int(3000, "Barres du graphique analysees", minval = 200, maxval = 20000, group = G1)
+lookDays = input.int(60, "Historique pris en compte (jours)", minval = 5, maxval = 365, group = G1)
 
 G2 = "Leviers et marge (poids = part estimee des positions)"
 lev1 = input.int(100, "Levier haut 1", minval = 2, maxval = 200, inline = "l1", group = G2)
@@ -39,42 +38,40 @@ splitMode = input.string("Direction de la bougie", "Repartition longs / shorts",
      options = ["Direction de la bougie", "50 / 50"])
 shrink = input.bool(true, "Reduire les niveaux quand l'OI baisse", group = G2)
 
-G3 = "Affichage"
-showL    = input.bool(true, "Longs (sous le prix)", inline = "sl", group = G3)
-colL     = input.color(#00E676, "", inline = "sl", group = G3)
-showS    = input.bool(true, "Shorts (au-dessus du prix)", inline = "ss", group = G3)
-colS     = input.color(#FF5252, "", inline = "ss", group = G3)
-maxDist  = input.float(6.0, "Distance max des niveaux actifs (% du prix, 0 = tout)", minval = 0.0,
-     step = 0.5, group = G3)
-showDone = input.bool(true, "Garder les niveaux deja touches (tres discrets)", group = G3)
-maxLines = input.int(120, "Points fins : nombre max de niveaux", minval = 10, maxval = 350, group = G3)
-minPct   = input.float(12.0, "Points fins : masquer sous X % du plus gros niveau", minval = 0.0,
-     maxval = 90.0, step = 1.0, group = G3)
-trWeak   = input.int(88, "Points fins : transparence faible (%)", minval = 0, maxval = 98, group = G3)
-trStrong = input.int(40, "Points fins : transparence forte (%)", minval = 0, maxval = 98, group = G3)
-gamma    = input.float(0.6, "Contraste des points fins (petit = plus visibles)", minval = 0.2,
-     maxval = 2.0, step = 0.1, group = G3)
+G3 = "Filtre : seulement les liquidites qui comptent"
+distAtr   = input.float(8.0, "Fenetre autour du prix (x ATR du graphique)", minval = 1.0, step = 0.5,
+     group = G3)
+minDist   = input.float(1.5, "Fenetre minimale (% du prix)", minval = 0.2, step = 0.1, group = G3)
+keepPct   = input.float(35.0, "Garder les poches >= X % de la plus grosse", minval = 5.0, maxval = 100.0,
+     step = 5.0, group = G3)
+perSide   = input.int(3, "Poches max par cote", minval = 1, maxval = 8, group = G3)
+clustPct  = input.float(0.25, "Regrouper les niveaux a moins de X % l'un de l'autre", minval = 0.05,
+     maxval = 2.0, step = 0.05, group = G3)
+magnetPct = input.float(70.0, "AIMANT : la plus forte de chaque cote, si >= X %", minval = 10.0, maxval = 100.0,
+     step = 5.0, group = G3)
 
-G4 = "Poches et aimants (grosses liquidations)"
-clustPct   = input.float(0.25, "Regrouper les niveaux a moins de X % l'un de l'autre", minval = 0.05,
-     maxval = 2.0, step = 0.05, group = G4)
-notablePct = input.float(25.0, "Poche notable (tirets) : >= X % de la plus grosse", minval = 1.0,
-     maxval = 100.0, step = 1.0, group = G4)
-magnetPct  = input.float(60.0, "AIMANT (trait plein epais) : >= X % de la plus grosse", minval = 1.0,
-     maxval = 100.0, step = 1.0, group = G4)
-magMax     = input.int(2, "AIMANTS max par cote (les plus gros)", minval = 1, maxval = 6, group = G4)
-lblN       = input.int(3, "Etiquettes : poches les plus grosses par cote (0 = aucune)", minval = 0,
-     maxval = 6, group = G4)
+G4 = "Affichage"
+showL    = input.bool(true, "Longs (sous le prix)", inline = "sl", group = G4)
+colL     = input.color(#00E676, "", inline = "sl", group = G4)
+showS    = input.bool(true, "Shorts (au-dessus du prix)", inline = "ss", group = G4)
+colS     = input.color(#FF5252, "", inline = "ss", group = G4)
+maxLen   = input.int(60, "Longueur max des barres (en barres)", minval = 10, maxval = 300, group = G4)
+minThk   = input.float(0.08, "Epaisseur minimale des barres (% du prix)", minval = 0.02, maxval = 1.0,
+     step = 0.02, group = G4)
+lblN     = input.int(2, "Etiquettes : poches par cote (0 = aucune)", minval = 0, maxval = 8, group = G4)
+showTbl  = input.bool(true, "Afficher le tableau de bord", group = G4)
+tblPosIn = input.string("Milieu droite", "Position du tableau", group = G4,
+     options = ["Haut droite", "Milieu droite", "Bas droite", "Haut gauche", "Bas gauche"])
 
 // Grille de prix : bins logarithmiques de 0.05 % (de mintick a mintick x 1e9)
 float lnStep = math.log(1.0 + 0.05 / 100.0)
 float minPx  = syminfo.mintick
 int lnBase   = int(math.floor(math.log(minPx) / lnStep))
 int nBins    = int(math.ceil(math.log(1000000000.0) / lnStep)) + 2
-int REC_CAP  = 4000
 float mmr    = mmrIn / 100.0
 float wSum   = math.max(wt1 + wt2 + wt3 + wt4, 0.0001)
 bool useOi   = modeIn == "Open Interest"
+float atr14  = ta.atr(14)
 
 // Open Interest du coin sur Binance (USDT perp), ou symbole choisi ; prix du meme perp
 string oiSym   = oiCustom != "" ? oiCustom : "BINANCE:" + syminfo.basecurrency + "USDT.P_OI"
@@ -87,6 +84,7 @@ string ltfAuto = tfSec <= 300 ? "" : tfSec <= 3600 ? "5" : tfSec <= 14400 ? "15"
 string ltfSel  = ltfIn == "Auto" ? ltfAuto : ltfIn == "Aucun (graphique)" ? "" : ltfIn
 bool ltfOn     = ltfSel != "" and timeframe.in_seconds(ltfSel) < tfSec
 string ltfReq  = ltfOn ? ltfSel : timeframe.period
+int lookBars   = math.min(20000, int(math.ceil(lookDays * 86400.0 / tfSec)))
 
 float oi = request.security(oiSym, timeframe.period, close, ignore_invalid_symbol = true)
 [oiA, oiT] = request.security_lower_tf(oiSym, ltfReq, [close, time], ignore_invalid_symbol = true,
@@ -94,29 +92,32 @@ float oi = request.security(oiSym, timeframe.period, close, ignore_invalid_symbo
 [pH, pL, pC, pV, pT] = request.security_lower_tf(perpSym, ltfReq, [high, low, close, volume, time],
      ignore_invalid_symbol = true, ignore_invalid_timeframe = true)
 
+string tblPos = switch tblPosIn
+    "Haut droite"   => position.top_right
+    "Bas droite"    => position.bottom_right
+    "Haut gauche"   => position.top_left
+    "Bas gauche"    => position.bottom_left
+    => position.middle_right
+
 // Etat. Les tailles sont stockees "brutes" ; taille reelle = brute x sc[1] (reduction globale de l'OI).
 // sc = [dernier OI, echelle globale, pas fins traites, pas graphique traites, pas avec OI]
 var array<float> lSz = array.new_float(nBins, 0.0)
-var array<int> lSt = array.new_int(nBins, 0)
 var array<int> lAct = array.new_int()
 var array<float> sSz = array.new_float(nBins, 0.0)
-var array<int> sSt = array.new_int(nBins, 0)
 var array<int> sAct = array.new_int()
-var array<float> rP = array.new_float()
-var array<float> rSz = array.new_float()
-var array<int> rSt = array.new_int()
-var array<int> rEn = array.new_int()
-var array<int> rSd = array.new_int()
 var array<float> sc = array.from(float(na), 1.0, 0.0, 0.0, 0.0)
 var array<float> levA = array.from(float(lev1), float(lev2), float(lev3), float(lev4))
 var array<float> wA = array.from(wt1, wt2, wt3, wt4)
 var array<float> gpP = array.new_float()
 var array<float> gpZ = array.new_float()
-var array<int> gpA = array.new_int()
+var array<float> gpLo = array.new_float()
+var array<float> gpHi = array.new_float()
 var array<int> gpD = array.new_int()
+var array<box> boxes = array.new_box()
 var array<line> drawn = array.new_line()
 var array<label> lbls = array.new_label()
-var table stBox = table.new(position.bottom_right, 1, 4)
+var table dash = table.new(tblPos, 2, 6, border_width = 1, border_color = color.new(color.gray, 80),
+     frame_width = 1, frame_color = color.new(color.gray, 80))
 
 idxOf(float p) =>
     int i = int(math.floor(math.log(math.max(p, minPx)) / lnStep)) - lnBase
@@ -138,39 +139,20 @@ lowerBound(array<int> a, int v) =>
     lo
 
 // Ajoute une taille a un bin de prix (les bins actifs restent tries par prix croissant)
-addLvl(array<float> sz, array<int> st, array<int> act, float price, float amt) =>
+addLvl(array<float> sz, array<int> act, float price, float amt) =>
     int i = idxOf(price)
     if array.get(sz, i) <= 0.0
         array.insert(act, lowerBound(act, i), i)
-        array.set(st, i, bar_index)
     array.set(sz, i, array.get(sz, i) + amt / array.get(sc, 1))
-    true
-
-// Memorise un niveau termine (touche par le prix)
-pushRec(float p, float s, int a, int b, int side) =>
-    array.push(rP, p)
-    array.push(rSz, s)
-    array.push(rSt, a)
-    array.push(rEn, b)
-    array.push(rSd, side)
-    if array.size(rP) > REC_CAP
-        array.shift(rP)
-        array.shift(rSz)
-        array.shift(rSt)
-        array.shift(rEn)
-        array.shift(rSd)
     true
 
 // Longs liquides : tous les niveaux actifs a un prix >= low (les plus hauts sont en fin de tableau)
 sweepL(float l) =>
     int hit = 0
-    float g = array.get(sc, 1)
     bool go = true
     while go and array.size(lAct) > 0
         int i = array.get(lAct, array.size(lAct) - 1)
-        float p = priceOf(i, 0.5)
-        if p >= l
-            pushRec(p, array.get(lSz, i) * g, array.get(lSt, i), bar_index, 1)
+        if priceOf(i, 0.5) >= l
             array.set(lSz, i, 0.0)
             array.pop(lAct)
             hit += 1
@@ -181,13 +163,10 @@ sweepL(float l) =>
 // Shorts liquides : tous les niveaux actifs a un prix <= high (les plus bas sont en debut de tableau)
 sweepS(float h) =>
     int hit = 0
-    float g = array.get(sc, 1)
     bool go = true
     while go and array.size(sAct) > 0
         int i = array.get(sAct, 0)
-        float p = priceOf(i, 0.5)
-        if p <= h
-            pushRec(p, array.get(sSz, i) * g, array.get(sSt, i), bar_index, -1)
+        if priceOf(i, 0.5) <= h
             array.set(sSz, i, 0.0)
             array.shift(sAct)
             hit += 1
@@ -237,19 +216,21 @@ stepLvl(float oiNow, float h, float l, float c, float vol) =>
                     float pl = px * (1.0 - 1.0 / lev + mmr)
                     float ps = px * (1.0 + 1.0 / lev - mmr)
                     if pl < l
-                        addLvl(lSz, lSt, lAct, pl, amt * lSh * wq)
+                        addLvl(lSz, lAct, pl, amt * lSh * wq)
                     if ps > h
-                        addLvl(sSz, sSt, sAct, ps, amt * (1.0 - lSh) * wq)
+                        addLvl(sSz, sAct, ps, amt * (1.0 - lSh) * wq)
     true
 
-// Poches : niveaux actifs voisins (a moins de clustPct % l'un de l'autre) additionnes
-buildPools(array<float> sz, array<int> st, array<int> act, int side) =>
+// Poches : niveaux actifs voisins (a moins de clustPct % l'un de l'autre) additionnes,
+// uniquement dans la fenetre autour du prix. Chaque poche : prix moyen pondere, taille, bornes, cote.
+buildPools(array<float> sz, array<int> act, int side, float winAbs) =>
     float g = array.get(sc, 1)
     float tol = clustPct / 100.0
     float cs = 0.0
     float cw = 0.0
     float cBase = 0.0
-    int cSt = 0
+    float cLo = 0.0
+    float cHi = 0.0
     int n = array.size(act)
     for k = 0 to n
         int i = 0
@@ -260,27 +241,27 @@ buildPools(array<float> sz, array<int> st, array<int> act, int side) =>
             i := array.get(act, k)
             p := priceOf(i, 0.5)
             s := array.get(sz, i) * g
-            elig := maxDist <= 0 or math.abs(p / close - 1.0) * 100.0 <= maxDist
+            elig := math.abs(p - close) <= winAbs
         bool fin = k == n
         if cs > 0 and (fin or (elig and p > cBase * (1.0 + tol)))
             array.push(gpP, cw / cs)
             array.push(gpZ, cs)
-            array.push(gpA, cSt)
+            array.push(gpLo, cLo)
+            array.push(gpHi, cHi)
             array.push(gpD, side)
             cs := 0.0
             cw := 0.0
         if elig
             if cs == 0.0
                 cBase := p
-                cSt := array.get(st, i)
-            else
-                cSt := math.min(cSt, array.get(st, i))
+                cLo := priceOf(i, 0.0)
+            cHi := priceOf(i, 1.0)
             cs += s
             cw += s * p
     true
 
 // ---------------- Mise a jour a la cloture de chaque barre ----------------
-bool inWin = bar_index > last_bar_index - lookback
+bool inWin = bar_index > last_bar_index - lookBars
 if barstate.isconfirmed and inWin
     int nP = 0
     int nO = 0
@@ -308,8 +289,12 @@ if barstate.isconfirmed and inWin
         array.set(sc, 3, array.get(sc, 3) + 1.0)
 
 // ---------------- Trace (derniere barre) ----------------
-int nShown = 0
 if barstate.islast
+    int db = array.size(boxes) - 1
+    while db >= 0
+        box.delete(array.get(boxes, db))
+        db -= 1
+    array.clear(boxes)
     int di = array.size(drawn) - 1
     while di >= 0
         line.delete(array.get(drawn, di))
@@ -320,156 +305,119 @@ if barstate.islast
         label.delete(array.get(lbls, dl))
         dl -= 1
     array.clear(lbls)
-    float g = array.get(sc, 1)
 
-    // 1) points fins : niveaux touches (discrets) + niveaux actifs proches du prix
-    array<float> kP = array.new_float()
-    array<float> kZ = array.new_float()
-    array<int> kA = array.new_int()
-    array<int> kE = array.new_int()
-    array<int> kD = array.new_int()
-    float refA = 0.0
-    float refAll = 0.0
-    if showDone
-        int r = 0
-        while r < array.size(rP)
-            int sd = array.get(rSd, r)
-            if (sd > 0 and showL) or (sd < 0 and showS)
-                array.push(kP, array.get(rP, r))
-                array.push(kZ, array.get(rSz, r))
-                array.push(kA, array.get(rSt, r))
-                array.push(kE, array.get(rEn, r))
-                array.push(kD, sd)
-                refAll := math.max(refAll, array.get(rSz, r))
-            r += 1
-    int ia = 0
-    while ia < array.size(lAct)
-        int bi = array.get(lAct, ia)
-        float pa = priceOf(bi, 0.5)
-        if showL and (maxDist <= 0 or math.abs(pa / close - 1.0) * 100.0 <= maxDist)
-            array.push(kP, pa)
-            array.push(kZ, array.get(lSz, bi) * g)
-            array.push(kA, array.get(lSt, bi))
-            array.push(kE, bar_index)
-            array.push(kD, 1)
-            refA := math.max(refA, array.get(lSz, bi) * g)
-        ia += 1
-    int ib = 0
-    while ib < array.size(sAct)
-        int bj = array.get(sAct, ib)
-        float pb = priceOf(bj, 0.5)
-        if showS and (maxDist <= 0 or math.abs(pb / close - 1.0) * 100.0 <= maxDist)
-            array.push(kP, pb)
-            array.push(kZ, array.get(sSz, bj) * g)
-            array.push(kA, array.get(sSt, bj))
-            array.push(kE, bar_index)
-            array.push(kD, -1)
-            refA := math.max(refA, array.get(sSz, bj) * g)
-        ib += 1
-    float ref = refA > 0 ? refA : refAll
-    int nC = array.size(kZ)
-    if nC > 0 and ref > 0
-        array<int> ord = array.sort_indices(kZ, order.descending)
-        for t = 0 to nC - 1
-            int c = array.get(ord, t)
-            float s = array.get(kZ, c)
-            if nShown < maxLines and s >= ref * minPct / 100.0
-                int sd = array.get(kD, c)
-                int x1 = array.get(kA, c)
-                int x2 = math.max(array.get(kE, c), x1 + 1)
-                bool live = array.get(kE, c) == bar_index
-                float fr = math.min(1.0, s / ref)
-                int trn = live ? int(math.round(trWeak - (trWeak - trStrong) * math.pow(fr, gamma))) : 92
-                color clr = sd > 0 ? colL : colS
-                float p = array.get(kP, c)
-                array.push(drawn, line.new(x1, p, x2, p, color = color.new(clr, trn),
-                     style = line.style_dotted, width = 1))
-                nShown += 1
-
-    // 2) poches : niveaux actifs voisins additionnes, classes simple / notable / AIMANT
+    // 1) poches dans la fenetre autour du prix (ATR du graphique, avec un minimum en %)
+    float winAbs = math.max(distAtr * atr14, minDist / 100.0 * close)
     array.clear(gpP)
     array.clear(gpZ)
-    array.clear(gpA)
+    array.clear(gpLo)
+    array.clear(gpHi)
     array.clear(gpD)
     if showL
-        buildPools(lSz, lSt, lAct, 1)
+        buildPools(lSz, lAct, 1, winAbs)
     if showS
-        buildPools(sSz, sSt, sAct, -1)
+        buildPools(sSz, sAct, -1, winAbs)
     int nPool = array.size(gpZ)
     float maxPool = nPool > 0 ? array.max(gpZ) : 0.0
+
+    // 2) on ne garde que les plus grosses (>= keepPct de la plus grosse, perSide max par cote)
     float sumUp = 0.0
     float sumDn = 0.0
-    string topTxt = "Aucune poche active"
-    int nLabL = 0
-    int nLabS = 0
-    int nMagL = 0
-    int nMagS = 0
+    int keptL = 0
+    int keptS = 0
+    float nearD = 1.0e12
+    string nearTxt = "-"
+    string topTxt = "Aucune poche assez forte"
     if maxPool > 0
         array<int> po = array.sort_indices(gpZ, order.descending)
         for u = 0 to nPool - 1
-            int q2 = array.get(po, u)
-            float z = array.get(gpZ, q2)
-            float pp = array.get(gpP, q2)
-            int pd = array.get(gpD, q2)
+            int q = array.get(po, u)
+            float z = array.get(gpZ, q)
+            float pw = array.get(gpP, q)
+            int pd = array.get(gpD, q)
             float rel = z / maxPool
-            int sc100 = int(math.round(rel * 100.0))
-            int tier = rel >= magnetPct / 100.0 ? 3 : rel >= notablePct / 100.0 ? 2 : 1
-            if tier == 3
-                if pd > 0
-                    if nMagL >= magMax
-                        tier := 2
-                    else
-                        nMagL += 1
-                else
-                    if nMagS >= magMax
-                        tier := 2
-                    else
-                        nMagS += 1
             if pd > 0
                 sumDn += z
             else
                 sumUp += z
-            float dpct = (pp / close - 1.0) * 100.0
-            string sg = dpct > 0 ? "+" : ""
-            string tagTxt = tier == 3 ? "AIMANT " : ""
-            string lt = tagTxt + str.tostring(pp, format.mintick) + "  " + sg + str.tostring(dpct, "0.0")
-                 + "%  [" + str.tostring(sc100) + "]"
-            color pclr = pd > 0 ? colL : colS
-            if u == 0
-                topTxt := "Plus gros aimant : " + (pd > 0 ? "v " : "^ ") + lt
-            if tier >= 2
-                int px1 = array.get(gpA, q2)
-                array.push(drawn, line.new(px1, pp, bar_index, pp,
-                     color = color.new(pclr, tier == 3 ? 5 : 35),
-                     style = tier == 3 ? line.style_solid : line.style_dashed,
-                     width = tier == 3 ? 4 : 2))
-                bool room = (pd > 0 and nLabL < lblN) or (pd < 0 and nLabS < lblN)
-                if room
-                    if pd > 0
-                        nLabL += 1
-                    else
-                        nLabS += 1
-                    array.push(lbls, label.new(bar_index, pp, lt, style = label.style_label_left,
-                         color = color.new(color.black, 100), textcolor = color.new(pclr, tier == 3 ? 0 : 25),
-                         size = tier == 3 ? size.normal : size.small))
+            bool okRel = rel >= keepPct / 100.0
+            bool okCnt = pd > 0 ? keptL < perSide : keptS < perSide
+            if okRel and okCnt
+                if pd > 0
+                    keptL += 1
+                else
+                    keptS += 1
+                bool top1 = (pd > 0 and keptL == 1) or (pd < 0 and keptS == 1)
+                bool mag = top1 and rel >= magnetPct / 100.0
+                float dpct = (pw / close - 1.0) * 100.0
+                string sg = dpct > 0 ? "+" : ""
+                string ptxt = str.tostring(pw, format.mintick) + "  " + sg + str.tostring(dpct, "0.0") + "%"
+                string arrow = pd > 0 ? "▼ " : "▲ "
+                int score = int(math.round(rel * 100.0))
+                float dAbs = math.abs(pw - close)
+                if dAbs < nearD
+                    nearD := dAbs
+                    nearTxt := arrow + ptxt + "  (" + str.tostring(dAbs / math.max(atr14, minPx), "0.0")
+                         + " ATR)"
+                if keptL + keptS == 1
+                    topTxt := arrow + (mag ? "AIMANT " : "") + ptxt + "  [" + str.tostring(score) + "]"
 
-    // 3) etat des donnees et legende
-    float nIn = array.get(sc, 2)
-    float nCh = array.get(sc, 3)
-    string precTxt = nIn > nCh ? "precision " + ltfSel + " min" : "precision graphique (pas de donnees fines)"
-    string oiOk = "OI " + oiSym + " | " + precTxt
-    string oiTxt = array.get(sc, 4) > 0 ? oiOk : "OI INDISPONIBLE (" + oiSym + ") : essaie Volume"
-    string dataTxt = useOi ? oiTxt : "Volume | " + precTxt
-    float tot = sumUp + sumDn
-    string upPct = str.tostring(sumUp / math.max(tot, 0.0000001) * 100.0, "0")
-    string dnPct = str.tostring(sumDn / math.max(tot, 0.0000001) * 100.0, "0")
-    string balTxt = tot > 0 ? "Poches : au-dessus " + upPct + "% | en dessous " + dnPct + "%" : "Poches : -"
-    table.cell(stBox, 0, 0, dataTxt + " | " + str.tostring(nShown) + " points", text_color = color.gray,
-         text_size = size.tiny, text_halign = text.align_right, bgcolor = color.new(color.black, 30))
-    table.cell(stBox, 0, 1, topTxt, text_color = color.silver, text_size = size.small,
-         text_halign = text.align_right, bgcolor = color.new(color.black, 30))
-    table.cell(stBox, 0, 2, balTxt, text_color = color.gray, text_size = size.tiny,
-         text_halign = text.align_right, bgcolor = color.new(color.black, 30))
-    table.cell(stBox, 0, 3, "points fins = simple | tirets = notable | trait epais = AIMANT",
-         text_color = color.gray, text_size = size.tiny, text_halign = text.align_right,
-         bgcolor = color.new(color.black, 30))
+                // barre : ancree sur la bougie actuelle, longueur et opacite selon la taille
+                float lo = array.get(gpLo, q)
+                float hi = array.get(gpHi, q)
+                float thk = minThk / 100.0 * pw
+                if hi - lo < thk
+                    lo := pw - thk / 2.0
+                    hi := pw + thk / 2.0
+                int blen = math.max(2, int(math.round(maxLen * math.pow(rel, 0.7))))
+                int xl = math.max(0, bar_index - blen)
+                int trn = int(math.round(88.0 - 62.0 * math.pow(rel, 0.8))) - (mag ? 10 : 0)
+                color pc = pd > 0 ? colL : colS
+                array.push(boxes, box.new(xl, hi, bar_index, lo, border_color = color.new(pc, 100),
+                     bgcolor = color.new(pc, trn)))
+                array.push(drawn, line.new(xl, pw, bar_index, pw, color = color.new(pc, mag ? 10 : 45),
+                     width = mag ? 2 : 1))
+                int rk = pd > 0 ? keptL : keptS
+                if rk <= lblN
+                    string lt = (mag ? "AIMANT " : "") + ptxt + "  [" + str.tostring(score) + "]"
+                    array.push(lbls, label.new(bar_index, pw, lt, style = label.style_label_left,
+                         color = color.new(color.black, 100), textcolor = color.new(pc, mag ? 0 : 20),
+                         size = size.small))
+
+    // 3) tableau de bord
+    if showTbl
+        float nIn = array.get(sc, 2)
+        float nCh = array.get(sc, 3)
+        string precTxt = nIn > nCh ? ltfSel + " min" : "graphique"
+        string srcTxt = useOi ? (array.get(sc, 4) > 0 ? "OI Binance" : "OI INDISPONIBLE") : "Volume"
+        float tot = sumUp + sumDn
+        string upP = str.tostring(sumUp / math.max(tot, 0.0000001) * 100.0, "0")
+        string dnP = str.tostring(sumDn / math.max(tot, 0.0000001) * 100.0, "0")
+        string imbTxt = tot > 0 ? "▲ " + upP + "%  |  ▼ " + dnP + "%" : "-"
+        string keepTxt = str.tostring(keptS) + " ▲  /  " + str.tostring(keptL) + " ▼   (" +
+             str.tostring(keptL + keptS) + " sur " + str.tostring(nPool) + ")"
+        color bgc = color.new(color.black, 20)
+        table.cell(dash, 0, 0, "LiqLevels", text_color = color.white, text_size = size.small,
+             text_halign = text.align_left, bgcolor = color.new(color.gray, 60))
+        table.cell(dash, 1, 0, "PROXY", text_color = color.orange, text_size = size.small,
+             text_halign = text.align_right, bgcolor = color.new(color.gray, 60))
+        table.cell(dash, 0, 1, "Donnees", text_color = color.gray, text_size = size.small,
+             text_halign = text.align_left, bgcolor = bgc)
+        table.cell(dash, 1, 1, srcTxt + " | " + precTxt, text_color = color.white, text_size = size.small,
+             text_halign = text.align_right, bgcolor = bgc)
+        table.cell(dash, 0, 2, "Retenues", text_color = color.gray, text_size = size.small,
+             text_halign = text.align_left, bgcolor = bgc)
+        table.cell(dash, 1, 2, keepTxt, text_color = color.white, text_size = size.small,
+             text_halign = text.align_right, bgcolor = bgc)
+        table.cell(dash, 0, 3, "Plus proche", text_color = color.gray, text_size = size.small,
+             text_halign = text.align_left, bgcolor = bgc)
+        table.cell(dash, 1, 3, nearTxt, text_color = color.white, text_size = size.small,
+             text_halign = text.align_right, bgcolor = bgc)
+        table.cell(dash, 0, 4, "Plus forte", text_color = color.gray, text_size = size.small,
+             text_halign = text.align_left, bgcolor = bgc)
+        table.cell(dash, 1, 4, topTxt, text_color = color.white, text_size = size.small,
+             text_halign = text.align_right, bgcolor = bgc)
+        table.cell(dash, 0, 5, "Desequilibre", text_color = color.gray, text_size = size.small,
+             text_halign = text.align_left, bgcolor = bgc)
+        table.cell(dash, 1, 5, imbTxt, text_color = color.white, text_size = size.small,
+             text_halign = text.align_right, bgcolor = bgc)
