@@ -1,5 +1,6 @@
 //@version=6
-indicator("VWAP Auto TF", "VWAP Auto", overlay = true, max_lines_count = 100, max_labels_count = 100)
+indicator("VWAP Auto TF", "VWAP Auto", overlay = true, max_lines_count = 100, max_labels_count = 100,
+     max_boxes_count = 500)
 
 // 0) Periode de reference (comme l'indicateur AVP) : Auto (Smart) choisit les periodes adaptees
 //    au timeframe (Jour/Semaine/Mois jusqu'a 1h, Semaine/Mois/Annee a 2h-4h, Mois/Annee en 12h-1D),
@@ -8,9 +9,12 @@ indicator("VWAP Auto TF", "VWAP Auto", overlay = true, max_lines_count = 100, ma
 // 2) VWAP calendrier : Weekly, cMonth, Yearly + une VWAP ancree a une date libre.
 //    Une ligne identique a la VWAP principale n'est pas retracee (pas de doublon).
 // 3) Volume Profile par periode (Jour, Semaine, Mois, Annee) : POC, HVN (pics de volume),
-//    VAH / VAL de la periode precedente.
-// 4) Opens Jour / Weekly / Monthly / Yearly (en crypto 24/7, l'open = la cloture precedente).
-// 5) Tableau des confluences : zones ou plusieurs niveaux (sources differentes) se regroupent.
+//    VAH / VAL de la periode precedente. Le profil est regroupe en un nombre de lignes adapte a
+//    la periode (Jour 40, Semaine 60, Mois 80, Annee 100) ; reglable.
+// 4) Histogramme du volume profile : une periode choisie automatiquement selon le timeframe
+//    (la plus longue qui tient en N barres), ou au choix. POC, Value Area et volume en couleurs.
+// 5) Opens Jour / Weekly / Monthly / Yearly (en crypto 24/7, l'open = la cloture precedente).
+// 6) Tableau des confluences : zones ou plusieurs niveaux (sources differentes) se regroupent.
 //    Fleche = sens ou le prix est attire (regle "aimant") : zone au-dessus = haussier,
 //    zone en dessous = baissier. Regle de travail, pas une probabilite mesuree.
 // Un niveau est masque si sa periode contient moins de N barres (profil peu fiable).
@@ -45,7 +49,9 @@ dNm = input.string("2024 VWAP", "Nom", group = G4)
 
 G5 = "Volume Profile (POC / HVN / VAH / VAL)"
 vaPct  = input.float(70.0, "Value Area (%)", minval = 10.0, maxval = 99.0, step = 1.0, group = G5)
-binPct = input.float(0.10, "Taille de bin (% du prix)", minval = 0.03, maxval = 2.0, step = 0.01, group = G5)
+binPct = input.float(0.03, "Resolution du moteur (% du prix)", minval = 0.03, maxval = 2.0,
+     step = 0.01, group = G5)
+rowsIn = input.int(0, "Lignes par profil (0 = auto selon la periode)", minval = 0, maxval = 200, group = G5)
 vpLbl  = input.bool(true, "Afficher les noms (VP, HVN et Opens)", group = G5)
 onVD   = input.bool(true, "Jour", inline = "vd", group = G5)
 cVD    = input.color(#AB47BC, "", inline = "vd", group = G5)
@@ -79,11 +85,36 @@ tblPosIn = input.string("Haut droite", "Position", group = G7,
 confAtr  = input.float(0.30, "Tolerance (x ATR)", minval = 0.05, step = 0.05, group = G7)
 confMin  = input.float(0.15, "Tolerance minimale (% du prix)", minval = 0.01, step = 0.01, group = G7)
 
+G8 = "Histogramme Volume Profile"
+histMode  = input.string("Auto (Smart)", "Periode histogramme", group = G8,
+     options = ["Auto (Smart)", "Aucun", "Jour", "Semaine", "Mois", "Annee"])
+histPrev  = input.bool(false, "Afficher aussi la periode precedente", group = G8)
+histWidth = input.float(25.0, "Largeur max (% de la periode)", minval = 5.0, maxval = 100.0,
+     step = 5.0, group = G8)
+histMax   = input.int(400, "Auto : periode la plus longue de N barres max", minval = 20, group = G8)
+cHist     = input.color(#607D8B, "Volume", inline = "hc", group = G8)
+cHistVa   = input.color(#26A69A, "Value Area", inline = "hc", group = G8)
+cHistPoc  = input.color(#FFB300, "POC", inline = "hc", group = G8)
+histTr    = input.int(70, "Transparence (%)", minval = 0, maxval = 95, group = G8)
+
 // Grille de prix du profil : bins logarithmiques de binPct % (de mintick a mintick x 1e9)
 float lnStep = math.log(1.0 + binPct / 100.0)
 float minPx  = syminfo.mintick
 int lnBase   = int(math.floor(math.log(minPx) / lnStep))
 int nBins    = int(math.ceil(math.log(1000000000.0) / lnStep)) + 2
+
+int tfSec = timeframe.in_seconds(timeframe.period)
+
+// Periode de l'histogramme : en Auto, la plus longue periode qui tient en histMax barres (Jour au minimum)
+bool hOkY = 31536000.0 / tfSec <= histMax
+bool hOkM = 2592000.0 / tfSec <= histMax
+bool hOkW = 604800.0 / tfSec <= histMax
+int hpAuto = hOkY ? 4 : hOkM ? 3 : hOkW ? 2 : 1
+int hpFix = histMode == "Jour" ? 1 : histMode == "Semaine" ? 2 : histMode == "Mois" ? 3 : 4
+int hp = histMode == "Aucun" ? 0 : histMode == "Auto (Smart)" ? hpAuto : hpFix
+float hPer = hp == 1 ? 86400.0 : hp == 2 ? 604800.0 : hp == 3 ? 2592000.0 : 31536000.0
+int histBars = math.max(3, math.round(hPer / tfSec * histWidth / 100.0))
+var array<box> hBoxes = array.new_box()
 
 string tblPos = switch tblPosIn
     "Haut gauche" => position.top_left
@@ -138,7 +169,7 @@ openLine(string nm, float lvl, int x1, bool show, color c) =>
                      style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
     true
 
-// ---------------- Volume Profile : fonctions ----------------
+// ---------------- Volume Profile : moteur (grille fine) ----------------
 idxOf(float p) =>
     int i = int(math.floor(math.log(math.max(p, minPx)) / lnStep)) - lnBase
     math.max(0, math.min(nBins - 1, i))
@@ -169,19 +200,38 @@ vpReset(array<float> bins, array<int> m, int startBar) =>
     array.set(m, 2, startBar)
     true
 
-// POC, VAH, VAL (Value Area : on ajoute la paire de lignes la plus fournie, au-dessus ou en dessous)
-vpStats(array<float> bins, array<int> m) =>
+// ---------------- Volume Profile : lignes d'affichage (taille adaptee a la periode) ----------------
+// Regroupe les bins fins en au plus 'target' lignes (ecrites dans rows).
+// Renvoie [nb lignes, bin de depart, bins par ligne]
+aggRows(array<float> bins, array<int> m, int target, array<float> rows) =>
     int lo = array.get(m, 0)
     int hi = array.get(m, 1)
+    array.clear(rows)
+    int nr = 0
+    int g = 1
+    if hi >= lo
+        int n = hi - lo + 1
+        g := math.max(1, int(math.ceil(n / float(target))))
+        nr := int(math.ceil(n / float(g)))
+        for r = 1 to nr
+            array.push(rows, 0.0)
+        for i = lo to hi
+            int ri = int((i - lo) / g)
+            array.set(rows, ri, array.get(rows, ri) + array.get(bins, i))
+    [nr, lo, g]
+
+// POC, VAH, VAL sur les lignes (Value Area : on ajoute la paire de lignes la plus fournie)
+vpStats(array<float> rows, int nr, int b0, int g) =>
     float poc = na
     float vah = na
     float val = na
-    if hi >= lo
+    if nr >= 1
+        int hi = nr - 1
         float tot = 0.0
         float best = -1.0
-        int pocI = lo
-        for i = lo to hi
-            float v = array.get(bins, i)
+        int pocI = 0
+        for i = 0 to hi
+            float v = array.get(rows, i)
             tot += v
             if v > best
                 best := v
@@ -190,46 +240,44 @@ vpStats(array<float> bins, array<int> m) =>
         float target = tot * vaPct / 100.0
         int up = pocI
         int dn = pocI
-        while acc < target and (up < hi or dn > lo)
+        while acc < target and (up < hi or dn > 0)
             float upV = 0.0
             float dnV = 0.0
             if up < hi
-                upV := array.get(bins, up + 1)
+                upV := array.get(rows, up + 1)
                 if up + 1 < hi
-                    upV += array.get(bins, up + 2)
-            if dn > lo
-                dnV := array.get(bins, dn - 1)
-                if dn - 1 > lo
-                    dnV += array.get(bins, dn - 2)
-            if up < hi and (dn <= lo or upV >= dnV)
+                    upV += array.get(rows, up + 2)
+            if dn > 0
+                dnV := array.get(rows, dn - 1)
+                if dn - 1 > 0
+                    dnV += array.get(rows, dn - 2)
+            if up < hi and (dn <= 0 or upV >= dnV)
                 acc += upV
                 up := math.min(hi, up + 2)
             else
                 acc += dnV
-                dn := math.max(lo, dn - 2)
-        poc := priceOf(pocI, 0.5)
-        vah := priceOf(up, 1.0)
-        val := priceOf(dn, 0.0)
+                dn := math.max(0, dn - 2)
+        poc := priceOf(b0 + pocI * g, 0.5 * g)
+        vah := priceOf(b0 + up * g, 1.0 * g)
+        val := priceOf(b0 + dn * g, 0.0)
     [poc, vah, val]
 
 // HVN : pics de volume du profil lisse, hors zone du POC (au plus hvnN) ; renvoie [prix 1, prix 2]
-vpHvn(array<float> bins, array<int> m) =>
-    int lo = array.get(m, 0)
-    int hi = array.get(m, 1)
+vpHvn(array<float> rows, int nr, int b0, int g) =>
     float h1 = na
     float h2 = na
-    int nb = hi - lo + 1
-    int w = math.max(2, math.min(math.round(hvnWin / binPct), math.round(nb / 5.0)))
+    int nb = nr
+    int w = math.max(2, math.min(math.round(hvnWin / (binPct * g)), math.round(nb / 5.0)))
     int sr = math.max(1, math.round(w / 3.0))
-    if hvnN > 0 and hi - lo >= 2 * w
+    if hvnN > 0 and nb - 1 >= 2 * w
         array<float> sm = array.new_float(nb, 0.0)
-        for i = lo to hi
+        for i = 0 to nb - 1
             float acc = 0.0
             int cnt = 0
-            for j = math.max(lo, i - sr) to math.min(hi, i + sr)
-                acc += array.get(bins, j)
+            for j = math.max(0, i - sr) to math.min(nb - 1, i + sr)
+                acc += array.get(rows, j)
                 cnt += 1
-            array.set(sm, i - lo, acc / cnt)
+            array.set(sm, i, acc / cnt)
         float mx = 0.0
         int pk = 0
         for q = 0 to nb - 1
@@ -259,53 +307,65 @@ vpHvn(array<float> bins, array<int> m) =>
                         b2 := v
                         i2 := q
         if i1 >= 0
-            h1 := priceOf(lo + i1, 0.5)
+            h1 := priceOf(b0 + i1 * g, 0.5 * g)
         if i2 >= 0 and hvnN >= 2
-            h2 := priceOf(lo + i2, 0.5)
+            h2 := priceOf(b0 + i2 * g, 0.5 * g)
     [h1, h2]
 
-// Valeurs a afficher (calculees sur la derniere barre uniquement).
+// Fige le profil de la periode qui vient de se terminer : lignes regroupees + POC/VAH/VAL/HVN
+// pv = [poc, vah, val, hvn1, hvn2] | pn = [nb lignes, bin de depart, bins par ligne, barre de debut]
+capturePrev(array<float> bins, array<int> m, array<float> pr, array<float> pv, array<int> pn, int tg) =>
+    [nr, b0, g] = aggRows(bins, m, tg, pr)
+    [poc, vah, val] = vpStats(pr, nr, b0, g)
+    [h1, h2] = vpHvn(pr, nr, b0, g)
+    array.set(pv, 0, poc)
+    array.set(pv, 1, vah)
+    array.set(pv, 2, val)
+    array.set(pv, 3, h1)
+    array.set(pv, 4, h2)
+    array.set(pn, 0, nr)
+    array.set(pn, 1, b0)
+    array.set(pn, 2, g)
+    array.set(pn, 3, array.get(m, 2))
+    true
+
+// Valeurs a afficher (calculees sur la derniere barre uniquement) : profil en cours et profil precedent.
 // pend = la bougie en cours ouvre une nouvelle periode : le profil stocke devient "precedent".
-vpDisplay(array<float> bins, array<int> m, float pPoc, float pVah, float pVal, int pSt, bool pend) =>
+periodView(array<float> bn, array<int> m, array<float> wk, int tg, array<float> pv, array<int> pn, bool pd) =>
     float cPoc = na
     float cVah = na
     float cVal = na
+    float cH1 = na
+    float cH2 = na
     int cSt = bar_index
-    float qPoc = pPoc
-    float qVah = pVah
-    float qVal = pVal
-    int qSt = pSt
+    float qPoc = array.get(pv, 0)
+    float qVah = array.get(pv, 1)
+    float qVal = array.get(pv, 2)
+    float qH1 = array.get(pv, 3)
+    float qH2 = array.get(pv, 4)
+    int qSt = array.get(pn, 3)
     if barstate.islast
-        [s1, s2, s3] = vpStats(bins, m)
+        [nr, b0, g] = aggRows(bn, m, tg, wk)
+        [s1, s2, s3] = vpStats(wk, nr, b0, g)
+        [t1, t2] = vpHvn(wk, nr, b0, g)
         int st = array.get(m, 2)
-        if pend
+        if pd
             qPoc := s1
             qVah := s2
             qVal := s3
+            qH1 := t1
+            qH2 := t2
             qSt := st
         else
             cPoc := s1
             cVah := s2
             cVal := s3
+            cH1 := t1
+            cH2 := t2
             cSt := st
-    [cPoc, cVah, cVal, cSt, qPoc, qVah, qVal, qSt]
+    [cPoc, cVah, cVal, cH1, cH2, cSt, qPoc, qVah, qVal, qH1, qH2, qSt]
 
-// HVN a afficher : [courant 1, courant 2, precedent 1, precedent 2]
-hvnDisplay(array<float> bins, array<int> m, float pH1, float pH2, bool pend) =>
-    float c1 = na
-    float c2 = na
-    float q1 = pH1
-    float q2 = pH2
-    if barstate.islast
-        [t1, t2] = vpHvn(bins, m)
-        if pend
-            q1 := t1
-            q2 := t2
-        else
-            c1 := t1
-            c2 := t2
-    [c1, c2, q1, q2]
-
+// ---------------- Volume Profile : trace ----------------
 // Trace le POC (tirets) et, si full, VAH / VAL (pointilles), prolonges a droite
 vpLevels(string nm, float poc, float vah, float val, int x1, bool show, color c, bool full) =>
     var line lp = na
@@ -366,6 +426,38 @@ hvnLevels(string nm, float h1, float h2, int x1, bool show, color c) =>
                          style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
     true
 
+// Histogramme : une boite par ligne du profil, a partir de la barre x0, longueur proportionnelle au volume
+histRows(array<float> rows, int nr, int b0, int g, int x0) =>
+    if nr > 0
+        [poc, vah, val] = vpStats(rows, nr, b0, g)
+        float mx = array.max(rows)
+        if mx > 0
+            for i = 0 to nr - 1
+                float v = array.get(rows, i)
+                if v > 0
+                    float pLo = priceOf(b0 + i * g, 0.0)
+                    float pHi = priceOf(b0 + i * g, 1.0 * g)
+                    int len = math.max(1, math.round(histBars * v / mx))
+                    bool isPoc = poc >= pLo and poc <= pHi
+                    bool inVa = pLo >= val * 0.9999 and pHi <= vah * 1.0001
+                    color rc = isPoc ? cHistPoc : inVa ? cHistVa : cHist
+                    array.push(hBoxes, box.new(x0, pHi, x0 + len, pLo, border_color = color.new(rc, 100),
+                         bgcolor = color.new(rc, histTr)))
+    true
+
+// Histogramme d'une periode : courante (sauf si la bougie en cours ouvre la suivante) et, au choix, precedente
+histPeriod(array<float> bn, array<int> m, array<float> wk, array<float> pr, array<int> pn, int tg, bool pd) =>
+    [nr, b0, g] = aggRows(bn, m, tg, wk)
+    int st = array.get(m, 2)
+    if not pd
+        histRows(wk, nr, b0, g, st)
+    if histPrev
+        if pd
+            histRows(wk, nr, b0, g, st)
+        else
+            histRows(pr, array.get(pn, 0), array.get(pn, 1), array.get(pn, 2), array.get(pn, 3))
+    true
+
 // ---------------- Confluences : fonctions ----------------
 // Ajoute un niveau (prix, nom, source) a la liste si il est actif et defini
 cfAdd(array<float> p, array<string> n, array<int> g, float price, string name, int grp, bool on) =>
@@ -408,7 +500,6 @@ cfBlank(int row) =>
 var int firstBarTime = time
 
 // ---------------- VWAP principale (periode selon le TF) ----------------
-int tfSec = timeframe.in_seconds(timeframe.period)
 string autoTf = tfSec <= dayMax * 60 ? "D" : tfSec <= weekMax * 60 ? "W" : tfSec <= monthMax * 60 ? "M" : "12M"
 
 string tfPick = switch refMode
@@ -476,6 +567,10 @@ if nY
     yStart := bar_index
 
 // ---------------- Volume Profile : calcul par periode ----------------
+// bins = grille fine | meta = [bin min, bin max, barre de debut]
+// pv = [poc, vah, val, hvn1, hvn2] de la periode precedente
+// pn = [nb lignes, bin de depart, bins par ligne, barre de debut]
+// pr = lignes de la periode precedente (pour l'histogramme) | wk = lignes de travail
 var array<float> binsD = array.new_float(nBins, 0.0)
 var array<float> binsW = array.new_float(nBins, 0.0)
 var array<float> binsM = array.new_float(nBins, 0.0)
@@ -484,91 +579,54 @@ var array<int> metaD = array.from(nBins, -1, 0)
 var array<int> metaW = array.from(nBins, -1, 0)
 var array<int> metaM = array.from(nBins, -1, 0)
 var array<int> metaY = array.from(nBins, -1, 0)
-var float pPocD = na
-var float pVahD = na
-var float pValD = na
-var float pH1D = na
-var float pH2D = na
-var int pStD = 0
-var float pPocW = na
-var float pVahW = na
-var float pValW = na
-var float pH1W = na
-var float pH2W = na
-var int pStW = 0
-var float pPocM = na
-var float pVahM = na
-var float pValM = na
-var float pH1M = na
-var float pH2M = na
-var int pStM = 0
-var float pPocY = na
-var float pVahY = na
-var float pValY = na
-var float pH1Y = na
-var float pH2Y = na
-var int pStY = 0
+var array<float> pvD = array.new_float(5, na)
+var array<float> pvW = array.new_float(5, na)
+var array<float> pvM = array.new_float(5, na)
+var array<float> pvY = array.new_float(5, na)
+var array<int> pnD = array.from(0, 0, 1, 0)
+var array<int> pnW = array.from(0, 0, 1, 0)
+var array<int> pnM = array.from(0, 0, 1, 0)
+var array<int> pnY = array.from(0, 0, 1, 0)
+var array<float> prD = array.new_float()
+var array<float> prW = array.new_float()
+var array<float> prM = array.new_float()
+var array<float> prY = array.new_float()
+var array<float> wkRows = array.new_float()
+
+// Nombre de lignes cible par periode (auto : Jour 40, Semaine 60, Mois 80, Annee 100)
+int tgD = rowsIn > 0 ? rowsIn : 40
+int tgW = rowsIn > 0 ? rowsIn : 60
+int tgM = rowsIn > 0 ? rowsIn : 80
+int tgY = rowsIn > 0 ? rowsIn : 100
 
 // Les profils ne sont mis a jour qu'a la cloture de chaque bougie
 if barstate.isconfirmed
     if nD
-        [d1, d2, d3] = vpStats(binsD, metaD)
-        [dh1, dh2] = vpHvn(binsD, metaD)
-        pPocD := d1
-        pVahD := d2
-        pValD := d3
-        pH1D := dh1
-        pH2D := dh2
-        pStD := array.get(metaD, 2)
+        capturePrev(binsD, metaD, prD, pvD, pnD, tgD)
         vpReset(binsD, metaD, bar_index)
     vpAdd(binsD, metaD, low, high, nz(volume))
     if nW
-        [w1, w2, w3] = vpStats(binsW, metaW)
-        [wh1, wh2] = vpHvn(binsW, metaW)
-        pPocW := w1
-        pVahW := w2
-        pValW := w3
-        pH1W := wh1
-        pH2W := wh2
-        pStW := array.get(metaW, 2)
+        capturePrev(binsW, metaW, prW, pvW, pnW, tgW)
         vpReset(binsW, metaW, bar_index)
     vpAdd(binsW, metaW, low, high, nz(volume))
     if nM
-        [m1, m2, m3] = vpStats(binsM, metaM)
-        [mh1, mh2] = vpHvn(binsM, metaM)
-        pPocM := m1
-        pVahM := m2
-        pValM := m3
-        pH1M := mh1
-        pH2M := mh2
-        pStM := array.get(metaM, 2)
+        capturePrev(binsM, metaM, prM, pvM, pnM, tgM)
         vpReset(binsM, metaM, bar_index)
     vpAdd(binsM, metaM, low, high, nz(volume))
     if nY
-        [y1, y2, y3] = vpStats(binsY, metaY)
-        [yh1, yh2] = vpHvn(binsY, metaY)
-        pPocY := y1
-        pVahY := y2
-        pValY := y3
-        pH1Y := yh1
-        pH2Y := yh2
-        pStY := array.get(metaY, 2)
+        capturePrev(binsY, metaY, prY, pvY, pnY, tgY)
         vpReset(binsY, metaY, bar_index)
     vpAdd(binsY, metaY, low, high, nz(volume))
 
 bool livePend = not barstate.isconfirmed
-[cPocD, cVahD, cValD, cStD, qPocD, qVahD, qValD, qStD] = vpDisplay(binsD, metaD,
-     pPocD, pVahD, pValD, pStD, livePend and nD)
-[cPocW, cVahW, cValW, cStW, qPocW, qVahW, qValW, qStW] = vpDisplay(binsW, metaW,
-     pPocW, pVahW, pValW, pStW, livePend and nW)
-[cPocM, cVahM, cValM, cStM, qPocM, qVahM, qValM, qStM] = vpDisplay(binsM, metaM,
-     pPocM, pVahM, pValM, pStM, livePend and nM)
-[cPocY, cVahY, cValY, cStY, qPocY, qVahY, qValY, qStY] = vpDisplay(binsY, metaY,
-     pPocY, pVahY, pValY, pStY, livePend and nY)
-[cH1D, cH2D, qH1D, qH2D] = hvnDisplay(binsD, metaD, pH1D, pH2D, livePend and nD)
-[cH1W, cH2W, qH1W, qH2W] = hvnDisplay(binsW, metaW, pH1W, pH2W, livePend and nW)
-[cH1M, cH2M, qH1M, qH2M] = hvnDisplay(binsM, metaM, pH1M, pH2M, livePend and nM)
-[cH1Y, cH2Y, qH1Y, qH2Y] = hvnDisplay(binsY, metaY, pH1Y, pH2Y, livePend and nY)
+[cPocD, cVahD, cValD, cH1D, cH2D, cStD, qPocD, qVahD, qValD, qH1D, qH2D, qStD] = periodView(binsD, metaD,
+     wkRows, tgD, pvD, pnD, livePend and nD)
+[cPocW, cVahW, cValW, cH1W, cH2W, cStW, qPocW, qVahW, qValW, qH1W, qH2W, qStW] = periodView(binsW, metaW,
+     wkRows, tgW, pvW, pnW, livePend and nW)
+[cPocM, cVahM, cValM, cH1M, cH2M, cStM, qPocM, qVahM, qValM, qH1M, qH2M, qStM] = periodView(binsM, metaM,
+     wkRows, tgM, pvM, pnM, livePend and nM)
+[cPocY, cVahY, cValY, cH1Y, cH2Y, cStY, qPocY, qVahY, qValY, qH1Y, qH2Y, qStY] = periodView(binsY, metaY,
+     wkRows, tgY, pvY, pnY, livePend and nY)
 
 // ---------------- Trace : VWAP ----------------
 bool bands = showBnd and not newPeriod
@@ -591,6 +649,22 @@ tag("Weekly", wV, cW, sW)
 tag("cMonth", mV, cM, sM)
 tag("Yearly", yV, cY, sY)
 tag(dNm + (dT < firstBarTime ? " (historique insuffisant)" : ""), dV, cD, onD)
+
+// ---------------- Histogramme du volume profile ----------------
+if barstate.islast
+    int hbi = array.size(hBoxes) - 1
+    while hbi >= 0
+        box.delete(array.get(hBoxes, hbi))
+        hbi -= 1
+    array.clear(hBoxes)
+    if hp == 1
+        histPeriod(binsD, metaD, wkRows, prD, pnD, tgD, livePend and nD)
+    else if hp == 2
+        histPeriod(binsW, metaW, wkRows, prW, pnW, tgW, livePend and nW)
+    else if hp == 3
+        histPeriod(binsM, metaM, wkRows, prM, pnM, tgM, livePend and nM)
+    else if hp == 4
+        histPeriod(binsY, metaY, wkRows, prY, pnY, tgY, livePend and nY)
 
 // ---------------- Lignes Volume Profile ----------------
 bool vD = onVD and selD
