@@ -7,6 +7,8 @@ indicator("VWAP Auto TF", "VWAP Auto", overlay = true, max_lines_count = 100, ma
 //    ou une seule periode au choix, ou Tout. Elle pilote VWAP calendrier, Volume Profile et Opens.
 // 1) VWAP principale : en Auto, TF <= 60m -> Jour | <= 4h -> Semaine | <= 1D -> Mois | sinon Annee.
 // 2) VWAP calendrier : Weekly, cMonth, Yearly + une VWAP ancree a une date libre.
+//    Elles sont affichees sur tous les timeframes, quelle que soit la periode de reference
+//    (qui ne pilote que la VWAP principale, le Volume Profile et les Opens).
 //    Une ligne identique a la VWAP principale n'est pas retracee (pas de doublon).
 //    Zones tres legeres autour des VWAP ancrees (VWAP -> 1 ecart-type -> 2), de plus en plus
 //    transparentes vers l'exterieur, pour voir la VWAP se dessiner sans bruit.
@@ -36,7 +38,7 @@ col     = input.color(#FFB300, "Couleur", group = G1)
 showBnd = input.bool(true, "Zones legeres autour des VWAP ancrees", group = G1)
 k1      = input.float(1.0, "Zone 1 (x ecart-type)", minval = 0.1, step = 0.1, group = G1)
 k2      = input.float(2.0, "Zone 2 (x ecart-type)", minval = 0.2, step = 0.1, group = G1)
-bandCur = input.bool(true, "Zones : periode en cours seulement", group = G1)
+bandCur = input.bool(false, "Zones : periode en cours seulement", group = G1)
 anTr    = input.int(94, "Transparence des zones (%)", minval = 60, maxval = 98, group = G1)
 lnTr    = input.int(25, "Transparence des lignes VWAP ancrees (%)", minval = 0, maxval = 90, group = G1)
 prevOn  = input.bool(true, "Garder les periodes precedentes des VWAP Mois et Annee", group = G1)
@@ -45,7 +47,7 @@ G2 = "Seuils du mode Auto (TF du graphique, en minutes)"
 dayMax   = input.int(60, "Jour si TF <=", minval = 1, group = G2)
 weekMax  = input.int(240, "Semaine si TF <=", minval = 1, group = G2)
 monthMax = input.int(1440, "Mois si TF <=", minval = 1, group = G2)
-minBars  = input.int(20, "Masquer si moins de N barres dans la periode", minval = 1, group = G2)
+minBars  = input.int(20, "Masquer VP et Opens si moins de N barres dans la periode", minval = 1, group = G2)
 
 G4 = "VWAP calendrier"
 onW = input.bool(true, "Weekly", inline = "w", group = G4)
@@ -585,10 +587,13 @@ bool curY = year == year(last_bar_time)
 [yV, ySd] = curVwap(src, nY)
 float dV = dateVwap(src, dT)
 
-// pas de doublon avec la VWAP principale, pas de ligne sur une periode trop courte pour le TF
-bool sW = onW and selW and tfPick != "W"
-bool sM = onM and selM and tfPick != "M"
-bool sY = onY and selY and tfPick != "12M"
+// Les VWAP ancrees (Weekly, cMonth, Yearly) sont affichees sur tous les timeframes, quelle que soit la
+// periode de reference. Seules conditions : pas de doublon avec la VWAP principale, et au moins avBars
+// barres dans la periode (sinon la VWAP n'est que la bougie elle-meme).
+int avBars = 3
+bool sW = onW and 604800.0 / tfSec >= avBars and tfPick != "W"
+bool sM = onM and 2592000.0 / tfSec >= avBars and tfPick != "M"
+bool sY = onY and 31536000.0 / tfSec >= avBars and tfPick != "12M"
 
 // ---------------- Opens de periode ----------------
 var float dOpen = na
