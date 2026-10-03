@@ -376,7 +376,7 @@ if barstate.islast
                     bLo := pw - minCore / 2.0
                     bHi := pw + minCore / 2.0
                 float mid = (bLo + bHi) / 2.0
-                float haloH = (bHi - bLo) / 2.0 * 2.8
+                float haloH = (bHi - bLo) / 2.0 * 1.8
 
                 // barre : ancree sur la bougie actuelle ; longueur et opacite selon la taille
                 int blen = math.max(6, int(math.round(maxL * math.pow(rel, 0.7))))
