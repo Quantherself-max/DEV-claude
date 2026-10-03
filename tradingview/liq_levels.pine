@@ -1,10 +1,11 @@
 //@version=6
-indicator("Liquidation Levels (estime)", "LiqLevels", overlay = true, max_boxes_count = 100,
-     max_lines_count = 100, max_labels_count = 60)
+indicator("Liquidation Levels (estime)", "LiqLevels", overlay = true, max_boxes_count = 500,
+     max_labels_count = 60)
 
 // Poches de liquidation ESTIMEES, affichees en barres horizontales ancrees sur la bougie actuelle :
-// plus la poche est grosse, plus la barre est longue et opaque. Rouge = shorts (au-dessus du prix),
-// vert = longs (sous le prix). Seules les poches assez fortes et assez proches pour compter sont gardees.
+// plus la poche est grosse, plus la barre est longue et opaque (degrade qui s'estompe vers la gauche).
+// Rouge = shorts (au-dessus du prix), vert = longs (sous le prix). Seules les poches assez fortes et
+// assez proches pour compter sont gardees.
 // DONNEES (proxy, pas de vraies liquidations) : l'Open Interest Binance USDT perp fourni par
 // TradingView (request.security sur <coin>USDT.P_OI) + prix / volume du meme perp. Chaque hausse d'OI
 // = nouvelles positions, ouvertes au prix de la sous-bougie. Hypotheses (reglables) : repartition
@@ -51,13 +52,18 @@ magnetPct = input.float(70.0, "AIMANT : la plus forte par cote, si >= X %", minv
      maxval = 100.0, step = 5.0, group = G3)
 
 G4 = "Affichage"
+styleIn  = input.string("Degrade", "Style des barres", group = G4, options = ["Degrade", "Plat"])
 showL    = input.bool(true, "Longs (sous le prix)", inline = "sl", group = G4)
-colL     = input.color(#00E676, "", inline = "sl", group = G4)
+colL     = input.color(#3DDC97, "", inline = "sl", group = G4)
 showS    = input.bool(true, "Shorts (au-dessus du prix)", inline = "ss", group = G4)
-colS     = input.color(#FF5252, "", inline = "ss", group = G4)
-maxLen   = input.int(60, "Longueur max des barres (en barres)", minval = 10, maxval = 300, group = G4)
-minThk   = input.float(0.08, "Epaisseur minimale des barres (% du prix)", minval = 0.02, maxval = 1.0,
-     step = 0.02, group = G4)
+colS     = input.color(#FF6B6B, "", inline = "ss", group = G4)
+lenMode  = input.string("Auto (% de l'ecran)", "Longueur des barres", group = G4,
+     options = ["Auto (% de l'ecran)", "Fixe (barres)"])
+lenPct   = input.float(28.0, "Auto : longueur max (% de l'ecran)", minval = 5.0, maxval = 80.0,
+     step = 1.0, group = G4)
+maxLen   = input.int(60, "Fixe : longueur max (barres)", minval = 10, maxval = 600, group = G4)
+thkAtr   = input.float(0.15, "Epaisseur minimale (x ATR)", minval = 0.02, maxval = 1.0, step = 0.01,
+     group = G4)
 lblN     = input.int(2, "Etiquettes : poches par cote (0 = aucune)", minval = 0, maxval = 8, group = G4)
 showTbl  = input.bool(true, "Afficher le tableau de bord", group = G4)
 tblPosIn = input.string("Milieu droite", "Position du tableau", group = G4,
@@ -114,10 +120,8 @@ var array<float> gpLo = array.new_float()
 var array<float> gpHi = array.new_float()
 var array<int> gpD = array.new_int()
 var array<box> boxes = array.new_box()
-var array<line> drawn = array.new_line()
 var array<label> lbls = array.new_label()
-var table dash = table.new(tblPos, 2, 6, border_width = 1, border_color = color.new(color.gray, 80),
-     frame_width = 1, frame_color = color.new(color.gray, 80))
+var table dash = table.new(tblPos, 2, 5, border_width = 0)
 
 idxOf(float p) =>
     int i = int(math.floor(math.log(math.max(p, minPx)) / lnStep)) - lnBase
@@ -295,11 +299,6 @@ if barstate.islast
         box.delete(array.get(boxes, db))
         db -= 1
     array.clear(boxes)
-    int di = array.size(drawn) - 1
-    while di >= 0
-        line.delete(array.get(drawn, di))
-        di -= 1
-    array.clear(drawn)
     int dl = array.size(lbls) - 1
     while dl >= 0
         label.delete(array.get(lbls, dl))
@@ -319,6 +318,13 @@ if barstate.islast
         buildPools(sSz, sAct, -1, winAbs)
     int nPool = array.size(gpZ)
     float maxPool = nPool > 0 ? array.max(gpZ) : 0.0
+
+    // longueur maximale d'une barre : part de l'ecran visible (ou valeur fixe)
+    float visSec = (chart.right_visible_bar_time - chart.left_visible_bar_time) / 1000.0
+    int visBars = int(math.round(visSec / tfSec))
+    bool useFix = lenMode == "Fixe (barres)" or visBars < 20
+    int maxL = useFix ? maxLen : int(math.round(visBars * lenPct / 100.0))
+    maxL := math.max(10, math.min(600, maxL))
 
     // 2) on ne garde que les plus grosses (>= keepPct de la plus grosse, perSide max par cote)
     float sumUp = 0.0
@@ -362,62 +368,74 @@ if barstate.islast
                 if keptL + keptS == 1
                     topTxt := arrow + (mag ? "AIMANT " : "") + ptxt + "  [" + str.tostring(score) + "]"
 
-                // barre : ancree sur la bougie actuelle, longueur et opacite selon la taille
-                float lo = array.get(gpLo, q)
-                float hi = array.get(gpHi, q)
-                float thk = minThk / 100.0 * pw
-                if hi - lo < thk
-                    lo := pw - thk / 2.0
-                    hi := pw + thk / 2.0
-                int blen = math.max(2, int(math.round(maxLen * math.pow(rel, 0.7))))
-                int xl = math.max(0, bar_index - blen)
-                int trn = int(math.round(88.0 - 62.0 * math.pow(rel, 0.8))) - (mag ? 10 : 0)
+                // epaisseur : l'etendue de la poche, au moins thkAtr x ATR ; halo plus large et tres leger
+                float bLo = array.get(gpLo, q)
+                float bHi = array.get(gpHi, q)
+                float minCore = math.max(thkAtr * atr14, 0.0003 * pw)
+                if bHi - bLo < minCore
+                    bLo := pw - minCore / 2.0
+                    bHi := pw + minCore / 2.0
+                float mid = (bLo + bHi) / 2.0
+                float haloH = (bHi - bLo) / 2.0 * 2.8
+
+                // barre : ancree sur la bougie actuelle ; longueur et opacite selon la taille
+                int blen = math.max(6, int(math.round(maxL * math.pow(rel, 0.7))))
+                float amax = math.min(0.9, 0.22 + 0.55 * math.pow(rel, 0.8) + (mag ? 0.1 : 0.0))
+                bool fade = styleIn == "Degrade"
+                int nSeg = fade ? math.min(12, blen) : 1
                 color pc = pd > 0 ? colL : colS
-                array.push(boxes, box.new(xl, hi, bar_index, lo, border_color = color.new(pc, 100),
-                     bgcolor = color.new(pc, trn)))
-                array.push(drawn, line.new(xl, pw, bar_index, pw, color = color.new(pc, mag ? 10 : 45),
-                     width = mag ? 2 : 1))
+                for sg2 = 0 to nSeg - 1
+                    int xR = bar_index - int(math.round(blen * sg2 / nSeg))
+                    int xL = math.max(0, bar_index - int(math.round(blen * (sg2 + 1) / nSeg)))
+                    float f = fade ? math.pow(1.0 - sg2 / float(nSeg), 1.8) : 1.0
+                    if xR > xL
+                        if fade
+                            int trH = int(math.round(100.0 - 100.0 * math.min(0.9, 0.16 * amax * f)))
+                            array.push(boxes, box.new(xL, mid + haloH, xR, mid - haloH,
+                                 border_color = color.new(pc, 100), bgcolor = color.new(pc, trH)))
+                        int trC = int(math.round(100.0 - 100.0 * math.min(0.9, amax * f)))
+                        array.push(boxes, box.new(xL, bHi, xR, bLo, border_color = color.new(pc, 100),
+                             bgcolor = color.new(pc, trC)))
+
+                // etiquette en pastille a droite de la barre (les plus grosses de chaque cote)
                 int rk = pd > 0 ? keptL : keptS
                 if rk <= lblN
-                    string lt = (mag ? "AIMANT " : "") + ptxt + "  [" + str.tostring(score) + "]"
-                    array.push(lbls, label.new(bar_index, pw, lt, style = label.style_label_left,
-                         color = color.new(color.black, 100), textcolor = color.new(pc, mag ? 0 : 20),
+                    string lt = (mag ? "AIMANT  " : "") + ptxt
+                    array.push(lbls, label.new(bar_index + 1, pw, lt, style = label.style_label_left,
+                         color = color.new(pc, mag ? 10 : 45), textcolor = mag ? color.black : color.white,
                          size = size.small))
 
-    // 3) tableau de bord
+    // 3) tableau de bord sobre
     if showTbl
         float nIn = array.get(sc, 2)
         float nCh = array.get(sc, 3)
         string precTxt = nIn > nCh ? ltfSel + " min" : "graphique"
-        string srcTxt = useOi ? (array.get(sc, 4) > 0 ? "OI Binance" : "OI INDISPONIBLE") : "Volume"
+        string oiOk = array.get(sc, 4) > 0 ? "PROXY OI Binance" : "OI INDISPONIBLE"
+        string srcTxt = useOi ? oiOk : "PROXY Volume"
         float tot = sumUp + sumDn
         string upP = str.tostring(sumUp / math.max(tot, 0.0000001) * 100.0, "0")
         string dnP = str.tostring(sumDn / math.max(tot, 0.0000001) * 100.0, "0")
         string imbTxt = tot > 0 ? "▲ " + upP + "%  |  ▼ " + dnP + "%" : "-"
-        string keepTxt = str.tostring(keptS) + " ▲  /  " + str.tostring(keptL) + " ▼   (" +
-             str.tostring(keptL + keptS) + " sur " + str.tostring(nPool) + ")"
-        color bgc = color.new(color.black, 20)
+        string keepTxt = str.tostring(keptL + keptS) + " / " + str.tostring(nPool) + " poches"
+        color bgc = color.new(#131722, 25)
+        color bgh = color.new(color.gray, 70)
         table.cell(dash, 0, 0, "LiqLevels", text_color = color.white, text_size = size.small,
-             text_halign = text.align_left, bgcolor = color.new(color.gray, 60))
-        table.cell(dash, 1, 0, "PROXY", text_color = color.orange, text_size = size.small,
-             text_halign = text.align_right, bgcolor = color.new(color.gray, 60))
+             text_halign = text.align_left, bgcolor = bgh)
+        table.cell(dash, 1, 0, keepTxt, text_color = color.silver, text_size = size.small,
+             text_halign = text.align_right, bgcolor = bgh)
         table.cell(dash, 0, 1, "Donnees", text_color = color.gray, text_size = size.small,
              text_halign = text.align_left, bgcolor = bgc)
         table.cell(dash, 1, 1, srcTxt + " | " + precTxt, text_color = color.white, text_size = size.small,
              text_halign = text.align_right, bgcolor = bgc)
-        table.cell(dash, 0, 2, "Retenues", text_color = color.gray, text_size = size.small,
+        table.cell(dash, 0, 2, "Plus proche", text_color = color.gray, text_size = size.small,
              text_halign = text.align_left, bgcolor = bgc)
-        table.cell(dash, 1, 2, keepTxt, text_color = color.white, text_size = size.small,
+        table.cell(dash, 1, 2, nearTxt, text_color = color.white, text_size = size.small,
              text_halign = text.align_right, bgcolor = bgc)
-        table.cell(dash, 0, 3, "Plus proche", text_color = color.gray, text_size = size.small,
+        table.cell(dash, 0, 3, "Plus forte", text_color = color.gray, text_size = size.small,
              text_halign = text.align_left, bgcolor = bgc)
-        table.cell(dash, 1, 3, nearTxt, text_color = color.white, text_size = size.small,
+        table.cell(dash, 1, 3, topTxt, text_color = color.white, text_size = size.small,
              text_halign = text.align_right, bgcolor = bgc)
-        table.cell(dash, 0, 4, "Plus forte", text_color = color.gray, text_size = size.small,
+        table.cell(dash, 0, 4, "Desequilibre", text_color = color.gray, text_size = size.small,
              text_halign = text.align_left, bgcolor = bgc)
-        table.cell(dash, 1, 4, topTxt, text_color = color.white, text_size = size.small,
-             text_halign = text.align_right, bgcolor = bgc)
-        table.cell(dash, 0, 5, "Desequilibre", text_color = color.gray, text_size = size.small,
-             text_halign = text.align_left, bgcolor = bgc)
-        table.cell(dash, 1, 5, imbTxt, text_color = color.white, text_size = size.small,
+        table.cell(dash, 1, 4, imbTxt, text_color = color.white, text_size = size.small,
              text_halign = text.align_right, bgcolor = bgc)
