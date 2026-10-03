@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Liq Terminal</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top">
+  <div class="brand">LIQ<span>TERMINAL</span></div>
+  <select id="symbol" aria-label="Symbole"></select>
+  <div id="tfs" class="seg" role="group" aria-label="Timeframe"></div>
+  <div class="price"><b id="price">-</b><small id="atr"></small></div>
+  <div class="spacer"></div>
+  <span id="srcBadge" class="badge">-</span>
+  <span id="tgBadge" class="badge">-</span>
+  <span id="status" class="muted">chargement...</span>
+</header>
+<main>
+  <section id="chartwrap">
+    <div id="chart"></div>
+    <canvas id="overlay"></canvas>
+    <div id="toolbar">
+      <label><input type="radio" name="mode" value="conf" checked> Confluences</label>
+      <label><input type="radio" name="mode" value="all"> Tous les niveaux</label>
+      <label><input type="checkbox" id="showPools" checked> Poches de liquidité</label>
+    </div>
+  </section>
+  <aside id="side">
+    <section class="card">
+      <h2>Confluences <small id="confHint"></small></h2>
+      <div id="ladder"></div>
+    </section>
+    <section class="card">
+      <h2>Poches de liquidité <small>estimées (proxy OI)</small></h2>
+      <div id="pools"></div>
+    </section>
+    <section class="card" id="detailCard">
+      <h2>Détail <small>clique un niveau, une zone ou une poche</small></h2>
+      <div id="detail" class="muted">Rien de sélectionné.</div>
+    </section>
+    <section class="card">
+      <h2>Alertes <small id="alertHint"></small></h2>
+      <div id="alerts" class="muted">-</div>
+    </section>
+  </aside>
+</main>
+<footer>Estimations à titre informatif, pas un conseil financier. La règle « aimant » (zone attirant le prix) est une hypothèse non validée.
+  Graphiques : <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a> (Apache-2.0).</footer>
+<script src="vendor/lightweight-charts.standalone.production.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
