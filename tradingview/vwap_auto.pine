@@ -1,12 +1,15 @@
 //@version=6
 indicator("VWAP Auto TF", "VWAP Auto", overlay = true, max_lines_count = 100, max_labels_count = 100)
 
-// 1) VWAP dont la periode de reset s'adapte au timeframe du graphique.
-//    Mode Auto : TF <= 60m -> Jour | <= 4h -> Semaine | <= 1D -> Mois | sinon Annee
+// 0) Periode de reference (comme l'indicateur AVP) : Auto (Smart) choisit les periodes adaptees
+//    au timeframe (Jour/Semaine/Mois jusqu'a 1h, Semaine/Mois/Annee a 2h-4h, Mois/Annee en 12h-1D),
+//    ou une seule periode au choix, ou Tout. Elle pilote VWAP calendrier, Volume Profile et Opens.
+// 1) VWAP principale : en Auto, TF <= 60m -> Jour | <= 4h -> Semaine | <= 1D -> Mois | sinon Annee.
 // 2) VWAP calendrier : Weekly, cMonth, Yearly + une VWAP ancree a une date libre.
 //    Une ligne identique a la VWAP principale n'est pas retracee (pas de doublon).
-// 3) Volume Profile par periode : POC, HVN (pics de volume), VAH / VAL de la periode precedente.
-// 4) Opens Weekly / Monthly / Yearly (en crypto 24/7, l'open = la cloture precedente).
+// 3) Volume Profile par periode (Jour, Semaine, Mois, Annee) : POC, HVN (pics de volume),
+//    VAH / VAL de la periode precedente.
+// 4) Opens Jour / Weekly / Monthly / Yearly (en crypto 24/7, l'open = la cloture precedente).
 // 5) Tableau des confluences : zones ou plusieurs niveaux (sources differentes) se regroupent.
 //    Fleche = sens ou le prix est attire (regle "aimant") : zone au-dessus = haussier,
 //    zone en dessous = baissier. Regle de travail, pas une probabilite mesuree.
@@ -14,9 +17,9 @@ indicator("VWAP Auto TF", "VWAP Auto", overlay = true, max_lines_count = 100, ma
 // VWAP = lignes pleines | Volume Profile = pointilles | Opens = traits horizontaux pleins.
 // Periodes calendaires basees sur le fuseau de l'echange (UTC pour le crypto).
 
-G1 = "VWAP principale"
-mode    = input.string("Auto", "Periode de reset", group = G1,
-     options = ["Auto", "Jour", "Semaine", "Mois", "Trimestre", "Annee"])
+G1 = "Periode de reference et VWAP principale"
+refMode = input.string("Auto (Smart)", "Periode de reference", group = G1,
+     options = ["Auto (Smart)", "Jour", "Semaine", "Mois", "Annee", "Tout"])
 src     = input.source(hlc3, "Source", group = G1)
 col     = input.color(#FFB300, "Couleur", group = G1)
 showBnd = input.bool(true, "Afficher les bandes +/- 1 ecart-type", group = G1)
@@ -42,8 +45,10 @@ dNm = input.string("2024 VWAP", "Nom", group = G4)
 
 G5 = "Volume Profile (POC / HVN / VAH / VAL)"
 vaPct  = input.float(70.0, "Value Area (%)", minval = 10.0, maxval = 99.0, step = 1.0, group = G5)
-binPct = input.float(0.10, "Taille de bin (% du prix)", minval = 0.05, maxval = 2.0, step = 0.05, group = G5)
+binPct = input.float(0.10, "Taille de bin (% du prix)", minval = 0.03, maxval = 2.0, step = 0.01, group = G5)
 vpLbl  = input.bool(true, "Afficher les noms (VP, HVN et Opens)", group = G5)
+onVD   = input.bool(true, "Jour", inline = "vd", group = G5)
+cVD    = input.color(#AB47BC, "", inline = "vd", group = G5)
 onVW   = input.bool(true, "Weekly", inline = "vw", group = G5)
 cVW    = input.color(#4CAF50, "", inline = "vw", group = G5)
 onVM   = input.bool(true, "Monthly", inline = "vm", group = G5)
@@ -58,6 +63,8 @@ hvnMin = input.float(50.0, "HVN : volume min (% du POC)", minval = 10.0, maxval 
 showHvn = input.bool(true, "Afficher les lignes HVN", group = G5)
 
 G6 = "Opens de periode"
+onOD = input.bool(true, "Jour open", inline = "od", group = G6)
+cOD  = input.color(#CE93D8, "", inline = "od", group = G6)
 onOW = input.bool(true, "Weekly open", inline = "ow", group = G6)
 cOW  = input.color(#9CCC65, "", inline = "ow", group = G6)
 onOM = input.bool(true, "Monthly open", inline = "om", group = G6)
@@ -211,10 +218,10 @@ vpHvn(array<float> bins, array<int> m) =>
     int hi = array.get(m, 1)
     float h1 = na
     float h2 = na
-    int w = math.max(2, math.round(hvnWin / binPct))
+    int nb = hi - lo + 1
+    int w = math.max(2, math.min(math.round(hvnWin / binPct), math.round(nb / 5.0)))
     int sr = math.max(1, math.round(w / 3.0))
     if hvnN > 0 and hi - lo >= 2 * w
-        int nb = hi - lo + 1
         array<float> sm = array.new_float(nb, 0.0)
         for i = lo to hi
             float acc = 0.0
@@ -404,26 +411,34 @@ var int firstBarTime = time
 int tfSec = timeframe.in_seconds(timeframe.period)
 string autoTf = tfSec <= dayMax * 60 ? "D" : tfSec <= weekMax * 60 ? "W" : tfSec <= monthMax * 60 ? "M" : "12M"
 
-string tfPick = switch mode
-    "Jour"      => "D"
-    "Semaine"   => "W"
-    "Mois"      => "M"
-    "Trimestre" => "3M"
-    "Annee"     => "12M"
+string tfPick = switch refMode
+    "Jour"    => "D"
+    "Semaine" => "W"
+    "Mois"    => "M"
+    "Annee"   => "12M"
     => autoTf
 
 bool newPeriod = timeframe.change(tfPick)
 [vw, up1, dn1] = ta.vwap(src, newPeriod, k1)
 float atr14 = ta.atr(14)
 
-// Un niveau n'est affiche que si sa periode contient assez de barres du graphique
-bool okW = 604800.0 / tfSec >= minBars
-bool okM = 2592000.0 / tfSec >= minBars
-bool okY = 31536000.0 / tfSec >= minBars
+// Periodes affichees (VWAP calendrier, Volume Profile, Opens).
+// Auto (Smart) : les 3 plus courtes periodes qui contiennent au moins minBars barres du graphique.
+bool validD = 86400.0 / tfSec >= minBars
+bool validW = 604800.0 / tfSec >= minBars
+bool validM = 2592000.0 / tfSec >= minBars
+bool validY = 31536000.0 / tfSec >= minBars
+bool isAuto = refMode == "Auto (Smart)"
+bool isAll  = refMode == "Tout"
+bool selD = refMode == "Jour" or ((isAuto or isAll) and validD)
+bool selW = refMode == "Semaine" or ((isAuto or isAll) and validW)
+bool selM = refMode == "Mois" or ((isAuto or isAll) and validM)
+bool selY = refMode == "Annee" or (isAll and validY) or (isAuto and validY and not validD)
 
 // ---------------- VWAP calendrier ----------------
 int dayId  = int(math.floor(time / 86400000))
 int weekId = int(math.floor((dayId + 3) / 7))
+bool nD = dayId != dayId[1]
 bool nW = weekId != weekId[1]
 bool nM = month != month[1]
 bool nY = year != year[1]
@@ -434,17 +449,22 @@ float yV = curVwap(src, nY)
 float dV = dateVwap(src, dT)
 
 // pas de doublon avec la VWAP principale, pas de ligne sur une periode trop courte pour le TF
-bool sW = onW and okW and tfPick != "W"
-bool sM = onM and okM and tfPick != "M"
-bool sY = onY and okY and tfPick != "12M"
+bool sW = onW and selW and tfPick != "W"
+bool sM = onM and selM and tfPick != "M"
+bool sY = onY and selY and tfPick != "12M"
 
 // ---------------- Opens de periode ----------------
+var float dOpen = na
+var int dStart = 0
 var float wOpen = na
 var float mOpen = na
 var float yOpen = na
 var int wStart = 0
 var int mStart = 0
 var int yStart = 0
+if nD
+    dOpen := open
+    dStart := bar_index
 if nW
     wOpen := open
     wStart := bar_index
@@ -456,12 +476,20 @@ if nY
     yStart := bar_index
 
 // ---------------- Volume Profile : calcul par periode ----------------
+var array<float> binsD = array.new_float(nBins, 0.0)
 var array<float> binsW = array.new_float(nBins, 0.0)
 var array<float> binsM = array.new_float(nBins, 0.0)
 var array<float> binsY = array.new_float(nBins, 0.0)
+var array<int> metaD = array.from(nBins, -1, 0)
 var array<int> metaW = array.from(nBins, -1, 0)
 var array<int> metaM = array.from(nBins, -1, 0)
 var array<int> metaY = array.from(nBins, -1, 0)
+var float pPocD = na
+var float pVahD = na
+var float pValD = na
+var float pH1D = na
+var float pH2D = na
+var int pStD = 0
 var float pPocW = na
 var float pVahW = na
 var float pValW = na
@@ -483,6 +511,17 @@ var int pStY = 0
 
 // Les profils ne sont mis a jour qu'a la cloture de chaque bougie
 if barstate.isconfirmed
+    if nD
+        [d1, d2, d3] = vpStats(binsD, metaD)
+        [dh1, dh2] = vpHvn(binsD, metaD)
+        pPocD := d1
+        pVahD := d2
+        pValD := d3
+        pH1D := dh1
+        pH2D := dh2
+        pStD := array.get(metaD, 2)
+        vpReset(binsD, metaD, bar_index)
+    vpAdd(binsD, metaD, low, high, nz(volume))
     if nW
         [w1, w2, w3] = vpStats(binsW, metaW)
         [wh1, wh2] = vpHvn(binsW, metaW)
@@ -518,12 +557,15 @@ if barstate.isconfirmed
     vpAdd(binsY, metaY, low, high, nz(volume))
 
 bool livePend = not barstate.isconfirmed
+[cPocD, cVahD, cValD, cStD, qPocD, qVahD, qValD, qStD] = vpDisplay(binsD, metaD,
+     pPocD, pVahD, pValD, pStD, livePend and nD)
 [cPocW, cVahW, cValW, cStW, qPocW, qVahW, qValW, qStW] = vpDisplay(binsW, metaW,
      pPocW, pVahW, pValW, pStW, livePend and nW)
 [cPocM, cVahM, cValM, cStM, qPocM, qVahM, qValM, qStM] = vpDisplay(binsM, metaM,
      pPocM, pVahM, pValM, pStM, livePend and nM)
 [cPocY, cVahY, cValY, cStY, qPocY, qVahY, qValY, qStY] = vpDisplay(binsY, metaY,
      pPocY, pVahY, pValY, pStY, livePend and nY)
+[cH1D, cH2D, qH1D, qH2D] = hvnDisplay(binsD, metaD, pH1D, pH2D, livePend and nD)
 [cH1W, cH2W, qH1W, qH2W] = hvnDisplay(binsW, metaW, pH1W, pH2W, livePend and nW)
 [cH1M, cH2M, qH1M, qH2M] = hvnDisplay(binsM, metaM, pH1M, pH2M, livePend and nM)
 [cH1Y, cH2Y, qH1Y, qH2Y] = hvnDisplay(binsY, metaY, pH1Y, pH2Y, livePend and nY)
@@ -551,15 +593,20 @@ tag("Yearly", yV, cY, sY)
 tag(dNm + (dT < firstBarTime ? " (historique insuffisant)" : ""), dV, cD, onD)
 
 // ---------------- Lignes Volume Profile ----------------
-bool vW = onVW and okW
-bool vM = onVM and okM
-bool vY = onVY and okY
+bool vD = onVD and selD
+bool vW = onVW and selW
+bool vM = onVM and selM
+bool vY = onVY and selY
+vpLevels("d", cPocD, cVahD, cValD, cStD, vD, cVD, false)
+vpLevels("pd", qPocD, qVahD, qValD, qStD, vD, color.new(cVD, 40), true)
 vpLevels("w", cPocW, cVahW, cValW, cStW, vW, cVW, false)
 vpLevels("pw", qPocW, qVahW, qValW, qStW, vW, color.new(cVW, 40), true)
 vpLevels("m", cPocM, cVahM, cValM, cStM, vM, cVM, false)
 vpLevels("pm", qPocM, qVahM, qValM, qStM, vM, color.new(cVM, 40), true)
 vpLevels("y", cPocY, cVahY, cValY, cStY, vY, cVY, false)
 vpLevels("py", qPocY, qVahY, qValY, qStY, vY, color.new(cVY, 40), true)
+hvnLevels("d", cH1D, cH2D, cStD, vD, cVD)
+hvnLevels("pd", qH1D, qH2D, qStD, vD, color.new(cVD, 40))
 hvnLevels("w", cH1W, cH2W, cStW, vW, cVW)
 hvnLevels("pw", qH1W, qH2W, qStW, vW, color.new(cVW, 40))
 hvnLevels("m", cH1M, cH2M, cStM, vM, cVM)
@@ -568,9 +615,14 @@ hvnLevels("y", cH1Y, cH2Y, cStY, vY, cVY)
 hvnLevels("py", qH1Y, qH2Y, qStY, vY, color.new(cVY, 40))
 
 // ---------------- Lignes d'open ----------------
-openLine("wOpen", wOpen, wStart, onOW, cOW)
-openLine("mOpen", mOpen, mStart, onOM, cOM)
-openLine("yOpen", yOpen, yStart, onOY, cOY)
+bool sOD = onOD and selD
+bool sOW = onOW and selW
+bool sOM = onOM and selM
+bool sOY = onOY and selY
+openLine("dOpen", dOpen, dStart, sOD, cOD)
+openLine("wOpen", wOpen, wStart, sOW, cOW)
+openLine("mOpen", mOpen, mStart, sOM, cOM)
+openLine("yOpen", yOpen, yStart, sOY, cOY)
 
 // ---------------- Tableau des confluences ----------------
 var array<float> cfP = array.new_float()
@@ -587,9 +639,18 @@ if barstate.islast and showTbl
     cfAdd(cfP, cfN, cfG, mV, "mVWAP", 3, sM)
     cfAdd(cfP, cfN, cfG, yV, "yVWAP", 4, sY)
     cfAdd(cfP, cfN, cfG, dV, dNm, 5, onD)
-    cfAdd(cfP, cfN, cfG, wOpen, "wOpen", 6, onOW)
-    cfAdd(cfP, cfN, cfG, mOpen, "mOpen", 7, onOM)
-    cfAdd(cfP, cfN, cfG, yOpen, "yOpen", 8, onOY)
+    cfAdd(cfP, cfN, cfG, dOpen, "dOpen", 17, sOD)
+    cfAdd(cfP, cfN, cfG, wOpen, "wOpen", 6, sOW)
+    cfAdd(cfP, cfN, cfG, mOpen, "mOpen", 7, sOM)
+    cfAdd(cfP, cfN, cfG, yOpen, "yOpen", 8, sOY)
+    cfAdd(cfP, cfN, cfG, cPocD, "dPOC", 15, vD)
+    cfAdd(cfP, cfN, cfG, cH1D, "dHVN", 15, vD)
+    cfAdd(cfP, cfN, cfG, cH2D, "dHVN", 15, vD)
+    cfAdd(cfP, cfN, cfG, qPocD, "pdPOC", 16, vD)
+    cfAdd(cfP, cfN, cfG, qVahD, "pdVAH", 16, vD)
+    cfAdd(cfP, cfN, cfG, qValD, "pdVAL", 16, vD)
+    cfAdd(cfP, cfN, cfG, qH1D, "pdHVN", 16, vD)
+    cfAdd(cfP, cfN, cfG, qH2D, "pdHVN", 16, vD)
     cfAdd(cfP, cfN, cfG, cPocW, "wPOC", 9, vW)
     cfAdd(cfP, cfN, cfG, cH1W, "wHVN", 9, vW)
     cfAdd(cfP, cfN, cfG, cH2W, "wHVN", 9, vW)
