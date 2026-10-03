@@ -8,9 +8,12 @@ indicator("VWAP Auto TF", "VWAP Auto", overlay = true, max_lines_count = 100, ma
 // 1) VWAP principale : en Auto, TF <= 60m -> Jour | <= 4h -> Semaine | <= 1D -> Mois | sinon Annee.
 // 2) VWAP calendrier : Weekly, cMonth, Yearly + une VWAP ancree a une date libre.
 //    Une ligne identique a la VWAP principale n'est pas retracee (pas de doublon).
-// 3) Volume Profile par periode (Jour, Semaine, Mois, Annee) : POC, HVN (pics de volume),
-//    VAH / VAL de la periode precedente. Le profil est regroupe en un nombre de lignes qui suit
-//    la densite de donnees : plus le timeframe est bas, plus le profil est fin (30 a 160 lignes).
+//    Zones tres legeres autour des VWAP ancrees (VWAP -> 1 ecart-type -> 2), de plus en plus
+//    transparentes vers l'exterieur, pour voir la VWAP se dessiner sans bruit.
+// 3) Volume Profile par periode (Jour, Semaine, Mois, Annee) : POC, VAH / VAL de la periode
+//    precedente. Les HVN sont visibles dans l'histogramme et pris en compte dans le tableau.
+//    Le profil est regroupe en un nombre de lignes qui suit la densite de donnees : plus le
+//    timeframe est bas, plus le profil est fin (30 a 160 lignes).
 // 4) Histogramme du volume profile : une periode choisie automatiquement selon le timeframe
 //    (la plus longue qui tient en N barres), ou au choix, avec les N derniers profils
 //    (3 par defaut : en cours + 2 precedents). POC, Value Area et volume en couleurs.
@@ -18,7 +21,8 @@ indicator("VWAP Auto TF", "VWAP Auto", overlay = true, max_lines_count = 100, ma
 // 6) Tableau des confluences : zones ou plusieurs niveaux (sources differentes) se regroupent.
 //    Fleche = sens ou le prix est attire (regle "aimant") : zone au-dessus = haussier,
 //    zone en dessous = baissier. Regle de travail, pas une probabilite mesuree.
-// Un niveau est masque si sa periode contient moins de N barres (profil peu fiable).
+// Lisibilite : un niveau est masque si sa periode contient moins de N barres (profil peu fiable)
+// ou s'il est a plus de N x ATR du prix (trop loin pour reagir).
 // VWAP = lignes pleines | Volume Profile = pointilles | Opens = traits horizontaux pleins.
 // Periodes calendaires basees sur le fuseau de l'echange (UTC pour le crypto).
 
@@ -27,8 +31,10 @@ refMode = input.string("Auto (Smart)", "Periode de reference", group = G1,
      options = ["Auto (Smart)", "Jour", "Semaine", "Mois", "Annee", "Tout"])
 src     = input.source(hlc3, "Source", group = G1)
 col     = input.color(#FFB300, "Couleur", group = G1)
-showBnd = input.bool(true, "Afficher les bandes +/- 1 ecart-type", group = G1)
-k1      = input.float(1.0, "Bande (x ecart-type)", minval = 0.1, step = 0.1, group = G1)
+showBnd = input.bool(true, "Zones legeres autour des VWAP ancrees", group = G1)
+k1      = input.float(1.0, "Zone 1 (x ecart-type)", minval = 0.1, step = 0.1, group = G1)
+k2      = input.float(2.0, "Zone 2 (x ecart-type)", minval = 0.2, step = 0.1, group = G1)
+anTr    = input.int(88, "Transparence des zones (%)", minval = 60, maxval = 98, group = G1)
 
 G2 = "Seuils du mode Auto (TF du graphique, en minutes)"
 dayMax   = input.int(60, "Jour si TF <=", minval = 1, group = G2)
@@ -53,7 +59,7 @@ vaPct  = input.float(70.0, "Value Area (%)", minval = 10.0, maxval = 99.0, step 
 binPct = input.float(0.03, "Resolution du moteur (% du prix)", minval = 0.03, maxval = 2.0,
      step = 0.01, group = G5)
 rowsIn = input.int(0, "Lignes par profil (0 = auto selon le timeframe)", minval = 0, maxval = 200, group = G5)
-vpLbl  = input.bool(true, "Afficher les noms (VP, HVN et Opens)", group = G5)
+vpLbl  = input.bool(true, "Afficher les noms (POC et Opens)", group = G5)
 onVD   = input.bool(true, "Jour", inline = "vd", group = G5)
 cVD    = input.color(#AB47BC, "", inline = "vd", group = G5)
 onVW   = input.bool(true, "Weekly", inline = "vw", group = G5)
@@ -67,7 +73,6 @@ hvnWin = input.float(1.0, "HVN : ecart min entre pics (% du prix)", minval = 0.2
      step = 0.1, group = G5)
 hvnMin = input.float(50.0, "HVN : volume min (% du POC)", minval = 10.0, maxval = 100.0,
      step = 5.0, group = G5)
-showHvn = input.bool(true, "Afficher les lignes HVN", group = G5)
 
 G6 = "Opens de periode"
 onOD = input.bool(true, "Jour open", inline = "od", group = G6)
@@ -96,7 +101,11 @@ histMax   = input.int(400, "Auto : periode la plus longue de N barres max", minv
 cHist     = input.color(#607D8B, "Volume", inline = "hc", group = G8)
 cHistVa   = input.color(#26A69A, "Value Area", inline = "hc", group = G8)
 cHistPoc  = input.color(#FFB300, "POC", inline = "hc", group = G8)
-histTr    = input.int(70, "Transparence (%)", minval = 0, maxval = 95, group = G8)
+histTr    = input.int(85, "Transparence (%)", minval = 20, maxval = 95, group = G8)
+
+G9 = "Lisibilite"
+distAtr = input.float(6.0, "Masquer les niveaux a plus de N x ATR du prix (0 = tout)", minval = 0.0,
+     step = 1.0, group = G9)
 
 // Grille de prix du profil : bins logarithmiques de binPct % (de mintick a mintick x 1e9)
 float lnStep = math.log(1.0 + binPct / 100.0)
@@ -105,6 +114,11 @@ int lnBase   = int(math.floor(math.log(minPx) / lnStep))
 int nBins    = int(math.ceil(math.log(1000000000.0) / lnStep)) + 2
 
 int tfSec = timeframe.in_seconds(timeframe.period)
+float atr14 = ta.atr(14)
+
+// Niveau assez proche du prix pour etre trace (N x ATR du graphique ; 0 = pas de filtre)
+near(float lvl) =>
+    not na(lvl) and (distAtr <= 0 or math.abs(lvl - close) <= distAtr * atr14)
 
 // Periode de l'histogramme : en Auto, la plus longue periode qui tient en histMax barres (Jour au minimum)
 bool hOkY = 31536000.0 / tfSec <= histMax
@@ -139,10 +153,10 @@ periodName(string tf) =>
         "3M" => "Trimestre"
         => "Annee"
 
-// VWAP remise a zero quand newP est vrai
+// VWAP remise a zero quand newP est vrai ; renvoie [vwap, ecart-type]
 curVwap(float s, bool newP) =>
     [v, u, d] = ta.vwap(s, newP, 1.0)
-    v
+    [v, u - v]
 
 // VWAP ancree a la premiere bougie dont l'heure >= t
 dateVwap(float s, int t) =>
@@ -155,7 +169,7 @@ tag(string nm, float lvl, color c, bool show) =>
     var label lb = na
     if barstate.islast
         label.delete(lb)
-        if show and not na(lvl)
+        if show and near(lvl)
             lb := label.new(bar_index, lvl, nm + " " + str.tostring(lvl, "#.##"),
                  style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
 
@@ -166,7 +180,7 @@ openLine(string nm, float lvl, int x1, bool show, color c) =>
     if barstate.islast
         line.delete(ol)
         label.delete(olb)
-        if show and not na(lvl)
+        if show and near(lvl)
             ol := line.new(x1, lvl, bar_index, lvl, extend = extend.right, color = c, width = 1)
             if vpLbl
                 olb := label.new(bar_index, lvl, nm + " " + str.tostring(lvl, "#.##"),
@@ -402,64 +416,31 @@ periodView(array<float> bn, array<int> m, array<float> wk, int tg, array<float> 
     [cPoc, cVah, cVal, cH1, cH2, cSt, qPoc, qVah, qVal, qH1, qH2, qSt]
 
 // ---------------- Volume Profile : trace ----------------
-// Trace le POC (tirets) et, si full, VAH / VAL (pointilles), prolonges a droite
+// Trace le POC (tirets) et, si full, VAH / VAL (pointilles), prolonges a droite.
+// Seuls les niveaux proches du prix sont traces ; seul le POC porte un nom.
 vpLevels(string nm, float poc, float vah, float val, int x1, bool show, color c, bool full) =>
     var line lp = na
     var line lh = na
     var line ll = na
     var label tp = na
-    var label th = na
-    var label tl = na
     if barstate.islast
         line.delete(lp)
         line.delete(lh)
         line.delete(ll)
         label.delete(tp)
-        label.delete(th)
-        label.delete(tl)
-        if show and not na(poc)
+        if show and near(poc)
             lp := line.new(x1, poc, bar_index, poc, extend = extend.right, color = c,
                  style = line.style_dashed, width = 1)
-            if full
-                lh := line.new(x1, vah, bar_index, vah, extend = extend.right, color = c,
-                     style = line.style_dotted, width = 1)
-                ll := line.new(x1, val, bar_index, val, extend = extend.right, color = c,
-                     style = line.style_dotted, width = 1)
             if vpLbl
                 string part = x1 == 0 ? " (partiel)" : ""
                 tp := label.new(bar_index, poc, nm + "POC " + str.tostring(poc, "#.##") + part,
                      style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
-                if full
-                    th := label.new(bar_index, vah, nm + "VAH " + str.tostring(vah, "#.##"),
-                         style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
-                    tl := label.new(bar_index, val, nm + "VAL " + str.tostring(val, "#.##"),
-                         style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
-    true
-
-// Trace les HVN (pointilles clairs), prolonges a droite
-hvnLevels(string nm, float h1, float h2, int x1, bool show, color c) =>
-    var line l1 = na
-    var line l2 = na
-    var label g1 = na
-    var label g2 = na
-    if barstate.islast
-        line.delete(l1)
-        line.delete(l2)
-        label.delete(g1)
-        label.delete(g2)
-        if show and showHvn
-            if not na(h1)
-                l1 := line.new(x1, h1, bar_index, h1, extend = extend.right, color = color.new(c, 55),
-                     style = line.style_dotted, width = 1)
-                if vpLbl
-                    g1 := label.new(bar_index, h1, nm + "HVN " + str.tostring(h1, "#.##"),
-                         style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
-            if not na(h2)
-                l2 := line.new(x1, h2, bar_index, h2, extend = extend.right, color = color.new(c, 55),
-                     style = line.style_dotted, width = 1)
-                if vpLbl
-                    g2 := label.new(bar_index, h2, nm + "HVN " + str.tostring(h2, "#.##"),
-                         style = label.style_label_left, color = color.new(color.black, 100), textcolor = c)
+        if show and full and near(vah)
+            lh := line.new(x1, vah, bar_index, vah, extend = extend.right, color = c,
+                 style = line.style_dotted, width = 1)
+        if show and full and near(val)
+            ll := line.new(x1, val, bar_index, val, extend = extend.right, color = c,
+                 style = line.style_dotted, width = 1)
     true
 
 // Histogramme : une boite par ligne du profil, a partir de la barre x0, longueur proportionnelle au volume
@@ -477,8 +458,9 @@ histRows(array<float> rows, int nr, int b0, int g, int x0) =>
                     bool isPoc = poc >= pLo and poc <= pHi
                     bool inVa = pLo >= val * 0.9999 and pHi <= vah * 1.0001
                     color rc = isPoc ? cHistPoc : inVa ? cHistVa : cHist
+                    int rtr = isPoc ? math.max(0, histTr - 45) : inVa ? math.max(0, histTr - 10) : histTr
                     array.push(hBoxes, box.new(x0, pHi, x0 + len, pLo, border_color = color.new(rc, 100),
-                         bgcolor = color.new(rc, histTr)))
+                         bgcolor = color.new(rc, rtr)))
     true
 
 // Histogramme d'une periode : profil en cours + les precedents (histCount profils au total)
@@ -551,8 +533,8 @@ string tfPick = switch refMode
     => autoTf
 
 bool newPeriod = timeframe.change(tfPick)
-[vw, up1, dn1] = ta.vwap(src, newPeriod, k1)
-float atr14 = ta.atr(14)
+[vw, upS, dnS] = ta.vwap(src, newPeriod, 1.0)
+float sdM = upS - vw
 
 // Periodes affichees (VWAP calendrier, Volume Profile, Opens).
 // Auto (Smart) : les 3 plus courtes periodes qui contiennent au moins minBars barres du graphique.
@@ -575,9 +557,9 @@ bool nW = weekId != weekId[1]
 bool nM = month != month[1]
 bool nY = year != year[1]
 
-float wV = curVwap(src, nW)
-float mV = curVwap(src, nM)
-float yV = curVwap(src, nY)
+[wV, wSd] = curVwap(src, nW)
+[mV, mSd] = curVwap(src, nM)
+[yV, ySd] = curVwap(src, nY)
 float dV = dateVwap(src, dT)
 
 // pas de doublon avec la VWAP principale, pas de ligne sur une periode trop courte pour le TF
@@ -670,19 +652,69 @@ bool livePend = not barstate.isconfirmed
 [cPocY, cVahY, cValY, cH1Y, cH2Y, cStY, qPocY, qVahY, qValY, qH1Y, qH2Y, qStY] = periodView(binsY, metaY,
      wkRows, tgY, pvY, pnY, livePend and nY)
 
-// ---------------- Trace : VWAP ----------------
-bool bands = showBnd and not newPeriod
-plot(newPeriod ? na : vw, "VWAP", color = col, linewidth = 2, style = plot.style_linebr)
-plot(bands ? up1 : na, "Bande +1", color = color.new(col, 60), style = plot.style_linebr,
-     display = display.pane)
-plot(bands ? dn1 : na, "Bande -1", color = color.new(col, 60), style = plot.style_linebr,
-     display = display.pane)
-plot(sW and not nW ? wV : na, "Weekly", color = cW, linewidth = 1, style = plot.style_linebr,
-     display = display.pane)
-plot(sM and not nM ? mV : na, "cMonth", color = cM, linewidth = 1, style = plot.style_linebr,
-     display = display.pane)
-plot(sY and not nY ? yV : na, "Yearly", color = cY, linewidth = 1, style = plot.style_linebr,
-     display = display.pane)
+// ---------------- Trace : VWAP ancrees + zones legeres ----------------
+// Zone 1 (VWAP -> k1 ecarts-types) et zone 2 (k1 -> k2) : de plus en plus transparentes vers l'exterieur.
+int anTr2 = math.min(98, anTr + 6)
+bool bM = showBnd and not newPeriod
+bool bW = showBnd and sW and not nW
+bool bMo = showBnd and sM and not nM
+bool bY = showBnd and sY and not nY
+pM0 = plot(newPeriod ? na : vw, "VWAP", color = col, linewidth = 2, style = plot.style_linebr)
+pM1u = plot(bM ? vw + k1 * sdM : na, "VWAP +1", color = color.new(col, 82),
+     style = plot.style_linebr, display = display.pane)
+pM1d = plot(bM ? vw - k1 * sdM : na, "VWAP -1", color = color.new(col, 82),
+     style = plot.style_linebr, display = display.pane)
+pM2u = plot(bM ? vw + k2 * sdM : na, "VWAP +2", color = color.new(col, 88),
+     style = plot.style_linebr, display = display.pane)
+pM2d = plot(bM ? vw - k2 * sdM : na, "VWAP -2", color = color.new(col, 88),
+     style = plot.style_linebr, display = display.pane)
+fill(pM0, pM1u, color = color.new(col, anTr), title = "VWAP zone +1")
+fill(pM1u, pM2u, color = color.new(col, anTr2), title = "VWAP zone +2")
+fill(pM0, pM1d, color = color.new(col, anTr), title = "VWAP zone -1")
+fill(pM1d, pM2d, color = color.new(col, anTr2), title = "VWAP zone -2")
+
+pW0 = plot(sW and not nW ? wV : na, "Weekly", color = cW, linewidth = 1, style = plot.style_linebr)
+pW1u = plot(bW ? wV + k1 * wSd : na, "Weekly +1", color = color.new(cW, 82),
+     style = plot.style_linebr, display = display.pane)
+pW1d = plot(bW ? wV - k1 * wSd : na, "Weekly -1", color = color.new(cW, 82),
+     style = plot.style_linebr, display = display.pane)
+pW2u = plot(bW ? wV + k2 * wSd : na, "Weekly +2", color = color.new(cW, 88),
+     style = plot.style_linebr, display = display.pane)
+pW2d = plot(bW ? wV - k2 * wSd : na, "Weekly -2", color = color.new(cW, 88),
+     style = plot.style_linebr, display = display.pane)
+fill(pW0, pW1u, color = color.new(cW, anTr), title = "Weekly zone +1")
+fill(pW1u, pW2u, color = color.new(cW, anTr2), title = "Weekly zone +2")
+fill(pW0, pW1d, color = color.new(cW, anTr), title = "Weekly zone -1")
+fill(pW1d, pW2d, color = color.new(cW, anTr2), title = "Weekly zone -2")
+
+pO0 = plot(sM and not nM ? mV : na, "cMonth", color = cM, linewidth = 1, style = plot.style_linebr)
+pO1u = plot(bMo ? mV + k1 * mSd : na, "cMonth +1", color = color.new(cM, 82),
+     style = plot.style_linebr, display = display.pane)
+pO1d = plot(bMo ? mV - k1 * mSd : na, "cMonth -1", color = color.new(cM, 82),
+     style = plot.style_linebr, display = display.pane)
+pO2u = plot(bMo ? mV + k2 * mSd : na, "cMonth +2", color = color.new(cM, 88),
+     style = plot.style_linebr, display = display.pane)
+pO2d = plot(bMo ? mV - k2 * mSd : na, "cMonth -2", color = color.new(cM, 88),
+     style = plot.style_linebr, display = display.pane)
+fill(pO0, pO1u, color = color.new(cM, anTr), title = "cMonth zone +1")
+fill(pO1u, pO2u, color = color.new(cM, anTr2), title = "cMonth zone +2")
+fill(pO0, pO1d, color = color.new(cM, anTr), title = "cMonth zone -1")
+fill(pO1d, pO2d, color = color.new(cM, anTr2), title = "cMonth zone -2")
+
+pY0 = plot(sY and not nY ? yV : na, "Yearly", color = cY, linewidth = 1, style = plot.style_linebr)
+pY1u = plot(bY ? yV + k1 * ySd : na, "Yearly +1", color = color.new(cY, 82),
+     style = plot.style_linebr, display = display.pane)
+pY1d = plot(bY ? yV - k1 * ySd : na, "Yearly -1", color = color.new(cY, 82),
+     style = plot.style_linebr, display = display.pane)
+pY2u = plot(bY ? yV + k2 * ySd : na, "Yearly +2", color = color.new(cY, 88),
+     style = plot.style_linebr, display = display.pane)
+pY2d = plot(bY ? yV - k2 * ySd : na, "Yearly -2", color = color.new(cY, 88),
+     style = plot.style_linebr, display = display.pane)
+fill(pY0, pY1u, color = color.new(cY, anTr), title = "Yearly zone +1")
+fill(pY1u, pY2u, color = color.new(cY, anTr2), title = "Yearly zone +2")
+fill(pY0, pY1d, color = color.new(cY, anTr), title = "Yearly zone -1")
+fill(pY1d, pY2d, color = color.new(cY, anTr2), title = "Yearly zone -2")
+
 plot(onD ? dV : na, "VWAP date", color = cD, linewidth = 1, style = plot.style_linebr,
      display = display.pane)
 
@@ -723,22 +755,14 @@ bool vD = onVD and selD
 bool vW = onVW and selW
 bool vM = onVM and selM
 bool vY = onVY and selY
-vpLevels("d", cPocD, cVahD, cValD, cStD, vD, cVD, false)
-vpLevels("pd", qPocD, qVahD, qValD, qStD, vD, color.new(cVD, 40), true)
-vpLevels("w", cPocW, cVahW, cValW, cStW, vW, cVW, false)
-vpLevels("pw", qPocW, qVahW, qValW, qStW, vW, color.new(cVW, 40), true)
-vpLevels("m", cPocM, cVahM, cValM, cStM, vM, cVM, false)
-vpLevels("pm", qPocM, qVahM, qValM, qStM, vM, color.new(cVM, 40), true)
-vpLevels("y", cPocY, cVahY, cValY, cStY, vY, cVY, false)
-vpLevels("py", qPocY, qVahY, qValY, qStY, vY, color.new(cVY, 40), true)
-hvnLevels("d", cH1D, cH2D, cStD, vD, cVD)
-hvnLevels("pd", qH1D, qH2D, qStD, vD, color.new(cVD, 40))
-hvnLevels("w", cH1W, cH2W, cStW, vW, cVW)
-hvnLevels("pw", qH1W, qH2W, qStW, vW, color.new(cVW, 40))
-hvnLevels("m", cH1M, cH2M, cStM, vM, cVM)
-hvnLevels("pm", qH1M, qH2M, qStM, vM, color.new(cVM, 40))
-hvnLevels("y", cH1Y, cH2Y, cStY, vY, cVY)
-hvnLevels("py", qH1Y, qH2Y, qStY, vY, color.new(cVY, 40))
+vpLevels("d", cPocD, cVahD, cValD, cStD, vD, color.new(cVD, 20), false)
+vpLevels("pd", qPocD, qVahD, qValD, qStD, vD, color.new(cVD, 55), true)
+vpLevels("w", cPocW, cVahW, cValW, cStW, vW, color.new(cVW, 20), false)
+vpLevels("pw", qPocW, qVahW, qValW, qStW, vW, color.new(cVW, 55), true)
+vpLevels("m", cPocM, cVahM, cValM, cStM, vM, color.new(cVM, 20), false)
+vpLevels("pm", qPocM, qVahM, qValM, qStM, vM, color.new(cVM, 55), true)
+vpLevels("y", cPocY, cVahY, cValY, cStY, vY, color.new(cVY, 20), false)
+vpLevels("py", qPocY, qVahY, qValY, qStY, vY, color.new(cVY, 55), true)
 
 // ---------------- Lignes d'open ----------------
 bool sOD = onOD and selD
