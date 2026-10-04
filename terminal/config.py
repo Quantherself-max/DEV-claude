@@ -59,7 +59,7 @@ class Config:
     # idees de trade (V5) : quelques idees rares, de haute qualite, avec stop et objectifs
     signal_on: bool = True
     signal_min_score: float = 60.0        # score minimal sur 100 (la derniere place de la semaine exige +8)
-    signal_max_week: int = 3              # idees par semaine au maximum (lundi 00:00 UTC)
+    signal_max_week: int = 5              # idees par semaine au maximum (lundi 00:00 UTC)
     signal_min_struct: float = 7.0        # qualite minimale des niveaux superposes
     signal_leverage: float = 10.0         # levier utilise pour les calculs de liquidation affiches
     signal_valid_hours: int = 48          # duree de validite d'un ordre limite

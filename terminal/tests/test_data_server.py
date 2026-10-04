@@ -484,7 +484,7 @@ class ServerTests(unittest.TestCase):
         r = json.loads(body)
         self.assertEqual(set(r), {"symbols", "desk", "on"})
         self.assertEqual(set(r["desk"]), {"week", "waiting", "stats", "trades"})
-        self.assertEqual(r["desk"]["week"]["cap"], 3)
+        self.assertEqual(r["desk"]["week"]["cap"], 5)
         sg = r["symbols"]["BTCUSDT"]
         self.assertTrue(sg["ready"])
         for k in ("ideas", "rejected", "minScore", "maxWeek", "minStruct", "validation", "warm"):
@@ -497,8 +497,8 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.app.cfg.signal_max_week, 2)
         self.assertEqual(self.app.desk.week(NOW)["cap"], 2)
         self.assertIn("TERMINAL_SIGNAL_MAX_WEEK=2", self.env.read_text())
-        self.post("/api/settings", {"signalMinScore": 65, "signalMaxWeek": 3, "signalLeverage": 10})        # valeurs par defaut
-        self.assertEqual(self.app.cfg.signal_max_week, 3)
+        self.post("/api/settings", {"signalMinScore": 60, "signalMaxWeek": 5, "signalLeverage": 10})        # valeurs par defaut
+        self.assertEqual(self.app.cfg.signal_max_week, 5)
         code, res = self.post("/api/settings", {"signalOn": False})
         self.assertFalse(res["signalOn"])
         self.assertFalse(json.loads(self.get("/api/signals?symbol=BTCUSDT")[1])["symbols"]["BTCUSDT"]["ready"])

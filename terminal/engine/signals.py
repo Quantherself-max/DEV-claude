@@ -14,7 +14,7 @@ Principe
   important ou grosse poche, au moins 1,5 fois le risque) et un second objectif.
 - Le score sur 100 combine : liquidite (30), VWAP / VWAP ancres et niveaux superposes (30), macro et annonces (20), flux
   d'ordres (8), tendance de fond (7), biais et dominance (5). FILTRES : il faut de la liquidite (6 points au moins) et une macro
-  qui ne va pas nettement contre l'idee. Rien n'est envoye sous le seuil, et au plus 3 idees par semaine.
+  qui ne va pas nettement contre l'idee. Rien n'est envoye sous le seuil, et au plus 5 idees par semaine.
 
 Ce module est PUR : il ne lit ni reseau ni disque. Le rejeu historique (sigtest.py) utilise la meme construction
 d'idees pour mesurer ce que la structure des niveaux aurait donne depuis 2019."""

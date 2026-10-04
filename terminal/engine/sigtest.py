@@ -140,7 +140,7 @@ def verdict(real, ctrl):
     return "none"
 
 
-def replay(candles, atrs=None, params=None, seed=5, step=2, ctrl_n=3, max_week=3):
+def replay(candles, atrs=None, params=None, seed=5, step=2, ctrl_n=3, max_week=5):
     """Rejoue `candles` (bougies 1h fermees). Renvoie les resultats par palier de qualite et la frequence par semaine."""
     o = {**signals.DEFAULTS, **(params or {})}
     atrs = atrs or atr_series(candles)

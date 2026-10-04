@@ -3,7 +3,7 @@
 - API officielle X v2 avec TON jeton (TERMINAL_X_BEARER_TOKEN dans .env, jamais renvoye a l'interface). Aucune donnee n'est
   envoyee a X : on ne fait que lire les derniers posts publics des comptes que tu as choisis.
 - Cout : la lecture est facturee par post lu (environ 0,005 $ selon les tarifs publies, a verifier sur ton compte developpeur).
-  Pour le limiter, les posts ne sont lus QU'AU MOMENT D'ENVOYER UNE IDEE (3 par semaine au maximum) ou quand tu cliques
+  Pour le limiter, les posts ne sont lus QU'AU MOMENT D'ENVOYER UNE IDEE (5 par semaine au maximum par défaut) ou quand tu cliques
   sur « Voir l'avis », puis gardes 30 minutes en memoire. Maximum 10 comptes x 5 a 20 posts.
 - Un echec (jeton, credits, reseau) n'a jamais d'effet sur les idees : l'avis est simplement indisponible."""
 import json

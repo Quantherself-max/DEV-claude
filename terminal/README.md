@@ -2,7 +2,7 @@
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
-- **Des idées de trade rares, envoyées sur Telegram** (V5) : achat ou vente sur une zone où plusieurs niveaux importants (VWAP, VWAP ancrés, profils de volume, de l'heure à l'année) et des poches de liquidités se superposent, avec entrée, stop, deux objectifs, probabilités et une explication complète sans abréviation. Trois idées par semaine au maximum (voir « V5 » plus bas).
+- **Des idées de trade rares, envoyées sur Telegram** (V5) : achat ou vente sur une zone où plusieurs niveaux importants (VWAP, VWAP ancrés, profils de volume, de l'heure à l'année) et des poches de liquidités se superposent, avec entrée, stop, deux objectifs, probabilités et une explication complète sans abréviation. Cinq idées par semaine au maximum, réglable (voir « V5 » plus bas).
 - **Un espace de travail (menu à gauche)** : **Desk** (les graphiques), **Overview** (une carte par paire : prix, biais, niveaux essentiels, contexte, macro, dominance, Fear & Greed) et **Analyse** (biais, macro, dominance, plan de trade, lexique). Le menu se replie avec la flèche.
 - **Trois graphiques synchronisés** (zoom et curseur liés) : **Principal** (bougies + niveaux essentiels), **Liquidité** (uniquement les poches : carte de chaleur, balayages, vraies liquidations) et **VWAP · AVWAP · Volume Profile** (uniquement ces niveaux). Boutons de disposition en haut du Desk : 1 graphique, Liquidité seule, VP seul, 2 ou 3 graphiques ; chaque panneau peut être agrandi.
 - **Des volume profiles choisis par toi, selon ta timeframe** (voir « V4 » plus bas).
@@ -102,7 +102,7 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 ## Ce qui est nouveau en V5 : des idées de trade, pas du bruit
 
 ### Ce que c'est
-Une **idée de trade** est un achat ou une vente préparé à l'avance : où entrer, où sortir si l'idée est fausse (le **stop**), où prendre les gains (deux **objectifs**), pourquoi, et avec quelles probabilités. Le terminal t'en envoie sur Telegram **au plus 3 par semaine** (du lundi 00 h UTC au dimanche), et seulement si leur qualité dépasse un seuil. Il vaut mieux recevoir zéro idée qu'une idée moyenne.
+Une **idée de trade** est un achat ou une vente préparé à l'avance : où entrer, où sortir si l'idée est fausse (le **stop**), où prendre les gains (deux **objectifs**), pourquoi, et avec quelles probabilités. Le terminal t'en envoie sur Telegram **au plus 5 par semaine** (réglable) (du lundi 00 h UTC au dimanche), et seulement si leur qualité dépasse un seuil. Il vaut mieux recevoir zéro idée qu'une idée moyenne.
 
 ### Comment une idée est construite : trois piliers
 1. **La liquidité.** Poche de liquidations dans la zone ou **juste au-delà** (le stop est alors placé derrière elle), poche **déjà balayée** récemment (les ordres d'arrêt ont été pris : retournement fréquent), zone percée puis reprise, ou grosse poche en face comme objectif. **Sans liquidité liée à la zone (6 points sur 30 au minimum), pas d'idée.**
@@ -112,7 +112,7 @@ Une **idée de trade** est un achat ou une vente préparé à l'avance : où ent
 5. **Deux types d'idées.** *Rebond* : ordre à cours limité au bord de la zone. *Retournement après balayage* : la zone (ou une poche proche) vient d'être percée puis reprise ; l'entrée est immédiate et le stop passe sous la mèche.
 6. **Stop et objectifs.** Le stop est au-delà de la zone, de ses poches et de la mèche, jamais à moins de 1,5 amplitude d'une bougie d'une heure. L'objectif 1 est juste avant le prochain niveau important ou la prochaine grosse poche, à au moins 1,5 fois le risque ; l'objectif 2 est le suivant. Sans objectif réaliste, pas d'idée.
 7. **Score sur 100.** Liquidité (30), VWAP / VWAP ancrés et niveaux (30), macro et annonces (20), flux d'ordres (8), tendance de fond (7), biais et dominance (5).
-8. **Filtres.** Seuil de 60/100 (la dernière place de la semaine exige 68) ; au plus 3 idées par semaine ; une idée par symbole toutes les 12 h ; au plus 2 idées ouvertes par symbole.
+8. **Filtres.** Seuil de 60/100 (la dernière place de la semaine exige 68) ; au plus 5 idées par semaine (réglable) ; une idée par symbole toutes les 12 h ; au plus 2 idées ouvertes par symbole.
 
 ### Ce que tu reçois
 - **Par défaut, Telegram ne reçoit QUE les idées de trade** (et leur suivi). Plus de « nouvelle confluence », de poches balayées ni d'alertes d'annonces. Pour les retrouver : ⚙ section 3, « Idées de trade + alertes de zones, de poches et d'annonces » (`TERMINAL_ALERT_MODE=all`). Au démarrage, un seul message court confirme que le terminal tourne.
@@ -133,11 +133,11 @@ Une **idée de trade** est un achat ou une vente préparé à l'avance : où ent
 - **Lecture automatique par mots-clés** (français et anglais : haussier / baissier, long / short, breakout / breakdown, négations et doutes simples) des posts de moins de 48 h qui parlent de la paire, les plus récents pesant davantage. Elle peut se tromper : lis le post.
 - **Réglage** : ⚙ section 5, « Avis d'influenceurs sur X » : coche la case, mets les comptes (10 au maximum, séparés par des virgules) et ton **jeton d'accès X**. Le bouton « Tester le jeton » vérifie le tout.
 - **Jeton X** : il faut un compte développeur sur developer.x.com, une application, puis son « Bearer Token » (clé d'accès en lecture), collé dans ⚙ ou dans `TERMINAL_X_BEARER_TOKEN` du `.env`. Il n'est jamais renvoyé à l'interface ni envoyé ailleurs qu'à l'API de X.
-- **Coût** : l'API de X facture la lecture, environ **0,005 $ par post lu** selon les tarifs publiés début 2026 (à vérifier sur ton compte développeur ; sans crédits, l'avis est simplement indisponible). Pour limiter le coût, les posts ne sont lus **qu'au moment d'envoyer une idée** (3 par semaine au maximum) ou quand tu cliques sur « Voir l'avis des comptes X » dans une idée, puis gardés 30 minutes. Exemple : 8 comptes x 10 posts = 80 lectures, soit environ 0,40 $ par idée.
+- **Coût** : l'API de X facture la lecture, environ **0,005 $ par post lu** selon les tarifs publiés début 2026 (à vérifier sur ton compte développeur ; sans crédits, l'avis est simplement indisponible). Pour limiter le coût, les posts ne sont lus **qu'au moment d'envoyer une idée** (5 par semaine au maximum) ou quand tu cliques sur « Voir l'avis des comptes X » dans une idée, puis gardés 30 minutes. Exemple : 8 comptes x 10 posts = 80 lectures, soit environ 0,40 $ par idée.
 - Désactivé tant qu'il n'y a ni jeton ni compte. Une panne de X n'a aucun effet sur les idées.
 
 ### Réglages (⚙ sections 3 et 4, ou `.env`)
-`TERMINAL_SIGNALS` (1/0), `TERMINAL_ALERT_MODE` (ideas), `TERMINAL_SIGNAL_MIN_SCORE` (60), `TERMINAL_SIGNAL_MAX_WEEK` (3), `TERMINAL_SIGNAL_MIN_STRUCT` (7), `TERMINAL_SIGNAL_LEVERAGE` (10, pour le calcul de liquidation affiché), `TERMINAL_SIGNAL_VALID_HOURS` (48). Avis X : `TERMINAL_X_BEARER_TOKEN`, `TERMINAL_X_ACCOUNTS`, `TERMINAL_X_POSTS` (10), `TERMINAL_X_ON` (1).
+`TERMINAL_SIGNALS` (1/0), `TERMINAL_ALERT_MODE` (ideas), `TERMINAL_SIGNAL_MIN_SCORE` (60), `TERMINAL_SIGNAL_MAX_WEEK` (5), `TERMINAL_SIGNAL_MIN_STRUCT` (7), `TERMINAL_SIGNAL_LEVERAGE` (10, pour le calcul de liquidation affiché), `TERMINAL_SIGNAL_VALID_HOURS` (48). Avis X : `TERMINAL_X_BEARER_TOKEN`, `TERMINAL_X_ACCOUNTS`, `TERMINAL_X_POSTS` (10), `TERMINAL_X_ON` (1).
 
 ## Ce qui est nouveau en V4
 

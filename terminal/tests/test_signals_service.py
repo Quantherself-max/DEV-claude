@@ -44,7 +44,7 @@ class ServiceSignalsTests(unittest.TestCase):
         self.assertIsNotNone(m.stats)
         v = m.sigval
         self.assertTrue(v["ready"])
-        self.assertEqual(v["cap"], 3)
+        self.assertEqual(v["cap"], 5)
         self.assertEqual(len(v["tiers"]), 3)
         self.assertNotIn("rejeu BTCUSDT", self.svc.errors)
 
@@ -97,7 +97,7 @@ class ServiceSignalsTests(unittest.TestCase):
             self.app.trade_cycle(self.svc, ["BTCUSDT"])
         self.assertEqual(len(self.app.desk.trades), 1)
         self.assertEqual(len(notifier.sent), 1)
-        self.assertIn("Idée de trade 1/3", notifier.sent[0])
+        self.assertIn("Idée de trade 1/5", notifier.sent[0])
         tr = self.app.desk.trades[0]
         self.assertIn(tr["status"], ("pending", "active"))
         self.assertLess(self.svc.recent_m5("BTCUSDT", NOW - 3_600_000)[0][0], NOW)
