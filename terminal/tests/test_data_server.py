@@ -419,6 +419,50 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.get("/api/plan?symbol=BTCUSDT&side=up&tp=2&sl=1&lev=10&h=24")[0], 400)
         self.assertEqual(self.get("/api/plan?symbol=BTCUSDT&side=long&tp=2&sl=1&lev=10&h=5")[0], 400)
 
+    def test_volume_profiles_series_and_specs(self):
+        st = json.loads(self.get("/api/state?symbol=BTCUSDT&tf=1h")[1])
+        self.assertTrue(st["vp"])
+        self.assertEqual([p["id"] for p in st["vp"]], ["r30", "r90", "r180"])                 # « auto » suit la timeframe
+        st1d = json.loads(self.get("/api/state?symbol=BTCUSDT&tf=1d")[1])                   # fenetre large : les niveaux VP y sont tous
+        xv = [l for l in st1d["levels"] if l["kind"] == "xvp"]
+        self.assertTrue(xv)
+        self.assertTrue(all(l["group"].startswith("xVP:") for l in xv))
+        self.assertTrue(all(l["name"].split()[-1] in ("POC", "VAH", "VAL", "HVN") and l["name"].startswith("VP ") for l in xv))
+        st5 = json.loads(self.get("/api/state?symbol=BTCUSDT&tf=5m")[1])
+        self.assertEqual([p["id"] for p in st5["vp"]], ["r3", "r7", "r14"])
+        d = json.loads(self.get("/api/vp?symbol=BTCUSDT&tf=1d")[1])
+        self.assertTrue(d["ready"])
+        p0 = d["profiles"][0]
+        self.assertGreater(len(p0["rows"]), 20)
+        self.assertLessEqual(len(p0["rows"]), 100)
+        self.assertTrue(p0["val"] < p0["poc"] < p0["vah"])
+        # un profil personnalise : enregistre, applique, persiste, et rejete s'il est invalide
+        code, res = self.post("/api/vps", {"specs": [{"kind": "rolling", "days": 21}, {"kind": "period", "period": "month", "back": 1}]})
+        self.assertEqual(code, 200, res)
+        self.assertEqual([s["kind"] for s in res["specs"]], ["rolling", "period"])
+        st2 = json.loads(self.get("/api/state?symbol=BTCUSDT&tf=1h")[1])
+        self.assertEqual([p["id"] for p in st2["vp"]], ["r21", "month1"])
+        self.assertTrue(__import__("os").path.exists(__import__("os").path.join(self.cfg.data_dir, "vps.json")))
+        self.assertEqual(json.loads(self.get("/api/vps")[1])["specs"][0]["days"], 21)
+        self.assertEqual(self.post("/api/vps", {"specs": [{"kind": "rolling", "days": 0}]})[0], 400)
+        self.assertEqual(self.post("/api/vps", {"specs": [{"kind": "rolling", "days": 5}]}, token=False)[0], 403)   # jeton requis
+        self.assertEqual(self.post("/api/vps", {"specs": [{"kind": "auto"}], "anchors": ["2025-06-01"]})[0], 200)
+        # series VWAP / AVWAP
+        sr = json.loads(self.get("/api/series?symbol=BTCUSDT&tf=1h")[1])
+        self.assertTrue(sr["ready"])
+        n = len(sr["times"])
+        self.assertEqual(n, 400)
+        self.assertTrue(all(len(v) == n for v in sr["vwap"].values()))
+        self.assertTrue(any(v is not None for v in sr["vwap"]["W"]))
+        labels = [a["label"] for a in sr["avwap"]]
+        self.assertIn("AVWAP 2025-06-01", labels)                                              # l'ancrage ajoute est present
+        self.assertTrue(any(l.startswith("AVWAP 2024") for l in labels))                      # + celui de la configuration
+        s1d = json.loads(self.get("/api/series?symbol=BTCUSDT&tf=1d")[1])
+        self.assertNotIn("D", s1d["vwap"])
+        self.assertEqual(self.get("/api/series?symbol=BTCUSDT&tf=3m")[0], 404)
+        self.assertEqual(self.get("/api/vp?symbol=XXX&tf=1h")[0], 404)
+        self.post("/api/vps", {"specs": [{"kind": "auto"}], "anchors": []})                    # remet les valeurs par defaut
+
     def test_heat_payload_and_gzip(self):
         import base64, gzip as gz
         req = urllib.request.Request(self.url + "/api/heat?symbol=BTCUSDT", headers={"Accept-Encoding": "gzip"})

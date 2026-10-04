@@ -1,10 +1,12 @@
 """Service de marche : relie les donnees, les moteurs (niveaux, poches, confluences, probabilites) et
 fabrique l'etat JSON envoye a l'interface et aux alertes."""
 import base64
+import json
 import math
 import threading
 import time
 from bisect import bisect_right
+from datetime import datetime, timezone
 from pathlib import Path
 
 from config import Config
@@ -14,6 +16,7 @@ from engine import bias as bias_engine
 from engine import dominance as dominance_engine
 from engine import macro as macro_engine
 from engine import synth as synth_engine
+from engine import vpx, vwapx
 from engine.confluence import Level, find_zones
 from engine.liquidity import LiqEngine
 from engine.periods import AnchoredVWAP, KINDS, NakedPocs, PeriodTracker
@@ -24,6 +27,8 @@ NAMES = {"D": "d", "W": "w", "M": "m", "Y": "y"}
 PREV_HL = {"D": ("PDH", "PDL"), "W": ("PWH", "PWL"), "M": ("PMH", "PML"), "Y": ("PYH", "PYL")}
 BASELINE = "Hasard (témoin)"
 SWEEP_FAMILY = "Poches balayées (OI)"
+HOUR_MS = 3_600_000
+AUTO_NOTE = {tf: list(v) for tf, v in vpx.AUTO_BY_TF.items()}
 
 
 def family_of(lv: Level):
@@ -68,6 +73,9 @@ class Market:
         self.stats = None            # probabilites mesurees (calculees en tache de fond)
         self.reach = None
         self.stats_at = 0.0
+        self.vp_cfg = {"specs": [{"kind": "auto"}], "anchors": []}      # volume profiles choisis + ancrages VWAP (partages)
+        self._vp_cache: dict = {}
+        self._ser_cache: dict = {}
         self.bias = None             # biais statistique valide hors echantillon (calcule en tache de fond)
         self.bias_fund: list = []
         self._atr_cache = (0, [])
@@ -292,6 +300,12 @@ class Market:
             if v > 0 and abs(v - price) <= win:
                 levels.append(Level(f"ROUND|{v:g}", f"Rond {v:,.0f}".replace(",", " ") if v >= 1000 else f"Rond {v:g}",
                                     float(v), "ROUND", "round"))
+        vps = self.vp_profiles(tf)
+        for pf in vps:                                           # volume profiles supplementaires = sources de confluence
+            gp = f"xVP:{pf['id']}"
+            for nm, val in (("POC", pf["poc"]), ("VAH", pf["vah"]), ("VAL", pf["val"])) + tuple(("HVN", h) for h in pf["hvn"][:1]):
+                if val and abs(val - price) <= win * 1.5:
+                    levels.append(Level(f"{gp}|{nm}", f"{pf['label']} {nm}", float(val), gp, "xvp", {"vp": pf["id"]}))
         for i, p in enumerate(liq["pools"]):
             pr = self._prob_for("above" if p["price"] > price else "below", p["price"] - price, 1)
             p["reach"] = pr["reach"] if pr else None
@@ -361,8 +375,56 @@ class Market:
             "liquidity": {"pools": liq["pools"], "total": liq["total"], "sumLong": liq["sum_long"],
                           "sumShort": liq["sum_short"], "steps": self.liq.steps, "oiPoints": len(t.oi)},
             "sweeps": sweeps, "context": self.context(),
+            "vp": [{k: pf[k] for k in ("id", "label", "kind", "start", "end", "poc", "vah", "val", "hvn", "bars")} for pf in vps],
             "stats": self.stats_summary(),
         }
+
+    # ---------- volume profiles choisis et series VWAP ----------
+    def vp_profiles(self, tf: str):
+        now = self.source.now_ms()
+        wins = vpx.resolve(self.vp_cfg["specs"], tf, now)
+        h1, m5 = self.store.closed_h1(), self.store.m5
+        out = []
+        for w in wins:
+            use_m5 = bool(m5) and (w["end"] - w["start"]) <= 5 * DAY and w["start"] >= m5[0].t
+            key = (w["id"], w["start"], w["end"], len(h1), len(m5) // 12 if use_m5 else 0)
+            if key not in self._vp_cache:
+                if len(self._vp_cache) > 120:
+                    self._vp_cache.clear()
+                self._vp_cache[key] = vpx.build(m5 if use_m5 else h1, w["start"], w["end"])
+            res = self._vp_cache[key]
+            if res:
+                out.append({**w, **res})
+        return out
+
+    def anchors(self):
+        now = self.source.now_ms()
+        seen, out = set(), []
+        for lab, ms in [(f"AVWAP {self.cfg.anchor_date}", self.cfg.anchor_ms)] + \
+                [(f"AVWAP {d}", int(datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)) for d in self.vp_cfg["anchors"]] + \
+                vwapx.auto_anchors(now):
+            if ms not in seen and ms < now:
+                seen.add(ms)
+                out.append((lab, ms))
+        return out
+
+    def vwap_series(self, tf: str):
+        cs = self.chart_candles(tf)[-400:]
+        if not cs:
+            return {"ready": False}
+        h1 = self.store.h1
+        anchors = self.anchors()
+        key = (tf, len(h1), cs[-1].t, tuple(anchors), int(time.time() // 10))
+        if key in self._ser_cache:
+            return self._ser_cache[key]
+        t0 = min([a for _, a in anchors] + [vwapx._start_of("Y", cs[0].t)])
+        sub = [k for k in h1 if k.t >= t0 - HOUR_MS]
+        res = vwapx.series(sub, [k.t for k in cs], INTERVAL_MS[tf], anchors)
+        res.update(ready=True, symbol=self.symbol, tf=tf, times=[k.t // 1000 for k in cs])
+        if len(self._ser_cache) > 6:
+            self._ser_cache.clear()
+        self._ser_cache[key] = res
+        return res
 
     def heat(self, hours: float | None = None) -> dict:
         """Carte de chaleur des poches de liquidation estimees (une colonne par heure, bandes de 0,15 %)."""
@@ -418,11 +480,69 @@ class Service:
         self.feed = None
         self.ext = None                # donnees externes : calendrier, actifs de reference, dominance (V3)
         self._ext_running = False
+        self.vp_state = {"specs": [{"kind": "auto"}], "anchors": []}
         self._an_cache: dict = {}
         self._plan_cache: dict = {}
+        self.load_vp()
 
     def attach_ext(self, hub) -> None:
         self.ext = hub
+
+    # ---------- volume profiles choisis (sauvegardes sur le disque) ----------
+    @property
+    def vp_file(self) -> Path:
+        return Path(self.cfg.data_dir) / "vps.json"
+
+    def load_vp(self) -> None:
+        try:
+            d = json.loads(self.vp_file.read_text(encoding="utf-8"))
+            cfg = {"specs": vpx.normalize_specs(d.get("specs")), "anchors": vpx.normalize_anchors(d.get("anchors"))}
+        except Exception:
+            cfg = {"specs": [{"kind": "auto"}], "anchors": []}
+        self._apply_vp(cfg)
+
+    def _apply_vp(self, cfg) -> None:
+        for m in self.markets.values():
+            m.vp_cfg = cfg
+            m._vp_cache.clear()
+            m._ser_cache.clear()
+        self.vp_state = cfg
+        self._an_cache.clear()
+
+    def set_vp(self, specs, anchors) -> dict:
+        cfg = {"specs": vpx.normalize_specs(specs), "anchors": vpx.normalize_anchors(anchors)}
+        try:
+            self.vp_file.parent.mkdir(parents=True, exist_ok=True)
+            self.vp_file.write_text(json.dumps(cfg), encoding="utf-8")
+        except OSError:
+            pass
+        with self.lock:
+            self._apply_vp(cfg)
+        return cfg
+
+    def get_vp(self, symbol: str, tf: str) -> dict:
+        m = self.markets.get(symbol)
+        if m is None:
+            raise KeyError(f"symbole inconnu : {symbol}")
+        if tf not in TFS:
+            raise KeyError(f"timeframe inconnu : {tf}")
+        if not m.ready:
+            return {"ready": False}
+        with self.lock:
+            profs = m.vp_profiles(tf)
+        return {"ready": True, "symbol": symbol, "tf": tf, "specs": self.vp_state["specs"], "anchors": self.vp_state["anchors"],
+                "auto": AUTO_NOTE, "profiles": profs}
+
+    def get_series(self, symbol: str, tf: str) -> dict:
+        m = self.markets.get(symbol)
+        if m is None:
+            raise KeyError(f"symbole inconnu : {symbol}")
+        if tf not in TFS:
+            raise KeyError(f"timeframe inconnu : {tf}")
+        if not m.ready:
+            return {"ready": False}
+        with self.lock:
+            return m.vwap_series(tf)
 
     def schedule_external(self, wait: bool = False) -> None:
         if not self.ext or self._ext_running:

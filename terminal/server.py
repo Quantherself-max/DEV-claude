@@ -237,6 +237,14 @@ def make_handler(app: App):
                                        "historyYears": c.history_years,
                                        "csrf": app.token, "wsBase": c.binance_ws if c.source == "binance" else "",
                                        "cbWs": c.coinbase_ws if c.source == "binance" else ""})
+                if u.path == "/api/vp":
+                    sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
+                    return self._json(app.service.get_vp(sym, (q.get("tf") or ["1h"])[0]))
+                if u.path == "/api/vps":
+                    return self._json({**app.service.vp_state, "auto": {tf: list(v) for tf, v in __import__("engine.vpx", fromlist=["x"]).AUTO_BY_TF.items()}})
+                if u.path == "/api/series":
+                    sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
+                    return self._json(app.service.get_series(sym, (q.get("tf") or ["1h"])[0]))
                 if u.path == "/api/analysis":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.service.analysis(sym))
@@ -287,6 +295,8 @@ def make_handler(app: App):
                 path = urlparse(self.path).path
                 if path == "/api/settings":
                     return self._json(app.save_settings(body))
+                if path == "/api/vps":
+                    return self._json({**app.service.set_vp(body.get("specs"), body.get("anchors", app.service.vp_state["anchors"])), "ok": True})
                 if path == "/api/test/binance":
                     sym = app.cfg.symbols[0] if app.cfg.symbols else "BTCUSDT"
                     res = BinanceSource(retries=1, timeout=12).selftest(sym)
