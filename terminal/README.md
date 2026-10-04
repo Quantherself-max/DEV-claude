@@ -1,7 +1,8 @@
-# Liq Terminal (V4)
+# Liq Terminal (V5)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Des idées de trade rares, envoyées sur Telegram** (V5) : achat ou vente sur une zone où plusieurs niveaux importants (VWAP, VWAP ancrés, profils de volume, de l'heure à l'année) et des poches de liquidités se superposent, avec entrée, stop, deux objectifs, probabilités et une explication complète sans abréviation. Trois idées par semaine au maximum (voir « V5 » plus bas).
 - **Un espace de travail (menu à gauche)** : **Desk** (les graphiques), **Overview** (une carte par paire : prix, biais, niveaux essentiels, contexte, macro, dominance, Fear & Greed) et **Analyse** (biais, macro, dominance, plan de trade, lexique). Le menu se replie avec la flèche.
 - **Trois graphiques synchronisés** (zoom et curseur liés) : **Principal** (bougies + niveaux essentiels), **Liquidité** (uniquement les poches : carte de chaleur, balayages, vraies liquidations) et **VWAP · AVWAP · Volume Profile** (uniquement ces niveaux). Boutons de disposition en haut du Desk : 1 graphique, Liquidité seule, VP seul, 2 ou 3 graphiques ; chaque panneau peut être agrandi.
 - **Des volume profiles choisis par toi, selon ta timeframe** (voir « V4 » plus bas).
@@ -98,6 +99,34 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V5 : des idées de trade, pas du bruit
+
+### Ce que c'est
+Une **idée de trade** est un achat ou une vente préparé à l'avance : où entrer, où sortir si l'idée est fausse (le **stop**), où prendre les gains (deux **objectifs**), pourquoi, et avec quelles probabilités. Le terminal t'en envoie sur Telegram **au plus 3 par semaine** (du lundi 00 h UTC au dimanche), et seulement si leur qualité dépasse un seuil. Il vaut mieux recevoir zéro idée qu'une idée moyenne.
+
+### Comment une idée est construite
+1. **Poids des niveaux selon l'échelle de temps.** Jour = 1, semaine = 2, mois = 3, année = 4. Le VWAP (prix moyen pondéré par les volumes), les VWAP ancrés et les profils de volume sont bonifiés (x1,3). Un VWAP annuel pèse donc plus de quatre fois un VWAP du jour. Les nombres ronds ne comptent presque pas. La **qualité des niveaux** d'une zone est la somme des poids de ses sources distinctes (7 au minimum, au moins 3 sources, dont 2 d'échelle semaine ou plus et 1 VWAP / VWAP ancré / profil de volume).
+2. **VWAP ancrés automatiques.** En plus de ta date d'ancrage : le plus bas et le plus haut de l'année et des 3 derniers mois, le début de l'année et du mois précédents. Ils entrent dans les confluences, les alertes et le graphique VWAP.
+3. **Deux types d'idées.** *Rebond* : ordre à cours limité au bord de la zone. *Retournement après balayage* : la zone (ou une poche de liquidations proche) vient d'être percée puis reprise ; les ordres d'arrêt ont été pris, l'entrée est immédiate et le stop passe sous la mèche.
+4. **Stop et objectifs.** Le stop est au-delà de la zone et de ses poches, jamais à moins de 1,5 amplitude d'une bougie d'une heure. L'objectif 1 est juste avant le prochain niveau important ou la prochaine grosse poche, à au moins 1,5 fois le risque ; l'objectif 2 est le suivant. Sans objectif réaliste, pas d'idée.
+5. **Score sur 100.** Niveaux superposés (40), liquidité (20 : poche dans la zone, poche déjà balayée, grosse poche en face comme objectif), flux d'ordres (12), macro et annonces (12), tendance de fond selon les VWAP semaine / mois / année (10), biais et dominance (6).
+6. **Filtres.** Seuil de 65/100 (la dernière place de la semaine exige 73) ; au plus 3 idées par semaine ; une idée par symbole toutes les 12 h ; au plus 2 idées ouvertes par symbole ; **annonce majeure dans moins de 3 h ou juste publiée : l'idée attend**.
+
+### Ce que tu reçois
+- Un message Telegram en cinq parties : **quoi faire**, **pourquoi ici** (chaque niveau expliqué avec son échelle de temps), **contexte** (flux, macro, tendance), **annonces économiques** (consensus et réaction passée), **probabilités**, **prudence** (calcul de liquidation avec ton levier). Aucune abréviation : VWAP est écrit « prix moyen pondéré par les volumes », POC « point de contrôle », etc.
+- Le suivi de l'idée : ordre exécuté, objectif 1 atteint (avec le conseil de remonter le stop à l'entrée), objectif 2, stop touché, ordre jamais exécuté / expiré.
+- Dans le terminal : onglet **Idées** du panneau de droite (cartes avec « Tout comprendre », détail du score, zones écartées et pourquoi, validation historique, journal), le **plan tracé sur le graphique principal** (entrée, stop, objectifs ; case « Plan »), une pastille 🎯 dans l'en-tête, la page Overview.
+
+### Honnêteté : ce qui est mesuré et ce qui ne l'est pas
+- **Validation historique (rejeu).** Le terminal rejoue la **structure des niveaux** (VWAP jour à année et bandes, ouvertures, plus hauts / bas précédents, profils de volume, POC nus) sur tout l'historique, avec les mêmes règles qu'en direct, et compare à des **entrées au hasard de même forme** (même distance, même stop, même objectif). Il écrit le verdict : « mieux que le hasard », « pas mieux que le hasard » ou « trop peu de cas ». Sur des prix sans mémoire, il ne trouve aucun avantage : c'est le contrôle de sa propre honnêteté. Sur de vrais marchés liquides, « pas mieux que le hasard » est un résultat fréquent : l'idée reste un **scénario**, pas un avantage prouvé.
+- **Non rejoué** : les poches de liquidation (29 jours d'historique d'Open Interest seulement), les annonces et le flux d'ordres. Ils pèsent dans le score en direct, mais leur effet n'est pas mesuré sur 7 ans.
+- **Probabilités affichées** : fréquence historique d'exécution de l'ordre limite selon la distance, fréquence d'atteindre l'objectif 1 avant le stop dans les 72 h pour cette forme de trade (n'importe quand), et rebond historique sur les zones de ce type face au hasard.
+- **Le journal** garde ce qui s'est réellement passé après chaque idée envoyée (`data_local/trades.json`). C'est le test le plus honnête, il se remplit avec le temps. Résultat cumulé en « fois le risque », en supposant que la moitié est prise à l'objectif 1.
+- **Fréquence réelle** : le rejeu donne environ 2 idées par semaine (structure seule). En direct, le score (poches, flux, annonces, tendance) ne laisse passer qu'une partie d'entre elles ; la fréquence réelle ne se connaît qu'à l'usage. Peu d'idées ? Baisse la qualité minimale dans ⚙ (60 par exemple). Trop ? Monte-la.
+
+### Réglages (⚙ section 4, ou `.env`)
+`TERMINAL_SIGNALS` (1/0), `TERMINAL_SIGNAL_MIN_SCORE` (65), `TERMINAL_SIGNAL_MAX_WEEK` (3), `TERMINAL_SIGNAL_MIN_STRUCT` (7), `TERMINAL_SIGNAL_LEVERAGE` (10, pour le calcul de liquidation affiché), `TERMINAL_SIGNAL_VALID_HOURS` (48).
+
 ## Ce qui est nouveau en V4
 
 ### Workspace et graphiques séparés
@@ -190,13 +219,14 @@ Lancer-Terminal-*   lanceurs à double-cliquer
 config.py           configuration (.env) et écriture des réglages
 engine/             calculs : profils de volume (auto et choisis), séries VWAP / AVWAP, périodes, POC nus, poches de
                     liquidation, confluences, ATR, statistiques (rebond / cassure, atteinte, balayages, Wilson), macro,
-                    dominance, biais validé en avançant, synthèse
+                    dominance, biais validé en avançant, synthèse ; signals.py (idées de trade : poids, zones, stop,
+                    objectifs, score, textes) et sigtest.py (rejeu historique face au hasard)
 data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase)
-alerts/             règles d'alerte, envoi Telegram
+alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées)
 service.py          relie les données et les moteurs, fabrique l'état JSON
 server.py           serveur local : API, réglages, sécurité
 web/                interface : index.html + style.css ; app.js (Desk, état, alertes), panels.js (les trois graphiques),
-                    overview.js (vue d'ensemble), analysis.js et charts.js (analyse, graphiques SVG) ;
+                    overview.js (vue d'ensemble), signals.js (idées de trade), analysis.js et charts.js (analyse, graphiques SVG) ;
                     TradingView Lightweight Charts (vendor/)
 tests/              tests automatiques (plus de cent)
 ```
@@ -216,4 +246,5 @@ tests/              tests automatiques (plus de cent)
 - **Flux temps réel.** Les adresses WebSocket de Binance (`/market`) et de Coinbase ont été vérifiées dans leur documentation mais pas testées en conditions réelles depuis cet environnement. Si le badge reste sur ● PRIX ~1 s, le terminal reste utilisable.
 - **Historique long.** Il est téléchargé au premier lancement (quelques minutes) puis mis en cache. L'Open Interest et les bougies 5 min restent limités à ~29 jours par Binance : les poches de liquidation et la carte de chaleur ne peuvent pas être calculées plus loin. Les profils de volume, les VWAP et les statistiques, eux, utilisent tout l'historique 1h.
 - **Volume profiles.** Ils sont construits à partir des bougies 1h (volume réparti sur la plage haut-bas de chaque bougie), pas des transactions : la résolution est inférieure à celle d'un profil TradingView calculé sur des bougies 1 minute.
+- **Idées de trade.** Ce sont des scénarios construits à partir de niveaux, de liquidité estimée, de flux et de macro, pas des conseils financiers. Le rejeu prouve (ou non) la valeur de la structure seule. Les ordres sont supposés exécutés au prix limite, sans frais ni glissement. Le terminal doit tourner pour envoyer les idées et suivre leurs ordres.
 - **À venir.** Flux ETF et on-chain si tu en as besoin.

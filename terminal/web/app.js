@@ -63,7 +63,7 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, sel: n
   liqOpts: {hours: 168, pools: true, sweeps: true, real: true, profile: true},
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
   layout: window.innerWidth >= 1500 ? '3' : window.innerWidth >= 1100 ? '2' : '1', prevLayout: null, sideOpen: true, sbCollapsed: false,
-  page: 'desk', sub: 'synth'};
+  page: 'desk', sub: 'synth', planOn: true, planKey: null, plan: null, planSig: '', sig: null};
 async function api(path, body) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
   const r = await fetch(path, opt);
@@ -122,7 +122,7 @@ const panels = [];
 const LAYOUTS = {'1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp']};
 const needs = k => LAYOUTS[st.layout].includes(k) && st.page === 'desk';
 function savePrefs() {
-  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed})); } catch (e) { /* stockage indisponible */ }
+  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn})); } catch (e) { /* stockage indisponible */ }
 }
 function loadPrefs() {
   try {
@@ -133,6 +133,7 @@ function loadPrefs() {
     if (LAYOUTS[p.layout]) st.layout = p.layout;
     if (typeof p.side === 'boolean') st.sideOpen = p.side;
     if (typeof p.sb === 'boolean') st.sbCollapsed = p.sb;
+    if (typeof p.plan === 'boolean') st.planOn = p.plan;
   } catch (e) { /* preferences illisibles : valeurs par defaut */ }
 }
 function syncAllTools() { panels.forEach(p => p.syncTools()); }
@@ -596,13 +597,13 @@ async function poll() {
   } catch (e) { console.error(e); $('#status').textContent = 'erreur d\'affichage : ' + e.message; $('#status').className = 'bad'; }
 }
 function resetSymbolData() {
-  st.sel = null; st.data = null; st.heat = null; st.liqs = null; st.an = null; st.series = null; st.vpd = null; st.key = null;
+  st.sel = null; st.data = null; st.heat = null; st.liqs = null; st.an = null; st.series = null; st.vpd = null; st.key = null; st.sig = null; st.planKey = null; st.planSig = ''; st.plan = null;
 }
 function buildControls(cfg) {
   st.cfg = cfg;
   if (!cfg.symbols.includes(st.symbol)) st.symbol = cfg.symbols[0];
   const sel = $('#symbol'); sel.innerHTML = cfg.symbols.map(s => `<option${s === st.symbol ? ' selected' : ''}>${s}</option>`).join('');
-  sel.onchange = () => { st.symbol = sel.value; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); pollOverview(); };
+  sel.onchange = () => { st.symbol = sel.value; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); pollOverview(); pollSignals(); };
   const box = $('#tfs');
   box.innerHTML = cfg.tfs.map(t => `<button data-tf="${t}" class="${t === st.tf ? 'on' : ''}">${t}</button>`).join('');
   box.onclick = e => { const b = e.target.closest('button'); if (!b) return; st.tf = b.dataset.tf; st.sel = null; st.data = null; st.series = null; st.vpd = null;
@@ -620,6 +621,7 @@ function showPane(name) {
   try { localStorage.setItem('liqTab', name); } catch (err) { /* stockage indisponible */ }
   if (name === 'liquidity') { pollLiqs(); renderLqReal(); }
   if (name === 'vp') pollVP();
+  if (name === 'signals') { pollSignals(); if (st.sig) Signals.render(st.sig); }
 }
 $('#tabs').onclick = e => { const b = e.target.closest('button[data-tab]'); if (b) showPane(b.dataset.tab); };
 $('#stats').addEventListener('click', e => {
@@ -644,7 +646,8 @@ function navigate(page, sub) {
 }
 function routeFromHash() {
   const m = /^#\/([a-z]+)(?:\/([a-z]+))?/.exec(location.hash);
-  if (m) navigate(m[1], m[2]);
+  if (m && m[1] === 'signals') { st.sideOpen = true; navigate('desk'); applyLayout(); showPane('signals'); document.querySelectorAll('#sidebar a[data-nav]').forEach(a => a.classList.toggle('on', a.dataset.nav === 'signals')); }
+  else if (m) navigate(m[1], m[2]);
   else { let saved = null; try { saved = localStorage.getItem('liqPage'); } catch (e) { /* rien */ } const q = (saved || 'desk').split('/'); navigate(q[0], q[1]); }
 }
 window.addEventListener('hashchange', routeFromHash);
@@ -787,6 +790,50 @@ function riskChip() {
 }
 $('#riskChip').onclick = () => { const b = document.querySelector('#anTabs button[data-an="macro"]'); if (b) { b.click(); $('#analysis').scrollIntoView({behavior: 'smooth'}); } };
 
+// ---------- idees de trade ----------
+let sigTimer = null;
+function activePlan() {
+  const sg = st.sig && st.sig.symbols && st.sig.symbols[st.symbol];
+  if (!st.planOn || !sg || !sg.ready) return null;
+  let p = st.planKey ? sg.ideas.find(i => i.key === st.planKey) : sg.ideas.find(i => i.eligible);
+  if (!p && !st.planKey) {                                           // pas d'idee : on suit l'idee envoyee encore ouverte
+    const t = st.sig.desk.trades.find(x => x.symbol === st.symbol && ['pending', 'active', 'tp1'].includes(x.status));
+    if (t) p = {key: t.id, side: t.side, entry: t.entry, stop: t.stop, tp1: t.tp1, tp2: t.tp2, score: t.score, kind: t.kind};
+  }
+  return p ? {symbol: st.symbol, side: p.side, entry: p.entry, stop: p.stop, tp1: p.tp1, tp2: p.tp2, score: p.score, key: p.key, kind: p.kind} : null;
+}
+function updatePlan() {
+  const p = activePlan(), k = p ? [p.key, p.entry, p.stop, p.tp1, p.tp2].join() : '';
+  if (k !== st.planSig) { st.planSig = k; st.plan = p; st.version++; panels.forEach(x => x.sig = ''); }
+}
+function sigChip() {
+  const el = $('#sigChip'), sg = st.sig && st.sig.symbols && st.sig.symbols[st.symbol];
+  const best = sg && sg.ready && sg.ideas.find(i => i.eligible);
+  const open = st.sig && st.sig.desk && st.sig.desk.trades.find(t => t.symbol === st.symbol && ['pending', 'active', 'tp1'].includes(t.status));
+  if (!best && !open) { el.hidden = true; return; }
+  el.hidden = false;
+  const i = best || open, buy = i.side === 'long';
+  el.className = 'badge sig ' + (buy ? 'up' : 'dn');
+  el.textContent = best ? `🎯 ${buy ? 'ACHAT' : 'VENTE'} ${Math.round(best.score)}/100` : `🎯 ${buy ? 'Achat' : 'Vente'} en cours`;
+  el.title = best ? `Idée de trade ${buy ? "d'achat" : 'de vente'} : entrée ${fmtP(best.entry)}, stop ${fmtP(best.stop)}. Clique pour tout comprendre.` : 'Idée envoyée encore ouverte. Clique pour la suivre.';
+}
+$('#sigChip').onclick = () => { location.hash = '#/signals'; };
+async function pollSignals() {
+  clearTimeout(sigTimer);
+  sigTimer = setTimeout(pollSignals, 6000);
+  if (!st.symbol) return;
+  try {
+    const sym = st.symbol, r = await api(`/api/signals?symbol=${sym}`);
+    if (sym !== st.symbol) return;
+    st.sig = r; sigChip(); updatePlan();
+    if (st.page === 'desk' && st.tab === 'signals') Signals.render(r);
+  } catch (e) { /* le prochain passage reessaiera */ }
+}
+function setPlan(key) {
+  if (key === 'off') st.planOn = false; else { st.planOn = true; st.planKey = key; }
+  savePrefs(); syncAllTools(); updatePlan();
+}
+
 // ---------- reglages ----------
 const M = $('#modal');
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, 4500); }
@@ -808,7 +855,9 @@ async function openSettings() {
     $('#aTf').innerHTML = (st.cfg ? st.cfg.tfs : ['1h']).map(t => `<option${t === s.alertTf ? ' selected' : ''}>${t}</option>`).join('');
     $('#aCool').value = s.alertCooldownHours;
     $('#aSweep').checked = !!s.alertSweep;
+    $('#aZones').checked = s.alertZones !== false;
     $('#aMacro').checked = s.alertMacro !== false;
+    $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sLev').value = s.signalLeverage;
   } catch (e) { $('#saveRes').textContent = 'Erreur : ' + e.message; }
 }
 const closeSettings = () => { M.hidden = true; };
@@ -842,7 +891,8 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
   const src = (document.querySelector('input[name=source]:checked') || {}).value;
   const before = st.cfg ? st.cfg.source + '|' + st.cfg.symbols.join(',') + '|' + (st.cfg.historyYears || 0) : '';
   const body = {source: src, symbols: $('#symbols').value.split(/[\s,;]+/).filter(Boolean), telegramChatId: $('#tgChat').value.trim(),
-    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMacro: $('#aMacro').checked, historyYears: +$('#histYears').value};
+    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, historyYears: +$('#histYears').value,
+    signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalLeverage: +$('#sLev').value};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();
   await api('/api/settings', body);
   buildControls(await api('/api/config'));
@@ -850,7 +900,7 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
   closeSettings();
   if (reloaded) { st.data = null; st.key = null; st.sel = null; }
   toast(reloaded ? (st.cfg.source === 'binance' ? 'Enregistré. Chargement des vraies données Binance (1 à 2 min)…' : 'Enregistré. Rechargement des données…') : 'Réglages enregistrés.');
-  poll(); renderAlerts();
+  poll(); renderAlerts(); pollSignals();
 });
 
 
@@ -876,20 +926,21 @@ function openSymbol(sym, page) {
   let cfg;
   try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
   window.LT = {st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
-    shownPools, levelColor, livePrice, placeLabels, usdFmt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol};
+    shownPools, levelColor, livePrice, placeLabels, usdFmt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
   Overview.init(window.LT);
+  Signals.init(window.LT);
   createPanels();
   buildControls(cfg);
   Analysis.init(window.LT);
   renderLqLegend(); applySidebar(); applyLayout();
-  try { const t = localStorage.getItem('liqTab'); showPane(['levels', 'context', 'stats', 'liquidity', 'vp', 'alerts'].includes(t) ? t : 'levels'); } catch (err) { showPane('levels'); }
+  try { const t = localStorage.getItem('liqTab'); showPane(['levels', 'signals', 'context', 'stats', 'liquidity', 'vp', 'alerts'].includes(t) ? t : 'levels'); } catch (err) { showPane('levels'); }
   $('#navSettings').onclick = e => { e.preventDefault(); openSettings(); };
   routeFromHash();
-  poll(); pollAnalysis(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop);
+  poll(); pollAnalysis(); pollSignals(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop);
   setInterval(() => {
     livePoll(); liveBadge(); cbRender(); riskChip();
     const lb = $('#liveBadge'), sb = $('#sbLive'); sb.hidden = lb.hidden; sb.textContent = lb.textContent; sb.className = lb.className;
   }, 1000);
-  window.__term = {st, panels, select, openSettings, live, cb, Analysis, navigate, maximize, applyLayout};      // pour les tests automatiques
+  window.__term = {st, panels, select, openSettings, live, cb, Analysis, Signals, navigate, maximize, applyLayout, pollSignals};      // pour les tests automatiques
 })();
 })();

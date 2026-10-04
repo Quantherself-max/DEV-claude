@@ -41,7 +41,8 @@ class Panel {
     if (kind === 'main') return `<label title="Seulement les 2 zones les plus importantes de chaque côté du prix"><input type="radio" name="mode" value="ess"> Essentiel</label>` +
       `<label title="Toutes les zones de confluence proches"><input type="radio" name="mode" value="conf"> Confluences</label>` +
       `<label title="Tous les niveaux de la fenêtre"><input type="radio" name="mode" value="all"> Tous</label>` +
-      `<label><input type="checkbox" data-opt="pools"> Poches</label>`;
+      `<label><input type="checkbox" data-opt="pools"> Poches</label>` +
+      `<label title="Entrée, stop et objectifs de l'idée de trade du moment"><input type="checkbox" data-opt="plan"> Plan</label>`;
     if (kind === 'liq') return `<span class="seg mini" data-hours><button data-h="24">24 h</button><button data-h="72">3 j</button><button data-h="168">7 j</button><button data-h="0">29 j</button></span>` +
       `<label><input type="checkbox" data-lq="pools"> Poches</label><label><input type="checkbox" data-lq="sweeps"> Balayages</label>` +
       `<label><input type="checkbox" data-lq="real"> Réel</label><label><input type="checkbox" data-lq="profile"> Profil</label>`;
@@ -56,6 +57,7 @@ class Panel {
     const st = LT.st, h = this.host;
     h.querySelectorAll('input[name=mode]').forEach(r => r.checked = r.value === st.mode);
     h.querySelectorAll('[data-opt=pools]').forEach(c => c.checked = st.pools);
+    h.querySelectorAll('[data-opt=plan]').forEach(c => c.checked = st.planOn);
     h.querySelectorAll('[data-lq]').forEach(c => c.checked = !!st.liqOpts[c.dataset.lq]);
     h.querySelectorAll('[data-vp]').forEach(c => c.checked = !!st.vpOpts[c.dataset.vp]);
     h.querySelectorAll('[data-hours] button').forEach(b => b.classList.toggle('on', +b.dataset.h === st.liqOpts.hours));
@@ -68,6 +70,7 @@ class Panel {
     if (ev.type !== 'change') return;
     if (t.name === 'mode') { st.mode = t.value; }
     else if (t.dataset.opt === 'pools') { st.pools = t.checked; }
+    else if (t.dataset.opt === 'plan') { st.planOn = t.checked; LT.updatePlan(); }
     else if (t.dataset.lq) { st.liqOpts[t.dataset.lq] = t.checked; }
     else if (t.dataset.vp) { st.vpOpts[t.dataset.vp] = t.checked; this.stamp = ''; }
     else return;
@@ -81,7 +84,11 @@ class Panel {
     const r = orig(), d = LT.st.data;
     if (!r || !d) return r;
     let ex = [];
-    if (this.kind === 'main') ex = d.liquidity.pools.map(p => p.price).concat(LT.shownZones(d).map(z => z.mid));
+    if (this.kind === 'main') {
+      ex = d.liquidity.pools.map(p => p.price).concat(LT.shownZones(d).map(z => z.mid));
+      const pl = LT.st.plan;
+      if (pl && pl.symbol === LT.st.symbol) ex = ex.concat([pl.entry, pl.stop, pl.tp1].concat(pl.tp2 != null ? [pl.tp2] : []));
+    }
     else if (this.kind === 'liq') ex = d.liquidity.pools.map(p => p.price);
     if (ex.length) {
       r.priceRange.minValue = Math.min(r.priceRange.minValue, ...ex);
@@ -253,6 +260,29 @@ class Panel {
       this.tag(x, it.ly, it.text, it.magnet ? '#0b0e11' : '#fff', rgba(it.col, it.magnet ? 0.92 : 0.55), it.magnet);
     });
   }
+  drawPlan(L, h) {
+    const p = LT.st.plan;
+    if (!p || p.symbol !== LT.st.symbol) return;
+    const ctx = this.ctx, plotW = L.plotW, Y = v => this.series.priceToCoordinate(v);
+    const ye = Y(p.entry), ys = Y(p.stop), y1 = Y(p.tp1), y2 = p.tp2 != null ? Y(p.tp2) : null;
+    if (ye == null || ys == null || y1 == null) return;
+    const x0 = Math.max(40, plotW * 0.5);
+    ctx.fillStyle = 'rgba(255,107,107,.10)'; ctx.fillRect(x0, Math.min(ye, ys), plotW - x0, Math.abs(ys - ye));
+    ctx.fillStyle = 'rgba(61,220,151,.10)'; ctx.fillRect(x0, Math.min(ye, y1), plotW - x0, Math.abs(y1 - ye));
+    const pc = v => ((v / p.entry - 1) * 100), fmt = LT.fmtP, sp = v => (v > 0 ? '+' : '') + LT.num(v) + ' %';
+    const items = [
+      {y: ye, col: '#5ab0ff', dash: [6, 4], text: `${p.side === 'long' ? 'ACHAT' : 'VENTE'} · entrée ${fmt(p.entry)}`},
+      {y: ys, col: '#ff6b6b', dash: [3, 3], text: `Stop ${fmt(p.stop)} (${sp(pc(p.stop))})`},
+      {y: y1, col: '#3ddc97', dash: [3, 3], text: `Objectif 1 ${fmt(p.tp1)} (${sp(pc(p.tp1))})`}];
+    if (y2 != null) items.push({y: y2, col: '#3ddc97', dash: [2, 5], text: `Objectif 2 ${fmt(p.tp2)} (${sp(pc(p.tp2))})`});
+    items.forEach(it => { ctx.strokeStyle = it.col; ctx.lineWidth = 1.2; ctx.setLineDash(it.dash); ctx.beginPath(); ctx.moveTo(x0 - 30, it.y); ctx.lineTo(plotW, it.y); ctx.stroke(); });
+    ctx.setLineDash([]);
+    LT.placeLabels(items.map(it => ({...it})), 18, 12, h - 30).forEach(it => {
+      ctx.font = '600 11px sans-serif';
+      const tw = ctx.measureText(it.text).width + 14, x = Math.max(8, plotW - tw - 10);
+      this.tag(x, it.ly, it.text, '#fff', it.col === '#5ab0ff' ? 'rgba(52,120,200,.85)' : it.col === '#ff6b6b' ? 'rgba(200,60,60,.85)' : 'rgba(30,150,100,.85)', true);
+    });
+  }
   drawMain(L, w, h) {
     const ctx = this.ctx, st = LT.st, {d, plotW} = L, byId = LT.byId, fmtP = LT.fmtP, pr = LT.pr;
     const selZ = st.sel && st.sel.type === 'zone' ? st.sel.id : null;
@@ -269,6 +299,7 @@ class Panel {
       if (st.mode === 'ess') zl.push({y: y + hh / 2, z});
     });
     this.drawPools(L, h);
+    this.drawPlan(L, h);
     const lv = byId(d.levels);
     if (st.mode === 'ess') LT.placeLabels(zl, 17, 12, h - 30).forEach(it => {
       const z = it.z, ar = z.side === 'above' ? '▲' : z.side === 'below' ? '▼' : '◆', col = z.side === 'above' ? '#3ddc97' : z.side === 'below' ? '#ff6b6b' : '#ffb300';

@@ -31,6 +31,21 @@ def auto_anchors(now_ms):
     return [("AVWAP année préc.", py), ("AVWAP mois préc.", pm)]
 
 
+def swing_anchors(h1, now_ms):
+    """Ancrages sur les extremes recents : plus bas / plus haut de l'annee et des 3 derniers mois (la ou les poids se sont
+    inverses). Deux extremes a moins de 4 jours l'un de l'autre ne comptent qu'une fois."""
+    out = []
+    for days, lab in ((365, "1 an"), (90, "3 mois")):
+        sub = [k for k in h1 if k.t >= now_ms - days * DAY]
+        if len(sub) < 24 * 10:
+            continue
+        lo, hi = min(sub, key=lambda k: k.l), max(sub, key=lambda k: k.h)
+        for name, k in ((f"AVWAP bas {lab}", lo), (f"AVWAP haut {lab}", hi)):
+            if all(abs(k.t - a) > 4 * DAY for _, a in out):
+                out.append((name, k.t - k.t % HOUR))
+    return out
+
+
 def series(h1, chart_times, tf_ms, anchors, kinds=("D", "W", "M", "Y")):
     """h1 : bougies 1h triees (la derniere peut etre en cours) ; chart_times : ouvertures des bougies du graphique (ms) ;
     anchors : [(libelle, ms)]. Renvoie {vwap:{K:[v|None]}, sd:{K:[...]}, avwap:[{label, anchor, v:[...]}]}."""

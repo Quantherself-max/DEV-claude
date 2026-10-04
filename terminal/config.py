@@ -45,6 +45,7 @@ class Config:
     stats_k: float = 1.5
     stats_refresh_hours: float = 6.0
     # alertes
+    alert_zones: bool = True              # alertes « nouvelle confluence » / « le prix approche » (a couper pour ne recevoir que les idees de trade)
     alert_sweep: bool = True              # alerte quand une grosse poche de liquidation est balayee
     alert_sweep_frac: float = 0.15        # ... si elle represente >= 15 % des liquidations de ce cote
     alert_macro: bool = True              # alerte ~1 h avant une annonce majeure + bilan de la reaction du marche
@@ -54,6 +55,13 @@ class Config:
     alert_approach_atr: float = 0.5
     alert_cooldown_hours: float = 6.0
     alert_max_per_hour: int = 6
+    # idees de trade (V5) : quelques idees rares, de haute qualite, avec stop et objectifs
+    signal_on: bool = True
+    signal_min_score: float = 65.0        # score minimal sur 100 (la derniere place de la semaine exige +8)
+    signal_max_week: int = 3              # idees par semaine au maximum (lundi 00:00 UTC)
+    signal_min_struct: float = 7.0        # qualite minimale des niveaux superposes
+    signal_leverage: float = 10.0         # levier utilise pour les calculs de liquidation affiches
+    signal_valid_hours: int = 48          # duree de validite d'un ordre limite
     telegram_token: str = ""
     telegram_chat_id: str = ""
     telegram_api_base: str = "https://api.telegram.org"
@@ -86,8 +94,15 @@ def load_config(env_path: Path | None = None) -> Config:
     c.alert_tf = g("TERMINAL_ALERT_TF", c.alert_tf)
     c.alert_min_score = int(g("TERMINAL_ALERT_MIN_SCORE", c.alert_min_score))
     c.alert_cooldown_hours = float(g("TERMINAL_ALERT_COOLDOWN_HOURS", c.alert_cooldown_hours))
+    c.alert_zones = g("TERMINAL_ALERT_ZONES", "1").lower() not in ("0", "false", "non", "no")
     c.alert_sweep = g("TERMINAL_ALERT_SWEEP", "1").lower() not in ("0", "false", "non", "no")
     c.alert_macro = g("TERMINAL_ALERT_MACRO", "1").lower() not in ("0", "false", "non", "no")
+    c.signal_on = g("TERMINAL_SIGNALS", "1").lower() not in ("0", "false", "non", "no")
+    c.signal_min_score = max(40.0, min(95.0, float(g("TERMINAL_SIGNAL_MIN_SCORE", c.signal_min_score))))
+    c.signal_max_week = max(1, min(10, int(float(g("TERMINAL_SIGNAL_MAX_WEEK", c.signal_max_week)))))
+    c.signal_min_struct = max(4.0, min(20.0, float(g("TERMINAL_SIGNAL_MIN_STRUCT", c.signal_min_struct))))
+    c.signal_leverage = max(1.0, min(125.0, float(g("TERMINAL_SIGNAL_LEVERAGE", c.signal_leverage))))
+    c.signal_valid_hours = max(4, min(168, int(float(g("TERMINAL_SIGNAL_VALID_HOURS", c.signal_valid_hours)))))
     c.stats_horizon = int(g("TERMINAL_STATS_HORIZON", c.stats_horizon))
     c.stats_k = float(g("TERMINAL_STATS_K", c.stats_k))
     c.telegram_token = g("TELEGRAM_BOT_TOKEN", "")

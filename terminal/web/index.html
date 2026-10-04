@@ -15,6 +15,7 @@
     <div class="sgroup">WORKSPACE</div>
     <a href="#/desk" data-nav="desk"><i>▥</i><span>Desk</span></a>
     <a href="#/overview" data-nav="overview"><i>▦</i><span>Overview</span></a>
+    <a href="#/signals" data-nav="signals"><i>◎</i><span>Idées de trade</span></a>
     <div class="sgroup">ANALYSE</div>
     <a href="#/analysis/synth" data-nav="analysis" data-sub="synth"><i>◆</i><span>Biais &amp; probabilités</span></a>
     <a href="#/analysis/macro" data-nav="analysis" data-sub="macro"><i>▲</i><span>Macro &amp; annonces</span></a>
@@ -35,6 +36,7 @@
     <span id="cbPrice" class="cb" hidden title="Prix Coinbase (spot USD) : le marché de ton graphique TradingView"></span></div>
   <span id="regime" class="regime" hidden></span>
   <button id="riskChip" class="badge risk" hidden></button>
+  <button id="sigChip" class="badge sig" hidden></button>
   <div class="spacer"></div>
   <button id="srcBadge" class="badge" title="Changer la source dans les réglages">-</button>
   <button id="tgBadge" class="badge" title="Configurer Telegram dans les réglages">-</button>
@@ -62,6 +64,7 @@
     <aside id="side">
       <nav id="tabs" class="tabs" role="tablist">
         <button data-tab="levels" class="on">Niveaux</button>
+        <button data-tab="signals">Idées</button>
         <button data-tab="context">Contexte</button>
         <button data-tab="stats">Stats</button>
         <button data-tab="liquidity">Liquidité</button>
@@ -81,6 +84,9 @@
           <h2>Poches de liquidation <small>estimées (OI)</small></h2>
           <div id="pools"></div>
         </section>
+      </div>
+      <div class="pane" data-pane="signals" hidden>
+        <div id="sigBox" class="sigbox"><section class="card"><div class="muted">Chargement…</div></section></div>
       </div>
       <div class="pane" data-pane="context" hidden>
         <section class="card"><h2>Contexte marché <small id="ctxHint"></small></h2><div id="context" class="muted">-</div></section>
@@ -181,10 +187,21 @@
           <label class="field">Score minimum <select id="aScore"><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
           <label class="field">Timeframe <select id="aTf"></select></label>
           <label class="field">Pause entre 2 alertes d'une zone (h) <input id="aCool" type="number" min="0.5" max="48" step="0.5"></label>
+          <label class="field chk"><input id="aZones" type="checkbox"> Alertes de zones (« nouvelle confluence », « le prix approche »)</label>
           <label class="field chk"><input id="aSweep" type="checkbox"> Alerte quand une grosse poche est balayée</label>
           <label class="field chk"><input id="aMacro" type="checkbox"> Alerte avant une annonce majeure (CPI, Fed...) et bilan de la réaction</label>
         </div>
-        <p class="muted small">Score = nombre de sources différentes dans la zone (+1 si une poche AIMANT en fait partie).</p>
+        <p class="muted small">Score = nombre de sources différentes dans la zone (+1 si une poche AIMANT en fait partie). Pour ne recevoir que les idées de trade (section 4), décoche les alertes de zones et de poches.</p>
+      </section>
+      <section>
+        <h4><span class="step">4</span> Idées de trade</h4>
+        <div class="grid2">
+          <label class="field chk"><input id="sOn" type="checkbox"> Envoyer des idées de trade sur Telegram</label>
+          <label class="field">Qualité minimale (sur 100) <input id="sMin" type="number" min="40" max="95" step="1"></label>
+          <label class="field">Idées par semaine au maximum <input id="sMax" type="number" min="1" max="10" step="1"></label>
+          <label class="field">Ton levier habituel (calcul de liquidation) <input id="sLev" type="number" min="1" max="125" step="1"></label>
+        </div>
+        <p class="muted small">Seules les configurations rares où plusieurs niveaux importants se superposent sont envoyées, avec stop, objectifs et explication complète. 65 est un bon point de départ ; baisse le seuil si tu reçois trop peu d'idées, monte-le pour être plus sélectif.</p>
       </section>
     </div>
     <div class="mfoot"><span id="saveRes" class="muted"></span><button id="cancelSettings">Annuler</button><button id="saveSettings" class="primary">Enregistrer</button></div>
@@ -195,6 +212,7 @@
 <script src="charts.js"></script>
 <script src="analysis.js"></script>
 <script src="overview.js"></script>
+<script src="signals.js"></script>
 <script src="panels.js"></script>
 <script src="app.js"></script>
 </body>

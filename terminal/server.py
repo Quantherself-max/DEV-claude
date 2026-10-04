@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 
 from alerts.notifier import ConsoleNotifier, TelegramNotifier
 from alerts.rules import AlertEngine
+from alerts.trades import OPEN, TradeDesk
 from config import ROOT, load_config, write_env
 from data.binance import BinanceSource
 from data.live import LiveFeed
@@ -72,6 +73,7 @@ class App:
         source, service, alerts, notifier, feed = build_parts(cfg, self.make_source, self.make_feed, self.make_hub)
         service.listeners.append(self.alert_cycle)
         self.cfg, self.source, self.service, self.alerts, self.notifier = cfg, source, service, alerts, notifier
+        self.desk = TradeDesk(cfg, notifier, log=alerts._log)
         self.feed = feed
         self.price_cache = {}
         if old:
@@ -125,7 +127,12 @@ class App:
                 self.notifier = TelegramNotifier(cfg.telegram_token, cfg.telegram_chat_id, cfg.telegram_api_base) \
                     if cfg.telegram_on else ConsoleNotifier()
                 self.alerts = AlertEngine(cfg, self.notifier)
+                self.desk = TradeDesk(cfg, self.notifier, log=self.alerts._log)
                 self.cfg = cfg
+                self.service.cfg = cfg                       # les reglages d'idees (seuil, levier, quota) s'appliquent tout de suite
+                for m in self.service.markets.values():
+                    m.cfg = cfg
+                self.service._sig_cache.clear()
 
     def alert_cycle(self, service):
         if service is not self.service:          # ancien service (apres un changement de reglages)
@@ -140,6 +147,24 @@ class App:
             except Exception:
                 macro = None
         self.alerts.run_cycle(states, macro)
+        self.trade_cycle(service, list(states))
+
+    def trade_cycle(self, service, symbols):
+        """Idees de trade : suit les idees ouvertes sur les bougies 5 min, puis envoie les nouvelles (quota hebdomadaire)."""
+        if not self.cfg.signal_on:
+            return
+        try:
+            now = self.source.now_ms()
+            sigs = {s: service.signals(s) for s in symbols}
+            m5s = {}
+            for s in symbols:
+                open_ = [t["checked"] for t in self.desk.trades if t["symbol"] == s and t["status"] in OPEN]
+                if open_:
+                    m5s[s] = service.recent_m5(s, min(open_))
+            self.desk.run_cycle(sigs, m5s, now)
+            service.errors.pop("idees", None)
+        except Exception as e:
+            service.errors["idees"] = f"{type(e).__name__}: {e}"
 
     def refresh_loop(self):
         while not self.stop.is_set():
@@ -156,7 +181,9 @@ class App:
                 "telegram": {"configured": c.telegram_on, "tokenHint": ("..." + tok[-4:]) if tok else "",
                              "chatId": c.telegram_chat_id},
                 "alertMinScore": c.alert_min_score, "alertTf": c.alert_tf, "alertCooldownHours": c.alert_cooldown_hours,
-                "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "historyYears": c.history_years}
+                "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "alertZones": c.alert_zones, "historyYears": c.history_years,
+                "signalOn": c.signal_on, "signalMinScore": c.signal_min_score, "signalMaxWeek": c.signal_max_week,
+                "signalLeverage": c.signal_leverage}
 
     def save_settings(self, body: dict):
         upd = {}
@@ -186,8 +213,18 @@ class App:
             upd["TERMINAL_ALERT_SWEEP"] = "1" if body["alertSweep"] else "0"
         if body.get("historyYears") is not None:
             upd["TERMINAL_HISTORY_YEARS"] = str(max(0, min(10, int(body["historyYears"]))))
+        if body.get("alertZones") is not None:
+            upd["TERMINAL_ALERT_ZONES"] = "1" if body["alertZones"] else "0"
         if body.get("alertMacro") is not None:
             upd["TERMINAL_ALERT_MACRO"] = "1" if body["alertMacro"] else "0"
+        if body.get("signalOn") is not None:
+            upd["TERMINAL_SIGNALS"] = "1" if body["signalOn"] else "0"
+        if body.get("signalMinScore") is not None:
+            upd["TERMINAL_SIGNAL_MIN_SCORE"] = str(max(40, min(95, float(body["signalMinScore"]))))
+        if body.get("signalMaxWeek") is not None:
+            upd["TERMINAL_SIGNAL_MAX_WEEK"] = str(max(1, min(10, int(body["signalMaxWeek"]))))
+        if body.get("signalLeverage") is not None:
+            upd["TERMINAL_SIGNAL_LEVERAGE"] = str(max(1, min(125, float(body["signalLeverage"]))))
         write_env(self.env_path, upd)
         cfg = load_config(self.env_path)
         cfg.port, cfg.host, cfg.data_dir = self.cfg.port, self.cfg.host, self.cfg.data_dir
@@ -250,7 +287,16 @@ def make_handler(app: App):
                     o["alerts"] = [{"t": a["t"], "text": a["text"].split("\n")[0], "sent": a.get("sent")} for a in app.alerts.log[-6:][::-1]]
                     o["feed"] = app.feed.status() if app.feed else None
                     o["errors"] = app.service.errors
+                    d = app.desk.public(app.source.now_ms())
+                    o["week"], o["tradeStats"], o["openTrades"] = d["week"], d["stats"], [t for t in d["trades"] if t["status"] in ("pending", "active", "tp1")]
                     return self._json(o)
+                if u.path == "/api/signals":
+                    syms = [(q.get("symbol") or [""])[0].upper()] if (q.get("symbol") or [""])[0] else list(app.service.markets)
+                    for sy in syms:
+                        if sy not in app.service.markets:
+                            raise KeyError(f"symbole inconnu : {sy}")
+                    return self._json({"symbols": {sy: app.service.signals(sy) for sy in syms}, "desk": app.desk.public(app.source.now_ms()),
+                                       "on": app.cfg.signal_on})
                 if u.path == "/api/analysis":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.service.analysis(sym))

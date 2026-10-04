@@ -1,0 +1,303 @@
+import re
+import unittest
+
+from engine import signals as sg
+from engine.atr import Candle
+
+H = 3_600_000
+NOW = 1_790_000_000_000
+BANNED = re.compile(r"\b(ATR|TP|SL|CVD|POC|VAH|VAL|HVN|OI|RR|R:R|AVWAP|nPOC|PDH|PDL|PWH|PWL)\b")
+
+
+def lv(i, name, price, group, kind, **extra):
+    return {"id": i, "name": name, "price": price, "group": group, "kind": kind, **extra}
+
+
+def zone(zid, members, price, side=None):
+    ps = [m["price"] for m in members]
+    lo, hi = min(ps), max(ps)
+    mid = sum(ps) / len(ps)
+    return {"id": zid, "lo": lo, "hi": hi, "mid": mid, "members": [m["id"] for m in members],
+            "side": side or ("below" if hi < price else "above" if lo > price else "in"), "groups": sorted({m["group"] for m in members})}
+
+
+def scene(price=100.0, extra_levels=(), extra_zones=(), pools=(), candles=None, sweeps=(), opts=None):
+    """Support solide a ~98 (VWAP du mois, ouverture de la semaine, POC de la semaine derniere, plus bas de la veille)
+    et resistance solide a ~106 (VWAP de l'annee, plus haut de la semaine derniere, VAH du mois dernier)."""
+    sup = [lv("a", "mVWAP", 98.00, "mVWAP", "vwap"), lv("b", "wOpen", 98.06, "wOpen", "open"),
+           lv("c", "pwPOC", 97.96, "pwVP", "vp"), lv("d", "PDL", 98.03, "PDHL", "hl")]
+    res = [lv("e", "yVWAP", 106.00, "yVWAP", "vwap"), lv("f", "PWH", 106.05, "PWHL", "hl"), lv("g", "pmVAH", 105.95, "pmVP", "vp")]
+    levels = sup + res + list(extra_levels)
+    zones = [zone("z1", sup, price), zone("z2", res, price)] + list(extra_zones)
+    cs = candles if candles is not None else [Candle(NOW - (12 - k) * H, 100, 100.4, 99.6, 100.0, 10, 5) for k in range(12)]
+    return {"symbol": "BTCUSDT", "now": NOW, "price": price, "atr": 1.0, "levels": levels, "zones": zones, "pools": list(pools),
+            "candles": cs, "sweeps": list(sweeps), "opts": opts or {}}
+
+
+class ClassifyTests(unittest.TestCase):
+    def test_weight_grows_with_timeframe_and_vwap_vp_are_favoured(self):
+        w = {k: sg.classify(lv("x", k + "VWAP", 100, k + "VWAP", "vwap"))["w"] for k in "dwmy"}
+        self.assertLess(w["d"], w["w"])
+        self.assertLess(w["w"], w["m"])
+        self.assertLess(w["m"], w["y"])
+        self.assertGreater(sg.classify(lv("x", "wVWAP", 100, "wVWAP", "vwap"))["w"], sg.classify(lv("x", "wOpen", 100, "wOpen", "open"))["w"])
+        self.assertGreater(sg.classify(lv("x", "pwPOC", 100, "pwVP", "vp"))["w"], sg.classify(lv("x", "PWH", 100, "PWHL", "hl"))["w"])
+        self.assertLess(sg.classify(lv("x", "Rond 100", 100, "ROUND", "round"))["w"], 1.0)
+
+    def test_previous_and_current_periods_and_naked_poc(self):
+        self.assertEqual(sg.classify(lv("x", "pyPOC", 100, "pyVP", "vp"))["tf"], 4)
+        self.assertEqual(sg.classify(lv("x", "PMH", 100, "PMHL", "hl"))["tf"], 3)
+        self.assertEqual(sg.classify(lv("x", "nPOC S-3", 100, "nPOC", "npoc"))["tf"], 2)
+        self.assertEqual(sg.classify(lv("x", "nPOC J-2", 100, "nPOC", "npoc"))["tf"], 1)
+
+    def test_custom_volume_profiles_and_anchored_vwap_by_span(self):
+        self.assertEqual(sg.classify(lv("x", "VP 3j POC", 100, "xVP:r3", "xvp", vpid="r3"), NOW)["tf"], 1)
+        self.assertEqual(sg.classify(lv("x", "VP 30j POC", 100, "xVP:r30", "xvp", vpid="r30"), NOW)["tf"], 3)
+        self.assertEqual(sg.classify(lv("x", "VP 180j VAH", 100, "xVP:r180", "xvp", vpid="r180"), NOW)["tf"], 4)
+        old = NOW - 400 * 24 * H
+        self.assertEqual(sg.classify(lv("x", "AVWAP bas 1 an", 100, "aVWAP:1", "avwap", anchor=old), NOW)["tf"], 4)
+        self.assertEqual(sg.classify(lv("x", "AVWAP 2026", 100, "aVWAP:2", "avwap", anchor=NOW - 5 * 24 * H), NOW)["tf"], 1)
+
+    def test_texts_are_plain_french_without_abbreviations(self):
+        cases = [lv("x", n, 100, g, k, **e) for n, g, k, e in [
+            ("dVWAP", "dVWAP", "vwap", {}), ("mVWAP+2σ", "mVWAP", "band", {}), ("yOpen", "yOpen", "open", {}), ("mPOC", "mVP", "vp", {}),
+            ("mHVN", "mVP", "vp", {}), ("pwVAH", "pwVP", "vp", {}), ("pdVAL", "pdVP", "vp", {}), ("PYH", "PYHL", "hl", {}), ("PML", "PMHL", "hl", {}),
+            ("nPOC S-2", "nPOC", "npoc", {}), ("AVWAP bas 1 an", "aVWAP:1", "avwap", {"anchor": 1}), ("AVWAP année préc.", "aVWAP:2", "avwap", {"anchor": 2}),
+            ("VP 90j POC", "xVP:r90", "xvp", {"vpid": "r90"}), ("VP depuis 01/06/25 VAL", "xVP:s2025-06-01", "xvp", {"vpid": "s2025-06-01"}),
+            ("VP mois -1 POC", "xVP:month1", "xvp", {"vpid": "month1"}), ("Rond 100", "ROUND", "round", {})]]
+        for c in cases:
+            t = sg.classify(c, NOW)["text"]
+            self.assertTrue(t and "100" in t, t)
+            self.assertIsNone(BANNED.search(t), t)
+
+    def test_zone_structure_counts_sources_once_and_ignores_rounds(self):
+        ms = [lv("1", "mVWAP", 100, "mVWAP", "vwap"), lv("2", "mVWAP+2σ", 100.1, "mVWAP", "band"), lv("3", "Rond 100", 100, "ROUND", "round"),
+              lv("4", "wOpen", 100.05, "wOpen", "open")]
+        st = sg.zone_structure(ms, NOW)
+        self.assertEqual(st["n"], 2)
+        self.assertAlmostEqual(st["S"], 3.9 + 1.8, places=6)
+        self.assertEqual(st["core"], 1)
+        self.assertEqual(st["htf"], 2)
+
+    def test_near_identical_anchored_vwaps_count_once(self):
+        a = lv("1", "AVWAP bas 1 an", 100.00, "aVWAP:1", "avwap", anchor=NOW - 300 * 24 * H)
+        b = lv("2", "AVWAP année préc.", 100.05, "aVWAP:2", "avwap", anchor=NOW - 200 * 24 * H)
+        self.assertEqual(sg.zone_structure([a, b], NOW)["n"], 1)
+        c = lv("3", "AVWAP haut 3 mois", 101.0, "aVWAP:3", "avwap", anchor=NOW - 60 * 24 * H)
+        self.assertEqual(sg.zone_structure([a, b, c], NOW)["n"], 2)
+
+
+class BuildIdeaTests(unittest.TestCase):
+    def test_long_idea_on_support_with_stop_and_targets(self):
+        ideas, rej = sg.build_ideas(scene())
+        longs = [i for i in ideas if i["side"] == "long"]
+        self.assertEqual(len(longs), 1)
+        i = longs[0]
+        self.assertEqual(i["kind"], "rebond")
+        self.assertEqual(i["entryType"], "limite")
+        self.assertAlmostEqual(i["entry"], 98.06)                  # bord haut de la zone
+        self.assertLess(i["stop"], 97.96)                          # sous la zone
+        self.assertGreater(i["tp1"], i["entry"])
+        self.assertLess(i["tp1"], 105.95)                          # juste avant la resistance
+        self.assertGreaterEqual(i["rr1"], 1.5)
+        self.assertAlmostEqual(i["rr1"], (i["tp1"] - i["entry"]) / (i["entry"] - i["stop"]))
+
+    def test_short_idea_on_resistance(self):
+        s = scene(price=105.0)
+        ideas, _ = sg.build_ideas(s)
+        shorts = [i for i in ideas if i["side"] == "short"]
+        self.assertEqual(len(shorts), 1)
+        self.assertEqual(shorts[0]["entry"], 105.95)
+        self.assertGreater(shorts[0]["stop"], 106.05)
+        self.assertLess(shorts[0]["tp1"], shorts[0]["entry"])
+
+    def test_too_few_sources_or_low_quality_gives_nothing(self):
+        s = scene()
+        s["zones"][0] = zone("z1", s["levels"][:2], 100.0)           # 2 sources seulement
+        ideas, rej = sg.build_ideas(s)
+        self.assertFalse([i for i in ideas if i["zoneId"] == "z1"])
+        s2 = scene(opts={"min_struct": 30.0})
+        self.assertEqual(sg.build_ideas(s2)[0], [])
+
+    def test_price_too_far_is_rejected_with_reason(self):
+        ideas, rej = sg.build_ideas(scene(price=110.0))
+        self.assertFalse([i for i in ideas if i["side"] == "long"])
+        self.assertTrue(any("trop loin" in r["why"] for r in rej))
+
+    def test_tight_stop_is_widened_to_the_noise_floor_and_a_huge_one_is_rejected(self):
+        i = [x for x in sg.build_ideas(scene())[0] if x["side"] == "long"][0]
+        self.assertGreaterEqual(i["entry"] - i["stop"], 1.5 - 1e-9)           # plancher : 1,5 amplitude d'heure
+        s = scene()
+        s["atr"], s["price"] = 0.2, 98.5                                          # amplitude faible : la zone entiere devient un stop enorme
+        wide = [lv("a", "mVWAP", 96.0, "mVWAP", "vwap"), lv("b", "wOpen", 98.06, "wOpen", "open"), lv("c", "pwPOC", 97.0, "pwVP", "vp")]
+        s["levels"] = wide + [l for l in s["levels"] if l["id"] in ("e", "f", "g")]
+        s["zones"] = [zone("z1", wide, 98.5), s["zones"][1]]
+        ideas, rej = sg.build_ideas(s)
+        self.assertFalse([x for x in ideas if x["side"] == "long"])
+        self.assertTrue(any("trop éloigné" in r["why"] for r in rej))
+
+    def test_no_realistic_target_rejects(self):
+        s = scene()
+        s["levels"] = [l for l in s["levels"] if l["id"] not in ("e", "f", "g")]
+        s["zones"] = [s["zones"][0]]
+        ideas, rej = sg.build_ideas(s)
+        self.assertEqual(ideas, [])
+        self.assertTrue(any("objectif" in r["why"] for r in rej))
+
+    def test_big_opposite_pool_can_be_the_target(self):
+        pool = {"side": "short", "lo": 103.0, "hi": 103.3, "price": 103.1, "score": 90, "magnet": True, "size": 1.0}
+        s = scene(pools=[pool])
+        ideas, _ = sg.build_ideas(s)
+        i = [x for x in ideas if x["side"] == "long"][0]
+        self.assertEqual(i["tp1Kind"], "pool")
+        self.assertAlmostEqual(i["tp1"], 103.0 - 0.1)
+
+    def test_second_target_is_further_than_a_full_amplitude(self):
+        pool = {"side": "short", "lo": 103.0, "hi": 103.3, "price": 103.1, "score": 90, "magnet": True, "size": 1.0}
+        ideas, _ = sg.build_ideas(scene(pools=[pool]))
+        i = [x for x in ideas if x["side"] == "long"][0]
+        self.assertIsNotNone(i["tp2"])
+        self.assertGreaterEqual(i["tp2"] - i["tp1"], 1.0)
+        self.assertGreater(i["rr2"], i["rr1"])
+
+    def test_reclaim_after_sweep_of_the_zone(self):
+        cs = [Candle(NOW - (12 - k) * H, 99, 99.5, 98.6, 99.0, 10, 5) for k in range(10)]
+        cs.append(Candle(NOW - 2 * H, 99, 99.1, 96.5, 97.0, 10, 5))        # meche sous la zone
+        cs.append(Candle(NOW - H, 97.0, 98.6, 96.9, 98.4, 10, 5))          # cloture reprise au-dessus de la zone
+        ideas, _ = sg.build_ideas(scene(price=98.4, candles=cs))
+        i = [x for x in ideas if x["side"] == "long"][0]
+        self.assertEqual(i["kind"], "reprise")
+        self.assertEqual(i["entryType"], "marché")
+        self.assertLess(i["stop"], 96.5)                                    # sous la meche
+        self.assertEqual(i["wick"], 96.5)
+
+    def test_recent_liquidity_sweep_triggers_reprise(self):
+        e = {"t": NOW - 2 * H, "side": "long", "price": 98.4, "to": 97.3, "frac": 0.3}
+        ideas, _ = sg.build_ideas(scene(price=99.0, sweeps=[e]))
+        i = [x for x in ideas if x["side"] == "long"][0]
+        self.assertEqual(i["kind"], "reprise")
+        self.assertIsNotNone(i["sweep"])
+        self.assertLess(i["stop"], 97.3)
+        old = dict(e, t=NOW - 30 * H)
+        self.assertEqual([x for x in sg.build_ideas(scene(price=99.0, sweeps=[old]))[0] if x["side"] == "long"][0]["kind"], "rebond")
+
+    def test_pool_in_zone_widens_the_stop(self):
+        pool = {"side": "long", "lo": 97.2, "hi": 97.6, "price": 97.4, "score": 80, "magnet": True, "size": 1.0}
+        m = lv("p", "Liq longs", 97.4, "LIQ", "liq", pool=pool)
+        s = scene(extra_levels=[m])
+        s["zones"][0] = zone("z1", [l for l in s["levels"] if l["id"] in ("a", "b", "c", "d", "p")], 100.0)
+        s["pools"] = [pool]
+        i = [x for x in sg.build_ideas(s)[0] if x["side"] == "long"][0]
+        self.assertLess(i["stop"], 97.2)
+        self.assertEqual(len(i["pools"]), 1)
+
+    def test_at_most_two_ideas_per_side_and_no_nested_duplicates(self):
+        extra = [lv("h", "mOpen", 98.5, "mOpen", "open"), lv("i", "PMH", 98.45, "PMHL", "hl"), lv("j", "pyPOC", 98.52, "pyVP", "vp")]
+        s = scene(extra_levels=extra, extra_zones=[zone("z3", extra, 100.0)])
+        longs = [i for i in sg.build_ideas(s)[0] if i["side"] == "long"]
+        self.assertLessEqual(len(longs), 2)
+
+
+class ScoreTests(unittest.TestCase):
+    def idea(self, **kw):
+        i = sg.build_ideas(scene())[0]
+        i = [x for x in i if x["side"] == "long"][0]
+        i.update(kw)
+        return i
+
+    def ctx(self, **kw):
+        c = {"price": 100.0, "vwap": {"W": 99.0, "M": 98.0, "Y": 95.0}, "flow": (0.5, [(0.5, "achats agressifs")]), "macro": {"score": 40, "label": "risk-on"},
+             "synth": {"direction": "haussier", "score": 40}, "dom": {}, "is_alt": False, "now": NOW}
+        c.update(kw)
+        return c
+
+    def test_score_is_bounded_and_aligned_context_is_rewarded(self):
+        good = sg.score_idea(self.idea(), self.ctx())
+        bad = sg.score_idea(self.idea(), self.ctx(flow=(-0.8, [(-0.8, "ventes")]), macro={"score": -80, "label": "risk-off"},
+                                                   vwap={"W": 101, "M": 102, "Y": 110}, synth={"direction": "baissier", "score": -60}))
+        self.assertLessEqual(good["score"], 100.0)
+        self.assertGreater(good["score"], bad["score"] + 15)
+        self.assertEqual(sum(c["max"] for c in good["comps"]), 100)
+        self.assertTrue(any("contre la tendance" in w for w in bad["warn"]))
+
+    def test_major_announcement_soon_holds_the_idea(self):
+        risk = {"minutes": 90, "label": "Inflation (CPI)", "level": "danger"}
+        r = sg.score_idea(self.idea(), self.ctx(macro={"score": 10, "label": "neutre", "risk": risk}))
+        self.assertTrue(r["hold"])
+        self.assertIn("annonce majeure", r["hold"][0])
+        far = {"minutes": 600, "label": "Inflation (CPI)", "level": "attention"}
+        r2 = sg.score_idea(self.idea(), self.ctx(macro={"score": 10, "label": "neutre", "risk": far}))
+        self.assertFalse(r2["hold"])
+        self.assertTrue(r2["warn"])
+        r3 = sg.score_idea(self.idea(), self.ctx(macro={"score": 10, "label": "neutre", "inWindow": ["x"]}))
+        self.assertTrue(r3["hold"])
+
+    def test_liquidity_points_for_pool_sweep_and_reclaim(self):
+        base = sg.score_idea(self.idea(), self.ctx())
+        pool = {"side": "long", "lo": 97, "hi": 97.5, "price": 97.2, "score": 85, "magnet": True}
+        withp = sg.score_idea(self.idea(pools=[pool]), self.ctx())
+        withs = sg.score_idea(self.idea(pools=[pool], sweep={"t": NOW, "side": "long", "price": 98, "to": 97, "frac": 0.3}), self.ctx())
+        liq = lambda r: [c for c in r["comps"] if c["key"] == "liquidity"][0]["pts"]
+        self.assertGreater(liq(withp), liq(base))
+        self.assertGreater(liq(withs), liq(withp))
+        self.assertLessEqual(liq(withs), 20)
+
+    def test_news_lines_in_plain_language(self):
+        ev = {"label": "Inflation (CPI)", "t": NOW + 20 * H, "impact": 3, "w": 1.0, "exp": {"text": "Consensus 3,1 % contre 3,0 % précédemment : hausse attendue."}}
+        past = {"label": "Emplois non agricoles", "t": NOW - 5 * H, "impact": 3, "w": 1.0, "reaction": {"impulse": 1.0, "impulseLabel": "restrictive"}}
+        lines = sg.news_lines({"upcoming": [ev], "past": [past]}, NOW)
+        self.assertEqual(len(lines), 2)
+        self.assertIn("Consensus 3,1 %", lines[0])
+        self.assertIn("heure UTC", lines[0])
+        self.assertIn("restrictive", lines[1])
+        self.assertEqual(sg.news_lines({}, NOW), [])
+
+
+class TextTests(unittest.TestCase):
+    def full(self, side="long"):
+        s = scene() if side == "long" else scene(price=105.0)
+        i = [x for x in sg.build_ideas(s)[0] if x["side"] == side][0]
+        c = {"price": s["price"], "vwap": {"W": 99, "M": 98, "Y": 95}, "flow": (0.3, [(0.3, "Flux agressif : 56 % d'achats")]),
+             "macro": {"score": 30, "label": "risk-on", "upcoming": [], "past": []}, "synth": {"direction": "haussier", "score": 30}, "dom": {}, "is_alt": False, "now": NOW}
+        i = sg.score_idea(i, c)
+        i.update(price=s["price"], atrPct=1.0, validHours=48, sweepAgeH=None)
+        probs = {"fill": {"p24": 0.7, "p72": 0.85}, "plan": {"n": 5000, "neff": 400, "tp": {"p": 0.35, "lo": 0.3, "hi": 0.4}},
+                 "bounce": {"p": 0.58, "n": 120}, "baseBounce": {"p": 0.5, "n": 900}}
+        d = sg.describe(i, probs, {"text": "Rejeu : mieux que le hasard."}, 10.0, "BTCUSDT")
+        return i, d
+
+    def test_text_has_all_sections_and_no_abbreviations(self):
+        for side in ("long", "short"):
+            i, d = self.full(side)
+            text = sg.to_text(i, d, 2, 3)
+            for part in ("QUOI FAIRE", "POURQUOI ICI", "PROBABILITÉS", "PRUDENCE", "Stop", "Objectif 1", "Validité", "2/3"):
+                self.assertIn(part, text)
+            self.assertIsNone(BANNED.search(text), BANNED.search(text))
+            self.assertLess(len(text), 3900)
+            self.assertIn("ACHAT" if side == "long" else "VENTE", text)
+
+    def test_leverage_warning_when_liquidation_comes_first(self):
+        i, d = self.full("long")
+        lines, info = sg.leverage_lines(i, 100.0)
+        self.assertTrue(any("AVANT ton stop" in x for x in lines))
+        lines2, info2 = sg.leverage_lines(i, 3.0)
+        self.assertFalse(any("⚠" in x for x in lines2))
+        self.assertGreater(info2["levMax"], 1)
+        self.assertAlmostEqual(info2["marginLoss"], info2["stopPct"] * 3.0)
+
+    def test_week_start_is_monday_midnight_utc(self):
+        ws = sg.week_start(1_759_600_000_000)                       # samedi 4 octobre 2025
+        self.assertEqual(ws, 1_759_104_000_000)                      # lundi 29 septembre 2025 00:00 UTC
+        self.assertEqual(sg.week_start(ws), ws)
+        self.assertEqual(sg.week_start(ws + 7 * 24 * H - 1), ws)
+        self.assertEqual(sg.week_start(ws + 7 * 24 * H), ws + 7 * 24 * H)
+
+    def test_formats(self):
+        self.assertEqual(sg.fmt_price(84760.4), "84 760")
+        self.assertEqual(sg.fmt_price(184.78), "184,78")
+        self.assertEqual(sg.fmt_pct(0.5432), "0,54 %")
+        self.assertEqual(sg.fmt_pct(-2.0, 1, True), "-2,0 %")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,6 +1,7 @@
 """Service de marche : relie les donnees, les moteurs (niveaux, poches, confluences, probabilites) et
 fabrique l'etat JSON envoye a l'interface et aux alertes."""
 import base64
+import hashlib
 import json
 import math
 import threading
@@ -15,6 +16,8 @@ from engine.atr import INTERVAL_MS, resample, rma_atr
 from engine import bias as bias_engine
 from engine import dominance as dominance_engine
 from engine import macro as macro_engine
+from engine import signals as signals_engine
+from engine import sigtest
 from engine import synth as synth_engine
 from engine import vpx, vwapx
 from engine.confluence import Level, find_zones
@@ -79,6 +82,9 @@ class Market:
         self.bias = None             # biais statistique valide hors echantillon (calcule en tache de fond)
         self.bias_fund: list = []
         self._atr_cache = (0, [])
+        self.sigval = None            # rejeu historique des idees (structure seule), calcule en tache de fond
+        self._avs: dict[int, AnchoredVWAP] = {}      # VWAP ancrees supplementaires (dates choisies + extremes automatiques)
+        self._sw_cache = (None, [])
 
     def update(self) -> None:
         self.store.refresh()
@@ -89,6 +95,8 @@ class Market:
                 for tr in self.trackers.values():
                     tr.feed(k)
                 self.avwap.feed(k)
+                for av in self._avs.values():
+                    av.feed(k)
                 for kd, nk in self.naked.items():
                     p = self.trackers[kd].prev
                     if p is not prev[kd] and p:
@@ -172,7 +180,22 @@ class Market:
                 age = max(2, math.ceil((now - x["t_end"]) / span) + 1)
                 add(f"nPOC {unit}-{age}", x["poc"], "nPOC", "npoc")
         a = self.avwap.snapshot(forming)
-        add(f"AVWAP {self.cfg.anchor_date}", a["vwap"], "aVWAP", "avwap", sd=a["sd"])
+        add(f"AVWAP {self.cfg.anchor_date}", a["vwap"], "aVWAP", "avwap", sd=a["sd"], anchor=self.cfg.anchor_ms)
+        keep = set()
+        for lab, ms in self.anchors():
+            if ms == self.cfg.anchor_ms:
+                continue
+            keep.add(ms)
+            av = self._avs.get(ms)
+            if av is None:
+                av = self._avs[ms] = AnchoredVWAP(ms)
+                for k in self.store.h1:
+                    if k.t <= self._fed_h1:
+                        av.feed(k)
+            sn = av.snapshot(forming)
+            add(lab, sn["vwap"], f"aVWAP:{ms}", "avwap", sd=sn["sd"], anchor=ms)
+        for ms in [m for m in self._avs if m not in keep]:
+            del self._avs[ms]
         return out
 
     # ---------- contexte (OI, prix, CVD, funding, base, ratios, Coinbase) ----------
@@ -339,7 +362,8 @@ class Market:
             lv_out.append({"id": lv.id, "name": lv.name, "price": lv.price, "group": lv.group, "kind": lv.kind,
                            "distPct": (lv.price / price - 1.0) * 100.0, "distAtr": abs(lv.price - price) / atr,
                            "inWindow": abs(lv.price - price) <= win, "zone": in_zone.get(lv.id),
-                           "pool": lv.extra.get("pool"), "sd": lv.extra.get("sd"), "family": fam, "famStat": fst})
+                           "pool": lv.extra.get("pool"), "sd": lv.extra.get("sd"), "family": fam, "famStat": fst,
+                           "anchor": lv.extra.get("anchor"), "vpid": lv.extra.get("vp")})
         # importance : sources distinctes, aimant, type de niveau meilleur que le hasard, proximite
         base = fam_stats.get(BASELINE, {}).get("all") if fam_stats else None
         lvd = {l["id"]: l for l in lv_out}
@@ -397,12 +421,19 @@ class Market:
                 out.append({**w, **res})
         return out
 
+    def swing_anchors(self):
+        h1 = self.store.h1
+        key = (len(h1), self.source.now_ms() // DAY)
+        if self._sw_cache[0] != key:
+            self._sw_cache = (key, vwapx.swing_anchors(self.store.closed_h1(), self.source.now_ms()))
+        return self._sw_cache[1]
+
     def anchors(self):
         now = self.source.now_ms()
         seen, out = set(), []
         for lab, ms in [(f"AVWAP {self.cfg.anchor_date}", self.cfg.anchor_ms)] + \
                 [(f"AVWAP {d}", int(datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)) for d in self.vp_cfg["anchors"]] + \
-                vwapx.auto_anchors(now):
+                vwapx.auto_anchors(now) + self.swing_anchors():
             if ms not in seen and ms < now:
                 seen.add(ms)
                 out.append((lab, ms))
@@ -482,6 +513,9 @@ class Service:
         self._ext_running = False
         self.vp_state = {"specs": [{"kind": "auto"}], "anchors": []}
         self._an_cache: dict = {}
+        self._an_state: dict = {}
+        self._sig_cache: dict = {}
+        self._fp_cache: dict = {}
         self._plan_cache: dict = {}
         self.load_vp()
 
@@ -615,10 +649,39 @@ class Service:
                 self.errors.pop(f"biais {sym}", None)
             except Exception as e:
                 self.errors[f"biais {sym}"] = f"{type(e).__name__}: {e}"
+            if self.cfg.signal_on:
+                try:                                                # rejeu des idees de trade (structure seule) depuis le debut de l'historique
+                    self.compute_sigval(sym, candles, atrs)
+                    self.errors.pop(f"rejeu {sym}", None)
+                except Exception as e:
+                    self.errors[f"rejeu {sym}"] = f"{type(e).__name__}: {e}"
         except Exception as e:
             self.errors[f"stats {sym}"] = f"{type(e).__name__}: {e}"
         finally:
             self._stats_running.discard(sym)
+
+    def compute_sigval(self, sym, candles, atrs) -> None:
+        m = self.markets[sym]
+        path = Path(self.cfg.data_dir) / f"signals_{sym}.json" if getattr(self.source, "name", "") == "binance" else None
+        params = {"min_struct": self.cfg.signal_min_struct, "valid_hours": self.cfg.signal_valid_hours}
+        v = None
+        if path and path.exists():
+            try:
+                v = json.loads(path.read_text(encoding="utf-8"))
+                if not (v.get("version") == sigtest.VERSION and v.get("ready") and v["bars"] >= len(candles) - 96
+                        and time.time() * 1000 - v["computedAt"] < 24 * 3_600_000
+                        and v["params"]["minStruct"] == params["min_struct"] and v["params"]["validHours"] == params["valid_hours"]
+                        and v.get("cap") == self.cfg.signal_max_week):
+                    v = None
+            except (OSError, ValueError, KeyError):
+                v = None
+        if v is None:
+            v = sigtest.replay(candles, atrs, params, max_week=self.cfg.signal_max_week)
+            if path and v.get("ready"):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(v), encoding="utf-8")
+        with self.lock:
+            m.sigval = v
 
     def schedule_stats(self, wait: bool = False) -> None:
         for sym, m in self.markets.items():
@@ -652,6 +715,7 @@ class Service:
         btc = self.markets.get("BTCUSDT")
         with self.lock:
             state = m.state("1h")
+            self._an_state[symbol] = (time.time(), state)
             h1 = list(m.store.closed_h1())
             c5 = list(m.store.m5[-288 * 29:])
             c5b = list(btc.store.m5[-288 * 29:]) if btc else []
@@ -686,6 +750,113 @@ class Service:
         self._an_cache[symbol] = (time.time(), out)
         return out
 
+    # ---------- idees de trade ----------
+    def recent_m5(self, symbol: str, since_ms: int) -> list:
+        """Bougies 5 min [(t, haut, bas, cloture)] depuis since_ms (suivi des idees ouvertes)."""
+        m = self.markets.get(symbol)
+        if m is None or not m.ready:
+            return []
+        out = []
+        with self.lock:
+            for k in reversed(m.store.m5):
+                if k.t < since_ms - 300_000:
+                    break
+                out.append((k.t, k.h, k.l, k.c))
+        return out[::-1]
+
+    def _idea_probs(self, symbol, idea, zp, h1, atrs, tab):
+        out = {}
+        if tab and idea["entryType"] == "limite":
+            d, direction = idea["distAtr"], "down" if idea["side"] == "long" else "up"
+            out["fill"] = {"p24": reach_prob(tab, d, direction, 24), "p72": reach_prob(tab, d, direction, 72)}
+        a, e = idea["atr"], idea["entry"]
+        tp_a, sl_a = max(0.1, round(abs(idea["tp1"] - e) / a, 1)), max(0.1, round(abs(e - idea["stop"]) / a, 1))
+        key = (symbol, idea["side"], tp_a, sl_a)
+        hit = self._fp_cache.get(key)
+        if hit is None or time.time() - hit[0] > 6 * 3600:
+            a_pct = a / idea["price"] * 100.0
+            res = bias_engine.plan(h1, atrs, idea["side"], tp_a * a_pct, sl_a * a_pct, 72, idea["price"], a)
+            if len(self._fp_cache) > 200:
+                self._fp_cache.clear()
+            hit = self._fp_cache[key] = (time.time(), res)
+        out["plan"] = hit[1]
+        if zp:
+            out["bounce"], out["baseBounce"] = zp.get("bounce"), zp.get("base")
+        return out
+
+    def signals(self, symbol: str) -> dict:
+        """Idees de trade du moment pour ce symbole : candidates classees par score, rejets et validation historique."""
+        m = self.markets.get(symbol)
+        if m is None:
+            raise KeyError(f"symbole inconnu : {symbol}")
+        if not m.ready or not self.cfg.signal_on:
+            return {"ready": False, "symbol": symbol, "on": self.cfg.signal_on}
+        hit = self._sig_cache.get(symbol)
+        if hit and time.time() - hit[0] < 4.0:
+            return hit[1]
+        cfg = self.cfg
+        an = self.analysis(symbol)
+        st = self._an_state.get(symbol)
+        if not an.get("ready") or not st:
+            return {"ready": False, "symbol": symbol, "on": True}
+        state, now = st[1], self.source.now_ms()
+        with self.lock:
+            cs = list(m.store.closed_h1()[-14:])
+            events = [dict(e) for e in m.liq.events[-30:]]
+            h1, atrs = m.h1_atrs()
+            tab, sigval = m.reach, m.sigval
+        opts = {"min_struct": cfg.signal_min_struct, "valid_hours": cfg.signal_valid_hours, "leverage": cfg.signal_leverage}
+        vw = {l["name"][0].upper(): l["price"] for l in state["levels"] if l["kind"] == "vwap" and l["name"] in ("wVWAP", "mVWAP", "yVWAP")}
+        inp = {"symbol": symbol, "now": now, "price": state["price"], "atr": state["atr"], "levels": state["levels"], "zones": state["zones"],
+               "pools": state["liquidity"]["pools"], "candles": cs, "sweeps": events, "opts": opts}
+        raw, rejects = signals_engine.build_ideas(inp)
+        ctx = {"price": state["price"], "vwap": vw, "flow": synth_engine.flow_score(state["context"]), "macro": an["macro"],
+               "synth": an["synth"], "dom": an["dom"], "is_alt": symbol != "BTCUSDT", "now": now}
+        zprob = {z["id"]: z.get("prob") for z in state["zones"]}
+        ideas = []
+        for idea in raw:
+            sc = signals_engine.score_idea(idea, ctx, opts)
+            sc.update(symbol=symbol, price=state["price"], atr=state["atr"], atrPct=state["atrPct"], validHours=cfg.signal_valid_hours,
+                      sweepAgeH=(now - sc["sweep"]["t"]) / 3_600_000 if sc["sweep"] else None)
+            sc["key"] = hashlib.md5((symbol + sc["side"] + "+".join(sorted(i["group"] for i in sc["st"]["items"]))).encode()).hexdigest()[:10]
+            sc["grade"] = signals_engine.grade(sc["score"])
+            probs = None
+            if sc["score"] >= cfg.signal_min_score - 12:
+                try:
+                    probs = self._idea_probs(symbol, sc, zprob.get(sc["zoneId"]), h1, atrs, tab)
+                except Exception as e:
+                    self.errors[f"probas idee {symbol}"] = f"{type(e).__name__}: {e}"
+            vt = sigtest.tier_for(sigval, sc["st"]["S"])
+            valid = {"text": sigtest.validation_text(sigval, sc["st"]["S"]), "verdict": vt["verdict"] if vt else None} if vt else None
+            if valid and not valid["text"]:
+                valid = None
+            sc["probs"], sc["valid"] = probs, valid
+            sc["desc"] = signals_engine.describe(sc, probs, valid, cfg.signal_leverage, symbol)
+            sc["eligible"] = sc["score"] >= cfg.signal_min_score and not sc["hold"]
+            pub = {k: v for k, v in sc.items() if k not in ("tp1Ref", "tp2Ref")}
+            pub["st"] = {**sc["st"], "items": [{k: it[k] for k in ("tf", "fam", "w", "text", "price", "name")} for it in sc["st"]["items"]]}
+            ideas.append(pub)
+        ideas.sort(key=lambda i: -i["score"])
+        rej = [{"side": r["side"], "S": r["st"]["S"], "label": r["label"], "why": r["why"], "entry": r["entry"]}
+               for r in sorted([r for r in rejects if r["distAtr"] <= 12], key=lambda r: -r["st"]["S"])[:4]]
+        out = {"ready": True, "on": True, "symbol": symbol, "t": now, "price": state["price"], "atr": state["atr"], "ideas": ideas,
+               "rejected": rej, "minScore": cfg.signal_min_score, "maxWeek": cfg.signal_max_week, "minStruct": cfg.signal_min_struct,
+               "validation": sigval, "leverage": cfg.signal_leverage, "warm": m.stats is not None and sigval is not None}
+        self._sig_cache[symbol] = (time.time(), out)
+        return out
+
+    def _idea_brief(self, sym):
+        """Meilleure idee du moment (resume pour la vue d'ensemble)."""
+        try:
+            sg = self.signals(sym)
+        except Exception:
+            return None
+        if not sg.get("ready") or not sg["ideas"]:
+            return {"n": 0} if sg.get("ready") else None
+        best = sg["ideas"][0]
+        return {"n": sum(1 for i in sg["ideas"] if i["eligible"]), "side": best["side"], "score": best["score"], "entry": best["entry"],
+                "stop": best["stop"], "tp1": best["tp1"], "eligible": best["eligible"], "hold": best["hold"][:1], "minScore": sg["minScore"]}
+
     def overview(self) -> dict:
         """Vue d'ensemble : une carte par paire (prix, biais, niveaux essentiels, contexte) + macro, dominance, sentiment."""
         syms, first = [], None
@@ -702,7 +873,8 @@ class Service:
                          "regime": (ctx.get("regime") or {}).get("label"), "funding": (ctx.get("funding") or {}).get("now"),
                          "oi24": (ctx.get("oi") or {}).get("d24h"), "buy24": (ctx.get("cvd") or {}).get("buy24h"),
                          "ls": ((ctx.get("ls") or {}).get("global") or {}).get("now"),
-                         "history": {"bars": (an["bias"] or {}).get("bars"), "since": (an["bias"] or {}).get("since")}})
+                         "history": {"bars": (an["bias"] or {}).get("bars"), "since": (an["bias"] or {}).get("since")},
+                         "idea": self._idea_brief(sym)})
         g = {}
         if first:
             m = first["macro"]

@@ -234,7 +234,10 @@ class AlertEngine:
         """Un passage complet : states = {symbole: etat au timeframe d'alerte} ; macro = analyse macro (optionnelle)."""
         first = not self.started
         for st in states.values():
-            self.dispatch(self.evaluate(st, first) + self.sweep_alerts(st, first), st)
+            zones = self.evaluate(st, first)
+            if not getattr(self.cfg, "alert_zones", True):
+                zones = []                                    # on garde la memoire des zones mais on n'envoie rien
+            self.dispatch(zones + self.sweep_alerts(st, first), st)
         if macro is not None and states:
             self.dispatch(self.macro_alerts(macro, first), next(iter(states.values())))
         if first:
@@ -248,6 +251,8 @@ class AlertEngine:
                 arrow = {"above": "▲", "below": "▼", "in": "◆"}[z["side"]]
                 names = " + ".join(member_label(m) for m in sorted(zone_members(st, z), key=lambda m: m["price"]))
                 lines.append(f"{arrow} {sym} {fmt_price(z['mid'])} ({z['distPct']:+.2f} %) · {names}")
-        text = "✅ Terminal demarre\n" + ("\n".join(lines) if lines else "Aucune confluence active pour l'instant.")
+        if not getattr(self.cfg, "alert_zones", True):
+            lines = []
+        text = "✅ Terminal demarre\n" + ("\n".join(lines) if lines else ("Les alertes de zones sont coupees : tu ne recevras que les idees de trade." if not getattr(self.cfg, "alert_zones", True) else "Aucune confluence active pour l'instant."))
         ok, detail = self.notifier.send(text)
         self._log({"t": self.now(), "symbol": "*", "kind": "startup", "text": text, "sent": ok, "detail": detail})

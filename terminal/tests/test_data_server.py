@@ -478,6 +478,38 @@ class ServerTests(unittest.TestCase):
         self.assertIn("score", o["macro"])
         self.assertLessEqual(len(o["alerts"]), 6)
 
+    def test_signals_endpoint_and_settings(self):
+        code, body, _ = self.get("/api/signals?symbol=BTCUSDT")
+        self.assertEqual(code, 200)
+        r = json.loads(body)
+        self.assertEqual(set(r), {"symbols", "desk", "on"})
+        self.assertEqual(set(r["desk"]), {"week", "waiting", "stats", "trades"})
+        self.assertEqual(r["desk"]["week"]["cap"], 3)
+        sg = r["symbols"]["BTCUSDT"]
+        self.assertTrue(sg["ready"])
+        for k in ("ideas", "rejected", "minScore", "maxWeek", "minStruct", "validation", "warm"):
+            self.assertIn(k, sg)
+        self.assertEqual(self.get("/api/signals?symbol=XXX")[0], 404)
+        self.assertEqual(list(json.loads(self.get("/api/signals")[1])["symbols"]), ["BTCUSDT"])
+        code, res = self.post("/api/settings", {"signalMinScore": 72, "signalMaxWeek": 2, "signalLeverage": 5, "signalOn": True})
+        self.assertEqual(code, 200, res)
+        self.assertEqual((res["signalMinScore"], res["signalMaxWeek"], res["signalLeverage"], res["signalOn"]), (72.0, 2, 5.0, True))
+        self.assertEqual(self.app.cfg.signal_max_week, 2)
+        self.assertEqual(self.app.desk.week(NOW)["cap"], 2)
+        self.assertIn("TERMINAL_SIGNAL_MAX_WEEK=2", self.env.read_text())
+        self.post("/api/settings", {"signalMinScore": 65, "signalMaxWeek": 3, "signalLeverage": 10})        # valeurs par defaut
+        self.assertEqual(self.app.cfg.signal_max_week, 3)
+        code, res = self.post("/api/settings", {"signalOn": False})
+        self.assertFalse(res["signalOn"])
+        self.assertFalse(json.loads(self.get("/api/signals?symbol=BTCUSDT")[1])["symbols"]["BTCUSDT"]["ready"])
+        self.post("/api/settings", {"signalOn": True})
+
+    def test_overview_has_ideas_and_week(self):
+        o = json.loads(self.get("/api/overview")[1])
+        for k in ("week", "tradeStats", "openTrades"):
+            self.assertIn(k, o)
+        self.assertIn("idea", o["symbols"][0])
+
     def test_heat_payload_and_gzip(self):
         import base64, gzip as gz
         req = urllib.request.Request(self.url + "/api/heat?symbol=BTCUSDT", headers={"Accept-Encoding": "gzip"})

@@ -258,6 +258,24 @@ class MacroAlertTests(unittest.TestCase):
         self.eng.run_cycle({"BTCUSDT": st}, {"upcoming": [self.ev(55)], "past": []})
         self.assertTrue(any("Annonce majeure" in x for x in self.n.sent))
 
+    def test_zone_alerts_can_be_muted_to_keep_only_trade_ideas(self):
+        eng = AlertEngine(Config(data_dir=self.tmp.name, alert_zones=False), self.n, now=self.clock)
+        eng.run_cycle({"BTCUSDT": make_state([Z3])}, None)                                              # demarrage
+        self.assertIn("coupees", self.n.sent[-1])
+        self.assertNotIn("86", self.n.sent[-1])
+        self.n.sent.clear()
+        self.clock.t += 10
+        eng.run_cycle({"BTCUSDT": make_state([Z3, dict(Z2, mid=85200.0)])}, None)                      # nouvelle zone qualifiante
+        self.assertEqual(self.n.sent, [])
+        on = AlertEngine(Config(data_dir=self.tmp.name + "/on"), self.n, now=self.clock)
+        on.run_cycle({"BTCUSDT": make_state([Z3])}, None)
+        self.clock.t += 10
+        on.run_cycle({"BTCUSDT": make_state([Z3, Z3b])}, None)
+        self.assertTrue(any("Nouvelle confluence" in x for x in self.n.sent))
+
+
+Z3b = {"mid": 84500.0, "m": [("PML", "PMHL", "hl", {}), ("wVWAP", "wVWAP", "vwap", {}), ("pdPOC", "pdVP", "vp", {})]}
+
 
 if __name__ == "__main__":
     unittest.main()
