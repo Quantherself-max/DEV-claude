@@ -504,6 +504,39 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(json.loads(self.get("/api/signals?symbol=BTCUSDT")[1])["symbols"]["BTCUSDT"]["ready"])
         self.post("/api/settings", {"signalOn": True})
 
+    def test_influencers_settings_endpoint_and_token_never_leaks(self):
+        from tests.test_social import FakeX
+        x = HTTPServer(("127.0.0.1", 0), FakeX)
+        threading.Thread(target=x.serve_forever, daemon=True).start()
+        try:
+            off = json.loads(self.get("/api/influencers?symbol=BTCUSDT&side=long")[1])
+            self.assertEqual(off, {"on": False, "configured": False})
+            self.assertFalse(self.app.settings()["x"]["configured"])
+            self.env.write_text(self.env.read_text() + f"TERMINAL_X_API_BASE=http://127.0.0.1:{x.server_address[1]}\n")
+            tok = "good-secret-1234567"
+            code, res = self.post("/api/settings", {"xToken": tok, "xAccounts": "@alice, bob, bad-handle", "xPosts": 5, "xOn": True})
+            self.assertEqual(code, 200, res)
+            self.assertEqual(res["x"], {"on": True, "configured": True, "tokenHint": "...4567", "accounts": ["alice", "bob"], "posts": 5})
+            self.assertNotIn(tok, json.dumps(res))
+            self.assertNotIn(tok, self.get("/api/config")[1].decode())
+            self.assertNotIn(tok, self.get("/api/settings")[1].decode())
+            self.assertIn(f"TERMINAL_X_BEARER_TOKEN={tok}", self.env.read_text())
+            on = json.loads(self.get("/api/influencers?symbol=BTCUSDT&side=short")[1])
+            self.assertTrue(on["on"])
+            self.assertEqual([a["handle"] for a in on["accounts"]], ["alice", "bob"])
+            self.assertEqual(set(on["summary"]), {"agree", "disagree", "neutral", "none", "total", "errors"})
+            self.assertTrue(self.post("/api/test/x", {})[1]["ok"])
+            self.assertFalse(self.post("/api/test/x", {"token": "bad"})[1]["ok"])
+            self.assertEqual(self.get("/api/influencers?symbol=XXX&side=long")[0], 404)
+            self.assertEqual(self.get("/api/influencers?symbol=BTCUSDT&side=up")[0], 400)
+            self.assertEqual(self.post("/api/test/x", {}, token=False)[0], 403)              # sans jeton de session
+            self.assertEqual(self.post("/api/settings", {"xToken": "a b"})[0], 400)
+        finally:
+            self.post("/api/settings", {"xClearToken": True, "xAccounts": "", "xOn": False})
+            self.assertFalse(self.app.settings()["x"]["configured"])
+            x.shutdown()
+            x.server_close()
+
     def test_overview_has_ideas_and_week(self):
         o = json.loads(self.get("/api/overview")[1])
         for k in ("week", "tradeStats", "openTrades"):

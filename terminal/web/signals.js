@@ -2,6 +2,7 @@
 const Signals = (() => {
   let LT = null, root = null, last = null;
   const open = new Set();
+  const xres = {};                                                    // avis d'influenceurs deja lus (cle symbole|sens)
   const esc = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const px = v => v == null ? '-' : LT.fmtP(v);
   const chg = (v, e) => LT.sPct((v / e - 1) * 100);
@@ -18,6 +19,8 @@ const Signals = (() => {
     LT = lt; root = document.getElementById('sigBox');
     if (!root) return;
     root.addEventListener('click', e => {
+      const xb = e.target.closest('button[data-x]');
+      if (xb) { loadX(xb.dataset.x, xb.dataset.side); return; }
       const b = e.target.closest('button[data-plan]');
       if (b) { LT.setPlan(b.dataset.plan); render(last); return; }
       if (e.target.closest('[data-plan-off]')) { LT.setPlan('off'); render(last); }
@@ -26,6 +29,28 @@ const Signals = (() => {
       const d = e.target; if (!d.dataset || !d.dataset.key) return;
       d.open ? open.add(d.dataset.key) : open.delete(d.dataset.key);
     }, true);
+  }
+
+  const XSTANCE = {bull: 'haussier', bear: 'baissier', mixed: 'mitigé', unclear: 'sans position claire', none: 'aucun post récent'};
+  const XREL = {agree: ["✅ d'accord", 'up'], disagree: ['❌ en désaccord', 'dn'], neutral: ['➖ sans avis net', 'muted'], none: ['… aucun post récent', 'muted']};
+  async function loadX(sym, side) {
+    const k = sym + '|' + side;
+    xres[k] = {loading: true}; render(last);
+    try { xres[k] = await LT.api(`/api/influencers?symbol=${sym}&side=${side}`); } catch (e) { xres[k] = {error: e.message}; }
+    render(last);
+  }
+  function xBlock(i, sym) {
+    const k = sym + '|' + i.side, r = xres[k];
+    const head = '<h5>Avis d\'influenceurs sur X <small>(facultatif, indicatif : n\'entre pas dans le score)</small></h5>';
+    const btn = `<button data-x="${esc(sym)}" data-side="${i.side}">Voir l'avis des comptes X</button>`;
+    if (!r) return head + `<div class="xbox">${btn}<div class="muted small">Lit les derniers posts des comptes configurés dans ⚙ section 5 (coût : environ 0,005 $ par post lu). Facultatif.</div></div>`;
+    if (r.loading) return head + '<div class="muted small">Lecture des posts…</div>';
+    if (r.error) return head + `<div class="dn small">Indisponible : ${esc(r.error)}</div>${btn}`;
+    if (!r.on) return head + '<div class="muted small">Non configuré : ajoute un jeton X et des comptes dans ⚙ section 5.</div>';
+    const s = r.summary;
+    const rows = r.accounts.map(a => a.error ? `<li class="warnl">@${esc(a.handle)} : indisponible (${esc(a.error)})</li>` : `<li><b class="${XREL[a.relation][1]}">${XREL[a.relation][0]}</b> @${esc(a.handle)}${a.stance !== 'none' ? ` <span class="muted">(${XSTANCE[a.stance]}, ${a.bull} haussier(s), ${a.bear} baissier(s))</span>` : ''}${a.excerpt ? `<div class="muted small">« ${esc(a.excerpt)} »${a.url ? ` <a href="${esc(a.url)}" target="_blank" rel="noopener">voir</a>` : ''}</div>` : ''}</li>`).join('');
+    return head + `<div class="small">${s.agree} d'accord · ${s.disagree} en désaccord · ${s.neutral} sans avis net · ${s.none} sans post récent${s.errors ? ` · ${s.errors} indisponible(s)` : ''}</div><ul>${rows}</ul>
+      <div class="muted small">Lecture automatique par mots-clés : elle peut se tromper, lis le post. Posts lus : ${r.cost.posts} (≈ ${String(r.cost.usd.toFixed(3)).replace('.', ',')} $). ${btn}</div>`;
   }
 
   function rr(x) { return x == null ? '' : ` · ${String(x.toFixed(1)).replace('.', ',')} fois le risque`; }
@@ -64,6 +89,7 @@ const Signals = (() => {
         ${d.probs.length ? `<h5>Probabilités</h5><ul>${lines(d.probs)}</ul>` : ''}
         <h5>Détail du score</h5><div class="cmps">${comps}</div>
         <h5>Prudence</h5><ul>${lines(d.risks, 'warnl')}${i.hold.length ? lines(i.hold.map(h => 'En attente : ' + h), 'warnl') : ''}${(i.gates || []).length ? lines(i.gates.map(g => 'Filtre : ' + g), 'warnl') : ''}</ul>
+        ${xBlock(i, sg.symbol)}
       </details></div>`;
   }
 

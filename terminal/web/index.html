@@ -205,6 +205,17 @@
         </div>
         <p class="muted small">Seules les configurations rares où plusieurs niveaux importants se superposent sont envoyées, avec stop, objectifs et explication complète. 65 est un bon point de départ ; baisse le seuil si tu reçois trop peu d'idées, monte-le pour être plus sélectif.</p>
       </section>
+      <section>
+        <h4><span class="step">5</span> Avis d'influenceurs sur X <small>facultatif</small></h4>
+        <label class="field chk"><input id="xOn" type="checkbox"> Ajouter, après chaque idée, l'avis de comptes X que tu suis (d'accord / en désaccord)</label>
+        <label class="field">Comptes à suivre (10 au maximum, séparés par des virgules) <input id="xAccounts" placeholder="compte1, compte2, compte3" autocomplete="off" spellcheck="false"></label>
+        <label class="field">Jeton d'accès X (API officielle) <input id="xToken" type="password" placeholder="Bearer token X (laisse vide pour garder l'actuel)" autocomplete="off" spellcheck="false"></label>
+        <div class="grid2">
+          <label class="field">Posts lus par compte <select id="xPosts"><option>5</option><option>10</option><option>15</option><option>20</option></select></label>
+          <div class="line"><button id="testX">Tester le jeton</button><span id="xRes" class="muted"></span></div>
+        </div>
+        <p class="muted small">Indicatif seulement : <b>n'entre jamais dans le score</b> et n'influence aucune idée. Lecture automatique par mots-clés des posts récents (48 h) qui parlent de la paire. La lecture se paie à l'API de X (environ 0,005 $ par post lu selon les tarifs publiés, à vérifier sur ton compte développeur) ; elle n'a lieu qu'au moment d'envoyer une idée ou quand tu cliques sur « Voir l'avis », puis elle est gardée 30 minutes. Le jeton reste dans ton fichier <code>.env</code>.</p>
+      </section>
     </div>
     <div class="mfoot"><span id="saveRes" class="muted"></span><button id="cancelSettings">Annuler</button><button id="saveSettings" class="primary">Enregistrer</button></div>
   </div>

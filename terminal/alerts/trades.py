@@ -6,6 +6,7 @@ stop) et journal. Les idees viennent de Service.signals(). Une idee n'est envoye
   - aucune annonce majeure n'est imminente (verrou calcule dans le score).
 Le journal est le test le plus honnete : il enregistre ce qui s'est PASSE apres chaque idee envoyee."""
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -18,8 +19,11 @@ COOLDOWN_H = 12
 
 
 class TradeDesk:
-    def __init__(self, cfg, notifier, now=time.time, log=None):
+    def __init__(self, cfg, notifier, now=time.time, log=None, opinions=None):
         self.cfg, self.notifier, self.now, self.log = cfg, notifier, now, log
+        self.opinions = opinions                 # f(symbole, sens) -> avis d'influenceurs (facultatif, JAMAIS dans le score)
+        self.inline = False                      # tests : lire l'avis tout de suite, sans fil d'arriere-plan
+        self._lock = threading.Lock()
         self.dir = Path(cfg.data_dir) / ("simulated" if cfg.source == "simulated" else "")
         self.file = self.dir / "trades.json"
         self.trades: list[dict] = []
@@ -34,13 +38,14 @@ class TradeDesk:
             self.trades = []
 
     def _save(self):
-        try:
-            self.dir.mkdir(parents=True, exist_ok=True)
-            tmp = self.file.with_suffix(".tmp")
-            tmp.write_text(json.dumps(self.trades[-300:], ensure_ascii=False), encoding="utf-8")
-            tmp.replace(self.file)
-        except OSError:
-            pass
+        with self._lock:
+            try:
+                self.dir.mkdir(parents=True, exist_ok=True)
+                tmp = self.file.with_suffix(".tmp")
+                tmp.write_text(json.dumps(self.trades[-300:], ensure_ascii=False), encoding="utf-8")
+                tmp.replace(self.file)
+            except OSError:
+                pass
 
     def _send(self, trade, text, kind):
         ok, detail = self.notifier.send(text)
@@ -105,7 +110,31 @@ class TradeDesk:
         tr["sent"] = self._send(tr, text, "trade")
         self.trades.append(tr)
         self._save()
+        self._send_opinions(tr)
         return tr
+
+    def _send_opinions(self, tr):
+        """Avis des comptes X suivis, envoye juste apres l'idee (message separe, fin de l'analyse). Hors score, hors decision."""
+        if not self.opinions:
+            return
+
+        def run():
+            try:
+                from engine import stance
+                op = self.opinions(tr["symbol"], tr["side"])
+                if not op or not op.get("on"):
+                    return
+                tr["x"] = op["summary"]
+                self._send(tr, stance.format_block(op, tr["symbol"], tr["side"]), "trade-x")
+                self._save()
+            except Exception as e:                       # un echec n'a aucun effet sur l'idee
+                if self.log:
+                    self.log({"t": self.now(), "symbol": tr["symbol"], "kind": "trade-x", "mid": tr["entry"], "text": "avis X indisponible", "sent": False,
+                              "detail": f"{type(e).__name__}: {e}"})
+        if self.inline:
+            run()
+        else:
+            threading.Thread(target=run, daemon=True).start()
 
     # --- vie de l'idee ---
     def track(self, sym: str, candles5: list, now_ms: int):
@@ -201,6 +230,6 @@ class TradeDesk:
 
     def public(self, now_ms: int):
         keys = ("id", "symbol", "side", "kind", "created", "score", "entry", "entryType", "stop", "tp1", "tp2", "rr1", "rr2", "validUntil",
-                "status", "result", "filledAt", "closedAt", "n", "title", "sent")
+                "status", "result", "filledAt", "closedAt", "n", "title", "sent", "x")
         return {"week": self.week(now_ms), "waiting": self.waiting, "stats": self.stats(),
                 "trades": [{k: t.get(k) for k in keys} for t in self.trades[-40:][::-1]]}

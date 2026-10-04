@@ -127,8 +127,17 @@ Une **idée de trade** est un achat ou une vente préparé à l'avance : où ent
 - **Le journal** garde ce qui s'est réellement passé après chaque idée envoyée (`data_local/trades.json`). C'est le test le plus honnête, il se remplit avec le temps. Résultat cumulé en « fois le risque », en supposant que la moitié est prise à l'objectif 1.
 - **Fréquence réelle** : le rejeu donne environ 2 idées par semaine (structure seule). En direct, le score (poches, flux, annonces, tendance) ne laisse passer qu'une partie d'entre elles ; la fréquence réelle ne se connaît qu'à l'usage. Peu d'idées ? Baisse la qualité minimale dans ⚙ (55 par exemple). Trop ? Monte-la.
 
+### Avis d'influenceurs sur X (facultatif, indicatif, hors score)
+À la fin de chaque idée, le terminal peut dire si quelques comptes X que **tu** choisis vont **dans ton sens** (✅ d'accord), **à l'opposé** (❌ en désaccord), sans avis net (➖) ou sans post récent sur la paire (…). C'est un message séparé envoyé juste après l'idée, avec un extrait du post le plus parlant de chaque compte pour que tu vérifies toi-même.
+- **N'entre jamais dans le score ni dans aucune décision** : l'idée est calculée et envoyée sans lui, il vient seulement après (test automatique : le score, l'entrée, le stop et les objectifs sont identiques avec ou sans cet avis).
+- **Lecture automatique par mots-clés** (français et anglais : haussier / baissier, long / short, breakout / breakdown, négations et doutes simples) des posts de moins de 48 h qui parlent de la paire, les plus récents pesant davantage. Elle peut se tromper : lis le post.
+- **Réglage** : ⚙ section 5, « Avis d'influenceurs sur X » : coche la case, mets les comptes (10 au maximum, séparés par des virgules) et ton **jeton d'accès X**. Le bouton « Tester le jeton » vérifie le tout.
+- **Jeton X** : il faut un compte développeur sur developer.x.com, une application, puis son « Bearer Token » (clé d'accès en lecture), collé dans ⚙ ou dans `TERMINAL_X_BEARER_TOKEN` du `.env`. Il n'est jamais renvoyé à l'interface ni envoyé ailleurs qu'à l'API de X.
+- **Coût** : l'API de X facture la lecture, environ **0,005 $ par post lu** selon les tarifs publiés début 2026 (à vérifier sur ton compte développeur ; sans crédits, l'avis est simplement indisponible). Pour limiter le coût, les posts ne sont lus **qu'au moment d'envoyer une idée** (3 par semaine au maximum) ou quand tu cliques sur « Voir l'avis des comptes X » dans une idée, puis gardés 30 minutes. Exemple : 8 comptes x 10 posts = 80 lectures, soit environ 0,40 $ par idée.
+- Désactivé tant qu'il n'y a ni jeton ni compte. Une panne de X n'a aucun effet sur les idées.
+
 ### Réglages (⚙ sections 3 et 4, ou `.env`)
-`TERMINAL_SIGNALS` (1/0), `TERMINAL_ALERT_MODE` (ideas), `TERMINAL_SIGNAL_MIN_SCORE` (60), `TERMINAL_SIGNAL_MAX_WEEK` (3), `TERMINAL_SIGNAL_MIN_STRUCT` (7), `TERMINAL_SIGNAL_LEVERAGE` (10, pour le calcul de liquidation affiché), `TERMINAL_SIGNAL_VALID_HOURS` (48).
+`TERMINAL_SIGNALS` (1/0), `TERMINAL_ALERT_MODE` (ideas), `TERMINAL_SIGNAL_MIN_SCORE` (60), `TERMINAL_SIGNAL_MAX_WEEK` (3), `TERMINAL_SIGNAL_MIN_STRUCT` (7), `TERMINAL_SIGNAL_LEVERAGE` (10, pour le calcul de liquidation affiché), `TERMINAL_SIGNAL_VALID_HOURS` (48). Avis X : `TERMINAL_X_BEARER_TOKEN`, `TERMINAL_X_ACCOUNTS`, `TERMINAL_X_POSTS` (10), `TERMINAL_X_ON` (1).
 
 ## Ce qui est nouveau en V4
 
@@ -222,9 +231,9 @@ Lancer-Terminal-*   lanceurs à double-cliquer
 config.py           configuration (.env) et écriture des réglages
 engine/             calculs : profils de volume (auto et choisis), séries VWAP / AVWAP, périodes, POC nus, poches de
                     liquidation, confluences, ATR, statistiques (rebond / cassure, atteinte, balayages, Wilson), macro,
-                    dominance, biais validé en avançant, synthèse ; signals.py (idées de trade : poids, zones, stop,
+                    dominance, biais validé en avançant, synthèse ; stance.py (lecture des avis X) ; signals.py (idées de trade : poids, zones, stop,
                     objectifs, score, textes) et sigtest.py (rejeu historique face au hasard)
-data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase)
+data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase) ; social.py (posts X, facultatif)
 alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées)
 service.py          relie les données et les moteurs, fabrique l'état JSON
 server.py           serveur local : API, réglages, sécurité

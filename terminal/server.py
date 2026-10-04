@@ -4,6 +4,7 @@ de session sur toutes les requetes qui modifient quelque chose (un autre site ne
 import gzip
 import json
 import mimetypes
+import re
 import secrets
 import threading
 import time
@@ -17,6 +18,7 @@ from alerts.trades import OPEN, TradeDesk
 from config import ROOT, load_config, write_env
 from data.binance import BinanceSource
 from data.live import LiveFeed
+from data.social import Influencers, clean_handles
 from data.simulated import SimulatedSource
 from service import TFS, Service
 
@@ -73,7 +75,8 @@ class App:
         source, service, alerts, notifier, feed = build_parts(cfg, self.make_source, self.make_feed, self.make_hub)
         service.listeners.append(self.alert_cycle)
         self.cfg, self.source, self.service, self.alerts, self.notifier = cfg, source, service, alerts, notifier
-        self.desk = TradeDesk(cfg, notifier, log=alerts._log)
+        self.social = Influencers(cfg)
+        self.desk = TradeDesk(cfg, notifier, log=alerts._log, opinions=self.social.opinions)
         self.feed = feed
         self.price_cache = {}
         if old:
@@ -127,7 +130,8 @@ class App:
                 self.notifier = TelegramNotifier(cfg.telegram_token, cfg.telegram_chat_id, cfg.telegram_api_base) \
                     if cfg.telegram_on else ConsoleNotifier()
                 self.alerts = AlertEngine(cfg, self.notifier)
-                self.desk = TradeDesk(cfg, self.notifier, log=self.alerts._log)
+                self.social = Influencers(cfg)
+                self.desk = TradeDesk(cfg, self.notifier, log=self.alerts._log, opinions=self.social.opinions)
                 self.cfg = cfg
                 self.service.cfg = cfg                       # les reglages d'idees (seuil, levier, quota) s'appliquent tout de suite
                 for m in self.service.markets.values():
@@ -183,7 +187,9 @@ class App:
                 "alertMinScore": c.alert_min_score, "alertTf": c.alert_tf, "alertCooldownHours": c.alert_cooldown_hours,
                 "alertMode": c.alert_mode, "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "alertZones": c.alert_zones, "historyYears": c.history_years,
                 "signalOn": c.signal_on, "signalMinScore": c.signal_min_score, "signalMaxWeek": c.signal_max_week,
-                "signalLeverage": c.signal_leverage}
+                "signalLeverage": c.signal_leverage,
+                "x": {"on": c.x_on, "configured": bool(c.x_token and c.x_accounts), "tokenHint": ("..." + c.x_token[-4:]) if c.x_token else "",
+                      "accounts": list(c.x_accounts), "posts": c.x_posts}}
 
     def save_settings(self, body: dict):
         upd = {}
@@ -227,6 +233,19 @@ class App:
             upd["TERMINAL_SIGNAL_MAX_WEEK"] = str(max(1, min(10, int(body["signalMaxWeek"]))))
         if body.get("signalLeverage") is not None:
             upd["TERMINAL_SIGNAL_LEVERAGE"] = str(max(1, min(125, float(body["signalLeverage"]))))
+        if body.get("xToken"):
+            tok = str(body["xToken"]).strip()
+            if len(tok) > 400 or re.search(r"\s", tok):
+                raise ValueError("jeton X invalide (une seule chaîne, sans espace)")
+            upd["TERMINAL_X_BEARER_TOKEN"] = tok
+        if body.get("xClearToken"):
+            upd["TERMINAL_X_BEARER_TOKEN"] = ""
+        if "xAccounts" in body:
+            upd["TERMINAL_X_ACCOUNTS"] = ",".join(clean_handles(body["xAccounts"]))
+        if body.get("xPosts") is not None:
+            upd["TERMINAL_X_POSTS"] = str(max(5, min(20, int(body["xPosts"]))))
+        if body.get("xOn") is not None:
+            upd["TERMINAL_X_ON"] = "1" if body["xOn"] else "0"
         write_env(self.env_path, upd)
         cfg = load_config(self.env_path)
         cfg.port, cfg.host, cfg.data_dir = self.cfg.port, self.cfg.host, self.cfg.data_dir
@@ -299,6 +318,14 @@ def make_handler(app: App):
                             raise KeyError(f"symbole inconnu : {sy}")
                     return self._json({"symbols": {sy: app.service.signals(sy) for sy in syms}, "desk": app.desk.public(app.source.now_ms()),
                                        "on": app.cfg.signal_on})
+                if u.path == "/api/influencers":
+                    sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
+                    side = (q.get("side") or ["long"])[0]
+                    if sym not in app.service.markets:
+                        raise KeyError(f"symbole inconnu : {sym}")
+                    if side not in ("long", "short"):
+                        raise ValueError("sens invalide (long ou short)")
+                    return self._json(app.social.opinions(sym, side))
                 if u.path == "/api/analysis":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.service.analysis(sym))
@@ -363,6 +390,8 @@ def make_handler(app: App):
                     ok, detail = TelegramNotifier(tok, cid, app.cfg.telegram_api_base).send(
                         "✅ Test du terminal : Telegram fonctionne.")
                     return self._json({"ok": ok, "detail": detail})
+                if path == "/api/test/x":
+                    return self._json(app.social.test(str(body.get("token") or "").strip() or None, body.get("handle")))
                 if path == "/api/telegram/chatid":
                     tok = body.get("token") or app.cfg.telegram_token
                     if not tok:

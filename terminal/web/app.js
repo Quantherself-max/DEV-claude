@@ -858,6 +858,8 @@ async function openSettings() {
     $('#aZones').checked = s.alertZones !== false;
     $('#aMode').value = s.alertMode === 'all' ? 'all' : 'ideas'; $('#aExtra').hidden = $('#aMode').value !== 'all';
     $('#aMacro').checked = s.alertMacro !== false;
+    const x = s.x || {}; $('#xOn').checked = x.on !== false; $('#xAccounts').value = (x.accounts || []).join(', '); $('#xPosts').value = String(x.posts || 10);
+    $('#xToken').value = ''; $('#xToken').placeholder = x.tokenHint ? `jeton enregistré (${x.tokenHint}) : laisse vide pour le garder` : 'Bearer token X (API officielle)'; $('#xRes').textContent = '';
     $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sLev').value = s.signalLeverage;
   } catch (e) { $('#saveRes').textContent = 'Erreur : ' + e.message; }
 }
@@ -889,13 +891,20 @@ $('#testTg').onclick = () => busy($('#testTg'), $('#tgRes'), async () => {
   $('#tgRes').className = r.ok ? 'up' : 'dn';
   $('#tgRes').textContent = r.ok ? '✓ message envoyé : regarde Telegram' : '✗ ' + r.detail;
 });
+$('#testX').onclick = () => busy($('#testX'), $('#xRes'), async () => {
+  const r = await api('/api/test/x', {token: $('#xToken').value.trim(), handle: $('#xAccounts').value});
+  $('#xRes').className = r.ok ? 'up' : 'dn';
+  $('#xRes').textContent = (r.ok ? '✓ ' : '✗ ') + r.detail;
+});
 $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async () => {
   const src = (document.querySelector('input[name=source]:checked') || {}).value;
   const before = st.cfg ? st.cfg.source + '|' + st.cfg.symbols.join(',') + '|' + (st.cfg.historyYears || 0) : '';
   const body = {source: src, symbols: $('#symbols').value.split(/[\s,;]+/).filter(Boolean), telegramChatId: $('#tgChat').value.trim(),
     alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMode: $('#aMode').value, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, historyYears: +$('#histYears').value,
+    xOn: $('#xOn').checked, xAccounts: $('#xAccounts').value, xPosts: +$('#xPosts').value,
     signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalLeverage: +$('#sLev').value};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();
+  if ($('#xToken').value.trim()) body.xToken = $('#xToken').value.trim();
   await api('/api/settings', body);
   buildControls(await api('/api/config'));
   const reloaded = before !== st.cfg.source + '|' + st.cfg.symbols.join(',') + '|' + (st.cfg.historyYears || 0);
