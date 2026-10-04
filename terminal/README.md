@@ -31,15 +31,18 @@ Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble sur une se
    Si Python n'est pas installé, le lanceur ouvre la page de téléchargement. Installe Python, en cochant **« Add Python to PATH »** sous Windows, puis double-clique de nouveau sur le lanceur.
 
    Le terminal s'ouvre dans ton navigateur, à l'adresse http://127.0.0.1:8765/ . Une fenêtre noire reste ouverte : c'est le programme. Ferme-la pour arrêter le terminal.
+   Le terminal démarre directement sur les **vraies données Binance**. Le premier chargement de l'historique prend 1 à 2 minutes : un bandeau l'indique pendant ce temps.
 3. **Régler.** Clique sur **⚙ Réglages**, en haut à droite :
-   - **Source** : clique « Tester la connexion Binance », puis choisis **Binance (réel)**. Le premier chargement prend 1 à 2 minutes.
+   - **Source** : « Tester la connexion Binance » vérifie que ton PC accède bien aux données. Le mode **Simulées** (prix fictifs) ne sert qu'à essayer sans internet.
    - **Telegram** : suis les 4 petites étapes affichées dans la fenêtre.
      - Crée un bot avec @BotFather et colle son token.
      - Envoie « bonjour » à ton bot, puis clique « Trouver mon chat id ».
      - Clique « Envoyer un message de test ».
    - Clique **Enregistrer**. Le terminal applique les changements tout de suite, sans redémarrage.
 
-Au tout premier lancement, les données sont **simulées** : les prix sont fictifs, pour découvrir l'outil. Un bandeau orange te le rappelle tant que tu n'es pas passé sur Binance.
+Si Binance est injoignable depuis ton PC, un bandeau rouge l'affiche avec un bouton « Tester la connexion ». Si tu choisis un jour le mode simulé, un bandeau orange te rappelle que les prix sont fictifs.
+
+**Tout est réel en mode Binance.** Les bougies, le volume acheteur, l'Open Interest, le funding et les ratios viennent de Binance. L'historique utilisé pour les probabilités, ce sont les vraies bougies passées de la paire. Le terminal se met à jour toutes les 30 secondes (réglable avec `TERMINAL_REFRESH_SECONDS` dans `.env`).
 
 ## Lire le terminal
 

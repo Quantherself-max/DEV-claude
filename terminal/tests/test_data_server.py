@@ -167,7 +167,7 @@ class ReloadTests(unittest.TestCase):
             def mk(c):
                 made.append(c.source)
                 return SimulatedSource(now_ms=NOW)
-            app = App(Config(symbols=("BTCUSDT",), data_dir=d), env_path=env, make_source=mk)
+            app = App(Config(source="simulated", symbols=("BTCUSDT",), data_dir=d), env_path=env, make_source=mk)
             s0 = app.service
             res = app.save_settings({"source": "binance"})
             self.assertEqual(res["source"], "binance")
@@ -218,7 +218,7 @@ class ServerTests(unittest.TestCase):
         cls.env = Path(cls.tmp.name) / ".env"
         cls.env.write_text("# mes reglages\nTERMINAL_SOURCE=simulated\nTERMINAL_SYMBOLS=BTCUSDT\n"
                            f"TELEGRAM_API_BASE=http://127.0.0.1:{cls.tg.server_address[1]}\n", encoding="utf-8")
-        cls.cfg = Config(symbols=("BTCUSDT",), data_dir=cls.tmp.name, port=0,
+        cls.cfg = Config(source="simulated", symbols=("BTCUSDT",), data_dir=cls.tmp.name, port=0,
                          telegram_api_base=f"http://127.0.0.1:{cls.tg.server_address[1]}")
         cls.app = App(cls.cfg, env_path=cls.env, make_source=lambda c: SimulatedSource(now_ms=NOW))
         cls.app.service.refresh_all()

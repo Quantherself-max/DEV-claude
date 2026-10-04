@@ -20,7 +20,7 @@ def _load_env_file(path: Path) -> dict:
 
 @dataclass
 class Config:
-    source: str = "simulated"            # simulated | binance
+    source: str = "binance"              # binance = vraies donnees (par defaut) | simulated = prix fictifs (essai hors ligne)
     symbols: tuple = ("BTCUSDT", "SOLUSDT")
     host: str = "127.0.0.1"              # local uniquement : le terminal n'est pas expose sur le reseau
     port: int = 8765
