@@ -163,3 +163,53 @@ svg.ch .ax{stroke:#2a2e39;stroke-width:1}
 @media (max-width:900px){main{height:auto}#chartwrap{height:60vh}#side{max-height:none}.ag,.ag.two{grid-template-columns:1fr}}
 
 .amb{color:var(--amb)}
+
+/* ---- V4 : workspace lateral, panneaux multiples ---- */
+body{display:grid;grid-template-columns:var(--sbw,214px) minmax(0,1fr);min-height:100vh}
+body.sbmin{--sbw:58px}
+#sidebar{position:sticky;top:0;height:100vh;background:#0d1117;border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden;z-index:8}
+.sbrand{display:flex;align-items:center;gap:10px;padding:13px 10px 13px 12px;border-bottom:1px solid var(--line)}
+.sbrand .logo{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:8px;border:1px solid #1f5f4a;color:#6ee7b7;background:#10261f;flex:none}
+.sbrand .stxt{display:flex;flex-direction:column;line-height:1.15;min-width:0}.sbrand b{font-size:12px;letter-spacing:.1em;white-space:nowrap}.sbrand small{color:var(--mut);font-size:10px}
+.sbrand button{margin-left:auto;padding:2px 7px;background:none;border-color:transparent;color:var(--mut)}
+#sidebar nav{flex:1;overflow:auto;padding:6px 0}
+.sgroup{margin:14px 14px 4px;font-size:10px;letter-spacing:.14em;color:#5c6070}
+#sidebar a{display:flex;gap:10px;align-items:center;padding:8px 10px;margin:2px 8px;border-radius:8px;color:#b4b8c4;text-decoration:none;border:1px solid transparent;white-space:nowrap}
+#sidebar a i{font-style:normal;width:18px;text-align:center;color:#8f93a0;flex:none}
+#sidebar a:hover{background:#161b26}
+#sidebar a.on{background:#10261f;border-color:#1f5f4a;color:#6ee7b7}#sidebar a.on i{color:#6ee7b7}
+.sfoot{padding:10px 12px;border-top:1px solid var(--line)}
+body.sbmin .stxt,body.sbmin #sidebar a span,body.sbmin .sgroup,body.sbmin .sfoot{display:none}
+body.sbmin .sbrand{padding:13px 8px;flex-direction:column;gap:6px}body.sbmin .sbrand button{margin:0}
+body.sbmin #sidebar a{justify-content:center;margin:2px 6px}
+#content{display:flex;flex-direction:column;min-width:0;min-height:100vh}
+.crumb{font-size:13px;white-space:nowrap}.crumb b{color:#e1e3ea}
+.page[hidden]{display:none}
+.page{flex:1;min-width:0}
+#deskbar{display:flex;align-items:center;gap:10px;padding:6px 12px;border-bottom:1px solid var(--line);background:var(--bg)}
+#deskbar .seg button{padding:4px 10px;font-size:12px}#deskbar .seg button.on{background:#232a3d;border-color:#3a4258;color:#fff}
+.seg-like{font-size:12px}
+#deskwrap{display:grid;grid-template-columns:minmax(0,1fr) 380px;height:calc(100vh - 118px);min-height:520px}
+#deskwrap.noside{grid-template-columns:minmax(0,1fr)}#deskwrap.noside #side{display:none}
+#desk{display:grid;gap:6px;padding:6px;min-height:0;min-width:0}
+#desk.l1,#desk.lliq,#desk.lvp{grid-template-columns:minmax(0,1fr)}
+#desk.l2{grid-template-columns:repeat(2,minmax(0,1fr))}
+#desk.l3{grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr)}#desk.l3 .k-main{grid-row:1/3}
+.panel{display:flex;flex-direction:column;min-height:0;min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--bg);overflow:hidden}
+.panel.hide{display:none}
+.phead{display:flex;align-items:center;gap:6px 12px;padding:4px 8px;border-bottom:1px solid var(--line);font-size:12px;color:var(--mut);flex-wrap:wrap;background:#0e1219}
+.ptitle{font-weight:600;color:#c6c9d2;letter-spacing:.03em;white-space:nowrap}
+.ptools{display:flex;gap:4px 10px;flex-wrap:wrap;align-items:center;margin-left:auto}.ptools label{cursor:pointer;white-space:nowrap}
+.pmax{padding:0 7px;background:none;border-color:transparent;color:var(--mut)}.pmax:hover{color:#fff}
+.pbody{position:relative;flex:1;min-height:0}
+.pbody .chart,.pbody canvas{position:absolute;inset:0;width:100%;height:100%}
+.pbody .heat{z-index:0;pointer-events:none}.pbody .chart{z-index:1}.pbody .ov{z-index:2;pointer-events:none}
+.pbody .tip{position:absolute;z-index:6;pointer-events:none;background:#0b0e11ee;border:1px solid #3a4258;border-radius:6px;padding:6px 9px;font-size:12px;max-width:260px;box-shadow:0 6px 20px #000a}
+.pbody .tip[hidden]{display:none}
+.k-main .heat,.k-vp .heat{display:none}
+#side{height:100%;overflow:auto}
+#analysis{padding-top:4px}
+#anTabs button{display:none}
+#anTabs h2{margin:0;font-size:16px;font-weight:600}
+.ovwrap{padding:12px 14px 24px}
+@media (max-width:1000px){body{--sbw:58px}.stxt,#sidebar a span,.sgroup,.sfoot{display:none}#deskwrap{grid-template-columns:1fr;height:auto}#desk{height:70vh}#desk.l3{grid-template-columns:1fr;grid-template-rows:repeat(3,minmax(300px,1fr));height:auto}#desk.l3 .k-main{grid-row:auto}}

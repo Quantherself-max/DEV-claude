@@ -1,7 +1,11 @@
-# Liq Terminal (V3)
+# Liq Terminal (V4)
 
-Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble sur une seule page :
+Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Un espace de travail (menu à gauche)** : **Desk** (les graphiques), **Overview** (une carte par paire : prix, biais, niveaux essentiels, contexte, macro, dominance, Fear & Greed) et **Analyse** (biais, macro, dominance, plan de trade, lexique). Le menu se replie avec la flèche.
+- **Trois graphiques synchronisés** (zoom et curseur liés) : **Principal** (bougies + niveaux essentiels), **Liquidité** (uniquement les poches : carte de chaleur, balayages, vraies liquidations) et **VWAP · AVWAP · Volume Profile** (uniquement ces niveaux). Boutons de disposition en haut du Desk : 1 graphique, Liquidité seule, VP seul, 2 ou 3 graphiques ; chaque panneau peut être agrandi.
+- **Des volume profiles choisis par toi, selon ta timeframe** (voir « V4 » plus bas).
+- **Une analyse sur l'historique le plus long possible** (depuis septembre 2019 quand la paire existait).
 - **Le graphique, épuré.** Le mode **Essentiel** (par défaut) ne trace que les 2 zones les plus importantes au-dessus et en dessous du prix, avec leur probabilité d'atteinte. « Confluences » et « Tous » restent disponibles.
 - **Le prix en temps réel.** Prix et bougie en cours bougent à chaque transaction Binance. Le prix **Coinbase** (le marché de ton graphique TradingView) s'affiche à côté, avec l'écart.
 - **Une vue Liquidité** (second onglet, même graphique) : carte de chaleur de l'historique des poches de liquidation, balayages, **vraies liquidations** Binance en bulles, profil actuel sur le bord droit.
@@ -29,7 +33,7 @@ Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble sur une se
 
    Le terminal s'ouvre dans ton navigateur, à l'adresse http://127.0.0.1:8765/ . Une fenêtre noire reste ouverte : c'est le programme. Ferme-la pour arrêter le terminal.
    Le terminal démarre directement sur les **vraies données Binance**. Le premier chargement de l'historique prend 1 à 2 minutes : un bandeau l'indique pendant ce temps.
-3. **Régler.** Clique sur **⚙ Réglages**, en haut à droite :
+3. **Régler.** Clique sur **⚙** (réglages), en haut à droite, ou sur « Réglages » en bas du menu de gauche :
    - **Source** : « Tester la connexion Binance » vérifie que ton PC accède bien aux données. Le mode **Simulées** (prix fictifs) ne sert qu'à essayer sans internet.
    - **Telegram** : suis les 4 petites étapes affichées dans la fenêtre.
      - Crée un bot avec @BotFather et colle son token.
@@ -94,6 +98,25 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V4
+
+### Workspace et graphiques séparés
+- Le menu de gauche range les écrans : **Desk**, **Overview**, **Analyse** (Biais, Macro, Dominance, Plan de trade, Lexique). L'adresse du navigateur suit l'écran (`#/desk`, `#/overview`, `#/analysis/macro`…) : tu peux mettre un écran en favori.
+- Sur le Desk, trois panneaux : **Principal**, **Liquidité** (uniquement les poches : carte de chaleur ou barres, balayages, vraies liquidations) et **VWAP · AVWAP · VP** (uniquement VWAP jour / semaine / mois / année avec bandes ±2σ, VWAP ancrées, profils de volume). Zoom et curseur sont synchronisés entre les panneaux. Tes choix (disposition, panneau latéral, options) sont mémorisés dans le navigateur.
+- Chaque panneau a ses propres options (cases à cocher dans son en-tête).
+
+### Volume profiles selon la timeframe
+- Onglet **VP** (panneau de droite). Le choix **Auto** prend trois fenêtres adaptées à ta timeframe : 5 min → 3, 7, 14 jours ; 15 min → 7, 14, 30 jours ; 1 h → 30, 90, 180 jours ; 4 h → 90, 180, 365 jours ; 1 j → 1, 2, 4 ans. Chacune donne **POC, VAH, VAL et HVN**.
+- Tu peux **ajouter tes propres profils** (8 au maximum) : *glissant* (N derniers jours), *depuis une date*, ou *période calendaire* (jour, semaine, mois, trimestre, année, courante ou précédente). Ils sont enregistrés dans `data_local/vps.json`.
+- Tous ces profils deviennent des **niveaux supplémentaires dans les confluences** (type `xVP`), avec les mêmes probabilités et la même comparaison au hasard que les autres niveaux. Les niveaux trop éloignés du prix sont ignorés pour ne pas faire de bruit.
+- **VWAP ancrées** : ajoute une date (6 au maximum) : la VWAP part de cette date. Deux ancrages automatiques existent aussi : début de l'année précédente et du mois précédent.
+
+### Historique le plus long possible
+- Bougies 1h chargées **depuis le 1er septembre 2019** (ou la date de cotation de la paire), mises en cache dans `data_local/` (`h1_*.json.gz`) : seul le manque est redemandé aux lancements suivants. Le **premier lancement télécharge tout** : compte quelques minutes, un bandeau l'indique.
+- Réglage : `TERMINAL_HISTORY_YEARS` dans `.env` (0 = le plus long possible ; 2 ou 3 pour un démarrage plus léger).
+- Les probabilités (atteinte, rebond), le biais (fenêtre d'entraînement glissante de 3 ans, validation en avançant), les corrélations macro (30 j, 90 j, 1 an), les bêtas face au BTC et les statistiques Fear & Greed utilisent cet historique. Le biais calculé est enregistré (`bias_*.json`) et réutilisé s'il a moins de 24 h.
+- Limite de Binance : l'Open Interest 5 min et les bougies 5 min ne remontent qu'à **~29 jours** : la carte de chaleur des poches de liquidation ne peut pas remonter plus loin (le terminal accumule ensuite ses propres instantanés).
+
 ## Ce qui est nouveau en V3
 
 ### Niveaux essentiels
@@ -135,7 +158,7 @@ python run.py --selftest          teste Binance (et Telegram s'il est configuré
 python run.py --source binance    force la source pour ce lancement
 python run.py --port 8800         change le port
 python run.py --no-browser        n'ouvre pas le navigateur
-python -m unittest discover -s tests -t .     tests automatiques
+python -m unittest discover -s tests     tests automatiques
 ```
 
 Sous Windows, remplace `python` par `py`. Tous les réglages peuvent aussi s'écrire à la main dans `.env` (voir `config.example.env`).
@@ -146,16 +169,16 @@ Tout est gratuit et sans compte ni clé. Si une source tombe en panne, les autre
 
 | Donnée | Source | Profondeur |
 |---|---|---|
-| Bougies 1h, volume acheteur agressif | Binance futures | Depuis le 1er janvier de l'an dernier |
+| Bougies 1h, volume acheteur agressif | Binance futures | Depuis septembre 2019 (ou la cotation de la paire), en cache disque |
 | Bougies 5 min, Open Interest 5 min | Binance futures | Environ 29 jours (limite Binance) |
 | Funding, premium index, ratios long/short | Binance futures | Funding : tout l'historique ; ratios : récent |
 | Transactions et liquidations en direct | WebSocket Binance futures | Temps réel |
 | Prix Coinbase | WebSocket Coinbase | Temps réel |
 | Calendrier économique (consensus) | ForexFactory (flux public) | Semaine en cours et suivante, archivé ensuite |
-| Dollar, taux 10 ans, indices, VIX, or | Yahoo Finance | 5 jours en 5 min, 6 mois en quotidien |
+| Dollar, taux 10 ans, indices, VIX, or | Yahoo Finance | 5 jours en 5 min, 10 ans en quotidien |
 | Dominance BTC | CoinGecko (repli CoinPaprika) | Historique construit par le terminal |
-| Paires alts/BTC | Binance spot | 30 jours en 1h, ~2,7 ans en quotidien |
-| Fear & Greed | alternative.me | 30 jours |
+| Paires alts/BTC | Binance spot | 30 jours en 1h, plusieurs années en quotidien |
+| Fear & Greed | alternative.me | Depuis 2018 |
 
 Les probabilités et le biais statistique sont recalculés toutes les 6 heures, en tâche de fond (de 30 secondes à 2 minutes selon la machine).
 
@@ -165,14 +188,17 @@ Les probabilités et le biais statistique sont recalculés toutes les 6 heures, 
 run.py              point d'entrée
 Lancer-Terminal-*   lanceurs à double-cliquer
 config.py           configuration (.env) et écriture des réglages
-engine/             calculs : profils de volume, VWAP et périodes, POC nus, poches de liquidation, confluences, ATR,
-                    statistiques (rebond / cassure, atteinte, balayages, intervalles de Wilson)
+engine/             calculs : profils de volume (auto et choisis), séries VWAP / AVWAP, périodes, POC nus, poches de
+                    liquidation, confluences, ATR, statistiques (rebond / cassure, atteinte, balayages, Wilson), macro,
+                    dominance, biais validé en avançant, synthèse
 data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase)
 alerts/             règles d'alerte, envoi Telegram
 service.py          relie les données et les moteurs, fabrique l'état JSON
 server.py           serveur local : API, réglages, sécurité
-web/                interface (HTML/CSS/JS + TradingView Lightweight Charts)
-tests/              tests automatiques (une centaine)
+web/                interface : index.html + style.css ; app.js (Desk, état, alertes), panels.js (les trois graphiques),
+                    overview.js (vue d'ensemble), analysis.js et charts.js (analyse, graphiques SVG) ;
+                    TradingView Lightweight Charts (vendor/)
+tests/              tests automatiques (plus de cent)
 ```
 
 ## Limites connues
@@ -188,4 +214,6 @@ tests/              tests automatiques (une centaine)
 - **Calendrier et macro.** Le flux gratuit ne contient pas le chiffre publié (seulement consensus et précédent) : la surprise est lue dans les taux et le dollar, ce qui est plus fiable mais ne remplace pas le chiffre. Yahoo Finance peut limiter les requêtes ; le terminal le signale et réessaie.
 - **Biais.** Un biais « neutre » ou de « faible confiance » est un résultat, pas un défaut. Sur BTC et SOL en 1h, les variables classiques n'offrent le plus souvent qu'un avantage minuscule ou nul.
 - **Flux temps réel.** Les adresses WebSocket de Binance (`/market`) et de Coinbase ont été vérifiées dans leur documentation mais pas testées en conditions réelles depuis cet environnement. Si le badge reste sur ● PRIX ~1 s, le terminal reste utilisable.
+- **Historique long.** Il est téléchargé au premier lancement (quelques minutes) puis mis en cache. L'Open Interest et les bougies 5 min restent limités à ~29 jours par Binance : les poches de liquidation et la carte de chaleur ne peuvent pas être calculées plus loin. Les profils de volume, les VWAP et les statistiques, eux, utilisent tout l'historique 1h.
+- **Volume profiles.** Ils sont construits à partir des bougies 1h (volume réparti sur la plage haut-bas de chaque bougie), pas des transactions : la résolution est inférieure à celle d'un profil TradingView calculé sur des bougies 1 minute.
 - **À venir.** Flux ETF et on-chain si tu en as besoin.

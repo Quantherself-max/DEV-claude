@@ -38,6 +38,7 @@ const periodOf = g => { const m = /^[pP]?([dwmyDWMY])/.exec(g); return m ? m[1].
 function levelColor(lv) {
   if (lv.kind === 'liq') return lv.pool && lv.pool.side === 'long' ? UP : DN;
   if (lv.kind === 'avwap') return '#E0E0E0';
+  if (lv.kind === 'xvp') return '#8FA8FF';
   if (lv.kind === 'hl') return '#D1D4DC';
   const p = periodOf(lv.group);
   return lv.kind === 'vwap' ? PER[p] : lv.kind === 'open' ? PER_OPEN[p] : PER_VP[p];
@@ -52,11 +53,17 @@ function explain(name) {
     return `${what} du profil de volume ${m[1] ? 'précédent ' : 'en cours '}${PN[m[2]]}.`;
   }
   if ((m = /^P([DWMY])([HL])$/.exec(name))) return `Plus ${m[2] === 'H' ? 'haut' : 'bas'} ${PN[m[1].toLowerCase()].replace('du', 'du précédent').replace('de la', 'de la précédente').replace("de l'année", "de l'année précédente")} : liquidité classique (stops au-delà).`;
+  if (/^VP /.test(name)) return 'Niveau d\'un volume profile que tu as choisi (onglet VP) : POC = prix le plus échangé, VAH / VAL = limites de la zone de valeur (70 % du volume), HVN = zone de fort volume.';
   if (/^Liq/.test(name)) return 'Poche de liquidation estimée à partir de l\'Open Interest (proxy).';
   return '';
 }
 
-const st = {symbol: null, tf: '1h', data: null, mode: 'ess', view: 'main', heat: null, heatHours: 168, liqs: null, an: null, pools: true, sel: null, lines: [], key: null, version: 0, cfg: null, tab: 'levels', statSide: 'all', lastBar: 0, lastBarObj: null};
+const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, sel: null, key: null, version: 0, cfg: null, tab: 'levels',
+  statSide: 'all', lastBar: 0, lastBarObj: null, heat: null, liqs: null, an: null, series: null, vpd: null, serN: 0, vpFocus: null,
+  liqOpts: {hours: 168, pools: true, sweeps: true, real: true, profile: true},
+  vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
+  layout: window.innerWidth >= 1500 ? '3' : window.innerWidth >= 1100 ? '2' : '1', prevLayout: null, sideOpen: true, sbCollapsed: false,
+  page: 'desk', sub: 'synth'};
 async function api(path, body) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
   const r = await fetch(path, opt);
@@ -65,66 +72,116 @@ async function api(path, body) {
   return j;
 }
 
-// ---------- graphique ----------
-const chart = LightweightCharts.createChart($('#chart'), {
-  autoSize: true,
-  layout: {background: {type: 'solid', color: 'rgba(0,0,0,0)'}, textColor: '#b2b5be', fontSize: 12},
-  grid: {vertLines: {color: 'rgba(40,46,64,.35)'}, horzLines: {color: 'rgba(40,46,64,.35)'}},
-  rightPriceScale: {borderColor: '#2a2e39', scaleMargins: {top: 0.08, bottom: 0.08}},
-  timeScale: {borderColor: '#2a2e39', timeVisible: true, secondsVisible: false, rightOffset: 16},
-  crosshair: {mode: LightweightCharts.CrosshairMode.Normal},
-});
-const series = chart.addCandlestickSeries({upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
-  wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineColor: '#787b86',
-  autoscaleInfoProvider: orig => {                       // garde les poches et zones proches dans le cadre
-    const r = orig(); const d = st.data;
-    if (!r || !d) return r;
-    const ex = d.liquidity.pools.map(p => p.price).concat(st.view === 'liq' ? [] : shownZones(d).map(z => z.mid));
-    if (ex.length) {
-      r.priceRange.minValue = Math.min(r.priceRange.minValue, ...ex);
-      r.priceRange.maxValue = Math.max(r.priceRange.maxValue, ...ex);
-    }
-    return r;
-  }});
-const overlay = $('#overlay'), ctx = overlay.getContext('2d'), heatCv = $('#heat'), hctx = heatCv.getContext('2d');
-
+// ---------- etat partage, aides de dessin, panneaux ----------
+const TF_SEC = {'5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400};
+function rgba(c, a) { return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
+const COL_L = [61, 220, 151], COL_S = [255, 107, 107];
 const byId = (arr, k = 'id') => Object.fromEntries(arr.map(x => [x[k], x]));
 const ladderZones = d => {
   const z = byId(d.zones);
   return [...d.ladder.above, ...d.ladder.inside, ...d.ladder.below].map(i => z[i]).filter(Boolean);
 };
-
-function setData(d) {
-  const key = d.symbol + '|' + d.tf;
-  const bars = d.candles.map(c => ({time: c[0], open: c[1], high: c[2], low: c[3], close: c[4]}));
-  if (key !== st.key) {
-    st.key = key;
-    live.bar = null;
-    series.setData(bars);
-    const n = bars.length;
-    chart.timeScale().setVisibleLogicalRange({from: Math.max(0, n - 130), to: n + 16});
-    st.lastBar = n ? bars[n - 1].time : 0;
-  } else {
-    // mise a jour douce (ne deplace pas la vue) : la bibliotheque n'accepte que la derniere bougie ou une plus
-    // recente. La bougie en cours garde les extremes et la cloture du flux temps reel s'il est plus frais.
-    bars.filter(b => b.time >= st.lastBar).forEach(b => {
-      const lb = live.bar;
-      if (lb && lb.time === b.time && liveFresh()) {
-        b = {...b, high: Math.max(b.high, lb.high), low: Math.min(b.low, lb.low), close: lb.close};
-        live.bar = b;
-      }
-      series.update(b);
-      st.lastBar = b.time;
-    });
+const essentialZones = d => { const z = byId(d.zones); return (d.ladder.essential || []).map(i => z[i]).filter(Boolean); };
+const shownZones = d => st.mode === 'ess' ? essentialZones(d) : ladderZones(d);
+const shownPools = (d, all) => {
+  const ps = d.liquidity.pools.map((p, i) => ({p, i}));
+  if (st.mode !== 'ess' || all) return ps;
+  const cnt = {long: 0, short: 0};
+  return ps.filter(x => x.p.rel >= 0.5 || x.p.magnet).sort((a, b) => b.p.rel - a.p.rel).filter(x => cnt[x.p.side]++ < 2);
+};
+// Etiquettes sans chevauchement : on les repousse verticalement (ecart mini `gap`), puis on les ramene dans le cadre.
+function placeLabels(items, gap, top, bottom) {
+  items.sort((p, q) => p.y - q.y);
+  let prev = top - gap;
+  items.forEach(it => { it.ly = Math.max(it.y, prev + gap); prev = it.ly; });
+  let next = bottom + gap;
+  for (let i = items.length - 1; i >= 0; i--) { items[i].ly = Math.min(items[i].ly, next - gap); next = items[i].ly; }
+  prev = top - gap;
+  items.forEach(it => { it.ly = Math.max(it.ly, prev + gap); prev = it.ly; });
+  return items;
+}
+// carte de chaleur : image en espace « bandes de prix x heures », peinte par tranches sous le graphique
+function buildHeatImage(h) {
+  const cv = document.createElement('canvas'); cv.width = h.n; cv.height = h.m;
+  const c = cv.getContext('2d'), img = c.createImageData(h.n, h.m);
+  for (let j = 0; j < h.m; j++) {
+    const row = h.m - 1 - j;
+    for (let i = 0; i < h.n; i++) {
+      const vl = h.L[j * h.n + i], vs = h.S[j * h.n + i], v = Math.max(vl, vs);
+      if (!v) continue;
+      const col = vs > vl ? COL_S : COL_L, k = (row * h.n + i) * 4, boost = Math.max(0, (v - 190) / 65);
+      img.data[k] = col[0] + (255 - col[0]) * boost * 0.45; img.data[k + 1] = col[1] + (255 - col[1]) * boost * 0.45;
+      img.data[k + 2] = col[2] + (255 - col[2]) * boost * 0.45; img.data[k + 3] = Math.min(235, 235 * Math.pow(v / 255, 1.3));
+    }
   }
-  st.lastBarObj = bars.length ? {...bars[bars.length - 1]} : null;
-  if (live.bar && st.lastBarObj && live.bar.time === st.lastBarObj.time) st.lastBarObj = {...live.bar};
+  c.putImageData(img, 0, 0);
+  return cv;
 }
 
+const panels = [];
+const LAYOUTS = {'1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp']};
+const needs = k => LAYOUTS[st.layout].includes(k) && st.page === 'desk';
+function savePrefs() {
+  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed})); } catch (e) { /* stockage indisponible */ }
+}
+function loadPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem('liqPrefs') || '{}');
+    if (['ess', 'conf', 'all'].includes(p.mode)) st.mode = p.mode;
+    if (typeof p.pools === 'boolean') st.pools = p.pools;
+    Object.assign(st.liqOpts, p.liqOpts || {}); Object.assign(st.vpOpts, p.vpOpts || {});
+    if (LAYOUTS[p.layout]) st.layout = p.layout;
+    if (typeof p.side === 'boolean') st.sideOpen = p.side;
+    if (typeof p.sb === 'boolean') st.sbCollapsed = p.sb;
+  } catch (e) { /* preferences illisibles : valeurs par defaut */ }
+}
+function syncAllTools() { panels.forEach(p => p.syncTools()); }
+function refreshAll() { panels.forEach(p => { p.stamp = ''; p.rebuildLines(); }); st.version++; if (needs('liq')) { pollHeat(); pollLiqs(); } if (needs('vp') || st.tab === 'vp') pollVP(); }
+function syncRange() {
+  const first = panels.find(p => p.visible()); if (!first) return;
+  const r = first.chart.timeScale().getVisibleLogicalRange(); if (!r) return;
+  panels.forEach(p => { if (p !== first && p.visible()) p.chart.timeScale().setVisibleLogicalRange(r); });
+}
+function applyLayout() {
+  const want = LAYOUTS[st.layout];
+  $('#desk').className = 'l' + st.layout;
+  panels.forEach(p => p.host.classList.toggle('hide', !want.includes(p.kind)));
+  document.querySelectorAll('#layouts button').forEach(b => b.classList.toggle('on', b.dataset.layout === st.layout));
+  $('#deskwrap').classList.toggle('noside', !st.sideOpen);
+  $('#sideToggle').textContent = st.sideOpen ? 'Panneau ▸' : '◂ Panneau';
+  setTimeout(() => { panels.forEach(p => p.visible() && p.resetView()); st.version++; refreshAll(); }, 90);
+  savePrefs();
+}
+function maximize(kind) {
+  const solo = kind === 'main' ? '1' : kind;
+  if (st.layout === solo) st.layout = st.prevLayout && st.prevLayout !== solo ? st.prevLayout : '3';
+  else { st.prevLayout = st.layout; st.layout = solo; }
+  applyLayout();
+}
+function createPanels() {
+  const desk = $('#desk');
+  ['main', 'liq', 'vp'].forEach(k => { const el = document.createElement('section'); desk.appendChild(el); panels.push(new Panel(el, k)); });
+  let sr = false, sx = false;
+  panels.forEach(p => {
+    p.chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
+      if (sr || !r || !p.visible()) return;
+      sr = true; panels.forEach(q => { if (q !== p && q.visible()) q.chart.timeScale().setVisibleLogicalRange(r); }); sr = false;
+    });
+    p.chart.subscribeCrosshairMove(param => {                      // la croix suit la meme heure dans les autres graphiques
+      if (sx || !p.visible()) return;
+      sx = true;
+      const bar = param.seriesData && param.seriesData.get(p.series);
+      panels.forEach(q => {
+        if (q === p || !q.visible()) return;
+        if (!param.time || !bar) q.chart.clearCrosshairPosition(); else q.chart.setCrosshairPosition(bar.close, param.time, q.series);
+      });
+      sx = false;
+    });
+  });
+}
 // ---------- temps reel : flux des transactions Binance (WebSocket) directement dans le navigateur ----------
 // Le prix et la bougie en cours bougent a chaque transaction ; le serveur, lui, recalcule niveaux, poches et
 // alertes toutes les 10 s. Si le flux ne passe pas, secours : dernier prix demande au serveur chaque seconde.
-const TF_SEC = {'5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400};
 const live = {ws: null, sym: null, price: null, t: 0, wsT: 0, src: '', bar: null, barDirty: false, dirty: false,
   retry: 0, retryTimer: null, opened: 0, panelT: 0, polling: false};
 const liveFresh = () => live.price != null && live.sym === st.symbol && Date.now() - live.t < 5000;
@@ -197,7 +254,7 @@ function liveRender() {                                          // appele a cha
   const d = st.data;
   if (!d || !liveFresh()) return;
   if (live.barDirty && live.bar && live.bar.time >= st.lastBar) {
-    try { series.update(live.bar); st.lastBar = live.bar.time; } catch (e) { live.bar = null; }
+    panels.forEach(p => p.updateBar(live.bar)); st.lastBar = Math.max(st.lastBar, live.bar.time);
     live.barDirty = false;
   }
   if (live.dirty) {
@@ -206,254 +263,6 @@ function liveRender() {                                          // appele a cha
     if (lp && lp.textContent !== t) lp.textContent = t;
     if (Date.now() - live.panelT > 1000) { live.panelT = Date.now(); live.dirty = false; liveDistances(d); }
   }
-}
-
-// zones affichees selon le mode : Essentiel = les 2 plus importantes de chaque cote ; Confluences = toutes celles de la liste
-const essentialZones = d => { const z = byId(d.zones); return (d.ladder.essential || []).map(i => z[i]).filter(Boolean); };
-const shownZones = d => st.mode === 'ess' ? essentialZones(d) : ladderZones(d);
-const shownPools = d => {
-  const ps = d.liquidity.pools.map((p, i) => ({p, i}));
-  if (st.mode !== 'ess') return ps;
-  const cnt = {long: 0, short: 0};
-  return ps.filter(x => x.p.rel >= 0.5 || x.p.magnet).sort((a, b) => b.p.rel - a.p.rel).filter(x => cnt[x.p.side]++ < 2);
-};
-
-function rebuildLines(d) {
-  st.lines.forEach(l => series.removePriceLine(l));
-  st.lines = [];
-  if (st.view === 'liq') return;
-  const lv = byId(d.levels);
-  let ids = [];
-  if (st.mode === 'all') ids = d.levels.filter(l => l.kind !== 'liq' && l.inWindow).map(l => l.id);
-  else {
-    const set = new Set(st.mode === 'conf' ? ladderZones(d).flatMap(z => z.members) : []);
-    if (st.sel && st.sel.type === 'zone') (byId(d.zones)[st.sel.id]?.members || []).forEach(i => set.add(i));
-    ids = [...set].filter(i => lv[i] && lv[i].kind !== 'liq');
-  }
-  if (st.sel && st.sel.type === 'level' && lv[st.sel.id] && !ids.includes(st.sel.id)) ids.push(st.sel.id);
-  const style = {vwap: 0, avwap: 0, open: 1, vp: 2, hl: 4};
-  ids.forEach(i => {
-    const l = lv[i]; const sel = st.sel && st.sel.type === 'level' && st.sel.id === i;
-    st.lines.push(series.createPriceLine({price: l.price, color: levelColor(l), lineWidth: sel ? 2 : 1,
-      lineStyle: style[l.kind] ?? 0, axisLabelVisible: false, title: l.name}));
-  });
-}
-
-// ---------- calques : zones de confluence, poches (de leur naissance a maintenant), carte de chaleur ----------
-function rgba(c, a) { return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
-const COL_L = [61, 220, 151], COL_S = [255, 107, 107];
-function layout() {
-  const d = st.data; if (!d) return null;
-  const ts = chart.timeScale();
-  const lastT = d.candles[d.candles.length - 1][0];
-  let xr = ts.timeToCoordinate(lastT);
-  const plotW = ts.width();
-  if (xr == null) xr = plotW - 80;
-  const prev = d.candles.length > 1 ? ts.timeToCoordinate(d.candles[d.candles.length - 2][0]) : null;
-  return {d, xr, plotW, barW: prev != null ? Math.max(1, xr - prev) : 6};
-}
-// instant (secondes) -> abscisse, par interpolation entre les bougies (marche pour n'importe quel timeframe)
-function timeX(tsec, L) {
-  const cs = st.data.candles, n = cs.length, ts = chart.timeScale();
-  if (tsec >= cs[n - 1][0]) return L.xr + (tsec - cs[n - 1][0]) / (TF_SEC[st.tf] || 3600) * L.barW;
-  let lo = 0, hi = n - 1;
-  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (cs[mid][0] <= tsec) lo = mid; else hi = mid; }
-  const xa = ts.timeToCoordinate(cs[lo][0]), xb = ts.timeToCoordinate(cs[Math.min(n - 1, lo + 1)][0]);
-  if (tsec < cs[0][0]) { return xa == null ? null : xa - (cs[0][0] - tsec) / (TF_SEC[st.tf] || 3600) * L.barW; }
-  if (xa == null || xb == null) return null;
-  return xa + (xb - xa) * (tsec - cs[lo][0]) / ((cs[Math.min(n - 1, lo + 1)][0] - cs[lo][0]) || 1);
-}
-function poolRect(p, L) {
-  const y1 = series.priceToCoordinate(p.hi), y0 = series.priceToCoordinate(p.lo), yc = series.priceToCoordinate(p.price);
-  if (y1 == null || y0 == null || yc == null) return null;
-  const thick = Math.max(6, Math.abs(y0 - y1));
-  let x0 = p.born ? timeX(p.born / 1000, L) : null;
-  const minLen = 36, born = x0 != null;
-  if (x0 == null || L.xr - x0 < minLen) x0 = L.xr - Math.max(minLen, L.plotW * 0.12 * Math.pow(p.rel, 0.7));
-  const edge = born && x0 > 0;                       // vraie naissance visible : bord gauche net ; sinon fondu (poche plus ancienne)
-  x0 = Math.max(0, x0);
-  return {x0, x1: L.xr, yc, thick, len: L.xr - x0, edge};
-}
-// Etiquettes sans chevauchement : on les repousse verticalement (ecart mini `gap`), puis on les ramene dans le cadre.
-function placeLabels(items, gap, top, bottom) {
-  items.sort((p, q) => p.y - q.y);
-  let prev = top - gap;
-  items.forEach(it => { it.ly = Math.max(it.y, prev + gap); prev = it.ly; });
-  let next = bottom + gap;
-  for (let i = items.length - 1; i >= 0; i--) { items[i].ly = Math.min(items[i].ly, next - gap); next = items[i].ly; }
-  prev = top - gap;
-  items.forEach(it => { it.ly = Math.max(it.ly, prev + gap); prev = it.ly; });
-  return items;
-}
-function tag(x, y, text, color, bg, bold) {
-  ctx.font = (bold ? '700 ' : '500 ') + '11px sans-serif';
-  const tw = ctx.measureText(text).width + 12, th = 17;
-  ctx.fillStyle = bg; ctx.beginPath(); (ctx.roundRect ? ctx.roundRect(x, y - th / 2, tw, th, 8) : ctx.rect(x, y - th / 2, tw, th)); ctx.fill();
-  ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(text, x + 6, y + 0.5);
-  return tw;
-}
-function drawPools(L, h) {
-  const {d, plotW} = L, pills = [];
-  if (!(st.pools || st.view === 'liq')) return pills;
-  shownPools(d).forEach(({p, i}) => {
-    const r = poolRect(p, L); if (!r) return;
-    const col = p.side === 'long' ? COL_L : COL_S;
-    const a = Math.min(0.9, 0.22 + 0.55 * Math.pow(p.rel, 0.8) + (p.magnet ? 0.1 : 0));
-    const g = ctx.createLinearGradient(r.x0, 0, r.x1, 0);
-    g.addColorStop(0, rgba(col, r.edge ? a * 0.55 : 0.02)); g.addColorStop(r.edge ? 0.04 : 0.55, rgba(col, a * (r.edge ? 0.9 : 0.55))); g.addColorStop(1, rgba(col, a));
-    ctx.fillStyle = rgba(col, a * 0.1); ctx.fillRect(r.x0, r.yc - r.thick * 0.9, r.len, r.thick * 1.8);
-    ctx.fillStyle = g; ctx.fillRect(r.x0, r.yc - r.thick / 2, r.len, r.thick);
-    if (r.edge) { ctx.fillStyle = rgba(col, Math.min(1, a + 0.25)); ctx.fillRect(r.x0, r.yc - r.thick / 2, 2, r.thick); }     // marque de naissance
-    if (st.sel && st.sel.type === 'pool' && st.sel.id === i) { ctx.strokeStyle = rgba(col, 1); ctx.lineWidth = 1.5; ctx.strokeRect(r.x0, r.yc - r.thick / 2 - 2, r.len, r.thick + 4); }
-    const dist = (p.price / livePrice(d) - 1) * 100;
-    pills.push({y: r.yc, x1: r.x1, col, magnet: p.magnet, text: (p.magnet ? 'AIMANT ' : '') + fmtP(p.price) + '  ' + fmtPct(dist)});
-  });
-  placeLabels(pills, 19, 12, h - 30).forEach(it => {
-    ctx.font = (it.magnet ? '700 ' : '500 ') + '11px sans-serif';
-    const x = Math.min(it.x1 + 10, plotW - ctx.measureText(it.text).width - 14);
-    if (Math.abs(it.ly - it.y) > 2) { ctx.strokeStyle = rgba(it.col, 0.6); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(it.x1, it.y); ctx.lineTo(x, it.ly); ctx.stroke(); }
-    tag(x, it.ly, it.text, it.magnet ? '#0b0e11' : '#fff', rgba(it.col, it.magnet ? 0.92 : 0.55), it.magnet);
-  });
-  return pills;
-}
-function drawMain(L, w, h) {
-  const {d, plotW} = L;
-  const selZ = st.sel && st.sel.type === 'zone' ? st.sel.id : null;
-  const zset = new Map(shownZones(d).map(z => [z.id, z]));
-  if (selZ && !zset.has(selZ)) { const z = byId(d.zones)[selZ]; if (z) zset.set(selZ, z); }
-  const zl = [];
-  zset.forEach(z => {
-    const yt = series.priceToCoordinate(z.hi), yb = series.priceToCoordinate(z.lo);
-    if (yt == null || yb == null) return;
-    const span = Math.abs(yb - yt), hh = Math.max(6, span), y = Math.min(yt, yb) - (hh - span) / 2, sel = z.id === selZ;
-    ctx.fillStyle = `rgba(255,179,0,${sel ? 0.2 : 0.07 + 0.025 * Math.min(4, z.score)})`;
-    ctx.fillRect(0, y, plotW, hh);
-    if (sel) { ctx.strokeStyle = 'rgba(255,179,0,.85)'; ctx.lineWidth = 1; ctx.strokeRect(0.5, y + 0.5, plotW - 1, hh - 1); }
-    if (st.mode === 'ess') zl.push({y: y + hh / 2, z});
-  });
-  drawPools(L, h);
-  // Essentiel : une etiquette par zone (a gauche) : sens, prix, score, probabilite d'atteinte
-  const lv = byId(d.levels);
-  if (st.mode === 'ess') placeLabels(zl, 17, 12, h - 30).forEach(it => {
-    const z = it.z, ar = z.side === 'above' ? '▲' : z.side === 'below' ? '▼' : '◆', col = z.side === 'above' ? '#3ddc97' : z.side === 'below' ? '#ff6b6b' : '#ffb300';
-    const reach = z.prob && z.side !== 'in' ? ' · ' + pr(z.prob.reach['24']) + '/24 h' : '';
-    const txt = `${ar} ${fmtP(z.mid)}  ${'●'.repeat(Math.min(5, z.score))}${reach}`;
-    ctx.font = '600 11px sans-serif';
-    const tw = ctx.measureText(txt).width + 18;
-    ctx.fillStyle = 'rgba(11,14,17,.9)'; ctx.fillRect(10, it.ly - 9, tw, 18);
-    ctx.fillStyle = col; ctx.fillRect(10, it.ly - 9, 3, 18);
-    ctx.fillStyle = '#e1e3ea'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(txt, 19, it.ly + 0.5);
-  });
-  // noms des niveaux : membres de la zone selectionnee, niveau selectionne, ou tous en mode "Tous"
-  const names = new Map();
-  if (st.mode === 'all') d.levels.filter(l => l.kind !== 'liq' && l.inWindow).forEach(l => names.set(l.id, l));
-  if (selZ) (byId(d.zones)[selZ]?.members || []).forEach(i => lv[i] && lv[i].kind !== 'liq' && names.set(i, lv[i]));
-  if (st.sel && st.sel.type === 'level' && lv[st.sel.id]) names.set(st.sel.id, lv[st.sel.id]);
-  const lab = [];
-  names.forEach(l => { const y = series.priceToCoordinate(l.price); if (y != null) lab.push({y, l}); });
-  placeLabels(lab, 15, 12, h - 30).forEach(it => {
-    const c = levelColor(it.l);
-    if (Math.abs(it.ly - it.y) > 2) { ctx.strokeStyle = 'rgba(180,184,196,.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, it.y); ctx.lineTo(10, it.ly); ctx.stroke(); }
-    ctx.font = '500 11px sans-serif';
-    const txt = it.l.name + '  ' + fmtP(it.l.price), tw = ctx.measureText(txt).width + 22;
-    const yy = st.mode === 'ess' ? it.ly + 0 : it.ly;
-    const xx = st.mode === 'ess' ? 190 : 10;
-    ctx.fillStyle = 'rgba(11,14,17,.88)'; ctx.fillRect(xx, yy - 8, tw, 16);
-    ctx.fillStyle = c; ctx.fillRect(xx, yy - 8, 3, 16);
-    ctx.fillStyle = '#d1d4dc'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(txt, xx + 9, yy + 0.5);
-  });
-}
-
-// ---- carte de chaleur (couche SOUS le graphique) ----
-function buildHeatImage(h) {
-  const cv = document.createElement('canvas'); cv.width = h.n; cv.height = h.m;
-  const c = cv.getContext('2d'), img = c.createImageData(h.n, h.m);
-  for (let j = 0; j < h.m; j++) {
-    const row = h.m - 1 - j;                                   // rangee 0 de l'image = bande la plus haute
-    for (let i = 0; i < h.n; i++) {
-      const vl = h.L[j * h.n + i], vs = h.S[j * h.n + i], v = Math.max(vl, vs);
-      if (!v) continue;
-      const col = vs > vl ? COL_S : COL_L, k = (row * h.n + i) * 4, boost = Math.max(0, (v - 190) / 65);
-      img.data[k] = col[0] + (255 - col[0]) * boost * 0.45; img.data[k + 1] = col[1] + (255 - col[1]) * boost * 0.45;
-      img.data[k + 2] = col[2] + (255 - col[2]) * boost * 0.45; img.data[k + 3] = Math.min(235, 235 * Math.pow(v / 255, 1.3));
-    }
-  }
-  c.putImageData(img, 0, 0);
-  return cv;
-}
-function drawHeat(L, hctx, w, h) {
-  const H = st.heat; if (!H || !H.ready || !H.img) return;
-  const x0 = timeX(H.t0 / 1000, L), x1 = timeX((H.t0 + H.n * H.dt) / 1000, L);
-  if (x0 == null || x1 == null) return;
-  hctx.save();
-  hctx.beginPath(); hctx.rect(0, 0, Math.min(L.plotW, L.xr + L.barW * 1.5), h - 28); hctx.clip();
-  hctx.imageSmoothingEnabled = true;
-  const rowP = j => Math.exp((H.b0 + j) * H.step), K = 4;
-  for (let j0 = 0; j0 < H.m; j0 += K) {
-    const j1 = Math.min(H.m, j0 + K);
-    const yb = series.priceToCoordinate(rowP(j0)), yt = series.priceToCoordinate(rowP(j1));
-    if (yb == null || yt == null || yb < -20 || yt > h + 20) continue;
-    // la source est retournee (haut = prix haut) : rangees H.m-j1 .. H.m-j0
-    hctx.drawImage(H.img, 0, H.m - j1, H.n, j1 - j0, x0, yt, x1 - x0, Math.max(1, yb - yt) + 0.5);
-  }
-  hctx.restore();
-}
-function drawLiq(L, w, h) {
-  const {d, plotW} = L, H = st.heat;
-  // profil actuel sur le bord droit : taille des poches par bande, barres horizontales
-  if (H && H.ready && H.img && $('#showProfile').checked) {
-    const maxLen = plotW * 0.16, i = H.n - 1;
-    for (let j = 0; j < H.m; j++) {
-      const vl = H.L[j * H.n + i], vs = H.S[j * H.n + i], v = Math.max(vl, vs); if (v < 40) continue;
-      const yb = series.priceToCoordinate(Math.exp((H.b0 + j) * H.step)), yt = series.priceToCoordinate(Math.exp((H.b0 + j + 1) * H.step));
-      if (yb == null || yt == null) continue;
-      ctx.fillStyle = rgba(vs > vl ? COL_S : COL_L, 0.55);
-      const len = v / 255 * maxLen;
-      ctx.fillRect(plotW - len, yt, len, Math.max(1.2, yb - yt));
-    }
-  }
-  drawPools(L, h);
-  // balayages de poches : losanges (vert = longs liquides, rouge = shorts liquides) ; taille ~ part balayee
-  if (H && H.ready && $('#showSweeps').checked) H.sweeps.forEach(s => {
-    const x = timeX(s.t / 1000, L), y = series.priceToCoordinate(s.price);
-    if (x == null || y == null || x < 0 || x > plotW) return;
-    const r = 4 + Math.min(8, s.frac * 30);
-    ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI / 4);
-    ctx.fillStyle = rgba(s.side === 'long' ? COL_L : COL_S, 0.9); ctx.strokeStyle = '#0b0e11'; ctx.lineWidth = 2;
-    ctx.fillRect(-r / 1.4, -r / 1.4, r * 1.4, r * 1.4); ctx.strokeRect(-r / 1.4, -r / 1.4, r * 1.4, r * 1.4); ctx.restore();
-  });
-  // liquidations reelles : bulles (aire ~ montant)
-  if (st.liqs && st.liqs.events && $('#showReal').checked) st.liqs.events.forEach(e => {
-    const x = timeX(e.t / 1000, L), y = series.priceToCoordinate(e.price);
-    if (x == null || y == null || x < 0 || x > plotW) return;
-    const r = Math.max(3, Math.min(18, 2.5 + Math.sqrt(e.usd / 25000)));
-    ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832);
-    ctx.fillStyle = rgba(e.side === 'long' ? COL_L : COL_S, 0.45); ctx.fill();
-    ctx.strokeStyle = rgba(e.side === 'long' ? COL_L : COL_S, 0.95); ctx.lineWidth = 1.5; ctx.stroke();
-  });
-}
-function draw() {
-  const dpr = window.devicePixelRatio || 1, w = overlay.clientWidth, h = overlay.clientHeight;
-  for (const cv of [overlay, heatCv]) {
-    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
-  }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); hctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h); hctx.clearRect(0, 0, w, h);
-  const L = layout(); if (!L) return;
-  if (st.view === 'liq') { drawHeat(L, hctx, w, h); drawLiq(L, w, h); } else drawMain(L, w, h);
-}
-let sig = '';
-function loop() {
-  const d = st.data;
-  if (d) {
-    const ts = chart.timeScale(), r = ts.getVisibleLogicalRange();
-    const s = [series.priceToCoordinate(d.price) | 0, series.priceToCoordinate(d.price * 1.03) | 0,
-      ts.timeToCoordinate(d.candles[d.candles.length - 1][0]) | 0, r ? (r.from | 0) + ':' + (r.to | 0) : '',
-      overlay.clientWidth, overlay.clientHeight, st.version, (livePrice(d) / d.price).toFixed(4)].join();
-    if (s !== sig) { sig = s; draw(); }
-    liveRender();
-  }
-  requestAnimationFrame(loop);
 }
 
 // ---------- panneaux ----------
@@ -697,35 +506,15 @@ async function renderAlerts() {
   } catch (e) { /* silencieux */ }
 }
 
-// ---------- selection / clic ----------
-function select(sel) { st.sel = sel; st.version++; if (st.data) { rebuildLines(st.data); renderLadder(st.data); renderPools(st.data); renderPools2(st.data); renderDetail(st.data); const d2 = $('#detail2'); if (d2) { d2.className = $('#detail').className; d2.innerHTML = $('#detail').innerHTML; } } }
-chart.subscribeClick(p => {
-  const d = st.data, L = layout();
-  if (!p.point || !d || !L) return;
-  const {x, y} = p.point;
-  if (st.pools || st.view === 'liq') {
-    for (const {p, i} of shownPools(d)) {
-      const r = poolRect(p, L);
-      if (r && x >= r.x0 - 4 && x <= r.x1 + 130 && Math.abs(y - r.yc) <= r.thick / 2 + 5) return select({type: 'pool', id: i});
-    }
+// ---------- selection ----------
+function select(sel) {
+  st.sel = sel; st.version++;
+  if (st.data) {
+    panels.forEach(p => p.rebuildLines());
+    renderLadder(st.data); renderPools(st.data); renderPools2(st.data); renderDetail(st.data);
+    const d2 = $('#detail2'); if (d2) { d2.className = $('#detail').className; d2.innerHTML = $('#detail').innerHTML; }
   }
-  if (st.view === 'liq') return select(null);
-  const zs = st.mode === 'ess' ? essentialZones(d) : ladderZones(d);
-  for (const z of zs) {
-    const a = series.priceToCoordinate(z.hi), b = series.priceToCoordinate(z.lo);
-    if (a == null || b == null) continue;
-    const mid = (a + b) / 2, half = Math.max(5, Math.abs(a - b) / 2 + 3);
-    if (Math.abs(y - mid) <= half) return select({type: 'zone', id: z.id});
-  }
-  let best = null, bd = 7;
-  d.levels.forEach(l => {
-    if (l.kind === 'liq') return;
-    const visible = st.mode === 'all' ? l.inWindow : st.mode === 'conf' && zs.some(z => z.members.includes(l.id));
-    const yy = series.priceToCoordinate(l.price);
-    if (visible && yy != null && Math.abs(yy - y) < bd) { bd = Math.abs(yy - y); best = l; }
-  });
-  select(best ? {type: 'level', id: best.id} : null);
-});
+}
 document.addEventListener('click', e => {
   const z = e.target.closest('[data-zone]'), p = e.target.closest('[data-pool]');
   if (z) select({type: 'zone', id: z.dataset.zone});
@@ -743,7 +532,7 @@ function updateBanner(d) {
   const c = st.cfg;
   if (!c) return;
   if (d && d.error && d.source !== 'simulated') banner('bad', `<span>Problème de données Binance : ${esc(d.error)}</span><button data-open-settings>Tester la connexion</button>`);
-  else if (!d && c.source === 'binance') banner('warn', '<span>Chargement de l\'historique Binance (1 à 2 minutes la première fois)…</span>');
+  else if (!d && c.source === 'binance') banner('warn', '<span>Chargement de l\'historique Binance (la première fois : plusieurs minutes pour tout l\'historique depuis 2019, ensuite quelques secondes)…</span>');
   else if (c.source === 'simulated') banner('warn', '<span>⚠ Données <b>SIMULÉES</b> : les prix sont fictifs, c\'est pour découvrir le terminal.</span><button data-open-settings class="primary">Passer aux vraies données Binance</button>');
   else banner(null);
 }
@@ -761,9 +550,31 @@ function header(d) {
   $('#status').className = d.error ? 'bad' : 'muted';
   updateBanner(d);
 }
+// bougies du graphique : mise a jour douce (ne deplace pas la vue) ; la bougie en cours garde les extremes et la cloture du flux
+function pushBars(d) {
+  const key = d.symbol + '|' + d.tf, reset = key !== st.key;
+  let bars = d.candles.map(c => ({time: c[0], open: c[1], high: c[2], low: c[3], close: c[4]}));
+  if (reset) {
+    st.key = key; live.bar = null;
+    st.lastBar = bars.length ? bars[bars.length - 1].time : 0;
+  } else {
+    bars = bars.filter(b => b.time >= st.lastBar).map(b => {
+      const lb = live.bar;
+      if (lb && lb.time === b.time && liveFresh()) { b = {...b, high: Math.max(b.high, lb.high), low: Math.min(b.low, lb.low), close: lb.close}; live.bar = b; }
+      st.lastBar = Math.max(st.lastBar, b.time);
+      return b;
+    });
+  }
+  panels.forEach(p => p.setBars(reset ? d.candles.map(c => ({time: c[0], open: c[1], high: c[2], low: c[3], close: c[4]})) : bars, reset));
+  const all = d.candles[d.candles.length - 1];
+  st.lastBarObj = {time: all[0], open: all[1], high: all[2], low: all[3], close: all[4]};
+  if (live.bar && live.bar.time === st.lastBarObj.time) st.lastBarObj = {...live.bar};
+  if (reset) setTimeout(() => { panels.forEach(p => p.visible() && p.resetView()); }, 150);
+}
 function apply(d) {
   st.data = d;
-  setData(d); header(d); rebuildLines(d); renderLadder(d); renderPools(d); renderPools2(d); renderDetail(d); renderContext(d); renderStats(d);
+  pushBars(d); header(d); panels.forEach(p => p.rebuildLines());
+  renderLadder(d); renderPools(d); renderPools2(d); renderDetail(d); renderContext(d); renderStats(d);
   st.version++;
 }
 let timer = null;
@@ -784,59 +595,72 @@ async function poll() {
     }
   } catch (e) { console.error(e); $('#status').textContent = 'erreur d\'affichage : ' + e.message; $('#status').className = 'bad'; }
 }
+function resetSymbolData() {
+  st.sel = null; st.data = null; st.heat = null; st.liqs = null; st.an = null; st.series = null; st.vpd = null; st.key = null;
+}
 function buildControls(cfg) {
   st.cfg = cfg;
   if (!cfg.symbols.includes(st.symbol)) st.symbol = cfg.symbols[0];
   const sel = $('#symbol'); sel.innerHTML = cfg.symbols.map(s => `<option${s === st.symbol ? ' selected' : ''}>${s}</option>`).join('');
-  sel.onchange = () => { st.symbol = sel.value; st.sel = null; st.data = null; st.heat = null; st.liqs = null; st.an = null; liveConnect(); cbConnect(); poll(); pollAnalysis(); if (st.view === 'liq') { pollHeat(); pollLiqs(); } };
+  sel.onchange = () => { st.symbol = sel.value; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); pollOverview(); };
   const box = $('#tfs');
   box.innerHTML = cfg.tfs.map(t => `<button data-tf="${t}" class="${t === st.tf ? 'on' : ''}">${t}</button>`).join('');
-  box.onclick = e => { const b = e.target.closest('button'); if (!b) return; st.tf = b.dataset.tf; st.sel = null; st.data = null;
-    box.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); poll(); };
-  document.querySelectorAll('input[name=mode]').forEach(r => r.onchange = () => { st.mode = r.value; if (st.data) { rebuildLines(st.data); st.version++; } });
-  $('#showPools').onchange = e => { st.pools = e.target.checked; st.version++; };
+  box.onclick = e => { const b = e.target.closest('button'); if (!b) return; st.tf = b.dataset.tf; st.sel = null; st.data = null; st.series = null; st.vpd = null;
+    box.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); poll(); refreshAll(); };
   updateBanner(st.data);
   if (!live.ws || live.sym !== st.symbol || !cfg.wsBase) liveConnect();
   if (cfg.cbWs && (!cb.ws || cb.sym !== st.symbol)) cbConnect();
 }
-// onglets du panneau de droite (une barre par vue)
-function showPane(name) {
-  document.querySelectorAll('.pane').forEach(p => p.hidden = p.dataset.pane !== name);
-  document.querySelectorAll('#tabs button, #tabsLiq button').forEach(x => x.classList.toggle('on', x.dataset.tab === name));
-}
-function tabClick(e) {
-  const b = e.target.closest('button[data-tab]'); if (!b) return;
-  if (st.view === 'liq') st.tabLiq = b.dataset.tab; else st.tab = b.dataset.tab;
-  showPane(b.dataset.tab);
-  try { localStorage.setItem(st.view === 'liq' ? 'liqTabLiq' : 'liqTab', b.dataset.tab); } catch (err) { /* stockage indisponible */ }
-}
-$('#tabs').onclick = tabClick; $('#tabsLiq').onclick = tabClick;
 
-// ---------- vues : Terminal / Liquidite (meme graphique, couches differentes) ----------
-function setView(v) {
-  st.view = v; st.sel = null;
-  document.querySelectorAll('#views button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
-  $('#tabs').hidden = v === 'liq'; $('#tabsLiq').hidden = v !== 'liq';
-  document.querySelector('.tb-main').hidden = v === 'liq'; document.querySelector('.tb-liq').hidden = v !== 'liq';
-  showPane(v === 'liq' ? (st.tabLiq || 'lq-pools') : st.tab);
-  if (st.data) { rebuildLines(st.data); renderLadder(st.data); renderPools(st.data); renderPools2(st.data); renderDetail(st.data); }
-  try { localStorage.setItem('liqView', v); } catch (err) { /* rien */ }
-  if (v === 'liq') { pollHeat(); pollLiqs(); }
-  st.version++;
+// ---------- onglets du panneau de droite ----------
+function showPane(name) {
+  st.tab = name;
+  document.querySelectorAll('#side .pane').forEach(p => p.hidden = p.dataset.pane !== name);
+  document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === name));
+  try { localStorage.setItem('liqTab', name); } catch (err) { /* stockage indisponible */ }
+  if (name === 'liquidity') { pollLiqs(); renderLqReal(); }
+  if (name === 'vp') pollVP();
 }
-$('#views').onclick = e => { const b = e.target.closest('button[data-view]'); if (b && b.dataset.view !== st.view) setView(b.dataset.view); };
-['showSweeps', 'showReal', 'showProfile'].forEach(id => $('#' + id).onchange = () => st.version++);
-$('#heatHours').onclick = e => {
-  const b = e.target.closest('button[data-h]'); if (!b) return;
-  st.heatHours = +b.dataset.h; document.querySelectorAll('#heatHours button').forEach(x => x.classList.toggle('on', x === b)); pollHeat();
-};
-let heatTimer = null, liqTimer = null;
+$('#tabs').onclick = e => { const b = e.target.closest('button[data-tab]'); if (b) showPane(b.dataset.tab); };
+$('#stats').addEventListener('click', e => {
+  const b = e.target.closest('button[data-side]'); if (!b) return;
+  st.statSide = b.dataset.side; if (st.data) renderStats(st.data);
+});
+
+// ---------- workspace : pages, menu lateral, mise en page ----------
+const PAGES = {desk: 'Desk', overview: 'Overview', analysis: 'Analyse'};
+const SUBS = {synth: 'Biais & probabilités', macro: 'Macro & annonces', dom: 'Dominance BTC / alts', plan: 'Plan de trade', lex: 'Lexique du graphique'};
+function navigate(page, sub) {
+  if (!PAGES[page]) page = 'desk';
+  st.page = page;
+  if (page === 'analysis') st.sub = SUBS[sub] ? sub : (st.sub || 'synth');
+  document.querySelectorAll('.page').forEach(p => p.hidden = p.dataset.page !== page);
+  document.querySelectorAll('#sidebar a[data-nav]').forEach(a => a.classList.toggle('on', a.dataset.nav === page && (page !== 'analysis' || a.dataset.sub === st.sub)));
+  $('#crumb').textContent = page === 'analysis' ? SUBS[st.sub] : PAGES[page];
+  if (page === 'analysis') Analysis.show(st.sub);
+  if (page === 'desk') setTimeout(() => { syncRange(); refreshAll(); }, 60);
+  if (page === 'overview') pollOverview();
+  try { localStorage.setItem('liqPage', page + (page === 'analysis' ? '/' + st.sub : '')); } catch (e) { /* rien */ }
+}
+function routeFromHash() {
+  const m = /^#\/([a-z]+)(?:\/([a-z]+))?/.exec(location.hash);
+  if (m) navigate(m[1], m[2]);
+  else { let saved = null; try { saved = localStorage.getItem('liqPage'); } catch (e) { /* rien */ } const q = (saved || 'desk').split('/'); navigate(q[0], q[1]); }
+}
+window.addEventListener('hashchange', routeFromHash);
+function applySidebar() { document.body.classList.toggle('sbmin', st.sbCollapsed); $('#sbToggle').textContent = st.sbCollapsed ? '»' : '«'; }
+$('#sbToggle').onclick = () => { st.sbCollapsed = !st.sbCollapsed; applySidebar(); savePrefs(); setTimeout(() => { st.version++; }, 250); };
+$('#layouts').onclick = e => { const b = e.target.closest('button[data-layout]'); if (b) { st.layout = b.dataset.layout; applyLayout(); } };
+$('#sideToggle').onclick = () => { st.sideOpen = !st.sideOpen; applyLayout(); };
+
+// ---------- carte de chaleur, liquidations reelles, VWAP / volume profiles : recuperation ----------
+let heatTimer = null, liqTimer = null, vpTimer = null;
 async function pollHeat() {
   clearTimeout(heatTimer);
-  if (st.view !== 'liq') return;
+  if (!needs('liq')) return;
   heatTimer = setTimeout(pollHeat, 45000);
   try {
-    const sym = st.symbol, h = await api(`/api/heat?symbol=${sym}&hours=${st.heatHours}`);
+    const sym = st.symbol, h = await api(`/api/heat?symbol=${sym}&hours=${st.liqOpts.hours}`);
     if (sym !== st.symbol || !h.ready) return;
     const dec = b64 => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
     h.L = dec(h.long); h.S = dec(h.short); h.img = buildHeatImage(h);
@@ -845,28 +669,71 @@ async function pollHeat() {
 }
 async function pollLiqs() {
   clearTimeout(liqTimer);
-  if (st.view !== 'liq') return;
+  if (!(needs('liq') || st.tab === 'liquidity')) return;
   liqTimer = setTimeout(pollLiqs, 8000);
   try { st.liqs = await api(`/api/liqs?symbol=${st.symbol}&hours=24`); renderLqReal(); st.version++; } catch (e) { /* rien */ }
 }
-// infobulle sur la carte de chaleur : bande de prix, heure, intensite estimee
-$('#chartwrap').addEventListener('mousemove', ev => {
-  const tip = $('#tip'), H = st.heat;
-  if (st.view !== 'liq' || !H || !H.ready || !st.data) { tip.hidden = true; return; }
-  const r = $('#chartwrap').getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top, L = layout();
-  if (!L || x > L.plotW) { tip.hidden = true; return; }
-  const price = series.coordinateToPrice(y), tt = chart.timeScale().coordinateToTime(x);
-  if (price == null || tt == null) { tip.hidden = true; return; }
-  const j = Math.floor(Math.log(price) / H.step) - H.b0, i = Math.floor((tt * 1000 - H.t0) / H.dt);
-  if (j < 0 || j >= H.m || i < 0 || i >= H.n) { tip.hidden = true; return; }
-  const vl = H.L[j * H.n + i], vs = H.S[j * H.n + i], v = Math.max(vl, vs);
-  const lo = Math.exp((H.b0 + j) * H.step), hi = Math.exp((H.b0 + j + 1) * H.step);
-  const usd = v ? H.ref * Math.pow(v / 255, 1 / 0.55) * price : 0;
-  tip.innerHTML = `<b>${fmtP(lo)} – ${fmtP(hi)}</b><br>${new Date(tt * 1000).toLocaleString('fr-FR', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'})}<br>` +
-    (v ? `<span class="${vs > vl ? 'dn' : 'up'}">${vs > vl ? 'Liquidations de shorts' : 'Liquidations de longs'}</span> ≈ <b>${usdFmt(usd)}</b><br><span class="muted">estimation à partir de l'Open Interest</span>` : '<span class="muted">pas de poche estimée ici</span>');
-  tip.hidden = false; tip.style.left = Math.min(r.width - 270, x + 14) + 'px'; tip.style.top = Math.max(4, y - 60) + 'px';
+async function pollVP() {
+  clearTimeout(vpTimer);
+  if (!(needs('vp') || st.tab === 'vp')) return;
+  vpTimer = setTimeout(pollVP, 20000);
+  try {
+    const sym = st.symbol, tf = st.tf;
+    const [S, V] = await Promise.all([api(`/api/series?symbol=${sym}&tf=${tf}`), api(`/api/vp?symbol=${sym}&tf=${tf}`)]);
+    if (sym !== st.symbol || tf !== st.tf) return;
+    S.stampN = ++st.serN; st.series = S; st.vpd = V;
+    if (V.ready && !V.profiles.find(p => p.id === st.vpFocus)) st.vpFocus = V.profiles[0] ? V.profiles[0].id : null;
+    renderVPList(); st.version++;
+  } catch (e) { /* rien */ }
+}
+
+// ---------- gestion des volume profiles (onglet VP) ----------
+const specText = s => s.kind === 'auto' ? 'Automatique (selon la timeframe)' : s.kind === 'rolling' ? `Glissant ${s.days} jours` : s.kind === 'since' ? `Depuis le ${s.date}` :
+  ({day: 'Jour', week: 'Semaine', month: 'Mois', quarter: 'Trimestre', year: 'Année'}[s.period]) + (s.back ? ` -${s.back}` : ' en cours');
+function renderVPList() {
+  const V = st.vpd, el = $('#vpList'); if (!el) return;
+  if (!V || !V.ready) { el.className = 'muted'; el.textContent = needs('vp') || st.tab === 'vp' ? 'Chargement…' : 'Ouvre le graphique VWAP · VP pour charger les profils.'; return; }
+  el.className = '';
+  const dt = t => new Date(t).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit', year: '2-digit'});
+  el.innerHTML = V.profiles.length ? `<table class="t"><tr><th>Profil</th><th>Fenêtre</th><th class="r">POC</th><th class="r">VAH</th><th class="r">VAL</th><th class="r">Barres</th></tr>` +
+    V.profiles.map(p => `<tr data-vpf="${esc(p.id)}" class="${p.id === st.vpFocus ? 'hl' : ''}" style="cursor:pointer" title="Afficher l'histogramme de ce profil"><td><span class="chip" style="background:#4c8dff"></span>${esc(p.label)}</td>` +
+      `<td class="muted small">${dt(p.t0)} → ${dt(p.t1)}</td><td class="r">${fmtP(p.poc)}</td><td class="r">${fmtP(p.vah)}</td><td class="r">${fmtP(p.val)}</td><td class="r muted">${p.bars}</td></tr>`).join('') + `</table>` :
+    '<div class="muted">Aucun profil sur cette timeframe (pas assez de données).</div>';
+  const hasAuto = V.specs.some(s => s.kind === 'auto');
+  $('#vpAuto').checked = hasAuto;
+  $('#vpAutoTxt').textContent = (V.auto[st.tf] || []).map(n => n >= 365 ? (n / 365) + ' an' + (n >= 730 ? 's' : '') : n + ' j').join(' · ');
+  $('#vpSpecs').innerHTML = V.specs.filter(s => s.kind !== 'auto').map((s, i) => `<div class="alert"><span>${esc(specText(s))}</span> <button class="x" data-vprm="${i}" title="Retirer">×</button></div>`).join('') || '<div class="muted small">Aucun profil personnalisé.</div>';
+  $('#vpAnchors').innerHTML = V.anchors.map((a, i) => `<div class="alert"><span>AVWAP ${esc(a)}</span> <button class="x" data-anrm="${i}" title="Retirer">×</button></div>`).join('') || '<div class="muted small">Aucune ancre ajoutée.</div>';
+}
+async function saveVP(specs, anchors) {
+  const out = $('#vpRes');
+  try {
+    await api('/api/vps', {specs, anchors});
+    out.className = 'up small'; out.textContent = '✓ enregistré';
+    pollVP(); poll();
+  } catch (e) { out.className = 'dn small'; out.textContent = e.message; }
+  setTimeout(() => { out.textContent = ''; }, 4000);
+}
+document.addEventListener('click', e => {
+  const r = e.target.closest('tr[data-vpf]');
+  if (r) { st.vpFocus = r.dataset.vpf; renderVPList(); st.version++; }
+  const rm = e.target.closest('[data-vprm]'), an = e.target.closest('[data-anrm]');
+  if (rm && st.vpd) { const cust = st.vpd.specs.filter(s => s.kind !== 'auto'), auto = st.vpd.specs.filter(s => s.kind === 'auto'); cust.splice(+rm.dataset.vprm, 1); saveVP([...auto, ...cust], st.vpd.anchors); }
+  if (an && st.vpd) { const a = st.vpd.anchors.slice(); a.splice(+an.dataset.anrm, 1); saveVP(st.vpd.specs, a); }
 });
-$('#chartwrap').addEventListener('mouseleave', () => { $('#tip').hidden = true; });
+$('#vpKind').onchange = () => document.querySelectorAll('[data-for]').forEach(l => l.hidden = l.dataset.for !== $('#vpKind').value);
+$('#vpAuto').onchange = e => {
+  if (!st.vpd) return;
+  const cust = st.vpd.specs.filter(s => s.kind !== 'auto');
+  saveVP(e.target.checked ? [{kind: 'auto'}, ...cust] : cust, st.vpd.anchors);
+};
+$('#vpAdd').onclick = () => {
+  if (!st.vpd) return;
+  const k = $('#vpKind').value;
+  const spec = k === 'rolling' ? {kind: 'rolling', days: +$('#vpDays').value} : k === 'since' ? {kind: 'since', date: $('#vpDate').value} : {kind: 'period', period: $('#vpPeriod').value, back: +$('#vpBack').value};
+  saveVP([...st.vpd.specs, spec], st.vpd.anchors);
+};
+$('#anchorAdd').onclick = () => { if (st.vpd && $('#vpAnchorDate').value) saveVP(st.vpd.specs, [...st.vpd.anchors, $('#vpAnchorDate').value]); };
 
 // ---------- Coinbase en direct (meme marche que le graphique TradingView en USD) ----------
 const cb = {ws: null, price: null, t: 0, sym: null, retry: 0, timer: null};
@@ -919,11 +786,6 @@ function riskChip() {
   el.title = 'Annonce majeure : ouvre l\'onglet Macro & annonces';
 }
 $('#riskChip').onclick = () => { const b = document.querySelector('#anTabs button[data-an="macro"]'); if (b) { b.click(); $('#analysis').scrollIntoView({behavior: 'smooth'}); } };
-
-$('#stats').addEventListener('click', e => {
-  const b = e.target.closest('button[data-side]'); if (!b) return;
-  st.statSide = b.dataset.side; if (st.data) renderStats(st.data);
-});
 
 // ---------- reglages ----------
 const M = $('#modal');
@@ -991,18 +853,43 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
   poll(); renderAlerts();
 });
 
+
+function loop() {
+  if (st.data) { panels.forEach(p => p.tick()); liveRender(); }
+  requestAnimationFrame(loop);
+}
+let ovTimer = null;
+async function pollOverview() {
+  clearTimeout(ovTimer);
+  if (st.page !== 'overview') return;
+  ovTimer = setTimeout(pollOverview, 6000);
+  try { Overview.render(await api('/api/overview')); } catch (e) { $('#overview').innerHTML = `<div class="dn">Vue d'ensemble indisponible : ${esc(e.message)}</div>`; }
+}
+function openSymbol(sym, page) {
+  if (st.cfg && st.cfg.symbols.includes(sym) && sym !== st.symbol) {
+    st.symbol = sym; $('#symbol').value = sym; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll();
+  }
+  location.hash = page === 'analysis' ? '#/analysis/synth' : '#/desk';
+}
 (async () => {
-  try { buildControls(await api('/api/config')); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
-  window.LT = {st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip};
+  loadPrefs();
+  let cfg;
+  try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
+  window.LT = {st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
+    shownPools, levelColor, livePrice, placeLabels, usdFmt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol};
+  Overview.init(window.LT);
+  createPanels();
+  buildControls(cfg);
   Analysis.init(window.LT);
-  renderLqLegend();
-  try {
-    const t = localStorage.getItem('liqTab'); if (t && t !== 'levels') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
-    st.tabLiq = localStorage.getItem('liqTabLiq') || 'lq-pools';
-    if (localStorage.getItem('liqView') === 'liq') setView('liq');
-  } catch (err) { /* rien */ }
+  renderLqLegend(); applySidebar(); applyLayout();
+  try { const t = localStorage.getItem('liqTab'); showPane(['levels', 'context', 'stats', 'liquidity', 'vp', 'alerts'].includes(t) ? t : 'levels'); } catch (err) { showPane('levels'); }
+  $('#navSettings').onclick = e => { e.preventDefault(); openSettings(); };
+  routeFromHash();
   poll(); pollAnalysis(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop);
-  setInterval(() => { livePoll(); liveBadge(); cbRender(); riskChip(); }, 1000);
-  window.__term = {st, chart, series, select, draw, layout, poolRect, overlay, openSettings, live, cb, setView, timeX, Analysis};      // pour les tests automatiques
+  setInterval(() => {
+    livePoll(); liveBadge(); cbRender(); riskChip();
+    const lb = $('#liveBadge'), sb = $('#sbLive'); sb.hidden = lb.hidden; sb.textContent = lb.textContent; sb.className = lb.className;
+  }, 1000);
+  window.__term = {st, panels, select, openSettings, live, cb, Analysis, navigate, maximize, applyLayout};      // pour les tests automatiques
 })();
 })();

@@ -677,11 +677,42 @@ class Service:
         bpub = bias_engine.public(bias_res)
         syn = synth_engine.synthesize(symbol, state["price"], bpub, macro_state, dom, state["context"], state["zones"],
                                       set(state["ladder"]["essential"]))
+        c24 = next((k.c for k in reversed(h1) if k.t <= now - DAY), None)
         out = {"ready": True, "symbol": symbol, "t": now, "price": state["price"], "synth": syn, "bias": bpub,
+               "context": state["context"], "atrPct": state["atrPct"], "change24": pct(state["price"], c24),
+               "spark": [round(k.c, 6) for k in h1[-72:]],
                "macro": macro_state, "dom": dom, "sources": {"errors": snap["errors"], "updated": snap.get("updated", {})},
                "statsReady": bool(m.stats), "biasPending": bias_res is None}
         self._an_cache[symbol] = (time.time(), out)
         return out
+
+    def overview(self) -> dict:
+        """Vue d'ensemble : une carte par paire (prix, biais, niveaux essentiels, contexte) + macro, dominance, sentiment."""
+        syms, first = [], None
+        for sym, m in self.markets.items():
+            if not m.ready:
+                syms.append({"symbol": sym, "ready": False})
+                continue
+            an = self.analysis(sym)
+            first = first or an
+            ctx = an["context"]
+            sy = an["synth"]
+            syms.append({"symbol": sym, "ready": True, "price": an["price"], "change24": an["change24"], "atrPct": an["atrPct"],
+                         "spark": an["spark"], "synth": {k: sy[k] for k in ("direction", "label", "score", "confidence", "validated", "pUp24", "pUp4", "base24", "levels", "invalidation")},
+                         "regime": (ctx.get("regime") or {}).get("label"), "funding": (ctx.get("funding") or {}).get("now"),
+                         "oi24": (ctx.get("oi") or {}).get("d24h"), "buy24": (ctx.get("cvd") or {}).get("buy24h"),
+                         "ls": ((ctx.get("ls") or {}).get("global") or {}).get("now"),
+                         "history": {"bars": (an["bias"] or {}).get("bars"), "since": (an["bias"] or {}).get("since")}})
+        g = {}
+        if first:
+            m = first["macro"]
+            g = {"macro": {"score": m["score"], "label": m["label"], "risk": m["risk"], "lines": [l for l in m["lines"][:3]],
+                           "upcoming": [{k: e[k] for k in ("id", "t", "label", "impact", "forecast", "previous")} for e in m["upcoming"][:4]]},
+                 "fng": m.get("fng") and {k: m["fng"][k] for k in ("value", "label", "d7")},
+                 "dom": {"btc_d": ((first["dom"].get("cg") or {}).get("btc_d")), "regime": (first["dom"].get("regime") or {}).get("name"),
+                         "tone": (first["dom"].get("regime") or {}).get("tone")},
+                 "sources": first["sources"]}
+        return {"ready": True, "t": self.source.now_ms(), "symbols": syms, **g}
 
     def plan(self, symbol: str, side: str, tp_pct: float, sl_pct: float, lev: float, horizon: int) -> dict:
         m = self.markets.get(symbol)

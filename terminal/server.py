@@ -245,6 +245,12 @@ def make_handler(app: App):
                 if u.path == "/api/series":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.service.get_series(sym, (q.get("tf") or ["1h"])[0]))
+                if u.path == "/api/overview":
+                    o = app.service.overview()
+                    o["alerts"] = [{"t": a["t"], "text": a["text"].split("\n")[0], "sent": a.get("sent")} for a in app.alerts.log[-6:][::-1]]
+                    o["feed"] = app.feed.status() if app.feed else None
+                    o["errors"] = app.service.errors
+                    return self._json(o)
                 if u.path == "/api/analysis":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.service.analysis(sym))

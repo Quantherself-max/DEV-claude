@@ -252,18 +252,18 @@ const Analysis = (() => {
   }
 
   // ---------- interface ----------
+  const TITLES = {synth: 'Biais & probabilités', macro: 'Macro & annonces', dom: 'Dominance BTC / alts', plan: 'Plan de trade', lex: 'Lexique du graphique'};
+  function show(name) {                                          // appele par le menu de gauche
+    document.querySelectorAll('#anTabs button').forEach(x => x.classList.toggle('on', x.dataset.an === name));
+    document.querySelectorAll('.anpane').forEach(p => p.hidden = p.dataset.anpane !== name);
+    $('#anTitle').textContent = TITLES[name] || '';
+    if (name === 'plan') runPlan();
+    if (S.an) render(S.an);
+  }
   function init(lt) {
     LT = lt;
-    $('#anTabs').onclick = e => {
-      const b = e.target.closest('button[data-an]'); if (!b) return;
-      document.querySelectorAll('#anTabs button').forEach(x => x.classList.toggle('on', x === b));
-      document.querySelectorAll('.anpane').forEach(p => p.hidden = p.dataset.anpane !== b.dataset.an);
-      try { localStorage.setItem('liqAn', b.dataset.an); } catch (err) { /* rien */ }
-      if (b.dataset.an === 'plan') runPlan();
-      if (S.an) render(S.an);
-    };
+    $('#anTabs').onclick = e => { const b = e.target.closest('button[data-an]'); if (b) show(b.dataset.an); };
     renderPlanForm(); renderLex();
-    try { const t = localStorage.getItem('liqAn'); const b = t && document.querySelector(`#anTabs button[data-an="${t}"]`); if (b) b.click(); } catch (err) { /* rien */ }
   }
   function render(an) {
     S.an = an;
@@ -275,5 +275,5 @@ const Analysis = (() => {
     if (tab && tab.an === 'dom') renderDom(an);
     $('#anStatus').textContent = 'analyse de ' + an.symbol + ' · ' + new Date(an.t).toLocaleTimeString('fr-FR');
   }
-  return {init, render, runPlan};
+  return {init, render, runPlan, show};
 })();

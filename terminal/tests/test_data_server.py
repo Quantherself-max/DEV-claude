@@ -463,6 +463,21 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.get("/api/vp?symbol=XXX&tf=1h")[0], 404)
         self.post("/api/vps", {"specs": [{"kind": "auto"}], "anchors": []})                    # remet les valeurs par defaut
 
+    def test_overview_endpoint(self):
+        code, body, _ = self.get("/api/overview")
+        self.assertEqual(code, 200)
+        o = json.loads(body)
+        for k in ("symbols", "macro", "dom", "fng", "alerts", "feed", "errors"):
+            self.assertIn(k, o)
+        ready = [s for s in o["symbols"] if s["ready"]]
+        self.assertTrue(ready)
+        s = ready[0]
+        for k in ("price", "change24", "spark", "synth", "regime", "history"):
+            self.assertIn(k, s)
+        self.assertIn(s["synth"]["confidence"], ("faible", "moyenne", "élevée", "elevee", "haute"))
+        self.assertIn("score", o["macro"])
+        self.assertLessEqual(len(o["alerts"]), 6)
+
     def test_heat_payload_and_gzip(self):
         import base64, gzip as gz
         req = urllib.request.Request(self.url + "/api/heat?symbol=BTCUSDT", headers={"Accept-Encoding": "gzip"})
