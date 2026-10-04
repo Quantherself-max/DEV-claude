@@ -12,16 +12,20 @@ from engine.atr import Candle, INTERVAL_MS
 from .base import DataError, Source
 
 FAPI = "https://fapi.binance.com"
+SPOT = "https://api.binance.com"
+COINBASE = "https://api.exchange.coinbase.com"
 
 
 class BinanceSource(Source):
     name = "binance"
 
-    def __init__(self, base: str = FAPI, timeout: int = 20, pause: float = 0.12, retries: int = 3):
+    def __init__(self, base: str = FAPI, timeout: int = 20, pause: float = 0.12, retries: int = 3,
+                 spot_base: str = SPOT, coinbase_base: str = COINBASE):
         self.base, self.timeout, self.pause, self.retries = base.rstrip("/"), timeout, pause, retries
+        self.spot_base, self.coinbase_base = spot_base.rstrip("/"), coinbase_base.rstrip("/")
 
-    def _get(self, path: str, params: dict | None = None):
-        url = self.base + path + ("?" + urllib.parse.urlencode(params) if params else "")
+    def _get(self, path: str, params: dict | None = None, host: str | None = None):
+        url = (host or self.base) + path + ("?" + urllib.parse.urlencode(params) if params else "")
         last = None
         for attempt in range(self.retries):
             try:
@@ -35,11 +39,11 @@ class BinanceSource(Source):
                     last = f"HTTP {e.code}"
                     continue
                 hint = " (acces refuse depuis ta region ou ton reseau ?)" if e.code in (403, 451) else ""
-                raise DataError(f"Binance HTTP {e.code}{hint} : {body}") from e
+                raise DataError(f"HTTP {e.code}{hint} ({url.split('?')[0]}) : {body}") from e
             except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
                 last = str(e)
                 time.sleep(1.0 * (attempt + 1))
-        raise DataError(f"Binance injoignable ({last})")
+        raise DataError(f"injoignable : {url.split('?')[0]} ({last})")
 
     @staticmethod
     def parse_klines(rows):
@@ -82,6 +86,33 @@ class BinanceSource(Source):
             time.sleep(self.pause)
         return out
 
+    # --- contexte derives (V2) ---
+    def premium_index(self, symbol):
+        """Prix mark, prix index (spot agrege), dernier funding (par 8 h), prochaine echeance."""
+        r = self._get("/fapi/v1/premiumIndex", {"symbol": symbol})
+        return {"mark": float(r["markPrice"]), "index": float(r["indexPrice"]), "funding": float(r["lastFundingRate"]),
+                "next_funding": int(r["nextFundingTime"])}
+
+    def funding_history(self, symbol, start_ms, end_ms):
+        rows = self._get("/fapi/v1/fundingRate", {"symbol": symbol, "startTime": start_ms, "endTime": end_ms, "limit": 1000})
+        return [(int(r["fundingTime"]), float(r["fundingRate"])) for r in rows]
+
+    def long_short(self, symbol, period, start_ms, end_ms, kind="global"):
+        """Ratio long/short : 'global' = comptes, 'top' = positions des gros traders. [(t, ratio, part long)]"""
+        path = "/futures/data/globalLongShortAccountRatio" if kind == "global" else "/futures/data/topLongShortPositionRatio"
+        rows = self._get(path, {"symbol": symbol, "period": period, "limit": 500, "startTime": start_ms, "endTime": end_ms})
+        out = []
+        for r in rows:
+            lg = r.get("longAccount", r.get("longPosition"))
+            out.append((int(r["timestamp"]), float(r["longShortRatio"]), float(lg) if lg is not None else None))
+        return out
+
+    def spot_price(self, symbol):
+        return float(self._get("/api/v3/ticker/price", {"symbol": symbol}, host=self.spot_base)["price"])
+
+    def coinbase_price(self, product):
+        return float(self._get(f"/products/{product}/ticker", None, host=self.coinbase_base)["price"])
+
     def selftest(self, symbol="BTCUSDT"):
         """Verifications rapides : renvoie une liste de (nom, ok, detail)."""
         res = []
@@ -103,4 +134,18 @@ class BinanceSource(Source):
             res.append((f"Open Interest 5m {symbol}", len(oi) >= 5, f"{len(oi)} points, dernier {oi[-1][1] if oi else '-'}"))
         except DataError as e:
             res.append((f"Open Interest 5m {symbol}", False, str(e)))
+        for name, fn in (("funding / prix mark (fapi)", lambda: self.premium_index(symbol)["funding"]),
+                         ("ratio long/short (fapi)", lambda: len(self.long_short(symbol, "1h", now - 6 * 3_600_000, now))),
+                         ("prix spot (api.binance.com)", lambda: self.spot_price(symbol)),
+                         ("prix Coinbase (api.exchange.coinbase.com)", lambda: self.coinbase_price(coinbase_product(symbol)))):
+            try:
+                res.append((name, True, str(fn())))
+            except (DataError, KeyError, ValueError) as e:
+                res.append((name, False, str(e) + " (optionnel : le terminal fonctionne sans)"))
         return res
+
+
+def coinbase_product(symbol: str) -> str:
+    """BTCUSDT -> BTC-USD (paire Coinbase en dollars)."""
+    base = symbol[:-4] if symbol.endswith("USDT") else symbol[:-3]
+    return f"{base}-USD"

@@ -22,6 +22,23 @@ def member_label(lv: dict) -> str:
     return lv["name"]
 
 
+def fmt_pct(x, d=0):
+    return "-" if x is None else f"{x * 100:.{d}f} %"
+
+
+def prob_line(z: dict) -> str:
+    p = z.get("prob")
+    if not p:
+        return "Probabilites : en cours de calcul (historique)."
+    b, base = p.get("bounce"), p.get("base")
+    parts = []
+    if z["side"] != "in":
+        parts.append(f"atteinte 24 h ≈ {fmt_pct(p['reach'].get('24'))}")
+    if b and b.get("n"):
+        parts.append(f"si touchee : rebond {fmt_pct(b['p'])} [n={b['n']}]" + (f" (hasard {fmt_pct(base['p'])})" if base and base.get("n") else ""))
+    return "Probabilites (historique 1h) : " + " · ".join(parts) if parts else "Probabilites : pas assez d'historique."
+
+
 def format_alert(kind: str, st: dict, z: dict) -> str:
     arrow = {"above": "▲", "below": "▼", "in": "◆"}[z["side"]]
     where = {"above": "au-dessus du prix : plutot attiree vers le haut",
@@ -34,13 +51,15 @@ def format_alert(kind: str, st: dict, z: dict) -> str:
             f"{sg}{z['distPct']:.2f} % du prix ({z['distAtr']:.1f} ATR {st['tf']})\n"
             f"{names}\n"
             f"Score {z['score']} · prix {fmt_price(st['price'])}\n"
+            f"{prob_line(z)}\n"
             f"Regle « aimant » (hypothese non validee) : zone {where}.")
 
 
 class AlertEngine:
     def __init__(self, cfg, notifier, now=time.time):
         self.cfg, self.notifier, self.now = cfg, notifier, now
-        self.dir = Path(cfg.data_dir)
+        # historique separe pour les donnees simulees : il ne doit pas bloquer les vraies alertes (cooldown)
+        self.dir = Path(cfg.data_dir) / ("simulated" if cfg.source == "simulated" else "")
         self.state_file = self.dir / "alerts_state.json"
         self.log_file = self.dir / "alerts_log.jsonl"
         self.records: list[dict] = []
@@ -121,11 +140,50 @@ class AlertEngine:
                     self.sent_times.append(t)
             self._log(entry)
 
+    def sweep_alerts(self, st: dict, first: bool):
+        """Grosse poche de liquidation balayee (journal du moteur OI) : une alerte par balayage."""
+        if not getattr(self.cfg, "alert_sweep", False):
+            return []
+        sw = st.get("sweeps") or {}
+        seen = self.__dict__.setdefault("_sweeps_seen", set(self._load_seen()))
+        out = []
+        for e in sw.get("recent", []):
+            key = f"{st['symbol']}:{e['t']}:{e['side']}"
+            if key in seen or e["frac"] < self.cfg.alert_sweep_frac:
+                continue
+            seen.add(key)
+            if first:
+                continue
+            s = sw.get("stats") or {}
+            hist = f"rebond {fmt_pct(s.get('p'))} [n={s.get('n')}]" if s.get("n") else "pas encore d'historique"
+            arrow, who = ("▼", "longs") if e["side"] == "long" else ("▲", "shorts")
+            d = (e["price"] / st["price"] - 1) * 100
+            z = {"mid": e["price"], "side": "below" if e["side"] == "long" else "above", "distPct": d}
+            text = (f"💥 Poche de liquidation balayee {arrow} {st['symbol']} {fmt_price(e['price'])} ({d:+.2f} %)\n"
+                    f"{fmt_pct(e['frac'])} des liquidations de {who} estimees · prix {fmt_price(st['price'])}\n"
+                    f"Apres un balayage (historique, 29 j) : {hist}. Estimation par l'OI (proxy).")
+            out.append(("sweep", z, text))
+        self._save_seen(seen)
+        return out
+
+    def _load_seen(self):
+        try:
+            return json.loads((self.dir / "sweeps_seen.json").read_text(encoding="utf-8"))
+        except Exception:
+            return []
+
+    def _save_seen(self, seen):
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            (self.dir / "sweeps_seen.json").write_text(json.dumps(sorted(seen)[-500:]), encoding="utf-8")
+        except OSError:
+            pass
+
     def run_cycle(self, states: dict):
         """Un passage complet : states = {symbole: etat au timeframe d'alerte}."""
         first = not self.started
         for st in states.values():
-            self.dispatch(self.evaluate(st, first), st)
+            self.dispatch(self.evaluate(st, first) + self.sweep_alerts(st, first), st)
         if first:
             self.startup_summary(states)
             self.started = True

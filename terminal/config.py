@@ -36,7 +36,13 @@ class Config:
     per_side: int = 3
     clust_pct: float = 0.25
     magnet_pct: float = 70.0
+    # probabilites (mesurees sur l'historique 1h) : rebond = +k ATR avant -k ATR dans l'horizon
+    stats_horizon: int = 24
+    stats_k: float = 1.5
+    stats_refresh_hours: float = 6.0
     # alertes
+    alert_sweep: bool = True              # alerte quand une grosse poche de liquidation est balayee
+    alert_sweep_frac: float = 0.15        # ... si elle represente >= 15 % des liquidations de ce cote
     alert_tf: str = "1h"
     alert_min_score: int = 3             # nb de sources distinctes (+1 si une poche AIMANT en fait partie)
     alert_max_dist_atr: float = 6.0
@@ -71,8 +77,33 @@ def load_config(env_path: Path | None = None) -> Config:
     c.alert_tf = g("TERMINAL_ALERT_TF", c.alert_tf)
     c.alert_min_score = int(g("TERMINAL_ALERT_MIN_SCORE", c.alert_min_score))
     c.alert_cooldown_hours = float(g("TERMINAL_ALERT_COOLDOWN_HOURS", c.alert_cooldown_hours))
+    c.alert_sweep = g("TERMINAL_ALERT_SWEEP", "1").lower() not in ("0", "false", "non", "no")
+    c.stats_horizon = int(g("TERMINAL_STATS_HORIZON", c.stats_horizon))
+    c.stats_k = float(g("TERMINAL_STATS_K", c.stats_k))
     c.telegram_token = g("TELEGRAM_BOT_TOKEN", "")
     c.telegram_chat_id = g("TELEGRAM_CHAT_ID", "")
     c.telegram_api_base = g("TELEGRAM_API_BASE", c.telegram_api_base)
     c.data_dir = g("TERMINAL_DATA_DIR", c.data_dir)
     return c
+
+
+def write_env(path: Path, updates: dict) -> None:
+    """Met a jour (ou cree) le fichier .env en gardant les autres lignes et les commentaires."""
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    done = set()
+    out = []
+    for line in lines:
+        key = line.split("=", 1)[0].strip() if "=" in line and not line.lstrip().startswith("#") else None
+        if key in updates:
+            out.append(f"{key}={updates[key]}")
+            done.add(key)
+        else:
+            out.append(line)
+    for k, v in updates.items():
+        if k not in done:
+            out.append(f"{k}={v}")
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)            # le token Telegram n'est lisible que par toi
+    except OSError:
+        pass

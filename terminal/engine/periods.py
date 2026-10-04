@@ -127,3 +127,28 @@ class AnchoredVWAP:
             a.add(forming)
         vw, sd = a.vwap()
         return {"vwap": vw, "sd": sd, "start": a.start, "n": a.n}
+
+
+class NakedPocs:
+    """POC 'nus' (naked) : POC des periodes passees que le prix n'a JAMAIS retraverses depuis. Aimants classiques
+    pour les traders de profil de volume. La periode juste terminee est exclue (c'est deja le POC precedent)."""
+
+    def __init__(self, keep: int = 20):
+        self.keep = keep
+        self.items: list[dict] = []        # {"poc", "t_end", "n"} ; n = numero de la periode (1 = derniere)
+        self.pending = None                 # POC de la periode qui vient de se terminer (pas encore "ancien")
+
+    def on_rollover(self, poc, t_end: int) -> None:
+        if self.pending is not None:
+            self.items.append(self.pending)
+            self.items = self.items[-self.keep:]
+        self.pending = {"poc": poc, "t_end": t_end} if poc is not None else None
+
+    def feed(self, k: Candle) -> None:
+        """Bougie FERMEE : un POC touche n'est plus 'nu' (le POC en attente aussi peut etre touche)."""
+        self.items = [x for x in self.items if not (k.l <= x["poc"] <= k.h)]
+        if self.pending is not None and k.l <= self.pending["poc"] <= k.h:
+            self.pending = None
+
+    def active(self):
+        return list(self.items)

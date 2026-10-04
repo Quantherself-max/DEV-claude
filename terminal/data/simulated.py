@@ -82,3 +82,40 @@ class SimulatedSource(Source):
     def open_interest(self, symbol, period, start_ms, end_ms):
         self._gen(symbol)
         return [(t, v) for t, v in self._oi[symbol] if start_ms <= t <= end_ms]
+
+    # --- contexte derives (V2), deterministes et plausibles ---
+    def _last_close(self, symbol):
+        self._gen(symbol)
+        return self._m5[symbol][-1].c
+
+    def premium_index(self, symbol):
+        now = self.now_ms()
+        c = self._last_close(symbol)
+        basis = 0.0004 * math.sin(now / 3.6e7) + 0.0001
+        return {"mark": c * (1 + basis), "index": c, "funding": 0.0001 + 0.00015 * math.sin(now / 9e7),
+                "next_funding": now - now % 28_800_000 + 28_800_000}
+
+    def funding_history(self, symbol, start_ms, end_ms):
+        t = start_ms - start_ms % 28_800_000 + 28_800_000
+        out = []
+        while t <= end_ms:
+            out.append((t, 0.0001 + 0.00015 * math.sin(t / 9e7)))
+            t += 28_800_000
+        return out
+
+    def long_short(self, symbol, period, start_ms, end_ms, kind="global"):
+        step = INTERVAL_MS[period]
+        t = start_ms - start_ms % step + step
+        out = []
+        while t <= end_ms:
+            r = (1.6 if kind == "global" else 1.1) + 0.35 * math.sin(t / 5e7 + (0 if kind == "global" else 1.3))
+            out.append((t, r, r / (1 + r)))
+            t += step
+        return out
+
+    def spot_price(self, symbol):
+        return self._last_close(symbol) * (1 - 0.0002)
+
+    def coinbase_price(self, product):
+        sym = product.replace("-USD", "USDT")
+        return self.spot_price(sym) * (1 + 0.0005 * math.sin(self.now_ms() / 4e7))

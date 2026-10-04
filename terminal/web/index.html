@@ -9,15 +9,18 @@
 </head>
 <body>
 <header id="top">
-  <div class="brand">LIQ<span>TERMINAL</span></div>
+  <div class="brand">LIQ<span>TERMINAL</span><em>V2</em></div>
   <select id="symbol" aria-label="Symbole"></select>
   <div id="tfs" class="seg" role="group" aria-label="Timeframe"></div>
   <div class="price"><b id="price">-</b><small id="atr"></small></div>
+  <span id="regime" class="regime" hidden></span>
   <div class="spacer"></div>
-  <span id="srcBadge" class="badge">-</span>
-  <span id="tgBadge" class="badge">-</span>
+  <button id="srcBadge" class="badge" title="Changer la source dans les réglages">-</button>
+  <button id="tgBadge" class="badge" title="Configurer Telegram dans les réglages">-</button>
   <span id="status" class="muted">chargement...</span>
+  <button id="openSettings" class="primary">⚙ Réglages</button>
 </header>
+<div id="banner" hidden></div>
 <main>
   <section id="chartwrap">
     <div id="chart"></div>
@@ -29,26 +32,80 @@
     </div>
   </section>
   <aside id="side">
-    <section class="card">
-      <h2>Confluences <small id="confHint"></small></h2>
-      <div id="ladder"></div>
-    </section>
-    <section class="card">
-      <h2>Poches de liquidité <small>estimées (proxy OI)</small></h2>
-      <div id="pools"></div>
-    </section>
-    <section class="card" id="detailCard">
-      <h2>Détail <small>clique un niveau, une zone ou une poche</small></h2>
-      <div id="detail" class="muted">Rien de sélectionné.</div>
-    </section>
-    <section class="card">
-      <h2>Alertes <small id="alertHint"></small></h2>
-      <div id="alerts" class="muted">-</div>
-    </section>
+    <nav id="tabs" class="tabs" role="tablist">
+      <button data-tab="levels" class="on">Niveaux</button>
+      <button data-tab="context">Contexte</button>
+      <button data-tab="stats">Stats</button>
+      <button data-tab="alerts">Alertes</button>
+    </nav>
+    <div class="pane" data-pane="levels">
+      <section class="card">
+        <h2>Confluences <small id="confHint"></small></h2>
+        <div id="ladder"></div>
+      </section>
+      <section class="card" id="detailCard">
+        <h2>Détail <small>clique une zone, un niveau ou une poche</small></h2>
+        <div id="detail" class="muted">Rien de sélectionné.</div>
+      </section>
+      <section class="card">
+        <h2>Poches de liquidation <small>estimées (OI)</small></h2>
+        <div id="pools"></div>
+      </section>
+    </div>
+    <div class="pane" data-pane="context" hidden>
+      <section class="card"><h2>Contexte marché <small id="ctxHint"></small></h2><div id="context" class="muted">-</div></section>
+    </div>
+    <div class="pane" data-pane="stats" hidden>
+      <section class="card"><h2>Réaction du prix aux niveaux <small id="statsHint"></small></h2><div id="stats" class="muted">-</div></section>
+      <section class="card"><h2>Poches balayées <small>journal</small></h2><div id="sweeps" class="muted">-</div></section>
+    </div>
+    <div class="pane" data-pane="alerts" hidden>
+      <section class="card"><h2>Alertes <small id="alertHint"></small></h2><div id="alerts" class="muted">-</div></section>
+    </div>
   </aside>
 </main>
-<footer>Estimations à titre informatif, pas un conseil financier. La règle « aimant » (zone attirant le prix) est une hypothèse non validée.
+<footer>Estimations et statistiques historiques à titre informatif, pas un conseil financier. La règle « aimant » (zone attirant le prix) est une hypothèse non validée.
   Graphiques : <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a> (Apache-2.0).</footer>
+
+<div id="modal" class="modal" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+    <div class="mhead"><h3 id="mTitle">Réglages</h3><button id="closeSettings" class="x" aria-label="Fermer">×</button></div>
+    <div class="mbody">
+      <section>
+        <h4><span class="step">1</span> Source des données</h4>
+        <label class="opt"><input type="radio" name="source" value="simulated"> <b>Simulées</b> <span class="muted">— prix fictifs, pour découvrir le terminal sans internet</span></label>
+        <label class="opt"><input type="radio" name="source" value="binance"> <b>Binance (réel)</b> <span class="muted">— vrais prix, volumes et Open Interest (gratuit, sans compte)</span></label>
+        <div class="line"><button id="testBinance">Tester la connexion Binance</button><span id="binanceRes" class="muted"></span></div>
+        <div id="binanceList" class="checks"></div>
+        <label class="field">Paires <input id="symbols" placeholder="BTCUSDT,SOLUSDT" autocomplete="off"></label>
+      </section>
+      <section>
+        <h4><span class="step">2</span> Alertes Telegram <small id="tgState"></small></h4>
+        <ol class="howto">
+          <li>Dans Telegram, ouvre <b>@BotFather</b>, envoie <code>/newbot</code>, choisis un nom : il te donne un <b>token</b>.</li>
+          <li>Colle le token ici :
+            <input id="tgToken" type="password" placeholder="123456789:AA..." autocomplete="off" spellcheck="false"></li>
+          <li>Ouvre ton nouveau bot dans Telegram et envoie-lui « bonjour », puis :
+            <button id="findChat">Trouver mon chat id</button> <span id="chatRes" class="muted"></span>
+            <input id="tgChat" placeholder="chat id (rempli automatiquement)" autocomplete="off"></li>
+          <li><button id="testTg">Envoyer un message de test</button> <span id="tgRes" class="muted"></span></li>
+        </ol>
+      </section>
+      <section>
+        <h4><span class="step">3</span> Règles d'alerte</h4>
+        <div class="grid2">
+          <label class="field">Score minimum <select id="aScore"><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+          <label class="field">Timeframe <select id="aTf"></select></label>
+          <label class="field">Pause entre 2 alertes d'une zone (h) <input id="aCool" type="number" min="0.5" max="48" step="0.5"></label>
+          <label class="field chk"><input id="aSweep" type="checkbox"> Alerte quand une grosse poche est balayée</label>
+        </div>
+        <p class="muted small">Score = nombre de sources différentes dans la zone (+1 si une poche AIMANT en fait partie).</p>
+      </section>
+    </div>
+    <div class="mfoot"><span id="saveRes" class="muted"></span><button id="cancelSettings">Annuler</button><button id="saveSettings" class="primary">Enregistrer</button></div>
+  </div>
+</div>
+<div id="toast" hidden></div>
 <script src="vendor/lightweight-charts.standalone.production.js"></script>
 <script src="app.js"></script>
 </body>

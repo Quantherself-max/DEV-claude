@@ -127,6 +127,31 @@ class AlertRuleTests(unittest.TestCase):
         self.assertEqual(len(n2.sent), 1)                         # uniquement le resume
         self.assertIn("Terminal demarre", n2.sent[0])
 
+    def test_probabilities_in_message(self):
+        st = make_state([Z3])
+        st["zones"][0]["prob"] = {"reach": {"4": 0.1, "24": 0.35, "72": 0.6}, "bounce": {"p": 0.58, "n": 320},
+                                  "base": {"p": 0.51, "n": 900}}
+        txt = format_alert("new", st, st["zones"][0])
+        self.assertIn("atteinte 24 h ≈ 35 %", txt)
+        self.assertIn("rebond 58 % [n=320]", txt)
+        self.assertIn("hasard 51 %", txt)
+
+    def test_sweep_alert_once_and_not_at_startup(self):
+        ev_old = {"t": 1, "side": "long", "price": 81600.0, "frac": 0.3, "result": "open"}
+        st = make_state([])
+        st["sweeps"] = {"stats": {"n": 20, "p": 0.6}, "recent": [ev_old]}
+        self.eng.run_cycle({"BTCUSDT": st})                          # demarrage : deja vu, pas d'alerte
+        self.assertEqual(len(self.n.sent), 1)
+        ev_new = {"t": 2, "side": "short", "price": 87600.0, "frac": 0.2, "result": "open"}
+        small = {"t": 3, "side": "short", "price": 88000.0, "frac": 0.05, "result": "open"}
+        st["sweeps"]["recent"] = [small, ev_new, ev_old]
+        self.eng.run_cycle({"BTCUSDT": st})
+        self.assertEqual(len(self.n.sent), 2)
+        self.assertIn("Poche de liquidation balayee ▲", self.n.sent[-1])
+        self.assertIn("rebond 60 % [n=20]", self.n.sent[-1])
+        self.eng.run_cycle({"BTCUSDT": st})
+        self.assertEqual(len(self.n.sent), 2)                         # pas de doublon
+
     def test_message_format(self):
         st = make_state([Z2MAG])
         txt = format_alert("new", st, st["zones"][0])
