@@ -26,6 +26,8 @@ function ciBar(s, b) {                                  // echelle 20 % -> 80 %
     `<i style="left:${x(s.lo)}%;width:${Math.max(1, x(s.hi) - x(s.lo))}%"></i>` +
     (b && b.n ? `<u style="left:${x(b.p)}%"></u>` : '') + `<b style="left:${x(s.p)}%"></b></div>`;
 }
+const usdFmt = v => v >= 1e9 ? (v / 1e9).toFixed(2).replace('.', ',') + ' Md$' : v >= 1e6 ? (v / 1e6).toFixed(1).replace('.', ',') + ' M$' : Math.round(v / 1e3) + ' k$';
+const ageFmt = ms => { const h = ms / 3.6e6; return h < 1 ? Math.round(ms / 6e4) + ' min' : h < 48 ? Math.round(h) + ' h' : Math.round(h / 24) + ' j'; };
 const timeFr = ms => new Date(ms).toLocaleString('fr-FR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
 const PER = {d:'#FFB300', w:'#4CAF50', m:'#42A5F5', y:'#EC407A'};
 const PER_OPEN = {d:'#CE93D8', w:'#9CCC65', m:'#64B5F6', y:'#F06292'};
@@ -54,7 +56,7 @@ function explain(name) {
   return '';
 }
 
-const st = {symbol: null, tf: '1h', data: null, mode: 'conf', pools: true, sel: null, lines: [], key: null, version: 0, cfg: null, tab: 'levels', statSide: 'all', lastBar: 0, lastBarObj: null};
+const st = {symbol: null, tf: '1h', data: null, mode: 'ess', view: 'main', heat: null, heatHours: 168, liqs: null, an: null, pools: true, sel: null, lines: [], key: null, version: 0, cfg: null, tab: 'levels', statSide: 'all', lastBar: 0, lastBarObj: null};
 async function api(path, body) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
   const r = await fetch(path, opt);
@@ -66,8 +68,8 @@ async function api(path, body) {
 // ---------- graphique ----------
 const chart = LightweightCharts.createChart($('#chart'), {
   autoSize: true,
-  layout: {background: {type: 'solid', color: '#0b0e11'}, textColor: '#b2b5be', fontSize: 12},
-  grid: {vertLines: {color: '#141824'}, horzLines: {color: '#141824'}},
+  layout: {background: {type: 'solid', color: 'rgba(0,0,0,0)'}, textColor: '#b2b5be', fontSize: 12},
+  grid: {vertLines: {color: 'rgba(40,46,64,.35)'}, horzLines: {color: 'rgba(40,46,64,.35)'}},
   rightPriceScale: {borderColor: '#2a2e39', scaleMargins: {top: 0.08, bottom: 0.08}},
   timeScale: {borderColor: '#2a2e39', timeVisible: true, secondsVisible: false, rightOffset: 16},
   crosshair: {mode: LightweightCharts.CrosshairMode.Normal},
@@ -77,14 +79,14 @@ const series = chart.addCandlestickSeries({upColor: '#26a69a', downColor: '#ef53
   autoscaleInfoProvider: orig => {                       // garde les poches et zones proches dans le cadre
     const r = orig(); const d = st.data;
     if (!r || !d) return r;
-    const ex = d.liquidity.pools.map(p => p.price).concat(ladderZones(d).map(z => z.mid));
+    const ex = d.liquidity.pools.map(p => p.price).concat(st.view === 'liq' ? [] : shownZones(d).map(z => z.mid));
     if (ex.length) {
       r.priceRange.minValue = Math.min(r.priceRange.minValue, ...ex);
       r.priceRange.maxValue = Math.max(r.priceRange.maxValue, ...ex);
     }
     return r;
   }});
-const overlay = $('#overlay'), ctx = overlay.getContext('2d');
+const overlay = $('#overlay'), ctx = overlay.getContext('2d'), heatCv = $('#heat'), hctx = heatCv.getContext('2d');
 
 const byId = (arr, k = 'id') => Object.fromEntries(arr.map(x => [x[k], x]));
 const ladderZones = d => {
@@ -206,14 +208,25 @@ function liveRender() {                                          // appele a cha
   }
 }
 
+// zones affichees selon le mode : Essentiel = les 2 plus importantes de chaque cote ; Confluences = toutes celles de la liste
+const essentialZones = d => { const z = byId(d.zones); return (d.ladder.essential || []).map(i => z[i]).filter(Boolean); };
+const shownZones = d => st.mode === 'ess' ? essentialZones(d) : ladderZones(d);
+const shownPools = d => {
+  const ps = d.liquidity.pools.map((p, i) => ({p, i}));
+  if (st.mode !== 'ess') return ps;
+  const cnt = {long: 0, short: 0};
+  return ps.filter(x => x.p.rel >= 0.5 || x.p.magnet).sort((a, b) => b.p.rel - a.p.rel).filter(x => cnt[x.p.side]++ < 2);
+};
+
 function rebuildLines(d) {
   st.lines.forEach(l => series.removePriceLine(l));
   st.lines = [];
+  if (st.view === 'liq') return;
   const lv = byId(d.levels);
-  let ids;
+  let ids = [];
   if (st.mode === 'all') ids = d.levels.filter(l => l.kind !== 'liq' && l.inWindow).map(l => l.id);
   else {
-    const set = new Set(ladderZones(d).flatMap(z => z.members));
+    const set = new Set(st.mode === 'conf' ? ladderZones(d).flatMap(z => z.members) : []);
     if (st.sel && st.sel.type === 'zone') (byId(d.zones)[st.sel.id]?.members || []).forEach(i => set.add(i));
     ids = [...set].filter(i => lv[i] && lv[i].kind !== 'liq');
   }
@@ -226,8 +239,9 @@ function rebuildLines(d) {
   });
 }
 
-// ---------- calque : zones de confluence et poches (barres en degrade ancrees sur la derniere bougie) ----------
+// ---------- calques : zones de confluence, poches (de leur naissance a maintenant), carte de chaleur ----------
 function rgba(c, a) { return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
+const COL_L = [61, 220, 151], COL_S = [255, 107, 107];
 function layout() {
   const d = st.data; if (!d) return null;
   const ts = chart.timeScale();
@@ -235,14 +249,30 @@ function layout() {
   let xr = ts.timeToCoordinate(lastT);
   const plotW = ts.width();
   if (xr == null) xr = plotW - 80;
-  return {d, xr, plotW};
+  const prev = d.candles.length > 1 ? ts.timeToCoordinate(d.candles[d.candles.length - 2][0]) : null;
+  return {d, xr, plotW, barW: prev != null ? Math.max(1, xr - prev) : 6};
+}
+// instant (secondes) -> abscisse, par interpolation entre les bougies (marche pour n'importe quel timeframe)
+function timeX(tsec, L) {
+  const cs = st.data.candles, n = cs.length, ts = chart.timeScale();
+  if (tsec >= cs[n - 1][0]) return L.xr + (tsec - cs[n - 1][0]) / (TF_SEC[st.tf] || 3600) * L.barW;
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (cs[mid][0] <= tsec) lo = mid; else hi = mid; }
+  const xa = ts.timeToCoordinate(cs[lo][0]), xb = ts.timeToCoordinate(cs[Math.min(n - 1, lo + 1)][0]);
+  if (tsec < cs[0][0]) { return xa == null ? null : xa - (cs[0][0] - tsec) / (TF_SEC[st.tf] || 3600) * L.barW; }
+  if (xa == null || xb == null) return null;
+  return xa + (xb - xa) * (tsec - cs[lo][0]) / ((cs[Math.min(n - 1, lo + 1)][0] - cs[lo][0]) || 1);
 }
 function poolRect(p, L) {
   const y1 = series.priceToCoordinate(p.hi), y0 = series.priceToCoordinate(p.lo), yc = series.priceToCoordinate(p.price);
   if (y1 == null || y0 == null || yc == null) return null;
   const thick = Math.max(6, Math.abs(y0 - y1));
-  const len = Math.max(36, L.plotW * 0.28 * Math.pow(p.rel, 0.7));
-  return {x0: L.xr - len, x1: L.xr, yc, thick, len};
+  let x0 = p.born ? timeX(p.born / 1000, L) : null;
+  const minLen = 36, born = x0 != null;
+  if (x0 == null || L.xr - x0 < minLen) x0 = L.xr - Math.max(minLen, L.plotW * 0.12 * Math.pow(p.rel, 0.7));
+  const edge = born && x0 > 0;                       // vraie naissance visible : bord gauche net ; sinon fondu (poche plus ancienne)
+  x0 = Math.max(0, x0);
+  return {x0, x1: L.xr, yc, thick, len: L.xr - x0, edge};
 }
 // Etiquettes sans chevauchement : on les repousse verticalement (ecart mini `gap`), puis on les ramene dans le cadre.
 function placeLabels(items, gap, top, bottom) {
@@ -262,40 +292,18 @@ function tag(x, y, text, color, bg, bold) {
   ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(text, x + 6, y + 0.5);
   return tw;
 }
-function draw() {
-  const dpr = window.devicePixelRatio || 1, w = overlay.clientWidth, h = overlay.clientHeight;
-  if (overlay.width !== Math.round(w * dpr) || overlay.height !== Math.round(h * dpr)) {
-    overlay.width = Math.round(w * dpr); overlay.height = Math.round(h * dpr);
-  }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, w, h);
-  const L = layout(); if (!L) return;
-  const {d, xr, plotW} = L;
-  // zones de confluence : bandes ambrees discretes sur toute la largeur (nom seulement si selectionnee)
-  const selZ = st.sel && st.sel.type === 'zone' ? st.sel.id : null;
-  const zones = ladderZones(d);
-  const zset = new Map(zones.map(z => [z.id, z]));
-  if (selZ && !zset.has(selZ)) { const z = byId(d.zones)[selZ]; if (z) zset.set(selZ, z); }
-  zset.forEach(z => {
-    const yt = series.priceToCoordinate(z.hi), yb = series.priceToCoordinate(z.lo);
-    if (yt == null || yb == null) return;
-    const span = Math.abs(yb - yt), hh = Math.max(6, span), y = Math.min(yt, yb) - (hh - span) / 2, sel = z.id === selZ;
-    ctx.fillStyle = `rgba(255,179,0,${sel ? 0.2 : 0.05 + 0.02 * Math.min(4, z.score)})`;
-    ctx.fillRect(0, y, plotW, hh);
-    if (sel) { ctx.strokeStyle = 'rgba(255,179,0,.85)'; ctx.lineWidth = 1; ctx.strokeRect(0.5, y + 0.5, plotW - 1, hh - 1); }
-  });
-  // poches de liquidite : barres en degrade + halo, etiquettes en pastille sans chevauchement
-  const pills = [];
-  if (st.pools) d.liquidity.pools.forEach((p, i) => {
+function drawPools(L, h) {
+  const {d, plotW} = L, pills = [];
+  if (!(st.pools || st.view === 'liq')) return pills;
+  shownPools(d).forEach(({p, i}) => {
     const r = poolRect(p, L); if (!r) return;
-    const col = p.side === 'long' ? [61, 220, 151] : [255, 107, 107];
+    const col = p.side === 'long' ? COL_L : COL_S;
     const a = Math.min(0.9, 0.22 + 0.55 * Math.pow(p.rel, 0.8) + (p.magnet ? 0.1 : 0));
-    const g = ctx.createLinearGradient(r.x1, 0, r.x0, 0);
-    g.addColorStop(0, rgba(col, a)); g.addColorStop(1, rgba(col, 0));
-    const g2 = ctx.createLinearGradient(r.x1, 0, r.x0, 0);
-    g2.addColorStop(0, rgba(col, a * 0.18)); g2.addColorStop(1, rgba(col, 0));
-    ctx.fillStyle = g2; ctx.fillRect(r.x0, r.yc - r.thick * 0.9, r.len, r.thick * 1.8);
+    const g = ctx.createLinearGradient(r.x0, 0, r.x1, 0);
+    g.addColorStop(0, rgba(col, r.edge ? a * 0.55 : 0.02)); g.addColorStop(r.edge ? 0.04 : 0.55, rgba(col, a * (r.edge ? 0.9 : 0.55))); g.addColorStop(1, rgba(col, a));
+    ctx.fillStyle = rgba(col, a * 0.1); ctx.fillRect(r.x0, r.yc - r.thick * 0.9, r.len, r.thick * 1.8);
     ctx.fillStyle = g; ctx.fillRect(r.x0, r.yc - r.thick / 2, r.len, r.thick);
+    if (r.edge) { ctx.fillStyle = rgba(col, Math.min(1, a + 0.25)); ctx.fillRect(r.x0, r.yc - r.thick / 2, 2, r.thick); }     // marque de naissance
     if (st.sel && st.sel.type === 'pool' && st.sel.id === i) { ctx.strokeStyle = rgba(col, 1); ctx.lineWidth = 1.5; ctx.strokeRect(r.x0, r.yc - r.thick / 2 - 2, r.len, r.thick + 4); }
     const dist = (p.price / livePrice(d) - 1) * 100;
     pills.push({y: r.yc, x1: r.x1, col, magnet: p.magnet, text: (p.magnet ? 'AIMANT ' : '') + fmtP(p.price) + '  ' + fmtPct(dist)});
@@ -306,8 +314,38 @@ function draw() {
     if (Math.abs(it.ly - it.y) > 2) { ctx.strokeStyle = rgba(it.col, 0.6); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(it.x1, it.y); ctx.lineTo(x, it.ly); ctx.stroke(); }
     tag(x, it.ly, it.text, it.magnet ? '#0b0e11' : '#fff', rgba(it.col, it.magnet ? 0.92 : 0.55), it.magnet);
   });
-  // noms des niveaux : membres de la zone selectionnee, niveau selectionne, ou tous en mode "Tous les niveaux"
-  const lv = byId(d.levels), names = new Map();
+  return pills;
+}
+function drawMain(L, w, h) {
+  const {d, plotW} = L;
+  const selZ = st.sel && st.sel.type === 'zone' ? st.sel.id : null;
+  const zset = new Map(shownZones(d).map(z => [z.id, z]));
+  if (selZ && !zset.has(selZ)) { const z = byId(d.zones)[selZ]; if (z) zset.set(selZ, z); }
+  const zl = [];
+  zset.forEach(z => {
+    const yt = series.priceToCoordinate(z.hi), yb = series.priceToCoordinate(z.lo);
+    if (yt == null || yb == null) return;
+    const span = Math.abs(yb - yt), hh = Math.max(6, span), y = Math.min(yt, yb) - (hh - span) / 2, sel = z.id === selZ;
+    ctx.fillStyle = `rgba(255,179,0,${sel ? 0.2 : 0.07 + 0.025 * Math.min(4, z.score)})`;
+    ctx.fillRect(0, y, plotW, hh);
+    if (sel) { ctx.strokeStyle = 'rgba(255,179,0,.85)'; ctx.lineWidth = 1; ctx.strokeRect(0.5, y + 0.5, plotW - 1, hh - 1); }
+    if (st.mode === 'ess') zl.push({y: y + hh / 2, z});
+  });
+  drawPools(L, h);
+  // Essentiel : une etiquette par zone (a gauche) : sens, prix, score, probabilite d'atteinte
+  const lv = byId(d.levels);
+  if (st.mode === 'ess') placeLabels(zl, 17, 12, h - 30).forEach(it => {
+    const z = it.z, ar = z.side === 'above' ? '▲' : z.side === 'below' ? '▼' : '◆', col = z.side === 'above' ? '#3ddc97' : z.side === 'below' ? '#ff6b6b' : '#ffb300';
+    const reach = z.prob && z.side !== 'in' ? ' · ' + pr(z.prob.reach['24']) + '/24 h' : '';
+    const txt = `${ar} ${fmtP(z.mid)}  ${'●'.repeat(Math.min(5, z.score))}${reach}`;
+    ctx.font = '600 11px sans-serif';
+    const tw = ctx.measureText(txt).width + 18;
+    ctx.fillStyle = 'rgba(11,14,17,.9)'; ctx.fillRect(10, it.ly - 9, tw, 18);
+    ctx.fillStyle = col; ctx.fillRect(10, it.ly - 9, 3, 18);
+    ctx.fillStyle = '#e1e3ea'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(txt, 19, it.ly + 0.5);
+  });
+  // noms des niveaux : membres de la zone selectionnee, niveau selectionne, ou tous en mode "Tous"
+  const names = new Map();
   if (st.mode === 'all') d.levels.filter(l => l.kind !== 'liq' && l.inWindow).forEach(l => names.set(l.id, l));
   if (selZ) (byId(d.zones)[selZ]?.members || []).forEach(i => lv[i] && lv[i].kind !== 'liq' && names.set(i, lv[i]));
   if (st.sel && st.sel.type === 'level' && lv[st.sel.id]) names.set(st.sel.id, lv[st.sel.id]);
@@ -318,10 +356,91 @@ function draw() {
     if (Math.abs(it.ly - it.y) > 2) { ctx.strokeStyle = 'rgba(180,184,196,.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, it.y); ctx.lineTo(10, it.ly); ctx.stroke(); }
     ctx.font = '500 11px sans-serif';
     const txt = it.l.name + '  ' + fmtP(it.l.price), tw = ctx.measureText(txt).width + 22;
-    ctx.fillStyle = 'rgba(11,14,17,.88)'; ctx.fillRect(10, it.ly - 8, tw, 16);
-    ctx.fillStyle = c; ctx.fillRect(10, it.ly - 8, 3, 16);
-    ctx.fillStyle = '#d1d4dc'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(txt, 19, it.ly + 0.5);
+    const yy = st.mode === 'ess' ? it.ly + 0 : it.ly;
+    const xx = st.mode === 'ess' ? 190 : 10;
+    ctx.fillStyle = 'rgba(11,14,17,.88)'; ctx.fillRect(xx, yy - 8, tw, 16);
+    ctx.fillStyle = c; ctx.fillRect(xx, yy - 8, 3, 16);
+    ctx.fillStyle = '#d1d4dc'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(txt, xx + 9, yy + 0.5);
   });
+}
+
+// ---- carte de chaleur (couche SOUS le graphique) ----
+function buildHeatImage(h) {
+  const cv = document.createElement('canvas'); cv.width = h.n; cv.height = h.m;
+  const c = cv.getContext('2d'), img = c.createImageData(h.n, h.m);
+  for (let j = 0; j < h.m; j++) {
+    const row = h.m - 1 - j;                                   // rangee 0 de l'image = bande la plus haute
+    for (let i = 0; i < h.n; i++) {
+      const vl = h.L[j * h.n + i], vs = h.S[j * h.n + i], v = Math.max(vl, vs);
+      if (!v) continue;
+      const col = vs > vl ? COL_S : COL_L, k = (row * h.n + i) * 4, boost = Math.max(0, (v - 190) / 65);
+      img.data[k] = col[0] + (255 - col[0]) * boost * 0.45; img.data[k + 1] = col[1] + (255 - col[1]) * boost * 0.45;
+      img.data[k + 2] = col[2] + (255 - col[2]) * boost * 0.45; img.data[k + 3] = Math.min(235, 235 * Math.pow(v / 255, 1.3));
+    }
+  }
+  c.putImageData(img, 0, 0);
+  return cv;
+}
+function drawHeat(L, hctx, w, h) {
+  const H = st.heat; if (!H || !H.ready || !H.img) return;
+  const x0 = timeX(H.t0 / 1000, L), x1 = timeX((H.t0 + H.n * H.dt) / 1000, L);
+  if (x0 == null || x1 == null) return;
+  hctx.save();
+  hctx.beginPath(); hctx.rect(0, 0, Math.min(L.plotW, L.xr + L.barW * 1.5), h - 28); hctx.clip();
+  hctx.imageSmoothingEnabled = true;
+  const rowP = j => Math.exp((H.b0 + j) * H.step), K = 4;
+  for (let j0 = 0; j0 < H.m; j0 += K) {
+    const j1 = Math.min(H.m, j0 + K);
+    const yb = series.priceToCoordinate(rowP(j0)), yt = series.priceToCoordinate(rowP(j1));
+    if (yb == null || yt == null || yb < -20 || yt > h + 20) continue;
+    // la source est retournee (haut = prix haut) : rangees H.m-j1 .. H.m-j0
+    hctx.drawImage(H.img, 0, H.m - j1, H.n, j1 - j0, x0, yt, x1 - x0, Math.max(1, yb - yt) + 0.5);
+  }
+  hctx.restore();
+}
+function drawLiq(L, w, h) {
+  const {d, plotW} = L, H = st.heat;
+  // profil actuel sur le bord droit : taille des poches par bande, barres horizontales
+  if (H && H.ready && H.img && $('#showProfile').checked) {
+    const maxLen = plotW * 0.16, i = H.n - 1;
+    for (let j = 0; j < H.m; j++) {
+      const vl = H.L[j * H.n + i], vs = H.S[j * H.n + i], v = Math.max(vl, vs); if (v < 40) continue;
+      const yb = series.priceToCoordinate(Math.exp((H.b0 + j) * H.step)), yt = series.priceToCoordinate(Math.exp((H.b0 + j + 1) * H.step));
+      if (yb == null || yt == null) continue;
+      ctx.fillStyle = rgba(vs > vl ? COL_S : COL_L, 0.55);
+      const len = v / 255 * maxLen;
+      ctx.fillRect(plotW - len, yt, len, Math.max(1.2, yb - yt));
+    }
+  }
+  drawPools(L, h);
+  // balayages de poches : losanges (vert = longs liquides, rouge = shorts liquides) ; taille ~ part balayee
+  if (H && H.ready && $('#showSweeps').checked) H.sweeps.forEach(s => {
+    const x = timeX(s.t / 1000, L), y = series.priceToCoordinate(s.price);
+    if (x == null || y == null || x < 0 || x > plotW) return;
+    const r = 4 + Math.min(8, s.frac * 30);
+    ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = rgba(s.side === 'long' ? COL_L : COL_S, 0.9); ctx.strokeStyle = '#0b0e11'; ctx.lineWidth = 2;
+    ctx.fillRect(-r / 1.4, -r / 1.4, r * 1.4, r * 1.4); ctx.strokeRect(-r / 1.4, -r / 1.4, r * 1.4, r * 1.4); ctx.restore();
+  });
+  // liquidations reelles : bulles (aire ~ montant)
+  if (st.liqs && st.liqs.events && $('#showReal').checked) st.liqs.events.forEach(e => {
+    const x = timeX(e.t / 1000, L), y = series.priceToCoordinate(e.price);
+    if (x == null || y == null || x < 0 || x > plotW) return;
+    const r = Math.max(3, Math.min(18, 2.5 + Math.sqrt(e.usd / 25000)));
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832);
+    ctx.fillStyle = rgba(e.side === 'long' ? COL_L : COL_S, 0.45); ctx.fill();
+    ctx.strokeStyle = rgba(e.side === 'long' ? COL_L : COL_S, 0.95); ctx.lineWidth = 1.5; ctx.stroke();
+  });
+}
+function draw() {
+  const dpr = window.devicePixelRatio || 1, w = overlay.clientWidth, h = overlay.clientHeight;
+  for (const cv of [overlay, heatCv]) {
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); hctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h); hctx.clearRect(0, 0, w, h);
+  const L = layout(); if (!L) return;
+  if (st.view === 'liq') { drawHeat(L, hctx, w, h); drawLiq(L, w, h); } else drawMain(L, w, h);
 }
 let sig = '';
 function loop() {
@@ -363,7 +482,8 @@ function zoneRow(z, d) {
   const ar = z.side === 'above' ? '<span class="ar up">▲</span>' : z.side === 'below' ? '<span class="ar dn">▼</span>' : '<span class="ar inz">◆</span>';
   const dots = '●'.repeat(Math.min(5, z.score));
   const sel = st.sel && st.sel.type === 'zone' && st.sel.id === z.id ? ' sel' : '';
-  return `<div class="row${z.score < 3 ? ' weak' : ''}${sel}" data-zone="${z.id}">${ar}<span class="nm" title="${esc(names.join(' + '))}">${esc(names.join(' + '))}</span>` +
+  const ess = (d.ladder.essential || []).includes(z.id);
+  return `<div class="row${z.score < 3 ? ' weak' : ''}${st.mode === 'ess' && !ess ? ' weak' : ''}${sel}" data-zone="${z.id}">${ar}<span class="nm" title="${esc(names.join(' + '))}">${ess ? '<b class="amb" title="Zone essentielle (tracée sur le graphique)">★</b> ' : ''}${esc(names.join(' + '))}</span>` +
     `<span class="pv">${fmtP(z.mid)}</span><span class="sub"><span data-zd="${z.id}">${zoneDist(z, d, livePrice(d))}</span><span class="dots">${dots}</span>${z.hasMagnet ? ' · poche AIMANT' : ''}` +
     probLine(z) + '</span></div>';
 }
@@ -393,6 +513,35 @@ function renderPools(d) {
   h += `<div class="imb"><i style="width:${up}%;background:${DN}"></i><i style="width:${100 - up}%;background:${UP}"></i></div>` +
     `<div class="muted" style="font-size:11px">au-dessus ${up.toFixed(0)} % · en dessous ${(100 - up).toFixed(0)} % · ${q.total} poches détectées → ${pools.length} retenues</div>`;
   $('#pools').innerHTML = h;
+}
+function renderPools2(d) {
+  const el = $('#pools2'); if (!el) return;
+  const ps = d.liquidity.pools.map((p, i) => ({p, i})).sort((a, b) => b.p.size * b.p.price - a.p.size * a.p.price);
+  el.innerHTML = ps.length ? ps.map(({p, i}) => {
+    const c = p.side === 'long' ? UP : DN, sel = st.sel && st.sel.type === 'pool' && st.sel.id === i ? ' sel' : '';
+    return `<div class="row${sel}" data-pool="${i}"><span class="ar" style="color:${c}">${p.side === 'long' ? '▼' : '▲'}</span><span class="nm">${p.magnet ? '<b>AIMANT</b> · ' : ''}${p.side === 'long' ? 'longs' : 'shorts'} · ${usdFmt(p.size * p.price)}</span><span class="pv">${fmtP(p.price)}</span>` +
+      `<span class="sub"><span data-pd="${i}">${fmtPct((p.price / livePrice(d) - 1) * 100)}</span> · ${p.born ? 'âge ' + ageFmt(Date.now() - p.born) : 'ancienne'}${p.reach ? ' · <span class="pr">' + pr(p.reach['24']) + '</span> d\'y aller en 24 h' : ''}<div class="bar"><i style="width:${p.score}%;background:${c}"></i></div></span></div>`;
+  }).join('') : '<div class="muted">Aucune poche assez forte dans la fenêtre.</div>';
+}
+function renderLqLegend() {
+  $('#lqLegend').innerHTML = `<div class="lgrow"><span class="lgbar" style="background:linear-gradient(90deg,transparent,#ff6b6b)"></span>Liquidations de <b>shorts</b> estimées (au-dessus du prix)</div>` +
+    `<div class="lgrow"><span class="lgbar" style="background:linear-gradient(90deg,transparent,#3ddc97)"></span>Liquidations de <b>longs</b> estimées (sous le prix)</div>` +
+    `<div class="lgrow"><span style="display:inline-block;width:12px;height:12px;transform:rotate(45deg);background:#3ddc97;margin:0 29px 0 4px"></span>Poche <b>balayée</b> (taille ~ part du total)</div>` +
+    `<div class="lgrow"><span style="display:inline-block;width:14px;height:14px;border-radius:50%;border:2px solid #ff6b6b;background:#ff6b6b55;margin:0 27px 0 3px"></span>Liquidation <b>réelle</b> (Binance, taille ~ montant)</div>` +
+    `<div class="note">Une colonne = une heure. Plus c'est lumineux, plus la poche est grosse. Les poches sont estimées à partir de l'Open Interest : elles montrent où les positions récentes seraient liquidées, pas des liquidations connues. Survole la carte pour lire une bande.</div>`;
+}
+function renderLqReal() {
+  const el = $('#real'), r = st.liqs;
+  if (!r) { el.textContent = 'Chargement…'; return; }
+  if (!r.live) { el.innerHTML = '<div class="muted">Flux temps réel indisponible (mode simulé ou désactivé).</div>'; return; }
+  const sm = r.summary || {}, row = (lab, v) => { const t = (v.long + v.short) || 1;
+    return `<tr><td>${lab}</td><td class="r up">${usdFmt(v.long)}</td><td class="r dn">${usdFmt(v.short)}</td><td style="width:34%"><div class="imb" style="margin:0"><i style="width:${v.long / t * 100}%;background:${UP}"></i><i style="width:${v.short / t * 100}%;background:${DN}"></i></div></td><td class="r muted">${v.n}</td></tr>`; };
+  const feed = r.status && r.status.liqs;
+  el.innerHTML = `<table class="t"><tr><th></th><th class="r">Longs</th><th class="r">Shorts</th><th></th><th class="r">n</th></tr>${row('1 h', sm['1h'] || {long: 0, short: 0, n: 0})}${row('4 h', sm['4h'] || {long: 0, short: 0, n: 0})}${row('24 h', sm['24h'] || {long: 0, short: 0, n: 0})}</table>` +
+    `<div class="note">Liquidations <b>réelles</b> vues par ton terminal (Binance ne publie que la plus grosse par seconde, et seulement depuis que le terminal tourne). Vert = positions longues liquidées, rouge = positions courtes.</div>` +
+    `<div class="sect">Dernières</div>` + (r.events.length ? r.events.slice(-14).reverse().map(e => `<div class="alert"><time>${new Date(e.t).toLocaleTimeString('fr-FR')}</time><span class="${e.side === 'long' ? 'up' : 'dn'}">${e.side === 'long' ? 'long' : 'short'} liquidé</span> ${usdFmt(e.usd)} à ${fmtP(e.price)}</div>`).join('') : '<div class="muted">Aucune liquidation depuis l\'ouverture du terminal.</div>') +
+    `<div class="note">Flux : ${feed && feed.connected ? '<span class="up">connecté</span>' : '<span class="dn">déconnecté</span>'}${feed && feed.error ? ' · ' + esc(feed.error) : ''}</div>`;
+  $('#realHint').textContent = feed && feed.connected ? 'en direct' : 'hors ligne';
 }
 function reachBlock(reach, what) {
   if (!reach) return '';
@@ -439,6 +588,7 @@ function renderDetail(d) {
     el.innerHTML = `<div><b>${p.side === 'long' ? '▼ Liquidations de longs' : '▲ Liquidations de shorts'} ${fmtP(p.price)}</b> ` +
       `<span class="muted">${fmtPct(dist)} · ${num(Math.abs(p.price - d.price) / d.atr, 1)} ATR</span></div>` +
       `<div class="note">Fourchette ${fmtP(p.lo)} – ${fmtP(p.hi)} · taille relative ${p.score}/100${p.magnet ? ' · <b>AIMANT</b> (la plus forte de ce côté)' : ''}</div>` +
+      `<div class="note">${p.size ? 'Taille estimée ≈ <b>' + usdFmt(p.size * p.price) + '</b> de positions · ' : ''}${p.born ? 'formée il y a <b>' + ageFmt(Date.now() - p.born) + '</b>' : 'formée il y a plus longtemps que l\'historique disponible'}</div>` +
       `<div class="bar"><i style="width:${p.score}%;background:${p.side === 'long' ? UP : DN}"></i></div>` +
       reachBlock(p.reach, 'atteigne la poche') +
       `<div class="sect">Après un balayage (journal des 30 derniers jours)</div>` + statLine(sw, base, 'Poches balayées') +
@@ -548,18 +698,19 @@ async function renderAlerts() {
 }
 
 // ---------- selection / clic ----------
-function select(sel) { st.sel = sel; st.version++; if (st.data) { rebuildLines(st.data); renderLadder(st.data); renderPools(st.data); renderDetail(st.data); } }
+function select(sel) { st.sel = sel; st.version++; if (st.data) { rebuildLines(st.data); renderLadder(st.data); renderPools(st.data); renderPools2(st.data); renderDetail(st.data); const d2 = $('#detail2'); if (d2) { d2.className = $('#detail').className; d2.innerHTML = $('#detail').innerHTML; } } }
 chart.subscribeClick(p => {
   const d = st.data, L = layout();
   if (!p.point || !d || !L) return;
   const {x, y} = p.point;
-  if (st.pools) {
-    for (let i = 0; i < d.liquidity.pools.length; i++) {
-      const r = poolRect(d.liquidity.pools[i], L);
+  if (st.pools || st.view === 'liq') {
+    for (const {p, i} of shownPools(d)) {
+      const r = poolRect(p, L);
       if (r && x >= r.x0 - 4 && x <= r.x1 + 130 && Math.abs(y - r.yc) <= r.thick / 2 + 5) return select({type: 'pool', id: i});
     }
   }
-  const zs = ladderZones(d);
+  if (st.view === 'liq') return select(null);
+  const zs = st.mode === 'ess' ? essentialZones(d) : ladderZones(d);
   for (const z of zs) {
     const a = series.priceToCoordinate(z.hi), b = series.priceToCoordinate(z.lo);
     if (a == null || b == null) continue;
@@ -569,7 +720,7 @@ chart.subscribeClick(p => {
   let best = null, bd = 7;
   d.levels.forEach(l => {
     if (l.kind === 'liq') return;
-    const visible = st.mode === 'all' ? l.inWindow : zs.some(z => z.members.includes(l.id));
+    const visible = st.mode === 'all' ? l.inWindow : st.mode === 'conf' && zs.some(z => z.members.includes(l.id));
     const yy = series.priceToCoordinate(l.price);
     if (visible && yy != null && Math.abs(yy - y) < bd) { bd = Math.abs(yy - y); best = l; }
   });
@@ -612,13 +763,13 @@ function header(d) {
 }
 function apply(d) {
   st.data = d;
-  setData(d); header(d); rebuildLines(d); renderLadder(d); renderPools(d); renderDetail(d); renderContext(d); renderStats(d);
+  setData(d); header(d); rebuildLines(d); renderLadder(d); renderPools(d); renderPools2(d); renderDetail(d); renderContext(d); renderStats(d);
   st.version++;
 }
 let timer = null;
 async function poll() {
   clearTimeout(timer);
-  timer = setTimeout(poll, 4000);
+  timer = setTimeout(poll, 2000);
   let d;
   try { d = await (await fetch(`/api/state?symbol=${st.symbol}&tf=${st.tf}`)).json(); }
   catch (e) { $('#status').textContent = 'terminal injoignable : la fenêtre du programme est-elle fermée ?'; $('#status').className = 'bad'; return; }
@@ -637,7 +788,7 @@ function buildControls(cfg) {
   st.cfg = cfg;
   if (!cfg.symbols.includes(st.symbol)) st.symbol = cfg.symbols[0];
   const sel = $('#symbol'); sel.innerHTML = cfg.symbols.map(s => `<option${s === st.symbol ? ' selected' : ''}>${s}</option>`).join('');
-  sel.onchange = () => { st.symbol = sel.value; st.sel = null; st.data = null; liveConnect(); poll(); };
+  sel.onchange = () => { st.symbol = sel.value; st.sel = null; st.data = null; st.heat = null; st.liqs = null; st.an = null; liveConnect(); cbConnect(); poll(); pollAnalysis(); if (st.view === 'liq') { pollHeat(); pollLiqs(); } };
   const box = $('#tfs');
   box.innerHTML = cfg.tfs.map(t => `<button data-tf="${t}" class="${t === st.tf ? 'on' : ''}">${t}</button>`).join('');
   box.onclick = e => { const b = e.target.closest('button'); if (!b) return; st.tf = b.dataset.tf; st.sel = null; st.data = null;
@@ -646,15 +797,129 @@ function buildControls(cfg) {
   $('#showPools').onchange = e => { st.pools = e.target.checked; st.version++; };
   updateBanner(st.data);
   if (!live.ws || live.sym !== st.symbol || !cfg.wsBase) liveConnect();
+  if (cfg.cbWs && (!cb.ws || cb.sym !== st.symbol)) cbConnect();
 }
-// onglets du panneau de droite
-$('#tabs').onclick = e => {
+// onglets du panneau de droite (une barre par vue)
+function showPane(name) {
+  document.querySelectorAll('.pane').forEach(p => p.hidden = p.dataset.pane !== name);
+  document.querySelectorAll('#tabs button, #tabsLiq button').forEach(x => x.classList.toggle('on', x.dataset.tab === name));
+}
+function tabClick(e) {
   const b = e.target.closest('button[data-tab]'); if (!b) return;
-  st.tab = b.dataset.tab;
-  document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x === b));
-  document.querySelectorAll('.pane').forEach(p => p.hidden = p.dataset.pane !== st.tab);
-  try { localStorage.setItem('liqTab', st.tab); } catch (err) { /* stockage indisponible */ }
+  if (st.view === 'liq') st.tabLiq = b.dataset.tab; else st.tab = b.dataset.tab;
+  showPane(b.dataset.tab);
+  try { localStorage.setItem(st.view === 'liq' ? 'liqTabLiq' : 'liqTab', b.dataset.tab); } catch (err) { /* stockage indisponible */ }
+}
+$('#tabs').onclick = tabClick; $('#tabsLiq').onclick = tabClick;
+
+// ---------- vues : Terminal / Liquidite (meme graphique, couches differentes) ----------
+function setView(v) {
+  st.view = v; st.sel = null;
+  document.querySelectorAll('#views button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
+  $('#tabs').hidden = v === 'liq'; $('#tabsLiq').hidden = v !== 'liq';
+  document.querySelector('.tb-main').hidden = v === 'liq'; document.querySelector('.tb-liq').hidden = v !== 'liq';
+  showPane(v === 'liq' ? (st.tabLiq || 'lq-pools') : st.tab);
+  if (st.data) { rebuildLines(st.data); renderLadder(st.data); renderPools(st.data); renderPools2(st.data); renderDetail(st.data); }
+  try { localStorage.setItem('liqView', v); } catch (err) { /* rien */ }
+  if (v === 'liq') { pollHeat(); pollLiqs(); }
+  st.version++;
+}
+$('#views').onclick = e => { const b = e.target.closest('button[data-view]'); if (b && b.dataset.view !== st.view) setView(b.dataset.view); };
+['showSweeps', 'showReal', 'showProfile'].forEach(id => $('#' + id).onchange = () => st.version++);
+$('#heatHours').onclick = e => {
+  const b = e.target.closest('button[data-h]'); if (!b) return;
+  st.heatHours = +b.dataset.h; document.querySelectorAll('#heatHours button').forEach(x => x.classList.toggle('on', x === b)); pollHeat();
 };
+let heatTimer = null, liqTimer = null;
+async function pollHeat() {
+  clearTimeout(heatTimer);
+  if (st.view !== 'liq') return;
+  heatTimer = setTimeout(pollHeat, 45000);
+  try {
+    const sym = st.symbol, h = await api(`/api/heat?symbol=${sym}&hours=${st.heatHours}`);
+    if (sym !== st.symbol || !h.ready) return;
+    const dec = b64 => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    h.L = dec(h.long); h.S = dec(h.short); h.img = buildHeatImage(h);
+    st.heat = h; st.version++;
+  } catch (e) { /* le serveur repondra au prochain essai */ }
+}
+async function pollLiqs() {
+  clearTimeout(liqTimer);
+  if (st.view !== 'liq') return;
+  liqTimer = setTimeout(pollLiqs, 8000);
+  try { st.liqs = await api(`/api/liqs?symbol=${st.symbol}&hours=24`); renderLqReal(); st.version++; } catch (e) { /* rien */ }
+}
+// infobulle sur la carte de chaleur : bande de prix, heure, intensite estimee
+$('#chartwrap').addEventListener('mousemove', ev => {
+  const tip = $('#tip'), H = st.heat;
+  if (st.view !== 'liq' || !H || !H.ready || !st.data) { tip.hidden = true; return; }
+  const r = $('#chartwrap').getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top, L = layout();
+  if (!L || x > L.plotW) { tip.hidden = true; return; }
+  const price = series.coordinateToPrice(y), tt = chart.timeScale().coordinateToTime(x);
+  if (price == null || tt == null) { tip.hidden = true; return; }
+  const j = Math.floor(Math.log(price) / H.step) - H.b0, i = Math.floor((tt * 1000 - H.t0) / H.dt);
+  if (j < 0 || j >= H.m || i < 0 || i >= H.n) { tip.hidden = true; return; }
+  const vl = H.L[j * H.n + i], vs = H.S[j * H.n + i], v = Math.max(vl, vs);
+  const lo = Math.exp((H.b0 + j) * H.step), hi = Math.exp((H.b0 + j + 1) * H.step);
+  const usd = v ? H.ref * Math.pow(v / 255, 1 / 0.55) * price : 0;
+  tip.innerHTML = `<b>${fmtP(lo)} – ${fmtP(hi)}</b><br>${new Date(tt * 1000).toLocaleString('fr-FR', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'})}<br>` +
+    (v ? `<span class="${vs > vl ? 'dn' : 'up'}">${vs > vl ? 'Liquidations de shorts' : 'Liquidations de longs'}</span> ≈ <b>${usdFmt(usd)}</b><br><span class="muted">estimation à partir de l'Open Interest</span>` : '<span class="muted">pas de poche estimée ici</span>');
+  tip.hidden = false; tip.style.left = Math.min(r.width - 270, x + 14) + 'px'; tip.style.top = Math.max(4, y - 60) + 'px';
+});
+$('#chartwrap').addEventListener('mouseleave', () => { $('#tip').hidden = true; });
+
+// ---------- Coinbase en direct (meme marche que le graphique TradingView en USD) ----------
+const cb = {ws: null, price: null, t: 0, sym: null, retry: 0, timer: null};
+function cbConnect() {
+  clearTimeout(cb.timer);
+  if (cb.ws) { const w = cb.ws; cb.ws = null; try { w.close(); } catch (e) { /* deja ferme */ } }
+  const url = st.cfg && st.cfg.cbWs;
+  if (!url || !st.symbol) { $('#cbPrice').hidden = true; return; }
+  if (cb.sym !== st.symbol) { cb.price = null; }
+  cb.sym = st.symbol;
+  const product = st.symbol.replace(/USDT$/, '') + '-USD';
+  let ws;
+  try { ws = new WebSocket(url); } catch (e) { return; }
+  cb.ws = ws;
+  ws.onopen = () => ws.send(JSON.stringify({type: 'subscribe', product_ids: [product], channels: ['ticker']}));
+  ws.onmessage = ev => { try { const m = JSON.parse(ev.data); if (m.type === 'ticker' && m.product_id === product && m.price) { cb.price = +m.price; cb.t = Date.now(); cb.retry = 0; } } catch (e) { /* ignore */ } };
+  ws.onerror = () => { try { ws.close(); } catch (e) { /* rien */ } };
+  ws.onclose = () => { if (cb.ws === ws) { cb.ws = null; cb.timer = setTimeout(cbConnect, Math.min(30000, 1000 * Math.pow(2, cb.retry++))); } };
+}
+function cbRender() {
+  const el = $('#cbPrice');
+  if (!st.cfg || !st.cfg.cbWs || cb.price == null || Date.now() - cb.t > 20000 || !st.data) { el.hidden = true; return; }
+  const ref = livePrice(st.data), d = cb.price - ref;
+  if (Math.abs(d) / ref > 0.03) { el.hidden = true; return; }               // écart > 3 % : mauvais produit ou donnée périmée, on n'affiche rien
+  el.hidden = false;
+  el.innerHTML = `Coinbase <b>${fmtP(cb.price)}</b> <span class="${d > 0 ? 'up' : d < 0 ? 'dn' : ''}">${d > 0 ? '+' : ''}${fmtP(Math.abs(d)) === '0,00' ? '0' : (d < 0 ? '−' : '') + fmtP(Math.abs(d))} (${fmtPct(d / ref * 100)})</span>`;
+}
+
+// ---------- analyse (biais, macro, dominance) ----------
+let anTimer = null;
+async function pollAnalysis() {
+  clearTimeout(anTimer);
+  anTimer = setTimeout(pollAnalysis, 15000);
+  if (!st.symbol) return;
+  try {
+    const sym = st.symbol, an = await api(`/api/analysis?symbol=${sym}`);
+    if (sym !== st.symbol || !an.ready) return;
+    st.an = an; Analysis.render(an); riskChip();
+  } catch (e) { $('#anStatus').textContent = 'analyse indisponible : ' + e.message; }
+}
+function riskChip() {
+  const el = $('#riskChip'), r = st.an && st.an.macro && st.an.macro.risk;
+  if (!r) { el.hidden = true; return; }
+  const mins = (r.t - Date.now()) / 60000;
+  if (mins < -30) { el.hidden = true; return; }
+  const lvl = mins <= 90 ? 'danger' : mins <= 720 ? 'attention' : 'info';
+  el.hidden = false; el.className = 'badge risk ' + lvl;
+  const tm = Math.round(Math.abs(mins));
+  el.textContent = (mins >= 0 ? '⚠ ' : '') + r.label + (mins >= 0 ? ' dans ' : ' il y a ') + (tm >= 60 ? Math.floor(tm / 60) + ' h ' + String(tm % 60).padStart(2, '0') : tm + ' min');
+  el.title = 'Annonce majeure : ouvre l\'onglet Macro & annonces';
+}
+$('#riskChip').onclick = () => { const b = document.querySelector('#anTabs button[data-an="macro"]'); if (b) { b.click(); $('#analysis').scrollIntoView({behavior: 'smooth'}); } };
+
 $('#stats').addEventListener('click', e => {
   const b = e.target.closest('button[data-side]'); if (!b) return;
   st.statSide = b.dataset.side; if (st.data) renderStats(st.data);
@@ -680,6 +945,7 @@ async function openSettings() {
     $('#aTf').innerHTML = (st.cfg ? st.cfg.tfs : ['1h']).map(t => `<option${t === s.alertTf ? ' selected' : ''}>${t}</option>`).join('');
     $('#aCool').value = s.alertCooldownHours;
     $('#aSweep').checked = !!s.alertSweep;
+    $('#aMacro').checked = s.alertMacro !== false;
   } catch (e) { $('#saveRes').textContent = 'Erreur : ' + e.message; }
 }
 const closeSettings = () => { M.hidden = true; };
@@ -713,7 +979,7 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
   const src = (document.querySelector('input[name=source]:checked') || {}).value;
   const before = st.cfg ? st.cfg.source + '|' + st.cfg.symbols.join(',') : '';
   const body = {source: src, symbols: $('#symbols').value.split(/[\s,;]+/).filter(Boolean), telegramChatId: $('#tgChat').value.trim(),
-    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked};
+    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMacro: $('#aMacro').checked};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();
   await api('/api/settings', body);
   buildControls(await api('/api/config'));
@@ -726,9 +992,16 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
 
 (async () => {
   try { buildControls(await api('/api/config')); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
-  try { const t = localStorage.getItem('liqTab'); if (t && t !== 'levels') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); } } catch (err) { /* rien */ }
-  poll(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop);
-  setInterval(() => { livePoll(); liveBadge(); }, 1000);
-  window.__term = {st, chart, series, select, draw, layout, poolRect, overlay, openSettings, live};      // pour les tests automatiques
+  window.LT = {st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip};
+  Analysis.init(window.LT);
+  renderLqLegend();
+  try {
+    const t = localStorage.getItem('liqTab'); if (t && t !== 'levels') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); }
+    st.tabLiq = localStorage.getItem('liqTabLiq') || 'lq-pools';
+    if (localStorage.getItem('liqView') === 'liq') setView('liq');
+  } catch (err) { /* rien */ }
+  poll(); pollAnalysis(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop);
+  setInterval(() => { livePoll(); liveBadge(); cbRender(); riskChip(); }, 1000);
+  window.__term = {st, chart, series, select, draw, layout, poolRect, overlay, openSettings, live, cb, setView, timeX, Analysis};      // pour les tests automatiques
 })();
 })();

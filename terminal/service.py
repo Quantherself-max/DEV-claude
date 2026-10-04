@@ -1,13 +1,18 @@
 """Service de marche : relie les donnees, les moteurs (niveaux, poches, confluences, probabilites) et
 fabrique l'etat JSON envoye a l'interface et aux alertes."""
+import base64
 import math
 import threading
 import time
 from bisect import bisect_right
 
 from config import Config
-from data.store import DataStore, H1, M5, DAY
+from data.store import DataStore, H1, M5, DAY, OI_DAYS
 from engine.atr import INTERVAL_MS, resample, rma_atr
+from engine import bias as bias_engine
+from engine import dominance as dominance_engine
+from engine import macro as macro_engine
+from engine import synth as synth_engine
 from engine.confluence import Level, find_zones
 from engine.liquidity import LiqEngine
 from engine.periods import AnchoredVWAP, KINDS, NakedPocs, PeriodTracker
@@ -57,9 +62,12 @@ class Market:
         self._fed_h1 = -1
         self._fed_m5 = -1
         self.ready = False
+        self.feed = None             # flux temps reel (prix exact, vraies liquidations), optionnel
         self.stats = None            # probabilites mesurees (calculees en tache de fond)
         self.reach = None
         self.stats_at = 0.0
+        self.bias = None             # biais statistique valide hors echantillon (calcule en tache de fond)
+        self.bias_fund: list = []
         self._atr_cache = (0, [])
 
     def update(self) -> None:
@@ -96,6 +104,9 @@ class Market:
         return resample(s.h1, INTERVAL_MS[tf])
 
     def price(self) -> float:
+        lp = self.feed.last_price(self.symbol) if self.feed else None
+        if lp:
+            return lp[0]                      # dernier prix echange (flux temps reel) plutot que la cloture 5 min
         s = self.store
         return s.m5[-1].c if s.m5 else s.h1[-1].c
 
@@ -233,6 +244,8 @@ class Market:
             ctx["coinbase"] = {"premium": prem,
                                "label": ("demande US plus forte" if prem > 0.05 else
                                          "demande US plus faible" if prem < -0.05 else "neutre")}
+        if self.feed:
+            ctx["liqReal"] = self.feed.liq_summary(self.symbol)           # vraies liquidations vues par le terminal
         tl, ts = self.liq.totals()
         if tl + ts > 0:
             ctx["liq"] = {"long": tl / (tl + ts) * 100.0, "short": ts / (tl + ts) * 100.0,
@@ -311,8 +324,29 @@ class Market:
                            "distPct": (lv.price / price - 1.0) * 100.0, "distAtr": abs(lv.price - price) / atr,
                            "inWindow": abs(lv.price - price) <= win, "zone": in_zone.get(lv.id),
                            "pool": lv.extra.get("pool"), "sd": lv.extra.get("sd"), "family": fam, "famStat": fst})
-        above = sorted([z for z in zones if z["side"] == "above"], key=lambda z: z["lo"])[:3]
-        below = sorted([z for z in zones if z["side"] == "below"], key=lambda z: -z["hi"])[:3]
+        # importance : sources distinctes, aimant, type de niveau meilleur que le hasard, proximite
+        base = fam_stats.get(BASELINE, {}).get("all") if fam_stats else None
+        lvd = {l["id"]: l for l in lv_out}
+        for z in zones:
+            edge = 0
+            for i in z["members"]:
+                f = (lvd.get(i) or {}).get("famStat")
+                if f and f.get("n", 0) >= 30 and base and base.get("n"):
+                    edge += 1 if f["lo"] > base["hi"] else -1 if f["hi"] < base["lo"] else 0
+            z["edge"] = max(-2, min(2, edge))
+            z["imp"] = round(z["score"] * 2 + (1.5 if z["hasMagnet"] else 0) + 0.7 * z["edge"] - 0.35 * min(z["distAtr"], 12)
+                             - (2.0 if z["score"] < 3 else 0.0), 2)
+        essential = []
+        for sd in ("above", "below"):
+            cand = sorted([z for z in zones if z["side"] == sd], key=lambda z: -z["imp"])
+            good = [z for z in cand if z["score"] >= 3][:2] or [z for z in cand if z["score"] >= 2][:1]
+            essential += [z["id"] for z in good]
+        essential += [z["id"] for z in zones if z["side"] == "in" and z["score"] >= 2]
+        ess_set = set(essential)
+        above = sorted([z for z in zones if z["side"] == "above"], key=lambda z: z["lo"])
+        below = sorted([z for z in zones if z["side"] == "below"], key=lambda z: -z["hi"])
+        above = [z for k, z in enumerate(above) if k < 3 or z["id"] in ess_set]         # les zones essentielles sont toujours listees
+        below = [z for k, z in enumerate(below) if k < 3 or z["id"] in ess_set]
         inside = [z for z in zones if z["side"] == "in"]
         t = self.store
         return {
@@ -321,12 +355,44 @@ class Market:
             "candles": [[k.t // 1000, k.o, k.h, k.l, k.c, k.v] for k in cs[-400:]],
             "levels": lv_out, "zones": zones,
             "ladder": {"above": [z["id"] for z in reversed(above)], "inside": [z["id"] for z in inside],
-                       "below": [z["id"] for z in below]},
+                       "below": [z["id"] for z in below], "essential": essential},
             "liquidity": {"pools": liq["pools"], "total": liq["total"], "sumLong": liq["sum_long"],
                           "sumShort": liq["sum_short"], "steps": self.liq.steps, "oiPoints": len(t.oi)},
             "sweeps": sweeps, "context": self.context(),
             "stats": self.stats_summary(),
         }
+
+    def heat(self, hours: float | None = None) -> dict:
+        """Carte de chaleur des poches de liquidation estimees (une colonne par heure, bandes de 0,15 %)."""
+        now, price = self.source.now_ms(), self.price()
+        since = now - int((hours or OI_DAYS * 24) * H1)
+        sub = [k for k in self.store.m5 if k.t >= since] or self.store.m5[-12:]
+        p_lo = max(min(k.l for k in sub) * 0.985, price * 0.6)
+        p_hi = min(max(k.h for k in sub) * 1.015, price * 1.4)
+        h = self.liq.heat(p_lo, p_hi, since, now)
+        if not h:
+            return {"ready": False}
+        n, m, b0 = h["n"], h["m"], h["b0"]
+        vals = sorted(v for _, a, b in h["cols"] for d in (a, b) for bb, v in d.items() if 0 <= bb - b0 < m)
+        if not vals:
+            return {"ready": False}
+        ref = vals[min(len(vals) - 1, int(len(vals) * 0.985))] or vals[-1]
+        out = []
+        for side in (1, 2):
+            buf = bytearray(n * m)
+            for ci, col in enumerate(h["cols"]):
+                for bb, v in col[side].items():
+                    j = bb - b0
+                    if 0 <= j < m:
+                        r = v / ref
+                        if r >= 0.05:                              # seules les poches notables s'allument
+                            buf[j * n + ci] = min(255, int(255 * min(1.0, r) ** 0.85))
+            out.append(base64.b64encode(bytes(buf)).decode("ascii"))
+        evs = [{"t": e["t"], "side": e["side"], "price": e["price"], "frac": e["frac"]}
+               for e in self.liq.events if e["t"] >= since]
+        return {"ready": True, "symbol": self.symbol, "t0": h["t0"], "dt": h["dt"], "n": n, "m": m, "b0": b0,
+                "step": h["step"], "ref": ref, "long": out[0], "short": out[1], "price": price, "now": now,
+                "sweeps": evs}
 
     def stats_summary(self):
         if not self.stats:
@@ -347,6 +413,36 @@ class Service:
         self.last_update = 0.0
         self.listeners = []            # fonctions appelees apres chaque rafraichissement : f(service)
         self._stats_running: set[str] = set()
+        self.feed = None
+        self.ext = None                # donnees externes : calendrier, actifs de reference, dominance (V3)
+        self._ext_running = False
+        self._an_cache: dict = {}
+        self._plan_cache: dict = {}
+
+    def attach_ext(self, hub) -> None:
+        self.ext = hub
+
+    def schedule_external(self, wait: bool = False) -> None:
+        if not self.ext or self._ext_running:
+            return
+        self._ext_running = True
+
+        def run():
+            try:
+                self.ext.refresh()
+            except Exception as e:
+                self.errors["externe"] = f"{type(e).__name__}: {e}"
+            finally:
+                self._ext_running = False
+        if wait:
+            run()
+        else:
+            threading.Thread(target=run, daemon=True).start()
+
+    def attach_feed(self, feed) -> None:
+        self.feed = feed
+        for m in self.markets.values():
+            m.feed = feed
 
     def refresh_all(self) -> None:
         for sym, m in self.markets.items():
@@ -363,6 +459,7 @@ class Service:
             except Exception as e:
                 self.errors["listener"] = f"{type(e).__name__}: {e}"
         self.schedule_stats()
+        self.schedule_external()
 
     # ---------- probabilites : recalcul en tache de fond (quelques secondes) ----------
     def compute_stats(self, sym: str) -> None:
@@ -377,6 +474,17 @@ class Service:
             with self.lock:
                 m.stats, m.reach, m.stats_at = st, tab, time.time()
             self.errors.pop(f"stats {sym}", None)
+            try:                                                # biais statistique : un echec ici n'efface pas les probabilites
+                try:
+                    fund = self.source.funding_history(sym, candles[0].t, self.source.now_ms())
+                except Exception:
+                    fund = m.bias_fund
+                b = bias_engine.analyse(candles, fund)
+                with self.lock:
+                    m.bias, m.bias_fund = b, fund
+                self.errors.pop(f"biais {sym}", None)
+            except Exception as e:
+                self.errors[f"biais {sym}"] = f"{type(e).__name__}: {e}"
         except Exception as e:
             self.errors[f"stats {sym}"] = f"{type(e).__name__}: {e}"
         finally:
@@ -391,6 +499,102 @@ class Service:
                     self.compute_stats(sym)
                 else:
                     threading.Thread(target=self.compute_stats, args=(sym,), daemon=True).start()
+
+    # ---------- analyse complete (biais, macro, dominance) ----------
+    @staticmethod
+    def _daily(candles):
+        """Cloture quotidienne UTC a partir de bougies 1h : [(debut du jour en ms, derniere cloture du jour)]."""
+        out = {}
+        for k in candles:
+            out[k.t // DAY * DAY] = k.c
+        return sorted(out.items())
+
+    def analysis(self, symbol: str) -> dict:
+        m = self.markets.get(symbol)
+        if m is None:
+            raise KeyError(f"symbole inconnu : {symbol}")
+        if not m.ready:
+            return {"ready": False}
+        hit = self._an_cache.get(symbol)
+        if hit and time.time() - hit[0] < 4.0:
+            return hit[1]
+        now = self.source.now_ms()
+        btc = self.markets.get("BTCUSDT")
+        with self.lock:
+            state = m.state("1h")
+            h1 = list(m.store.closed_h1())
+            c5 = list(m.store.m5[-288 * 29:])
+            c5b = list(btc.store.m5[-288 * 29:]) if btc else []
+            h1b = list(btc.store.closed_h1()[-24 * 130:]) if btc else []
+            bias_res, fund = m.bias, m.bias_fund
+        if bias_res and bias_res.get("ready") and h1 and bias_res["t"] != h1[-1].t:
+            try:
+                bias_res = bias_engine.repredict(bias_res, h1, fund)
+                with self.lock:
+                    m.bias = bias_res
+            except Exception as e:
+                self.errors[f"biais {symbol}"] = f"{type(e).__name__}: {e}"
+        snap = self.ext.snapshot() if self.ext else {"calendar": {}, "cross5": {}, "crossD": {}, "fng": [], "cg": None,
+                                                     "cg_hist": [], "alt": {}, "altD": {}, "errors": {}, "updated": {}}
+        macro_state, new = macro_engine.analyse(now, snap, c5, c5b, symbol, self._daily(h1b))
+        if new and self.ext:
+            with self.ext.lock:
+                for k, v in new.items():
+                    if k in self.ext.calendar:
+                        self.ext.calendar[k]["reaction"] = v
+            self.ext.save()
+        dom = dominance_engine.analyse(snap, h1b or h1, h1, symbol)
+        bpub = bias_engine.public(bias_res)
+        syn = synth_engine.synthesize(symbol, state["price"], bpub, macro_state, dom, state["context"], state["zones"],
+                                      set(state["ladder"]["essential"]))
+        out = {"ready": True, "symbol": symbol, "t": now, "price": state["price"], "synth": syn, "bias": bpub,
+               "macro": macro_state, "dom": dom, "sources": {"errors": snap["errors"], "updated": snap.get("updated", {})},
+               "statsReady": bool(m.stats), "biasPending": bias_res is None}
+        self._an_cache[symbol] = (time.time(), out)
+        return out
+
+    def plan(self, symbol: str, side: str, tp_pct: float, sl_pct: float, lev: float, horizon: int) -> dict:
+        m = self.markets.get(symbol)
+        if m is None:
+            raise KeyError(f"symbole inconnu : {symbol}")
+        if not m.ready:
+            return {"ready": False}
+        if side not in ("long", "short") or not (0.05 <= tp_pct <= 50 and 0.05 <= sl_pct <= 50) or horizon not in (4, 24, 72):
+            raise ValueError("parametres invalides (sens long/short, TP et SL entre 0,05 et 50 %, horizon 4, 24 ou 72 h)")
+        lev = max(1.0, min(125.0, lev))
+        with self.lock:
+            h1, atrs = m.h1_atrs()
+            h1, atrs = list(h1), list(atrs)
+            price, tab = m.price(), m.reach
+        key = (symbol, len(h1), side, round(tp_pct, 2), round(sl_pct, 2), horizon)
+        res = self._plan_cache.get(key)
+        if res is None:
+            res = bias_engine.plan(h1, atrs, side, tp_pct, sl_pct, horizon, price, atrs[-1])
+            if len(self._plan_cache) > 80:
+                self._plan_cache.clear()
+            self._plan_cache[key] = res
+        mmr = 0.4
+        liq_pct = max(0.0, 100.0 / lev - mmr)
+        a_pct = atrs[-1] / price * 100.0
+        d = liq_pct / a_pct if a_pct else None
+        direction = "down" if side == "long" else "up"
+        touch = {str(H): (reach_prob(tab, d, direction, H) if tab and d is not None else None) for H in (4, 24, 72)}
+        liq_px = price * (1 - liq_pct / 100.0) if side == "long" else price * (1 + liq_pct / 100.0)
+        return {"ready": True, "symbol": symbol, "side": side, "price": price, "atrPct": a_pct, "plan": res,
+                "lev": lev, "liqPct": liq_pct, "liqPrice": liq_px, "liqAtr": d, "liqTouch": touch,
+                "slBeyondLiq": sl_pct >= liq_pct, "entry": price,
+                "tpPrice": price * (1 + tp_pct / 100) if side == "long" else price * (1 - tp_pct / 100),
+                "slPrice": price * (1 - sl_pct / 100) if side == "long" else price * (1 + sl_pct / 100),
+                "riskOnMargin": sl_pct * lev, "gainOnMargin": tp_pct * lev}
+
+    def get_heat(self, symbol: str, hours: float | None = None) -> dict:
+        m = self.markets.get(symbol)
+        if m is None:
+            raise KeyError(f"symbole inconnu : {symbol}")
+        if not m.ready:
+            return {"ready": False}
+        with self.lock:
+            return m.heat(hours)
 
     def get_state(self, symbol: str, tf: str) -> dict:
         m = self.markets.get(symbol)

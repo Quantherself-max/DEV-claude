@@ -85,6 +85,7 @@ def main() -> int:
     print("  Reglages (donnees reelles, Telegram) : bouton  Reglages  en haut a droite du terminal.")
     print("  Pour arreter : ferme cette fenetre (ou Ctrl+C).")
     print("=" * 64)
+    app.start_background()
     threading.Thread(target=app.refresh_loop, daemon=True).start()
     if not a.no_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
@@ -93,8 +94,7 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\nArret.")
     finally:
-        app.stop.set()
-        app.wake.set()
+        app.shutdown()
         httpd.server_close()
     return 0
 

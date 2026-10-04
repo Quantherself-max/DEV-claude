@@ -188,6 +188,51 @@ class ReloadTests(unittest.TestCase):
             self.assertTrue(app.service.markets["BTCUSDT"].ready)
 
 
+class LiveServerTests(unittest.TestCase):
+    def test_server_uses_websocket_price_and_serves_real_liquidations(self):
+        from data.live import LiveFeed
+        from data.ws import OP_TEXT
+        from tests.fakews import FakeWSServer
+
+        def script(path, send, alive, conn):
+            ms = int(time.time() * 1000)
+            if "aggTrade" in path:
+                while alive():
+                    send(OP_TEXT, json.dumps({"data": {"e": "aggTrade", "s": "BTCUSDT", "p": "91234.50", "q": "1", "T": int(time.time() * 1000)}}).encode())
+                    time.sleep(0.05)
+            else:
+                send(OP_TEXT, json.dumps({"data": {"e": "forceOrder", "o": {"s": "BTCUSDT", "S": "SELL", "q": "2", "p": "90000", "ap": "90100", "z": "2", "T": ms - 1000}}}).encode())
+                time.sleep(2)
+
+        srv = FakeWSServer(script)
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Config(source="simulated", symbols=("BTCUSDT",), data_dir=d, port=0)
+            app = App(cfg, env_path=__import__("pathlib").Path(d) / ".env", make_source=lambda c: SimulatedSource(now_ms=NOW),
+                      make_feed=lambda c: LiveFeed(f"ws://127.0.0.1:{srv.port}/market", c.symbols, d))
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            base = f"http://127.0.0.1:{httpd.server_address[1]}"
+            try:
+                app.service.refresh_all()
+                app.start_background()
+                deadline = time.time() + 8
+                while time.time() < deadline and not (app.feed.last_price("BTCUSDT") and app.feed.recent_liqs("BTCUSDT")):
+                    time.sleep(0.05)
+                r = json.loads(urllib.request.urlopen(base + "/api/price?symbol=BTCUSDT", timeout=5).read())
+                self.assertEqual((r["price"], r["via"]), (91234.5, "ws"))
+                lq = json.loads(urllib.request.urlopen(base + "/api/liqs?symbol=BTCUSDT", timeout=5).read())
+                self.assertEqual([(e["side"], round(e["usd"])) for e in lq["events"]], [("long", 180200)])
+                self.assertEqual(round(lq["summary"]["1h"]["long"]), 180200)
+                st = app.service.get_state("BTCUSDT", "1h")
+                self.assertEqual(st["price"], 91234.5)                       # le prix du serveur suit le flux
+                self.assertEqual(round(st["context"]["liqReal"]["1h"]["long"]), 180200)
+                h = json.loads(urllib.request.urlopen(base + "/api/health", timeout=5).read())
+                self.assertTrue(h["feed"]["trades"]["connected"])
+            finally:
+                app.shutdown(); httpd.shutdown(); httpd.server_close(); srv.close()
+
+
 class FakeTelegram(BaseHTTPRequestHandler):
     sent = []
 
@@ -283,6 +328,73 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(all(z["mid"] < st["price"] for z in st["zones"] if z["side"] == "below"))
         self.assertTrue(all("reach" in p for p in st["liquidity"]["pools"]))
         self.assertIn("regime", st["context"])
+
+    def test_importance_essential_and_pool_birth(self):
+        st = json.loads(self.get("/api/state?symbol=BTCUSDT&tf=1h")[1])
+        ess = st["ladder"]["essential"]
+        zones = {z["id"]: z for z in st["zones"]}
+        self.assertTrue(set(ess) <= set(zones))
+        for side in ("above", "below"):
+            self.assertLessEqual(sum(1 for i in ess if zones[i]["side"] == side), 2)       # au plus 2 zones par cote
+        for z in st["zones"]:
+            self.assertIn("imp", z)
+        pools = st["liquidity"]["pools"]
+        self.assertTrue(pools)
+        for p in pools:
+            self.assertTrue(p["born"] is None or p["born"] <= st["now"])
+        ages = [p["born"] for p in pools if p["born"]]
+        self.assertTrue(ages)                                                              # l'age des poches est connu
+
+    def test_analysis_and_plan_endpoints(self):
+        from engine import bias as be
+        from tests.test_bias import synth
+        m = self.app.service.markets["BTCUSDT"]
+        deadline = time.time() + 40
+        while time.time() < deadline and not (m.stats and m.reach):
+            time.sleep(0.2)
+        m.bias = be.analyse(synth(24 * 330, 21, signal=0.35))        # modele valide (signal plante), injecte pour le test
+        r = json.loads(self.get("/api/analysis?symbol=BTCUSDT")[1])
+        self.assertTrue(r["ready"])
+        for k in ("synth", "bias", "macro", "dom", "sources"):
+            self.assertIn(k, r)
+        json.dumps(r)                                                  # serialisable : aucune donnee d'entrainement ne fuit
+        self.assertNotIn("_model", json.dumps(r))
+        self.assertIn(r["synth"]["direction"], ("haussier", "baissier", "neutre"))
+        self.assertTrue(r["macro"]["hasCalendar"])
+        self.assertTrue(r["macro"]["upcoming"])
+        self.assertIn("horizons", r["bias"])
+        self.assertEqual(self.get("/api/analysis?symbol=XXX")[0], 404)
+        p = json.loads(self.get("/api/plan?symbol=BTCUSDT&side=long&tp=2&sl=1&lev=10&h=24")[1])
+        self.assertTrue(p["ready"])
+        pl = p["plan"]
+        self.assertAlmostEqual(pl["tp"]["p"] + pl["sl"]["p"] + pl["none"]["p"], 1.0, places=6)
+        self.assertAlmostEqual(p["liqPct"], 9.6)                       # 100/10 - 0,4
+        self.assertLess(p["liqPrice"], p["price"])
+        self.assertFalse(p["slBeyondLiq"])
+        self.assertIsNotNone(p["liqTouch"]["24"])
+        s = json.loads(self.get("/api/plan?symbol=BTCUSDT&side=short&tp=2&sl=12&lev=10&h=24")[1])
+        self.assertTrue(s["slBeyondLiq"])                              # stop au-dela de la liquidation : signale
+        self.assertGreater(s["liqPrice"], s["price"])
+        self.assertEqual(self.get("/api/plan?symbol=BTCUSDT&side=up&tp=2&sl=1&lev=10&h=24")[0], 400)
+        self.assertEqual(self.get("/api/plan?symbol=BTCUSDT&side=long&tp=2&sl=1&lev=10&h=5")[0], 400)
+
+    def test_heat_payload_and_gzip(self):
+        import base64, gzip as gz
+        req = urllib.request.Request(self.url + "/api/heat?symbol=BTCUSDT", headers={"Accept-Encoding": "gzip"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            self.assertEqual(r.headers.get("Content-Encoding"), "gzip")
+            h = json.loads(gz.decompress(r.read()))
+        self.assertTrue(h["ready"])
+        n, m = h["n"], h["m"]
+        self.assertGreater(n, 400)
+        self.assertEqual(len(base64.b64decode(h["long"])), n * m)
+        self.assertEqual(len(base64.b64decode(h["short"])), n * m)
+        self.assertGreater(sum(1 for b in base64.b64decode(h["long"]) if b), 100)             # des cellules allumees
+        lo = h["b0"] * h["step"]
+        import math
+        self.assertLess(math.exp(lo), h["price"])
+        self.assertGreater(math.exp((h["b0"] + m) * h["step"]), h["price"])                    # la fenetre contient le prix
+        self.assertEqual(self.get("/api/heat?symbol=XXX")[0], 404)
 
     def test_all_timeframes_and_errors(self):
         for tf in ("5m", "15m", "1h", "4h", "1d"):

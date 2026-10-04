@@ -1,23 +1,20 @@
-# Liq Terminal (V2)
+# Liq Terminal (V3)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble sur une seule page :
 
-- tes **niveaux** : VWAP jour, semaine, mois et année avec leurs bandes ±2σ, VWAP ancrée, opens, plus hauts et plus bas précédents, profils de volume (POC, VAH/VAL, HVN), **POC nus** et nombres ronds ;
-- les **poches de liquidation estimées** à partir de l'Open Interest de Binance, réparties entre longs et shorts selon le **vrai volume acheteur agressif** ;
-- les **confluences** : des zones où plusieurs sources différentes se regroupent ;
-- les **probabilités mesurées** sur l'historique de la paire :
-  - la chance que le prix atteigne une zone en 4 h, 24 h ou 72 h ;
-  - le taux de rebond quand le prix la touche, comparé à des niveaux tirés au hasard ;
-- le **contexte** du marché :
-  - régime prix / OI ;
-  - CVD réel et funding ;
-  - basis et ratios long/short ;
-  - prime Coinbase ;
-- des **alertes Telegram** quand une confluence se forme, quand le prix s'en approche ou quand une grosse poche est balayée.
+- **Le graphique, épuré.** Le mode **Essentiel** (par défaut) ne trace que les 2 zones les plus importantes au-dessus et en dessous du prix, avec leur probabilité d'atteinte. « Confluences » et « Tous » restent disponibles.
+- **Le prix en temps réel.** Prix et bougie en cours bougent à chaque transaction Binance. Le prix **Coinbase** (le marché de ton graphique TradingView) s'affiche à côté, avec l'écart.
+- **Une vue Liquidité** (second onglet, même graphique) : carte de chaleur de l'historique des poches de liquidation, balayages, **vraies liquidations** Binance en bulles, profil actuel sur le bord droit.
+- **Une section Analyse sous le graphique** :
+  - **Biais & probabilités** : un biais qui n'est une probabilité que si le modèle a prouvé un avantage hors échantillon ;
+  - **Macro & annonces** : calendrier avec consensus, réaction mesurée des marchés aux annonces passées, dollar / taux / indices / VIX / or ;
+  - **Dominance BTC / alts** : régime, probabilités historiques, bêta de ta paire face au BTC ;
+  - **Plan de trade** : probabilité de toucher le TP avant le stop, liquidation selon ton levier ;
+  - **Lexique** qui explique chaque élément du graphique.
+- Tout ce qui existait en V2 : niveaux (VWAP et bandes ±2σ, ouvertures, plus hauts/bas, POC/VAH/VAL, POC nus, nombres ronds), poches de liquidation estimées via l'Open Interest, confluences avec probabilités, contexte (OI, CVD, funding, long/short, prime Coinbase), alertes Telegram.
 
-> Ce sont des estimations et des statistiques passées, à titre informatif : ce n'est pas un conseil financier.
-> Les poches de liquidation sont un **proxy** : ce ne sont pas de vraies liquidations.
-> La règle « aimant » (une zone attire le prix) est une **hypothèse non validée**.
+> Estimations et statistiques historiques, à titre informatif : ce n'est pas un conseil financier.
+> Les poches de liquidation sont un **proxy** (sauf les bulles « réelles »). La règle « aimant » est une **hypothèse non validée**.
 
 ## Démarrage en 3 étapes
 
@@ -97,6 +94,34 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V3
+
+### Niveaux essentiels
+Chaque zone reçoit une **importance** : nombre de sources distinctes, poche AIMANT, type de niveau qui bat le hasard dans l'historique de la paire, proximité du prix. Le mode Essentiel garde les 2 meilleures de chaque côté (score ≥ 3). Une ★ dans la liste de droite indique les zones tracées. Chaque zone du graphique porte une étiquette : sens, prix, score, probabilité d'atteinte en 24 h.
+
+### Liquidité améliorée
+- Les barres de poches partent maintenant de **l'instant où la poche s'est formée** (un trait vertical marque la naissance) et non plus d'une longueur arbitraire. Un balayage remet l'âge à zéro.
+- La vue **Liquidité** affiche la carte de chaleur (une colonne par heure, bandes de 0,15 % du prix), avec 24 h, 3 j, 7 j ou 29 j d'historique. Survole une case pour lire la bande, l'heure et la taille estimée en dollars.
+- Les **vraies liquidations** viennent du flux public Binance `forceOrder`. Binance n'envoie que la plus grosse par seconde et seulement depuis l'ouverture du terminal ; elles sont gardées dans `data_local/`.
+
+### Macro
+- **Calendrier** : le flux gratuit de ForexFactory donne le consensus et le chiffre précédent. Il ne donne **pas** le chiffre publié. La « surprise » est donc lue dans la réaction du **rendement 10 ans** et du **dollar** dans les 15 minutes suivantes, comparée à celle du BTC. Ces mesures sont archivées (`data_local/macro_events.json`) : la « réaction type du BTC » par type d'annonce se construit avec le temps.
+- **Actifs de référence** (Yahoo Finance, futures presque 24 h) : dollar, taux 10 ans, S&P 500, Nasdaq, VIX, or. Le lien avec le BTC est mesuré sur 30 jours.
+- **Lecture macro** : phrases construites uniquement à partir de ces chiffres. Ce n'est pas une IA qui improvise : tout est vérifiable.
+- **Alertes Telegram** : une alerte environ 1 h avant une annonce majeure (consensus et scénarios), puis un bilan de la réaction du marché.
+
+### Dominance BTC / alts
+Dominance officielle (CoinGecko, repli CoinPaprika) et **panier alts/BTC** construit avec l'historique réel Binance spot (ETH, SOL, BNB, XRP, ADA, DOGE, AVAX, LINK cotés en BTC). Le régime croise ce panier et la direction du BTC. Les probabilités viennent de ~2,7 ans de bougies quotidiennes.
+
+### Biais statistique « validé »
+Régression logistique sur 10 variables calculées à chaque clôture horaire (momentum, CVD réel, VWAP jour/semaine, volatilité, position 72 h, funding). Elle est **validée hors échantillon** (entraînée sur le passé, testée sur les 30 jours suivants, en avançant), avec intervalle de confiance et calibration. Si elle ne bat pas le hasard sur ta paire, le terminal l'écrit et n'en tire **aucun** biais : c'est le résultat le plus fréquent sur des marchés liquides, et c'est une information utile.
+
+### Latence
+- Prix et bougie : flux WebSocket direct dans le navigateur (badge ● TEMPS RÉEL). Secours automatique si le flux ne passe pas : le serveur redonne le prix chaque seconde (badge ● PRIX ~1 s).
+- Le serveur écoute aussi le flux : ses alertes d'approche utilisent le dernier prix échangé.
+- Niveaux, poches et alertes recalculés toutes les 5 secondes (`TERMINAL_REFRESH_SECONDS`).
+- **Pourquoi ton prix TradingView diffère** : ton graphique « Bitcoin / Dollar · Coinbase » est le marché spot américain, le terminal affiche le **perpétuel Binance**. L'écart de quelques dizaines de dollars est normal. Le prix Coinbase est affiché à côté pour comparer.
+
 ## Sécurité
 
 - Le serveur n'écoute que sur ta machine (`127.0.0.1`). Il refuse les requêtes qui viennent d'un autre site : vérification de l'en-tête Host et jeton de session.
@@ -117,18 +142,22 @@ Sous Windows, remplace `python` par `py`. Tous les réglages peuvent aussi s'éc
 
 ## Données
 
-Le terminal utilise les endpoints publics de Binance futures USDT-M. Il n'a besoin ni de compte ni de clé.
+Tout est gratuit et sans compte ni clé. Si une source tombe en panne, les autres continuent et l'erreur s'affiche (état des sources, onglet Macro).
 
-| Donnée | Profondeur |
-|---|---|
-| Bougies 1h | Depuis le 1er janvier de l'an dernier. Elles servent aux profils annuels, à la VWAP ancrée et à l'historique des probabilités. |
-| Bougies 5 min et volume acheteur agressif | Environ 29 jours |
-| Open Interest 5 min | Environ 29 jours, limite imposée par Binance |
-| Funding, premium index, ratios long/short | Récents |
-| Prix spot Binance et prix Coinbase | Prix actuel |
-| Transactions en temps réel | Flux WebSocket public `wss://fstream.binance.com/market`, ouvert par le navigateur |
+| Donnée | Source | Profondeur |
+|---|---|---|
+| Bougies 1h, volume acheteur agressif | Binance futures | Depuis le 1er janvier de l'an dernier |
+| Bougies 5 min, Open Interest 5 min | Binance futures | Environ 29 jours (limite Binance) |
+| Funding, premium index, ratios long/short | Binance futures | Funding : tout l'historique ; ratios : récent |
+| Transactions et liquidations en direct | WebSocket Binance futures | Temps réel |
+| Prix Coinbase | WebSocket Coinbase | Temps réel |
+| Calendrier économique (consensus) | ForexFactory (flux public) | Semaine en cours et suivante, archivé ensuite |
+| Dollar, taux 10 ans, indices, VIX, or | Yahoo Finance | 5 jours en 5 min, 6 mois en quotidien |
+| Dominance BTC | CoinGecko (repli CoinPaprika) | Historique construit par le terminal |
+| Paires alts/BTC | Binance spot | 30 jours en 1h, ~2,7 ans en quotidien |
+| Fear & Greed | alternative.me | 30 jours |
 
-Les probabilités sont recalculées toutes les 6 heures, en tâche de fond. Si une donnée facultative est bloquée, par exemple Coinbase dans certains pays, le terminal continue de fonctionner sans elle.
+Les probabilités et le biais statistique sont recalculés toutes les 6 heures, en tâche de fond (de 30 secondes à 2 minutes selon la machine).
 
 ## Structure
 
@@ -143,7 +172,7 @@ alerts/             règles d'alerte, envoi Telegram
 service.py          relie les données et les moteurs, fabrique l'état JSON
 server.py           serveur local : API, réglages, sécurité
 web/                interface (HTML/CSS/JS + TradingView Lightweight Charts)
-tests/              tests automatiques (47)
+tests/              tests automatiques (une centaine)
 ```
 
 ## Limites connues
@@ -156,4 +185,7 @@ tests/              tests automatiques (47)
 
   Elles ne sont pas calibrées sur de vraies liquidations.
 - **Probabilités.** Ce sont des fréquences passées sur la même paire. Elles ne garantissent rien pour l'avenir. Le nombre de tests (`n`) et l'intervalle de confiance indiquent leur fiabilité. Sur les données simulées, tout est proche du hasard : c'est normal, le marché simulé n'a pas de mémoire.
-- **À venir en V3** : données macroéconomiques et calendrier des annonces économiques.
+- **Calendrier et macro.** Le flux gratuit ne contient pas le chiffre publié (seulement consensus et précédent) : la surprise est lue dans les taux et le dollar, ce qui est plus fiable mais ne remplace pas le chiffre. Yahoo Finance peut limiter les requêtes ; le terminal le signale et réessaie.
+- **Biais.** Un biais « neutre » ou de « faible confiance » est un résultat, pas un défaut. Sur BTC et SOL en 1h, les variables classiques n'offrent le plus souvent qu'un avantage minuscule ou nul.
+- **Flux temps réel.** Les adresses WebSocket de Binance (`/market`) et de Coinbase ont été vérifiées dans leur documentation mais pas testées en conditions réelles depuis cet environnement. Si le badge reste sur ● PRIX ~1 s, le terminal reste utilisable.
+- **À venir.** Flux ETF et on-chain si tu en as besoin.

@@ -4,16 +4,29 @@ VOLUME ACHETEUR AGRESSIF reel (taker buy) quand il est connu (sinon la direction
 levier ; prix de liquidation = formule isolee + marge de maintenance. Un niveau disparait quand le prix le
 touche (journal des balayages) ; quand l'OI baisse, les niveaux restants sont reduits d'autant.
 C'est une estimation (proxy), pas de vraies liquidations."""
+import math
 from bisect import insort
 
 from .grid import Grid, rnd
 
 LIQ_GRID = Grid(0.05)
+BAND_PCT = 0.15                                   # largeur d'une bande de la carte de chaleur (% du prix)
+_BAND = math.log(1.0 + BAND_PCT / 100.0)
+SNAP_MS = 3_600_000                               # une photo de l'etat des poches par heure
+STEP_MS = 300_000
+
+
+def band_of(price: float) -> int:
+    return math.floor(math.log(max(price, 1e-9)) / _BAND)
+
+
+def band_price(b: int, off: float = 0.0) -> float:
+    return math.exp((b + off) * _BAND)
 
 
 class LiqEngine:
     def __init__(self, levs=(100, 50, 25, 10), wts=(10, 20, 30, 40), mmr=0.004, split="auto", shrink=True,
-                 sweep_min_frac=0.05, max_events=300):
+                 sweep_min_frac=0.05, max_events=300, max_snaps=800):
         self.levs, self.wts, self.mmr, self.split, self.shrink = levs, wts, mmr, split, shrink
         self.wsum = max(sum(wts), 1e-4)
         self.lsz: dict[int, float] = {}
@@ -29,6 +42,10 @@ class LiqEngine:
         self.sweep_min_frac = sweep_min_frac
         self.max_events = max_events
         self.events: list[dict] = []  # balayages significatifs (journal)
+        self.snaps: list = []         # (t_ms, {bande: taille longs}, {bande: taille shorts}) : une par heure
+        self.max_snaps = max_snaps
+        self._slot = None
+        self._bandc: dict[int, int] = {}
 
     # --- niveaux ---
     def _add(self, side, price, amt):
@@ -89,9 +106,73 @@ class LiqEngine:
             if len(self.events) > self.max_events:
                 del self.events[0]
 
+    # --- photos horaires (carte de chaleur et age des poches) ---
+    def _bands_now(self):
+        bc, g = self._bandc, self.g
+        out = []
+        for sz, act in ((self.lsz, self.lact), (self.ssz, self.sact)):
+            d: dict[int, float] = {}
+            for i in act:
+                b = bc.get(i)
+                if b is None:
+                    b = bc[i] = band_of(LIQ_GRID.price(i))
+                d[b] = d.get(b, 0.0) + sz[i] * g
+            out.append(d)
+        return out
+
+    def _snap(self, ts):
+        lo, sh = self._bands_now()
+        self.snaps.append((ts, lo, sh))
+        if len(self.snaps) > self.max_snaps:
+            del self.snaps[0]
+
+    def _tick_snap(self, t):
+        slot = (t - STEP_MS) // SNAP_MS            # t = fin de bougie 5 min ; la photo est prise a l'ouverture de l'heure
+        if self._slot is None or slot > self._slot:
+            self._snap(slot * SNAP_MS)
+            self._slot = slot
+
+    def birth_of(self, lo, hi, side, share=0.25):
+        """Debut (ms) de la poche situee entre lo et hi : remonte les photos tant qu'elle pesait au moins `share`
+        de sa taille actuelle (un balayage la remet a zero). None si l'historique est vide."""
+        if not self.snaps:
+            return None
+        b0, b1 = band_of(lo), band_of(hi)
+        k = 1 if side == "long" else 2
+        now_d = self._bands_now()[0 if side == "long" else 1]
+        cur = sum(v for b, v in now_d.items() if b0 <= b <= b1)
+        if cur <= 0:
+            return None
+        born = None
+        for snap in reversed(self.snaps):
+            tot = sum(v for b, v in snap[k].items() if b0 <= b <= b1)
+            if tot >= share * cur:
+                born = snap[0]
+            else:
+                break
+        return born
+
+    def heat(self, p_lo, p_hi, since_ms, now_ms):
+        """Carte de chaleur : colonnes horaires [since, now], bandes de prix [p_lo, p_hi]. Tailles reelles."""
+        b0, b1 = band_of(p_lo), band_of(p_hi)
+        m = b1 - b0 + 1
+        cols = [s for s in self.snaps if s[0] >= since_ms - SNAP_MS]
+        slot_now = now_ms // SNAP_MS * SNAP_MS
+        live = self._bands_now()
+        if cols and cols[-1][0] == slot_now:
+            cols[-1] = (slot_now, live[0], live[1])         # la colonne de l'heure en cours montre l'etat actuel
+        elif cols:
+            cols.append((slot_now, live[0], live[1]))
+        if not cols or m <= 0:
+            return None
+        return {"t0": cols[0][0], "dt": SNAP_MS, "n": len(cols), "b0": b0, "m": m,
+                "cols": cols, "lo": band_price(b0), "step": _BAND}
+
     def step(self, oi_now, h, l, c, vol=0.0, tb=None, t=None):
         """Un pas de temps (bougie 5 min). oi_now peut etre None (alors seule la touche est traitee).
         tb = volume acheteur agressif de la bougie (None si inconnu) ; t = horodatage (journal des balayages)."""
+        if t is not None:
+            self._tick_snap(t)
         tot_l, tot_s = self.raw_long, self.raw_short
         hl, raw_l, p1l, p2l = self._sweep_long(l)
         hs, raw_s, p1s, p2s = self._sweep_short(h)
@@ -177,7 +258,8 @@ class LiqEngine:
             if rel >= keep_pct / 100.0 and cnt[p["side"]] < per_side:
                 cnt[p["side"]] += 1
                 kept.append({**p, "rel": rel, "score": rnd(rel * 100.0),
-                             "magnet": cnt[p["side"]] == 1 and rel >= magnet_pct / 100.0})
+                             "magnet": cnt[p["side"]] == 1 and rel >= magnet_pct / 100.0,
+                             "born": self.birth_of(p["lo"], p["hi"], p["side"])})
         return {"pools": kept, "total": len(allp),
                 "sum_long": sum(p["size"] for p in allp if p["side"] == "long"),
                 "sum_short": sum(p["size"] for p in allp if p["side"] == "short")}

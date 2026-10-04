@@ -179,11 +179,64 @@ class AlertEngine:
         except OSError:
             pass
 
-    def run_cycle(self, states: dict):
-        """Un passage complet : states = {symbole: etat au timeframe d'alerte}."""
+    def macro_alerts(self, macro: dict, first: bool = False):
+        """Annonce majeure : une alerte environ 1 h avant (consensus + scenarios), puis un bilan quand le marche a reagi.
+        Renvoie [(kind, z, texte)] ; le journal des alertes deja envoyees survit aux redemarrages."""
+        if not macro or not getattr(self.cfg, "alert_macro", False):
+            return []
+        seen = self.__dict__.setdefault("_macro_seen", set(self._load_json("macro_seen.json")))
+        now, out = self.now() * 1000, []
+        for e in macro.get("upcoming", []):
+            mins = (e["t"] - now) / 60000
+            key = f"pre:{e['id']}"
+            if e["impact"] == 3 and e["w"] >= 0.5 and 10 <= mins <= 65 and key not in seen:
+                seen.add(key)
+                ex = e.get("exp") or {}
+                text = (f"⚠ Annonce majeure dans {int(mins)} min : {e['label']} ({e['country']})\n"
+                        f"{ex.get('text') or 'Pas de consensus publie.'}\n"
+                        f"{ex.get('scen_up', '')}\n{ex.get('scen_dn', '')}\n"
+                        f"Fenetre de danger : spreads larges, meches rapides. Reduis le levier ou reste a plat.")
+                out.append(("macro", {"mid": 0.0}, text.replace("\n\n", "\n")))
+        for e in macro.get("past", []):
+            key = f"post:{e['id']}"
+            r = e.get("reaction")
+            age = (now - e["t"]) / 60000
+            if key in seen or not (e["impact"] == 3 and e["w"] >= 0.5) or not r or r.get("impulse") is None or age > 240:
+                continue
+            seen.add(key)
+            if first:
+                continue
+            b = r.get("btc") or {}
+            c = r.get("cross") or {}
+            text = (f"📊 {e['label']} publie ({e['forecast'] or 'sans consensus'}) : surprise {r['impulseLabel']}\n"
+                    f"Taux 10 ans {c['US10Y']:+.1f} pb, dollar {c['DXY']:+.2f} % en 15 min" if "US10Y" in c and "DXY" in c else
+                    f"📊 {e['label']} publie ({e['forecast'] or 'sans consensus'}) : surprise {r['impulseLabel']}")
+            if b.get("r15") is not None:
+                text += f"\nBTC {b['r15']:+.2f} % en 15 min" + (f", {b['r60']:+.2f} % en 1 h" if b.get("r60") is not None else "")
+            out.append(("macro", {"mid": 0.0}, text))
+        self._save_json("macro_seen.json", sorted(seen)[-300:])
+        return out
+
+    def _load_json(self, name):
+        try:
+            return json.loads((self.dir / name).read_text(encoding="utf-8"))
+        except Exception:
+            return []
+
+    def _save_json(self, name, data):
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            (self.dir / name).write_text(json.dumps(data), encoding="utf-8")
+        except OSError:
+            pass
+
+    def run_cycle(self, states: dict, macro: dict | None = None):
+        """Un passage complet : states = {symbole: etat au timeframe d'alerte} ; macro = analyse macro (optionnelle)."""
         first = not self.started
         for st in states.values():
             self.dispatch(self.evaluate(st, first) + self.sweep_alerts(st, first), st)
+        if macro is not None and states:
+            self.dispatch(self.macro_alerts(macro, first), next(iter(states.values())))
         if first:
             self.startup_summary(states)
             self.started = True

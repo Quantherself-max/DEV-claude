@@ -96,8 +96,17 @@ class BinanceSource(Source):
                 "next_funding": int(r["nextFundingTime"])}
 
     def funding_history(self, symbol, start_ms, end_ms):
-        rows = self._get("/fapi/v1/fundingRate", {"symbol": symbol, "startTime": start_ms, "endTime": end_ms, "limit": 1000})
-        return [(int(r["fundingTime"]), float(r["fundingRate"])) for r in rows]
+        out, t = [], start_ms
+        while t <= end_ms:
+            rows = self._get("/fapi/v1/fundingRate", {"symbol": symbol, "startTime": t, "endTime": end_ms, "limit": 1000})
+            if not rows:
+                break
+            out += [(int(r["fundingTime"]), float(r["fundingRate"])) for r in rows]
+            if len(rows) < 1000:
+                break
+            t = int(rows[-1]["fundingTime"]) + 1
+            time.sleep(self.pause)
+        return out
 
     def long_short(self, symbol, period, start_ms, end_ms, kind="global"):
         """Ratio long/short : 'global' = comptes, 'top' = positions des gros traders. [(t, ratio, part long)]"""

@@ -24,8 +24,10 @@ class Config:
     symbols: tuple = ("BTCUSDT", "SOLUSDT")
     host: str = "127.0.0.1"              # local uniquement : le terminal n'est pas expose sur le reseau
     port: int = 8765
-    refresh_seconds: int = 10            # recalcul des niveaux / alertes ; le prix, lui, arrive en temps reel
+    refresh_seconds: int = 5             # recalcul des niveaux / alertes ; le prix, lui, arrive en temps reel
     binance_ws: str = "wss://fstream.binance.com/market"   # flux temps reel Binance futures (route /market depuis 2026)
+    coinbase_ws: str = "wss://ws-feed.exchange.coinbase.com"   # prix Coinbase en direct (meme marche que ton TradingView)
+    live_ws: bool = True                 # flux temps reel cote serveur (prix exact pour les alertes, liquidations reelles)
     anchor_date: str = "2024-01-01"      # VWAP ancree
     # fenetre autour du prix et confluences (en ATR du timeframe affiche)
     dist_atr: float = 8.0
@@ -44,6 +46,7 @@ class Config:
     # alertes
     alert_sweep: bool = True              # alerte quand une grosse poche de liquidation est balayee
     alert_sweep_frac: float = 0.15        # ... si elle represente >= 15 % des liquidations de ce cote
+    alert_macro: bool = True              # alerte ~1 h avant une annonce majeure + bilan de la reaction du marche
     alert_tf: str = "1h"
     alert_min_score: int = 3             # nb de sources distinctes (+1 si une poche AIMANT en fait partie)
     alert_max_dist_atr: float = 6.0
@@ -75,11 +78,14 @@ def load_config(env_path: Path | None = None) -> Config:
     c.port = int(g("TERMINAL_PORT", c.port))
     c.refresh_seconds = max(3, int(g("TERMINAL_REFRESH_SECONDS", c.refresh_seconds)))
     c.binance_ws = g("TERMINAL_BINANCE_WS", c.binance_ws).rstrip("/")
+    c.coinbase_ws = g("TERMINAL_COINBASE_WS", c.coinbase_ws).rstrip("/")
+    c.live_ws = g("TERMINAL_LIVE_WS", "1").lower() not in ("0", "false", "non", "no")
     c.anchor_date = g("TERMINAL_ANCHOR_DATE", c.anchor_date)
     c.alert_tf = g("TERMINAL_ALERT_TF", c.alert_tf)
     c.alert_min_score = int(g("TERMINAL_ALERT_MIN_SCORE", c.alert_min_score))
     c.alert_cooldown_hours = float(g("TERMINAL_ALERT_COOLDOWN_HOURS", c.alert_cooldown_hours))
     c.alert_sweep = g("TERMINAL_ALERT_SWEEP", "1").lower() not in ("0", "false", "non", "no")
+    c.alert_macro = g("TERMINAL_ALERT_MACRO", "1").lower() not in ("0", "false", "non", "no")
     c.stats_horizon = int(g("TERMINAL_STATS_HORIZON", c.stats_horizon))
     c.stats_k = float(g("TERMINAL_STATS_K", c.stats_k))
     c.telegram_token = g("TELEGRAM_BOT_TOKEN", "")

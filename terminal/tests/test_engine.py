@@ -278,5 +278,48 @@ class ConfluenceTests(unittest.TestCase):
                 self.assertLessEqual(z["hi"] - z["lo"], tol + 1e-9)
 
 
+class LiquiditySnapshotTests(unittest.TestCase):
+    H = 3_600_000
+
+    def run_steps(self, e, n, t0, oi0, px=100.0, d_oi=10.0, hi=None, lo=None):
+        oi = oi0
+        for i in range(n):
+            oi += d_oi
+            tend = t0 + (i + 1) * 300_000
+            e.step(oi, hi or px + 0.1, lo or px - 0.1, px, vol=100.0, tb=50.0, t=tend)
+        return oi
+
+    def test_hourly_snapshots_and_birth_of_pool(self):
+        from engine.liquidity import LiqEngine
+        e = LiqEngine()
+        t0 = 10 * self.H                                   # heure ronde
+        oi = self.run_steps(e, 36, t0, 1000.0)              # 3 h de nouvelles positions autour de 100
+        self.assertEqual([x[0] for x in e.snaps], [t0, t0 + self.H, t0 + 2 * self.H])
+        pools = e.pools(100.0, 20.0, keep_pct=10)["pools"]
+        self.assertTrue(pools)
+        p = max(pools, key=lambda q: q["size"])
+        born = p["born"]
+        self.assertIsNotNone(born)
+        self.assertLessEqual(born, t0 + self.H)             # la poche existe depuis le debut (>= 25 % de sa taille finale)
+        # un balayage remet l'age a zero : le prix monte jusqu'aux shorts, ils disparaissent, l'age des shorts repart
+        top = max((q for q in pools if q["side"] == "short"), key=lambda q: q["price"])
+        e.step(oi, top["hi"] + 5, 99.9, 100.0, vol=100.0, tb=50.0, t=t0 + 37 * 300_000)
+        sh = [q for q in e.pools(100.0, 20.0, keep_pct=10)["pools"] if q["side"] == "short" and q["price"] == top["price"]]
+        self.assertEqual(sh, [])                             # la poche balayee n'existe plus
+
+    def test_heat_matrix_columns_and_live_column(self):
+        from engine.liquidity import LiqEngine, band_of
+        e = LiqEngine()
+        t0 = 20 * self.H
+        self.run_steps(e, 24, t0, 1000.0)
+        h = e.heat(90.0, 110.0, t0, t0 + 2 * self.H + 600_000)
+        self.assertIsNotNone(h)
+        self.assertEqual(h["n"], 3)                          # 2 photos + la colonne de l'heure en cours (etat actuel)
+        self.assertEqual(h["cols"][-1][0], t0 + 2 * self.H)
+        self.assertTrue(h["cols"][-1][1] and h["cols"][-1][2])
+        self.assertEqual(h["b0"], band_of(90.0))
+        self.assertIsNone(LiqEngine().heat(90, 110, 0, 1))
+
+
 if __name__ == "__main__":
     unittest.main()

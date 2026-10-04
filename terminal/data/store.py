@@ -34,7 +34,7 @@ class DataStore:
         self.oi_v: list[float] = []
         self.ctx = {"premium": None, "funding": [], "ls_global": [], "ls_top": [], "spot": None,
                     "coinbase": None, "errors": {}}
-        self._ctx_due = {"funding": 0.0, "ls": 0.0}
+        self._ctx_due = {"funding": 0.0, "ls": 0.0, "px": 0.0}
         self.last_error = None
         self.last_refresh = 0
 
@@ -71,10 +71,12 @@ class DataStore:
                 return None
 
         self.ctx["premium"] = safe("premium", lambda: self.source.premium_index(self.symbol)) or self.ctx["premium"]
-        self.ctx["spot"] = safe("spot", lambda: self.source.spot_price(self.symbol))
-        from data.binance import coinbase_product
-        self.ctx["coinbase"] = safe("coinbase", lambda: self.source.coinbase_price(coinbase_product(self.symbol)))
         wall = time.time()
+        if wall >= self._ctx_due["px"]:                         # prix spot / Coinbase : inutile de les demander a chaque cycle
+            self.ctx["spot"] = safe("spot", lambda: self.source.spot_price(self.symbol))
+            from data.binance import coinbase_product
+            self.ctx["coinbase"] = safe("coinbase", lambda: self.source.coinbase_price(coinbase_product(self.symbol)))
+            self._ctx_due["px"] = wall + 15
         if wall >= self._ctx_due["funding"]:
             f = safe("funding", lambda: self.source.funding_history(self.symbol, now - 7 * DAY, now))
             if f is not None:

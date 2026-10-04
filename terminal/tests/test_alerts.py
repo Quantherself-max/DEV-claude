@@ -203,5 +203,61 @@ class TelegramTests(unittest.TestCase):
             srv.shutdown()
 
 
+class MacroAlertTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg = Config(data_dir=self.tmp.name, alert_macro=True)
+        self.clock, self.n = Clock(), FakeNotifier()
+        self.eng = AlertEngine(self.cfg, self.n, now=self.clock)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def ev(self, mins, **kw):
+        now_ms = self.clock.t * 1000
+        e = {"id": "cpi1", "t": now_ms + mins * 60_000, "impact": 3, "w": 0.9, "label": "Inflation (CPI)", "country": "USD",
+             "forecast": "0.3%", "previous": "0.2%",
+             "exp": {"text": "Consensus 0.3% contre 0.2% precedemment : hausse attendue.", "scen_up": "Si superieur : restrictif.", "scen_dn": "Si inferieur : accommodant."}}
+        e.update(kw)
+        return e
+
+    def test_pre_event_alert_once_between_65_and_10_minutes(self):
+        self.assertEqual(self.eng.macro_alerts({"upcoming": [self.ev(180)], "past": []}), [])           # trop tot
+        out = self.eng.macro_alerts({"upcoming": [self.ev(55)], "past": []})
+        self.assertEqual(len(out), 1)
+        self.assertIn("Annonce majeure dans 55 min", out[0][2])
+        self.assertIn("restrictif", out[0][2])
+        self.assertEqual(self.eng.macro_alerts({"upcoming": [self.ev(50)], "past": []}), [])           # une seule fois
+        again = AlertEngine(self.cfg, self.n, now=self.clock)                                          # redemarrage : memoire conservee
+        self.assertEqual(again.macro_alerts({"upcoming": [self.ev(45)], "past": []}), [])
+        self.assertEqual(self.eng.macro_alerts({"upcoming": [self.ev(5, id="late")], "past": []}), [])  # trop tard pour prevenir
+        self.assertEqual(self.eng.macro_alerts({"upcoming": [self.ev(55, id="x", impact=2)], "past": []}), [])
+        self.assertEqual(self.eng.macro_alerts({"upcoming": [self.ev(55, id="y", w=0.3)], "past": []}), [])
+
+    def test_post_event_summary_with_measured_reaction(self):
+        past = self.ev(-40, reaction={"impulse": 1.9, "impulseLabel": "restrictive forte", "btc": {"r15": -0.62, "r60": -1.1},
+                                      "cross": {"US10Y": 6.0, "DXY": 0.25}})
+        first = self.eng.macro_alerts({"upcoming": [], "past": [past]}, first=True)
+        self.assertEqual(first, [])                                                                   # au demarrage : on enregistre sans envoyer
+        self.assertEqual(self.eng.macro_alerts({"upcoming": [], "past": [past]}), [])
+        past2 = self.ev(-40, id="nfp", reaction={"impulse": -1.0, "impulseLabel": "accommodante", "btc": {"r15": 0.4, "r60": None},
+                                                  "cross": {"US10Y": -3.0, "DXY": -0.1}})
+        out = self.eng.macro_alerts({"upcoming": [], "past": [past2]})
+        self.assertEqual(len(out), 1)
+        self.assertIn("accommodante", out[0][2])
+        self.assertIn("BTC +0.40 % en 15 min", out[0][2])
+        pending = self.ev(-40, id="p", reaction=None)
+        self.assertEqual(self.eng.macro_alerts({"upcoming": [], "past": [pending]}), [])               # pas encore mesure : on attend
+
+    def test_disabled_and_run_cycle_dispatch(self):
+        off = AlertEngine(Config(data_dir=self.tmp.name, alert_macro=False), self.n, now=self.clock)
+        self.assertEqual(off.macro_alerts({"upcoming": [self.ev(55)], "past": []}), [])
+        st = make_state([Z3])
+        self.eng.run_cycle({"BTCUSDT": st}, {"upcoming": [], "past": []})                              # demarrage
+        self.n.sent.clear()
+        self.eng.run_cycle({"BTCUSDT": st}, {"upcoming": [self.ev(55)], "past": []})
+        self.assertTrue(any("Annonce majeure" in x for x in self.n.sent))
+
+
 if __name__ == "__main__":
     unittest.main()

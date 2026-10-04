@@ -9,11 +9,17 @@
 </head>
 <body>
 <header id="top">
-  <div class="brand">LIQ<span>TERMINAL</span><em>V2</em></div>
+  <div class="brand">LIQ<span>TERMINAL</span><em>V3</em></div>
+  <div id="views" class="seg views" role="tablist" aria-label="Vue">
+    <button data-view="main" class="on">Terminal</button>
+    <button data-view="liq">Liquidité</button>
+  </div>
   <select id="symbol" aria-label="Symbole"></select>
   <div id="tfs" class="seg" role="group" aria-label="Timeframe"></div>
-  <div class="price"><b id="price">-</b><small id="atr"></small></div>
+  <div class="price"><b id="price" title="Dernier prix échangé sur le perpétuel Binance">-</b><small id="atr"></small>
+    <span id="cbPrice" class="cb" hidden title="Prix Coinbase (spot USD) : le marché de ton graphique TradingView"></span></div>
   <span id="regime" class="regime" hidden></span>
+  <button id="riskChip" class="badge risk" hidden></button>
   <div class="spacer"></div>
   <button id="srcBadge" class="badge" title="Changer la source dans les réglages">-</button>
   <button id="tgBadge" class="badge" title="Configurer Telegram dans les réglages">-</button>
@@ -22,15 +28,27 @@
   <button id="openSettings" class="primary">⚙ Réglages</button>
 </header>
 <div id="banner" hidden></div>
-<main>
+<main id="main">
   <section id="chartwrap">
+    <canvas id="heat"></canvas>
     <div id="chart"></div>
     <canvas id="overlay"></canvas>
     <div id="toolbar">
-      <label><input type="radio" name="mode" value="conf" checked> Confluences</label>
-      <label><input type="radio" name="mode" value="all"> Tous les niveaux</label>
-      <label><input type="checkbox" id="showPools" checked> Poches de liquidité</label>
+      <span class="tb tb-main">
+        <label title="Seulement les 2 zones les plus importantes de chaque côté du prix"><input type="radio" name="mode" value="ess" checked> Essentiel</label>
+        <label title="Toutes les zones de confluence proches"><input type="radio" name="mode" value="conf"> Confluences</label>
+        <label title="Tous les niveaux de la fenêtre"><input type="radio" name="mode" value="all"> Tous</label>
+        <label><input type="checkbox" id="showPools" checked> Poches</label>
+      </span>
+      <span class="tb tb-liq" hidden>
+        <span class="muted">Période</span>
+        <span id="heatHours" class="seg mini"><button data-h="24">24 h</button><button data-h="72">3 j</button><button data-h="168" class="on">7 j</button><button data-h="0">29 j</button></span>
+        <label><input type="checkbox" id="showSweeps" checked> Balayages</label>
+        <label><input type="checkbox" id="showReal" checked> Liquidations réelles</label>
+        <label><input type="checkbox" id="showProfile" checked> Profil</label>
+      </span>
     </div>
+    <div id="tip" hidden></div>
   </section>
   <aside id="side">
     <nav id="tabs" class="tabs" role="tablist">
@@ -38,6 +56,11 @@
       <button data-tab="context">Contexte</button>
       <button data-tab="stats">Stats</button>
       <button data-tab="alerts">Alertes</button>
+    </nav>
+    <nav id="tabsLiq" class="tabs" role="tablist" hidden>
+      <button data-tab="lq-pools" class="on">Poches</button>
+      <button data-tab="lq-real">Réel</button>
+      <button data-tab="lq-sweeps">Balayages</button>
     </nav>
     <div class="pane" data-pane="levels">
       <section class="card">
@@ -58,13 +81,38 @@
     </div>
     <div class="pane" data-pane="stats" hidden>
       <section class="card"><h2>Réaction du prix aux niveaux <small id="statsHint"></small></h2><div id="stats" class="muted">-</div></section>
-      <section class="card"><h2>Poches balayées <small>journal</small></h2><div id="sweeps" class="muted">-</div></section>
     </div>
     <div class="pane" data-pane="alerts" hidden>
       <section class="card"><h2>Alertes <small id="alertHint"></small></h2><div id="alerts" class="muted">-</div></section>
     </div>
+    <div class="pane" data-pane="lq-pools" hidden>
+      <section class="card"><h2>Comment lire la carte</h2><div id="lqLegend"></div></section>
+      <section class="card"><h2>Poches actuelles <small>triées par taille</small></h2><div id="pools2"></div></section>
+      <section class="card" id="detailCard2"><h2>Détail</h2><div id="detail2" class="muted">Clique une poche.</div></section>
+    </div>
+    <div class="pane" data-pane="lq-real" hidden>
+      <section class="card"><h2>Liquidations réelles <small id="realHint"></small></h2><div id="real" class="muted">-</div></section>
+    </div>
+    <div class="pane" data-pane="lq-sweeps" hidden>
+      <section class="card"><h2>Poches balayées <small>journal</small></h2><div id="sweeps" class="muted">-</div></section>
+    </div>
   </aside>
 </main>
+<section id="analysis">
+  <nav id="anTabs" class="antabs" role="tablist">
+    <button data-an="synth" class="on">Biais &amp; probabilités</button>
+    <button data-an="macro">Macro &amp; annonces</button>
+    <button data-an="dom">Dominance BTC / alts</button>
+    <button data-an="plan">Plan de trade</button>
+    <button data-an="lex">Lexique du graphique</button>
+    <span class="spacer"></span><span id="anStatus" class="muted small"></span>
+  </nav>
+  <div class="anpane" data-anpane="synth"><div id="anSynth" class="muted">Analyse en cours…</div></div>
+  <div class="anpane" data-anpane="macro" hidden><div id="anMacro" class="muted">Analyse en cours…</div></div>
+  <div class="anpane" data-anpane="dom" hidden><div id="anDom" class="muted">Analyse en cours…</div></div>
+  <div class="anpane" data-anpane="plan" hidden><div id="anPlan"></div></div>
+  <div class="anpane" data-anpane="lex" hidden><div id="anLex"></div></div>
+</section>
 <footer>Estimations et statistiques historiques à titre informatif, pas un conseil financier. La règle « aimant » (zone attirant le prix) est une hypothèse non validée.
   Graphiques : <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a> (Apache-2.0).</footer>
 
@@ -99,6 +147,7 @@
           <label class="field">Timeframe <select id="aTf"></select></label>
           <label class="field">Pause entre 2 alertes d'une zone (h) <input id="aCool" type="number" min="0.5" max="48" step="0.5"></label>
           <label class="field chk"><input id="aSweep" type="checkbox"> Alerte quand une grosse poche est balayée</label>
+          <label class="field chk"><input id="aMacro" type="checkbox"> Alerte avant une annonce majeure (CPI, Fed...) et bilan de la réaction</label>
         </div>
         <p class="muted small">Score = nombre de sources différentes dans la zone (+1 si une poche AIMANT en fait partie).</p>
       </section>
@@ -108,6 +157,8 @@
 </div>
 <div id="toast" hidden></div>
 <script src="vendor/lightweight-charts.standalone.production.js"></script>
+<script src="charts.js"></script>
+<script src="analysis.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
