@@ -832,7 +832,7 @@ class Service:
                 valid = None
             sc["probs"], sc["valid"] = probs, valid
             sc["desc"] = signals_engine.describe(sc, probs, valid, cfg.signal_leverage, symbol)
-            sc["eligible"] = sc["score"] >= cfg.signal_min_score and not sc["hold"]
+            sc["eligible"] = sc["score"] >= cfg.signal_min_score and not sc["hold"] and not sc["gates"]
             pub = {k: v for k, v in sc.items() if k not in ("tp1Ref", "tp2Ref")}
             pub["st"] = {**sc["st"], "items": [{k: it[k] for k in ("tf", "fam", "w", "text", "price", "name")} for it in sc["st"]["items"]]}
             ideas.append(pub)

@@ -38,7 +38,8 @@ const Signals = (() => {
     const buy = i.side === 'long', col = buy ? 'up' : 'dn', d = i.desc;
     const status = trade ? (trade.status === 'closed' ? RESULT[trade.result] : STATUS[trade.status]) : null;
     const sent = trade ? `<span class="pill ${status ? status[1] : ''}">${esc(status ? status[0] : '')}</span>` : '';
-    const state = trade ? sent : i.hold.length ? `<span class="pill warn" title="${esc(i.hold.join(' · '))}">En attente : annonce</span>`
+    const gate = (i.gates || [])[0];
+    const state = trade ? sent : gate ? `<span class="pill warn" title="${esc(i.gates.join(' · '))}">Filtre : ${esc(gate.split(' (')[0])}</span>` : i.hold.length ? `<span class="pill warn" title="${esc(i.hold.join(' · '))}">En attente : annonce</span>`
       : i.eligible ? '<span class="pill up">Au-dessus du seuil</span>' : `<span class="pill muted">Sous le seuil (${sg.minScore})</span>`;
     const comps = i.comps.map(c => `<div class="cmp"><span>${esc(c.label)}</span><i><b style="width:${Math.round(100 * c.pts / c.max)}%"></b></i><em>${c.pts.toFixed(0)}/${c.max}</em></div>`).join('');
     const best = sg.ideas.find(x => x.eligible);
@@ -57,11 +58,12 @@ const Signals = (() => {
       <details data-key="${esc(i.key)}" ${open.has(i.key) ? 'open' : ''}><summary>Tout comprendre : pourquoi, contexte, probabilités</summary>
         <h5>Quoi faire</h5><ul>${lines(d.action)}</ul>
         <h5>Pourquoi ici</h5><ul>${lines(d.why)}</ul>
-        ${d.context.length ? `<h5>Contexte</h5><ul>${lines(d.context)}</ul>` : ''}
+        ${d.macro && d.macro.length ? `<h5>Contexte macro</h5><ul>${lines(d.macro)}</ul>` : ''}
         ${d.news.length ? `<h5>Annonces économiques</h5><ul>${lines(d.news)}</ul>` : ''}
+        ${d.context.length ? `<h5>Autres contextes</h5><ul>${lines(d.context)}</ul>` : ''}
         ${d.probs.length ? `<h5>Probabilités</h5><ul>${lines(d.probs)}</ul>` : ''}
         <h5>Détail du score</h5><div class="cmps">${comps}</div>
-        <h5>Prudence</h5><ul>${lines(d.risks, 'warnl')}${i.hold.length ? lines(i.hold.map(h => 'En attente : ' + h), 'warnl') : ''}</ul>
+        <h5>Prudence</h5><ul>${lines(d.risks, 'warnl')}${i.hold.length ? lines(i.hold.map(h => 'En attente : ' + h), 'warnl') : ''}${(i.gates || []).length ? lines(i.gates.map(g => 'Filtre : ' + g), 'warnl') : ''}</ul>
       </details></div>`;
   }
 
@@ -104,7 +106,7 @@ const Signals = (() => {
     let html = `<section class="card"><h2>Cette semaine <small>lundi 00 h UTC → dimanche</small></h2>
       <div class="week"><span class="dots">${dots}</span><b>${w.sent}/${w.cap}</b> idées envoyées · seuil de qualité <b>${sg.minScore}/100</b> (la dernière place exige ${sg.minScore + 8})</div>
       ${desk.waiting && desk.waiting.why ? `<div class="muted small">${esc(desk.waiting.why)}</div>` : ''}
-      <div class="muted small">Idées d'achat ou de vente sur des zones où plusieurs niveaux importants (jour, semaine, mois, année) se superposent. Rien n'est envoyé sous le seuil : mieux vaut aucune idée qu'une idée moyenne.</div></section>`;
+      <div class="muted small">Idées d'achat ou de vente fondées sur trois piliers : les <b>liquidités</b> (poches d'ordres d'arrêt), les <b>VWAP et VWAP ancrés</b> (de l'heure à l'année) et le <b>contexte macro</b>. Rien n'est envoyé sous le seuil ni sans liquidité ou avec une macro nettement contraire : mieux vaut aucune idée qu'une idée moyenne.</div></section>`;
     html += `<section class="card"><h2>Idées du moment <small>${esc(sym)}</small></h2>${ideas.length
       ? ideas.map(i => card(i, sg, matchTrade(i))).join('')
       : '<div class="muted">Aucune configuration ne passe les filtres pour l\'instant. C\'est normal : une bonne idée est rare.</div>'}`;

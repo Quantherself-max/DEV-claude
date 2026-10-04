@@ -29,27 +29,27 @@ class ServiceSignalsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
-        cfg = Config(source="simulated", symbols=("SOLUSDT",), data_dir=cls.tmp.name, port=0, signal_min_struct=4.5, signal_min_score=30.0)
+        cfg = Config(source="simulated", symbols=("BTCUSDT",), data_dir=cls.tmp.name, port=0, signal_min_struct=4.5, signal_min_score=30.0)
         cls.app = App(cfg, env_path=__import__("pathlib").Path(cls.tmp.name) / ".env", make_source=lambda c: SimulatedSource(now_ms=NOW))
         cls.svc = cls.app.service
         cls.svc.refresh_all()
-        cls.svc.compute_stats("SOLUSDT")                         # synchrone : probabilites, biais et rejeu historique
+        cls.svc.compute_stats("BTCUSDT")                         # synchrone : probabilites, biais et rejeu historique
 
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
     def test_replay_validation_is_computed_with_the_stats(self):
-        m = self.svc.markets["SOLUSDT"]
+        m = self.svc.markets["BTCUSDT"]
         self.assertIsNotNone(m.stats)
         v = m.sigval
         self.assertTrue(v["ready"])
         self.assertEqual(v["cap"], 3)
         self.assertEqual(len(v["tiers"]), 3)
-        self.assertNotIn("rejeu SOLUSDT", self.svc.errors)
+        self.assertNotIn("rejeu BTCUSDT", self.svc.errors)
 
     def test_signals_payload_shape_and_plain_text(self):
-        s = self.svc.signals("SOLUSDT")
+        s = self.svc.signals("BTCUSDT")
         self.assertTrue(s["ready"])
         self.assertTrue(s["warm"])
         self.assertTrue(s["ideas"], "le scenario simule doit produire au moins une idee")
@@ -74,7 +74,7 @@ class ServiceSignalsTests(unittest.TestCase):
             self.assertGreater(i["stop"], i["entry"])
 
     def test_announcement_in_the_next_hours_puts_the_idea_on_hold(self):
-        s = self.svc.signals("SOLUSDT")
+        s = self.svc.signals("BTCUSDT")
         held = [i for i in s["ideas"] if i["hold"]]
         self.assertTrue(held, "une annonce majeure est proche dans le scenario simule")
         self.assertFalse(any(i["eligible"] for i in held))
@@ -90,18 +90,18 @@ class ServiceSignalsTests(unittest.TestCase):
 
         def no_hold(idea, c, o=None):
             r = orig(idea, c, o)
-            r["hold"] = []
+            r["hold"], r["gates"] = [], []
             return r
         self.svc._sig_cache.clear()
         with mock.patch.object(service_mod.signals_engine, "score_idea", no_hold):
-            self.app.trade_cycle(self.svc, ["SOLUSDT"])
+            self.app.trade_cycle(self.svc, ["BTCUSDT"])
         self.assertEqual(len(self.app.desk.trades), 1)
         self.assertEqual(len(notifier.sent), 1)
         self.assertIn("Idée de trade 1/3", notifier.sent[0])
         tr = self.app.desk.trades[0]
         self.assertIn(tr["status"], ("pending", "active"))
-        self.assertLess(self.svc.recent_m5("SOLUSDT", NOW - 3_600_000)[0][0], NOW)
-        m5 = self.svc.recent_m5("SOLUSDT", tr["created"])
+        self.assertLess(self.svc.recent_m5("BTCUSDT", NOW - 3_600_000)[0][0], NOW)
+        m5 = self.svc.recent_m5("BTCUSDT", tr["created"])
         self.assertTrue(all(len(c) == 4 for c in m5))
         pub = self.app.desk.public(NOW)
         self.assertEqual(pub["week"]["sent"], 1)
@@ -110,12 +110,12 @@ class ServiceSignalsTests(unittest.TestCase):
     def test_disabled_signals_return_not_ready(self):
         self.svc.cfg.signal_on = False
         try:
-            self.assertFalse(self.svc.signals("SOLUSDT")["ready"])
+            self.assertFalse(self.svc.signals("BTCUSDT")["ready"])
         finally:
             self.svc.cfg.signal_on = True
 
     def test_new_anchored_vwaps_are_levels_with_anchor_and_group(self):
-        st = self.svc.get_state("SOLUSDT", "1h")
+        st = self.svc.get_state("BTCUSDT", "1h")
         av = [l for l in st["levels"] if l["kind"] == "avwap"]
         names = {l["name"] for l in av}
         self.assertTrue(any(n.startswith("AVWAP bas") or n.startswith("AVWAP haut") for n in names), names)

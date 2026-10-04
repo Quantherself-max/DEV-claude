@@ -1,27 +1,30 @@
-"""Idees de trade (V5) : on ne garde que les configurations rares ou plusieurs niveaux IMPORTANTS se superposent.
+"""Idees de trade (V5) : on ne garde que les configurations rares, construites sur TROIS piliers :
+  1. la LIQUIDITE : poche de liquidations dans la zone ou juste au-dela, poche deja balayee, grosse poche en face comme objectif ;
+  2. les VWAP et VWAP ancres (et, en renfort, profils de volume, ouvertures, plus hauts / plus bas, POC nus) ;
+  3. le CONTEXTE MACRO : lecture des actifs de reference, annonces a venir (consensus), reaction aux annonces passees.
 
 Principe
-- On part des zones de confluence deja calculees (VWAP, VWAP ancrees, profils de volume, ouvertures, plus hauts /
-  plus bas, POC nus, poches de liquidation) et on donne a chaque source un POIDS selon son echelle de temps :
-  heure < jour < semaine < mois < annee. Un VWAP annuel pese quatre fois plus qu'un VWAP du jour. VWAP, VWAP ancrees
-  et profils de volume sont bonifies (x1,3) : ce sont les niveaux les plus suivis.
+- On part des zones de confluence deja calculees et on donne a chaque source un POIDS selon son echelle de temps :
+  heure < jour < semaine < mois < annee. Un VWAP annuel pese quatre fois plus qu'un VWAP du jour. VWAP et VWAP ancres sont
+  bonifies (x1,6), les profils de volume (x1,2), les ouvertures et plus hauts / bas pesent un peu moins.
 - Une idee est un retournement sur une zone : achat sur un support, vente sur une resistance.
     « rebond »  : ordre a cours limite sur le bord de la zone ;
     « reprise » : la zone (ou une poche de liquidation proche) a ete balayee puis reprise : le piege est joue.
-- Chaque idee a un stop (sous / au-dessus de la zone ou de la meche du balayage), un premier objectif (prochain niveau
-  important, au moins 1,5 fois le risque) et un second objectif.
-- Le score sur 100 combine : structure des niveaux (40), liquidite (20), flux d'ordres (12), macro et annonces (12),
-  tendance de fond (10), biais et dominance (6). Rien n'est envoye sous le seuil, et au plus 3 idees par semaine.
+- Chaque idee a un stop (au-dela de la zone, de ses poches et de la meche du balayage), un premier objectif (prochain niveau
+  important ou grosse poche, au moins 1,5 fois le risque) et un second objectif.
+- Le score sur 100 combine : liquidite (30), VWAP / VWAP ancres et niveaux superposes (30), macro et annonces (20), flux
+  d'ordres (8), tendance de fond (7), biais et dominance (5). FILTRES : il faut de la liquidite (6 points au moins) et une macro
+  qui ne va pas nettement contre l'idee. Rien n'est envoye sous le seuil, et au plus 3 idees par semaine.
 
 Ce module est PUR : il ne lit ni reseau ni disque. Le rejeu historique (sigtest.py) utilise la meme construction
-d'idees pour mesurer ce que cette structure aurait donne depuis 2019."""
+d'idees pour mesurer ce que la structure des niveaux aurait donne depuis 2019."""
 import math
 import re
 
 # ---------- constantes ----------
 TFW = {1: 1.0, 2: 2.0, 3: 3.0, 4: 4.0}                      # jour, semaine, mois, annee
 TF_NAME = {0: "heure", 1: "jour", 2: "semaine", 3: "mois", 4: "année"}
-EMPH = {"vwap": 1.3, "avwap": 1.3, "vp": 1.3, "band": 1.0, "hl": 1.0, "open": 0.9, "npoc": 1.1, "round": 0.4}
+EMPH = {"vwap": 1.6, "avwap": 1.6, "vp": 1.2, "band": 1.1, "hl": 0.9, "open": 0.8, "npoc": 1.0, "round": 0.4}
 PER = {"D": 1, "W": 2, "M": 3, "Y": 4}
 PERIOD_OF = {}
 for _l in "dwmy":
@@ -48,6 +51,8 @@ DEFAULTS = {
     "valid_hours": 48,
     "sweep_hours": 8,
     "leverage": 10.0,
+    "min_liq_pts": 6.0,       # filtre : points de liquidite minimaux (sur 30)
+    "min_macro_pts": 5.0,     # filtre : points de macro minimaux (sur 20) ; en dessous, la macro va nettement contre l'idee
 }
 
 
@@ -184,8 +189,8 @@ def zone_structure(members, now_ms: int = 0) -> dict:
     items = sorted(by_g.values(), key=lambda c: -c["w"])
     real = [c for c in items if c["fam"] != "round"]
     return {"S": sum(c["w"] for c in real), "items": items, "n": len(real),
-            "htf": sum(1 for c in real if c["tf"] >= 2), "core": sum(1 for c in real if c["fam"] in ("vwap", "avwap", "vp")),
-            "maxTf": max([c["tf"] for c in real] or [0])}
+            "htf": sum(1 for c in real if c["tf"] >= 2), "core": sum(1 for c in real if c["fam"] in ("vwap", "band", "avwap")),
+            "vp": sum(1 for c in real if c["fam"] == "vp"), "maxTf": max([c["tf"] for c in real] or [0])}
 
 
 def quality_word(S):
@@ -257,15 +262,24 @@ def build_ideas(inp: dict) -> tuple[list[dict], list[dict]]:
                 kind = "reprise"
         if side is None:
             continue
+        # poches importantes JUSTE AU-DELA de la zone (cote du stop) : le prix peut aller les chercher avant de repartir
+        near = []
+        for p in inp.get("pools") or []:
+            if p.get("score", 0) < 50 or p in z["pools"]:
+                continue
+            if side == "long" and p["side"] == "long" and p["price"] < z["lo"] and p["hi"] >= z["lo"] - 2.0 * atr:
+                near.append(p)
+            elif side == "short" and p["side"] == "short" and p["price"] > z["hi"] and p["lo"] <= z["hi"] + 2.0 * atr:
+                near.append(p)
         # entree et stop
         if side == "long":
-            base = min([z["lo"]] + [p["lo"] for p in z["pools"] if p["side"] == "long"] + ([wick] if wick else []) + ([sweep_evt["to"] or sweep_evt["price"]] if sweep_evt else []))
+            base = min([z["lo"]] + [p["lo"] for p in z["pools"] + near if p["side"] == "long"] + ([wick] if wick else []) + ([sweep_evt["to"] or sweep_evt["price"]] if sweep_evt else []))
             stop = base - buf
             entry = z["hi"]
             if kind == "reprise" and (price - z["hi"] <= 0.5 * atr or z["side"] == "in"):
                 entry = price
         else:
-            base = max([z["hi"]] + [p["hi"] for p in z["pools"] if p["side"] == "short"] + ([wick] if wick else []) + ([sweep_evt["to"] or sweep_evt["price"]] if sweep_evt else []))
+            base = max([z["hi"]] + [p["hi"] for p in z["pools"] + near if p["side"] == "short"] + ([wick] if wick else []) + ([sweep_evt["to"] or sweep_evt["price"]] if sweep_evt else []))
             stop = base + buf
             entry = z["lo"]
             if kind == "reprise" and (z["lo"] - price <= 0.5 * atr or z["side"] == "in"):
@@ -288,7 +302,7 @@ def build_ideas(inp: dict) -> tuple[list[dict], list[dict]]:
             why_not = "aucun objectif réaliste (prochain niveau important trop proche ou absent)"
         base_idea = {"zoneId": z["id"], "side": side, "kind": kind, "entry": entry, "entryType": entry_type, "stop": stop,
                      "risk": risk, "distAtr": dist, "zone": {"lo": z["lo"], "hi": z["hi"], "mid": z["mid"], "side": z["side"]},
-                     "st": st, "pools": z["pools"], "sweep": sweep_evt, "wick": wick, "label": tag, "minStruct": o["min_struct"]}
+                     "st": st, "pools": z["pools"], "nearPools": near, "sweep": sweep_evt, "wick": wick, "label": tag, "minStruct": o["min_struct"]}
         if why_not:
             rejects.append({**base_idea, "why": why_not})
             continue
@@ -325,44 +339,46 @@ def trend_score(price, vw):
 
 
 def score_idea(idea: dict, c: dict, o: dict | None = None) -> dict:
-    """Ajoute a l'idee : score sur 100 (detail par composante), alertes de prudence et verrous.
-    c : atr, price, vwap {W,M,Y}, flow (score -1..1 + notes), macro (etat macro), synth, dom, now."""
+    """Ajoute a l'idee : score sur 100 (detail par composante), alertes de prudence, verrous (attente) et filtres (gates).
+    c : price, vwap {W,M,Y}, flow (score -1..1 + notes), macro (etat macro), synth, dom, now."""
     o = {**DEFAULTS, **(o or {})}
     sgn = 1 if idea["side"] == "long" else -1
-    comps, warn, hold = [], [], []
+    comps, warn, hold, gates = [], [], [], []
     st = idea["st"]
-    s_pts = 40.0 * min(1.0, st["S"] / 12.0)
-    comps.append({"key": "structure", "label": "Niveaux superposés", "pts": s_pts, "max": 40,
-                  "note": f"{st['n']} sources, qualité {fmt_num(st['S'])} ({quality_word(st['S'])}), échelles : {', '.join(TF_NAME[t] for t in sorted({i['tf'] for i in st['items'] if i['tf']}, reverse=True))}"})
-    # liquidite
+    # 1) liquidite (30)
     lpts, lnotes = 0.0, []
-    pools = [p for p in idea["pools"] if (p["side"] == "long") == (idea["side"] == "long")]
+    same = lambda p: (p["side"] == "long") == (idea["side"] == "long")
+    pools = [p for p in idea["pools"] if same(p)]
     if pools:
         best = max(p.get("score", 0) for p in pools)
-        add = 10.0 if best >= 70 else 6.0 if best >= 50 else 3.0
-        lpts += add
+        lpts += 14.0 if best >= 70 else 9.0 if best >= 50 else 4.0
         lnotes.append("poche de liquidations dans la zone" + (" (la plus importante)" if best >= 70 else ""))
+    near = [p for p in idea.get("nearPools", []) if same(p)]
+    if near:
+        lpts += 8.0 if max(p.get("score", 0) for p in near) >= 70 else 6.0
+        lnotes.append("grosse poche juste au-delà de la zone (le stop est placé derrière)")
     if idea["sweep"]:
-        lpts += 10.0 if idea["sweep"]["frac"] >= 0.15 else 6.0
+        lpts += 12.0 if idea["sweep"]["frac"] >= 0.15 else 8.0
         lnotes.append("poche déjà balayée récemment")
     elif idea["kind"] == "reprise":
-        lpts += 5.0
+        lpts += 6.0
         lnotes.append("zone percée puis reprise")
     if idea.get("tp1Kind") == "pool" or idea.get("tp2Kind") == "pool":
-        lpts += 5.0
+        lpts += 6.0
         lnotes.append("grosse poche en face comme objectif")
-    comps.append({"key": "liquidity", "label": "Liquidité", "pts": min(20.0, lpts), "max": 20, "note": "; ".join(lnotes) or "pas de poche notable liée à la zone"})
-    # flux
-    fs, fnotes = c.get("flow") or (None, [])
-    if fs is None:
-        comps.append({"key": "flow", "label": "Flux d'ordres", "pts": 6.0, "max": 12, "note": "indisponible : neutre"})
-    else:
-        comps.append({"key": "flow", "label": "Flux d'ordres", "pts": 6.0 + 6.0 * _clip(sgn * fs), "max": 12,
-                      "note": "; ".join(t for s, t in fnotes if s * sgn > 0.15) or "ne soutient ni n'empêche"})
-    # macro et annonces
+    lpts = min(30.0, lpts)
+    comps.append({"key": "liquidity", "label": "Liquidité", "pts": lpts, "max": 30, "note": "; ".join(lnotes) or "pas de poche notable liée à la zone"})
+    if lpts < o["min_liq_pts"]:
+        gates.append("pas assez de liquidité liée à la zone (ni poche dans la zone ou juste au-delà, ni balayage récent, ni grosse poche comme objectif)")
+    # 2) VWAP, VWAP ancres et niveaux superposes (30)
+    s_pts = 30.0 * min(1.0, st["S"] / 14.0)
+    tfs = ", ".join(TF_NAME[t] for t in sorted({i["tf"] for i in st["items"] if i["tf"]}, reverse=True))
+    comps.append({"key": "structure", "label": "VWAP, VWAP ancrés et niveaux", "pts": s_pts, "max": 30,
+                  "note": f"{st['n']} sources dont {st['core']} VWAP ou VWAP ancré, qualité {fmt_num(st['S'])} ({quality_word(st['S'])}), échelles : {tfs}"})
+    # 3) macro et annonces (20)
     macro = c.get("macro") or {}
     ms = macro.get("score")
-    m_pts = 6.0 + (6.0 * _clip(sgn * ms / 100.0) if ms is not None else 0.0)
+    m_pts = 10.0 + (10.0 * _clip(sgn * ms / 100.0) if ms is not None else 0.0)
     m_note = f"lecture macro {macro.get('label') or 'indisponible'}" + (f" ({ms:+.0f}/100)" if ms is not None else "")
     risk = macro.get("risk")
     ev_h = None
@@ -373,31 +389,40 @@ def score_idea(idea: dict, c: dict, o: dict | None = None) -> dict:
         if ev_h <= 3:
             hold.append(f"annonce majeure dans {fmt_num(ev_h)} h ({risk['label']}) : on attend la publication")
         elif ev_h <= 24:
-            m_pts -= 4.0
+            m_pts -= 6.0
             warn.append(f"annonce majeure dans {fmt_num(ev_h, 0)} h ({risk['label']}) : le prix peut balayer la zone avant")
-    comps.append({"key": "macro", "label": "Macro et annonces", "pts": max(0.0, min(12.0, m_pts)), "max": 12, "note": m_note})
-    # tendance de fond
+    m_pts = max(0.0, min(20.0, m_pts))
+    comps.append({"key": "macro", "label": "Macro et annonces", "pts": m_pts, "max": 20, "note": m_note})
+    if ms is not None and m_pts < o["min_macro_pts"]:
+        gates.append(f"le contexte macro va nettement contre l'idée ({macro.get('label') or 'macro'} {ms:+.0f}/100)")
+    # 4) flux d'ordres (8)
+    fs, fnotes = c.get("flow") or (None, [])
+    if fs is None:
+        comps.append({"key": "flow", "label": "Flux d'ordres", "pts": 4.0, "max": 8, "note": "indisponible : neutre"})
+    else:
+        comps.append({"key": "flow", "label": "Flux d'ordres", "pts": 4.0 + 4.0 * _clip(sgn * fs), "max": 8,
+                      "note": "; ".join(t for s, t in fnotes if s * sgn > 0.15) or "ne soutient ni n'empêche"})
+    # 5) tendance de fond (7)
     tr = trend_score(c["price"], c.get("vwap") or {})
-    t_pts = 5.0 + 5.0 * sgn * tr
     if sgn * tr < -0.3:
         warn.append("l'idée va contre la tendance de fond (prix " + ("sous" if tr < 0 else "au-dessus de") + " les VWAP de la semaine, du mois et de l'année) : plus risquée")
-    comps.append({"key": "trend", "label": "Tendance de fond", "pts": max(0.0, min(10.0, t_pts)), "max": 10,
+    comps.append({"key": "trend", "label": "Tendance de fond", "pts": max(0.0, min(7.0, 3.5 + 3.5 * sgn * tr)), "max": 7,
                   "note": ("dans le sens de la tendance de fond" if sgn * tr > 0.3 else "contre la tendance de fond" if sgn * tr < -0.3 else "tendance de fond neutre")})
-    # biais et dominance
+    # 6) biais et dominance (5)
     sy, dom = c.get("synth") or {}, c.get("dom") or {}
-    b_pts = 3.0
-    notes = []
+    b_pts, notes = 2.5, []
     if sy.get("direction") in ("haussier", "baissier"):
-        b_pts += 3.0 * _clip(sgn * sy["score"] / 50.0) * 0.5
+        b_pts += 1.5 * _clip(sgn * sy["score"] / 50.0)
         notes.append(f"biais global {sy['direction']}")
     d = (dom.get("regime") or {}).get("score") if c.get("is_alt") else None
     if d is not None:
-        b_pts += 1.5 * _clip(sgn * d / 0.6)
+        b_pts += 1.0 * _clip(sgn * d / 0.6)
         notes.append(f"dominance : {dom['regime']['name']}")
-    comps.append({"key": "bias", "label": "Biais et dominance", "pts": max(0.0, min(6.0, b_pts)), "max": 6, "note": "; ".join(notes) or "neutre"})
+    comps.append({"key": "bias", "label": "Biais et dominance", "pts": max(0.0, min(5.0, b_pts)), "max": 5, "note": "; ".join(notes) or "neutre"})
     total = sum(x["pts"] for x in comps)
-    return {**idea, "score": round(total, 1), "comps": comps, "warn": warn, "hold": hold, "eventHours": ev_h,
-            "trend": tr, "news": news_lines(macro, c.get("now") or 0)}
+    mlines = [ln["text"] for ln in (macro.get("lines") or []) if ln.get("text", "").startswith("Lecture macro") or "mouvement inhabituel" in ln.get("text", "")][:3]
+    return {**idea, "score": round(total, 1), "comps": comps, "warn": warn, "hold": hold, "gates": gates, "eventHours": ev_h,
+            "trend": tr, "news": news_lines(macro, c.get("now") or 0), "macroLines": mlines}
 
 
 DAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
@@ -427,7 +452,7 @@ def news_lines(macro: dict, now_ms: int) -> list[str]:
 
 # ---------- etape 3 : textes en clair ----------
 def grade(score):
-    return "excellente" if score >= 85 else "très bonne" if score >= 78 else "bonne" if score >= 70 else "moyenne" if score >= 60 else "faible"
+    return "excellente" if score >= 80 else "très bonne" if score >= 72 else "bonne" if score >= 60 else "moyenne" if score >= 50 else "faible"
 
 
 def leverage_lines(idea, lev, mmr=0.4):
@@ -469,33 +494,51 @@ def describe(idea: dict, probs: dict | None, valid: dict | None, lev: float, sym
         action.append(f"Validité : entrée immédiate, l'idée est fausse si le prix atteint {fmt_price(s)}. Si le prix a déjà trop bougé quand tu lis ce message, ne cours pas après : attends la prochaine idée.")
     else:
         action.append(f"Validité : {idea['validHours']} h. L'idée est annulée si le prix atteint {fmt_price(s)} avant que l'ordre soit exécuté, ou si l'objectif 1 est atteint sans que l'ordre l'ait été.")
-    why = []
     st = idea["st"]
-    why.append(f"{st['n']} niveaux se superposent entre {fmt_price(idea['zone']['lo'])} et {fmt_price(idea['zone']['hi'])} "
-               f"(qualité {fmt_num(st['S'])} ; minimum demandé {fmt_num(idea.get('minStruct', 7.0))}, 12 et plus est exceptionnel) :")
-    for it in st["items"][:7]:
-        if it["fam"] == "round":
-            continue
-        why.append(f"  • [{TF_NAME[it['tf']]}] {it['text']}")
+    why = [f"Zone {fmt_price(idea['zone']['lo'])} - {fmt_price(idea['zone']['hi'])} : {st['n']} niveaux se superposent "
+           f"(qualité {fmt_num(st['S'])} ; minimum demandé {fmt_num(idea.get('minStruct', 7.0))}, 14 et plus est exceptionnel)."]
+    # 1) la liquidite : ce vers quoi le prix est attire, et ce que le stop evite
+    liq = []
+    who = lambda p: "longues" if p["side"] == "long" else "courtes"
     for p in idea["pools"]:
         if (p["side"] == "long") == buy:
-            who = "longues" if p["side"] == "long" else "courtes"
-            why.append(f"  • Poche de liquidations de positions {who} estimée entre {fmt_price(p['lo'])} et {fmt_price(p['hi'])} (force {p.get('score', 0):.0f}/100) : "
+            liq.append(f"  • Poche de liquidations de positions {who(p)} entre {fmt_price(p['lo'])} et {fmt_price(p['hi'])} dans la zone (force {p.get('score', 0):.0f}/100) : "
                        "beaucoup d'ordres d'arrêt s'y trouvent ; le prix va souvent les chercher, puis repart.")
+    for p in idea.get("nearPools", []):
+        if (p["side"] == "long") == buy:
+            liq.append(f"  • Grosse poche de liquidations de positions {who(p)} juste {'sous' if buy else 'au-dessus de'} la zone, entre {fmt_price(p['lo'])} et {fmt_price(p['hi'])} "
+                       f"(force {p.get('score', 0):.0f}/100) : le prix peut aller la chercher avant de repartir, c'est pourquoi le stop est placé derrière elle.")
     if idea["sweep"]:
         e0 = idea["sweep"]
-        who = "longues" if e0["side"] == "long" else "courtes"
-        why.append(f"Une poche de positions {who} vers {fmt_price(e0['price'])} a été balayée il y a {idea.get('sweepAgeH', 0):.0f} h : les ordres d'arrêt ont été pris, "
+        liq.append(f"  • Une poche de positions {who(e0)} vers {fmt_price(e0['price'])} a été balayée il y a {idea.get('sweepAgeH') or 0:.0f} h : les ordres d'arrêt ont été pris, "
                    "ce qui précède souvent un retournement.")
     elif idea["kind"] == "reprise" and idea.get("wick"):
-        why.append(f"Le prix a percé la zone jusqu'à {fmt_price(idea['wick'])} puis est revenu {'au-dessus' if buy else 'en dessous'} : la mèche a pris les ordres d'arrêt.")
-    why.append(f"Le stop est placé au-delà de {'la zone et de ses poches' if idea['pools'] else 'la zone'} : si le prix va jusque-là, l'idée est fausse.")
+        liq.append(f"  • Le prix a percé la zone jusqu'à {fmt_price(idea['wick'])} puis est revenu {'au-dessus' if buy else 'en dessous'} : la mèche a pris les ordres d'arrêt.")
+    if idea.get("tp1Kind") == "pool" or idea.get("tp2Kind") == "pool":
+        liq.append("  • Une grosse poche de liquidations se trouve en face : le prix y est attiré, c'est là que l'objectif est placé.")
+    if liq:
+        why.append("Liquidités (les ordres d'arrêt qui attirent le prix) :")
+        why += liq
+    # 2) VWAP et VWAP ancres
+    vw = [it for it in st["items"] if it["fam"] in ("vwap", "band", "avwap")]
+    if vw:
+        why.append("Prix moyens (VWAP et VWAP ancrés), où les acheteurs et vendeurs de la période sont à l'équilibre :")
+        why += [f"  • [{TF_NAME[it['tf']]}] {it['text']}" for it in vw[:5]]
+    # 3) autres niveaux
+    oth = [it for it in st["items"] if it["fam"] not in ("vwap", "band", "avwap", "round")]
+    if oth:
+        why.append("Autres niveaux au même endroit (profils de volume, ouvertures, plus hauts et plus bas) :")
+        why += [f"  • [{TF_NAME[it['tf']]}] {it['text']}" for it in oth[:5]]
+    why.append(f"Le stop est placé au-delà de {'la zone et de ses poches' if idea['pools'] or idea.get('nearPools') else 'la zone'} : si le prix va jusque-là, l'idée est fausse.")
     tgt1 = ("juste avant une poche de liquidations en face" if idea["tp1Kind"] == "pool" else "juste avant le prochain niveau important")
     why.append(f"L'objectif 1 est placé {tgt1}, car c'est là que le prix risque de se retourner.")
-    ctx = []
+    macro_lines, ctx = [], []
     for cmp in idea["comps"]:
-        if cmp["key"] in ("flow", "macro", "trend", "bias") and cmp["note"]:
+        if cmp["key"] == "macro":
+            macro_lines.append(f"Macro et annonces ({cmp['pts']:.0f}/{cmp['max']}) : {cmp['note']}")
+        elif cmp["key"] in ("flow", "trend", "bias") and cmp["note"]:
             ctx.append(f"{cmp['label']} ({cmp['pts']:.0f}/{cmp['max']}) : {cmp['note']}")
+    macro_lines += list(idea.get("macroLines") or [])
     prob = []
     if probs:
         f = probs.get("fill")
@@ -515,20 +558,22 @@ def describe(idea: dict, probs: dict | None, valid: dict | None, lev: float, sym
     levl, levinfo = leverage_lines(idea, lev)
     risks = list(idea["warn"]) + levl
     risks.append("Ce sont des estimations et des statistiques passées, pas une garantie ni un conseil financier. Ne risque que ce que tu acceptes de perdre.")
-    return {"headline": head, "action": action, "why": why, "context": ctx, "news": list(idea.get("news") or []), "probs": prob,
-            "risks": risks, "leverage": levinfo}
+    return {"headline": head, "action": action, "why": why, "macro": macro_lines, "context": ctx, "news": list(idea.get("news") or []),
+            "probs": prob, "risks": risks, "leverage": levinfo}
 
 
 def to_text(idea: dict, d: dict, n_week: int, max_week: int) -> str:
-    """Message Telegram complet (moins de ~3 500 caracteres)."""
-    stars = "★" * max(1, round((idea["score"] - 50) / 10)) if idea["score"] >= 60 else "★"
+    """Message Telegram complet (moins de ~3 900 caracteres)."""
+    stars = "★" * max(1, round((idea["score"] - 40) / 12)) if idea["score"] >= 52 else "★"
     lines = [f"🎯 Idée de trade {n_week}/{max_week} de la semaine · {d['headline']}",
              f"Qualité : {idea['score']:.0f}/100 ({grade(idea['score'])}) {stars}", "",
              "▶ QUOI FAIRE"] + [f"• {x}" for x in d["action"]] + ["", "▶ POURQUOI ICI"] + d["why"]
-    if d["context"]:
-        lines += ["", "▶ CONTEXTE"] + [f"• {x}" for x in d["context"]]
+    if d.get("macro"):
+        lines += ["", "▶ CONTEXTE MACRO"] + [f"• {x}" for x in d["macro"]]
     if d.get("news"):
         lines += ["", "▶ ANNONCES ÉCONOMIQUES"] + [f"• {x}" for x in d["news"]]
+    if d["context"]:
+        lines += ["", "▶ AUTRES CONTEXTES"] + [f"• {x}" for x in d["context"]]
     if d["probs"]:
         lines += ["", "▶ PROBABILITÉS"] + [f"• {x}" for x in d["probs"]]
     lines += ["", "▶ PRUDENCE"] + [f"• {x}" for x in d["risks"]]

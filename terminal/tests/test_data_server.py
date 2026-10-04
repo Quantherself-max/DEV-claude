@@ -575,6 +575,7 @@ class ServerTests(unittest.TestCase):
         st = json.loads(self.get("/api/settings")[1])
         self.assertEqual(st["source"], "simulated")
         self.assertFalse(st["telegram"]["configured"])
+        self.assertEqual(st["alertMode"], "ideas")                                    # par defaut : seulement les idees de trade
         code, res = self.post("/api/settings", {"telegramToken": "pas-un-token"})
         self.assertEqual(code, 400)
         code, res = self.post("/api/telegram/chatid", {"token": "BAD:x"})
@@ -592,6 +593,11 @@ class ServerTests(unittest.TestCase):
         self.assertEqual((res["alertMinScore"], res["alertSweep"]), (4, False))
         self.assertIs(self.app.service, service_before)                            # pas de rechargement des donnees
         self.assertTrue(self.app.cfg.telegram_on)
+        code, res = self.post("/api/settings", {"alertMode": "all"})
+        self.assertEqual(res["alertMode"], "all")
+        self.assertIn("TERMINAL_ALERT_MODE=all", self.env.read_text())
+        self.post("/api/settings", {"alertMode": "ideas"})
+        self.assertEqual(self.app.cfg.alert_mode, "ideas")
         txt = self.env.read_text()
         self.assertIn("# mes reglages", txt)                                       # le reste du fichier est garde
         self.assertIn("TELEGRAM_BOT_TOKEN=123:abcdefghijkl", txt)

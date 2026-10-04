@@ -182,16 +182,18 @@
         </ol>
       </section>
       <section>
-        <h4><span class="step">3</span> Règles d'alerte</h4>
-        <div class="grid2">
+        <h4><span class="step">3</span> Ce que tu reçois sur Telegram</h4>
+        <label class="field">Alertes
+          <select id="aMode"><option value="ideas">Seulement les idées de trade (recommandé)</option><option value="all">Idées de trade + alertes de zones, de poches et d'annonces</option></select></label>
+        <div id="aExtra" class="grid2" hidden>
           <label class="field">Score minimum <select id="aScore"><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
           <label class="field">Timeframe <select id="aTf"></select></label>
           <label class="field">Pause entre 2 alertes d'une zone (h) <input id="aCool" type="number" min="0.5" max="48" step="0.5"></label>
-          <label class="field chk"><input id="aZones" type="checkbox"> Alertes de zones (« nouvelle confluence », « le prix approche »)</label>
+          <label class="field chk"><input id="aZones" type="checkbox"> Alertes « nouvelle confluence » et « le prix approche »</label>
           <label class="field chk"><input id="aSweep" type="checkbox"> Alerte quand une grosse poche est balayée</label>
           <label class="field chk"><input id="aMacro" type="checkbox"> Alerte avant une annonce majeure (CPI, Fed...) et bilan de la réaction</label>
         </div>
-        <p class="muted small">Score = nombre de sources différentes dans la zone (+1 si une poche AIMANT en fait partie). Pour ne recevoir que les idées de trade (section 4), décoche les alertes de zones et de poches.</p>
+        <p class="muted small">Par défaut, tu ne reçois que les idées de trade (avec leur suivi : ordre exécuté, objectifs, stop). Les alertes de zones, de poches et d'annonces ne sont envoyées qu'en mode « Idées de trade + alertes ». Score = nombre de sources différentes dans la zone (+1 si une poche AIMANT en fait partie).</p>
       </section>
       <section>
         <h4><span class="step">4</span> Idées de trade</h4>

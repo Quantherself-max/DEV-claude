@@ -45,7 +45,8 @@ class Config:
     stats_k: float = 1.5
     stats_refresh_hours: float = 6.0
     # alertes
-    alert_zones: bool = True              # alertes « nouvelle confluence » / « le prix approche » (a couper pour ne recevoir que les idees de trade)
+    alert_mode: str = "ideas"             # "ideas" = SEULEMENT les idees de trade sur Telegram | "all" = + alertes de zones, de poches et d'annonces
+    alert_zones: bool = True              # (mode all) alertes « nouvelle confluence » / « le prix approche »
     alert_sweep: bool = True              # alerte quand une grosse poche de liquidation est balayee
     alert_sweep_frac: float = 0.15        # ... si elle represente >= 15 % des liquidations de ce cote
     alert_macro: bool = True              # alerte ~1 h avant une annonce majeure + bilan de la reaction du marche
@@ -57,7 +58,7 @@ class Config:
     alert_max_per_hour: int = 6
     # idees de trade (V5) : quelques idees rares, de haute qualite, avec stop et objectifs
     signal_on: bool = True
-    signal_min_score: float = 65.0        # score minimal sur 100 (la derniere place de la semaine exige +8)
+    signal_min_score: float = 60.0        # score minimal sur 100 (la derniere place de la semaine exige +8)
     signal_max_week: int = 3              # idees par semaine au maximum (lundi 00:00 UTC)
     signal_min_struct: float = 7.0        # qualite minimale des niveaux superposes
     signal_leverage: float = 10.0         # levier utilise pour les calculs de liquidation affiches
@@ -94,6 +95,7 @@ def load_config(env_path: Path | None = None) -> Config:
     c.alert_tf = g("TERMINAL_ALERT_TF", c.alert_tf)
     c.alert_min_score = int(g("TERMINAL_ALERT_MIN_SCORE", c.alert_min_score))
     c.alert_cooldown_hours = float(g("TERMINAL_ALERT_COOLDOWN_HOURS", c.alert_cooldown_hours))
+    c.alert_mode = "all" if g("TERMINAL_ALERT_MODE", c.alert_mode).lower() == "all" else "ideas"
     c.alert_zones = g("TERMINAL_ALERT_ZONES", "1").lower() not in ("0", "false", "non", "no")
     c.alert_sweep = g("TERMINAL_ALERT_SWEEP", "1").lower() not in ("0", "false", "non", "no")
     c.alert_macro = g("TERMINAL_ALERT_MACRO", "1").lower() not in ("0", "false", "non", "no")

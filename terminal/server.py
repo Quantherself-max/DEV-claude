@@ -141,7 +141,7 @@ class App:
         if not states:
             return
         macro = None
-        if self.cfg.alert_macro:
+        if self.cfg.alert_macro and self.cfg.alert_mode == "all":
             try:
                 macro = service.analysis(next(iter(states)))["macro"]
             except Exception:
@@ -181,7 +181,7 @@ class App:
                 "telegram": {"configured": c.telegram_on, "tokenHint": ("..." + tok[-4:]) if tok else "",
                              "chatId": c.telegram_chat_id},
                 "alertMinScore": c.alert_min_score, "alertTf": c.alert_tf, "alertCooldownHours": c.alert_cooldown_hours,
-                "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "alertZones": c.alert_zones, "historyYears": c.history_years,
+                "alertMode": c.alert_mode, "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "alertZones": c.alert_zones, "historyYears": c.history_years,
                 "signalOn": c.signal_on, "signalMinScore": c.signal_min_score, "signalMaxWeek": c.signal_max_week,
                 "signalLeverage": c.signal_leverage}
 
@@ -213,6 +213,8 @@ class App:
             upd["TERMINAL_ALERT_SWEEP"] = "1" if body["alertSweep"] else "0"
         if body.get("historyYears") is not None:
             upd["TERMINAL_HISTORY_YEARS"] = str(max(0, min(10, int(body["historyYears"]))))
+        if body.get("alertMode") in ("ideas", "all"):
+            upd["TERMINAL_ALERT_MODE"] = body["alertMode"]
         if body.get("alertZones") is not None:
             upd["TERMINAL_ALERT_ZONES"] = "1" if body["alertZones"] else "0"
         if body.get("alertMacro") is not None:

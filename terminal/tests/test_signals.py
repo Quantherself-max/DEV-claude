@@ -75,7 +75,7 @@ class ClassifyTests(unittest.TestCase):
               lv("4", "wOpen", 100.05, "wOpen", "open")]
         st = sg.zone_structure(ms, NOW)
         self.assertEqual(st["n"], 2)
-        self.assertAlmostEqual(st["S"], 3.9 + 1.8, places=6)
+        self.assertAlmostEqual(st["S"], 4.8 + 1.6, places=6)                 # VWAP du mois 3 x 1,6 ; ouverture de la semaine 2 x 0,8
         self.assertEqual(st["core"], 1)
         self.assertEqual(st["htf"], 2)
 
@@ -240,7 +240,39 @@ class ScoreTests(unittest.TestCase):
         liq = lambda r: [c for c in r["comps"] if c["key"] == "liquidity"][0]["pts"]
         self.assertGreater(liq(withp), liq(base))
         self.assertGreater(liq(withs), liq(withp))
-        self.assertLessEqual(liq(withs), 20)
+        self.assertLessEqual(liq(withs), 30)
+
+    def test_three_pillars_dominate_the_score_and_comps_sum_to_100(self):
+        r = sg.score_idea(self.idea(), self.ctx())
+        mx = {c["key"]: c["max"] for c in r["comps"]}
+        self.assertEqual(mx, {"liquidity": 30, "structure": 30, "macro": 20, "flow": 8, "trend": 7, "bias": 5})
+        self.assertEqual(sum(mx.values()), 100)
+
+    def test_liquidity_gate(self):
+        no_liq = sg.score_idea(self.idea(), self.ctx())                                  # simple rebond, ni poche ni balayage ni objectif poche
+        self.assertTrue(any("liquidité" in g for g in no_liq["gates"]))
+        pool = {"side": "long", "lo": 97, "hi": 97.5, "price": 97.2, "score": 85, "magnet": True}
+        self.assertFalse(sg.score_idea(self.idea(pools=[pool]), self.ctx())["gates"])
+        self.assertFalse(sg.score_idea(self.idea(kind="reprise", wick=97.0), self.ctx())["gates"])            # zone percee puis reprise = liquidite prise
+        self.assertFalse(sg.score_idea(self.idea(tp1Kind="pool"), self.ctx())["gates"])                      # grosse poche en face comme objectif
+        weak = {"side": "long", "lo": 97, "hi": 97.5, "price": 97.2, "score": 30, "magnet": False}
+        self.assertTrue(sg.score_idea(self.idea(pools=[weak]), self.ctx())["gates"])                          # poche trop petite
+
+    def test_macro_gate_only_when_macro_goes_clearly_against_the_idea(self):
+        pool = {"side": "long", "lo": 97, "hi": 97.5, "price": 97.2, "score": 85, "magnet": True}
+        against = sg.score_idea(self.idea(pools=[pool]), self.ctx(macro={"score": -80, "label": "risk-off"}))
+        self.assertTrue(any("macro" in g for g in against["gates"]))
+        self.assertFalse(sg.score_idea(self.idea(pools=[pool]), self.ctx(macro={"score": -20, "label": "neutre"}))["gates"])
+        self.assertFalse(sg.score_idea(self.idea(pools=[pool]), self.ctx(macro={"label": "indisponible"}))["gates"])
+        short = self.idea(pools=[dict(pool, side="short")], side="short")
+        self.assertFalse(sg.score_idea(short, self.ctx(macro={"score": -80, "label": "risk-off"}))["gates"])   # risk-off favorise la vente
+
+    def test_zone_without_any_vwap_or_anchored_vwap_is_not_an_idea(self):
+        s = scene()
+        sup = [lv("a", "pwPOC", 98.0, "pwVP", "vp"), lv("b", "wOpen", 98.06, "wOpen", "open"), lv("c", "PDL", 98.03, "PDHL", "hl"), lv("d", "PWL", 97.96, "PWHL", "hl")]
+        s["levels"] = sup + [l for l in s["levels"] if l["id"] in ("e", "f", "g")]
+        s["zones"] = [zone("z1", sup, 100.0), s["zones"][1]]
+        self.assertFalse([i for i in sg.build_ideas(s)[0] if i["side"] == "long"])
 
     def test_news_lines_in_plain_language(self):
         ev = {"label": "Inflation (CPI)", "t": NOW + 20 * H, "impact": 3, "w": 1.0, "exp": {"text": "Consensus 3,1 % contre 3,0 % précédemment : hausse attendue."}}
@@ -253,18 +285,50 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(sg.news_lines({}, NOW), [])
 
 
+class NearPoolTests(unittest.TestCase):
+    def test_big_pool_just_beyond_the_zone_moves_the_stop_behind_it(self):
+        pool = {"side": "long", "lo": 96.8, "hi": 97.4, "price": 97.1, "score": 90, "magnet": True, "size": 1.0}
+        i = [x for x in sg.build_ideas(scene(pools=[pool]))[0] if x["side"] == "long"][0]
+        self.assertEqual(len(i["nearPools"]), 1)
+        self.assertLess(i["stop"], 96.8)
+        r = sg.score_idea(i, TextTests.ctx_for(scene()))
+        self.assertTrue([c for c in r["comps"] if c["key"] == "liquidity"][0]["pts"] >= 6)
+        self.assertFalse(r["gates"])
+        small = dict(pool, score=30)
+        j = [x for x in sg.build_ideas(scene(pools=[small]))[0] if x["side"] == "long"][0]
+        self.assertEqual(j["nearPools"], [])
+        far = dict(pool, lo=90.0, hi=90.5, price=90.2)
+        self.assertEqual([x for x in sg.build_ideas(scene(pools=[far]))[0] if x["side"] == "long"][0]["nearPools"], [])
+
+
 class TextTests(unittest.TestCase):
+    @staticmethod
+    def ctx_for(s):
+        return {"price": s["price"], "vwap": {"W": 99, "M": 98, "Y": 95}, "flow": (0.3, [(0.3, "Flux agressif : 56 % d'achats")]),
+                "macro": {"score": 30, "label": "risk-on", "upcoming": [], "past": [], "lines": [{"tone": "ok", "text": "Lecture macro : risk-on (+30/100). C'est un contexte."}]},
+                "synth": {"direction": "haussier", "score": 30}, "dom": {}, "is_alt": False, "now": NOW}
+
     def full(self, side="long"):
-        s = scene() if side == "long" else scene(price=105.0)
+        pool = {"side": "long" if side == "long" else "short", "lo": 97.2 if side == "long" else 106.4, "hi": 97.6 if side == "long" else 106.8,
+                "price": 97.4 if side == "long" else 106.6, "score": 85, "magnet": True, "size": 1.0}
+        s = scene(pools=[pool]) if side == "long" else scene(price=105.0, pools=[pool])
         i = [x for x in sg.build_ideas(s)[0] if x["side"] == side][0]
-        c = {"price": s["price"], "vwap": {"W": 99, "M": 98, "Y": 95}, "flow": (0.3, [(0.3, "Flux agressif : 56 % d'achats")]),
-             "macro": {"score": 30, "label": "risk-on", "upcoming": [], "past": []}, "synth": {"direction": "haussier", "score": 30}, "dom": {}, "is_alt": False, "now": NOW}
-        i = sg.score_idea(i, c)
+        i = sg.score_idea(i, self.ctx_for(s))
         i.update(price=s["price"], atrPct=1.0, validHours=48, sweepAgeH=None)
         probs = {"fill": {"p24": 0.7, "p72": 0.85}, "plan": {"n": 5000, "neff": 400, "tp": {"p": 0.35, "lo": 0.3, "hi": 0.4}},
                  "bounce": {"p": 0.58, "n": 120}, "baseBounce": {"p": 0.5, "n": 900}}
         d = sg.describe(i, probs, {"text": "Rejeu : mieux que le hasard."}, 10.0, "BTCUSDT")
         return i, d
+
+    def test_message_follows_the_three_pillars_in_order(self):
+        i, d = self.full("long")
+        text = sg.to_text(i, d, 1, 3)
+        order = ["QUOI FAIRE", "POURQUOI ICI", "Liquidités (les ordres d'arrêt", "Prix moyens (VWAP et VWAP ancrés)", "Autres niveaux au même endroit",
+                 "CONTEXTE MACRO", "AUTRES CONTEXTES", "PROBABILITÉS", "PRUDENCE"]
+        pos = [text.index(k) for k in order]
+        self.assertEqual(pos, sorted(pos), dict(zip(order, pos)))
+        self.assertIn("Lecture macro : risk-on", text)
+        self.assertLess(len(text), 3900)
 
     def test_text_has_all_sections_and_no_abbreviations(self):
         for side in ("long", "short"):

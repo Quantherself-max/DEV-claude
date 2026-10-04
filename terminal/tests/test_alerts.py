@@ -49,7 +49,7 @@ class Clock:
 class AlertRuleTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.cfg = Config(data_dir=self.tmp.name)
+        self.cfg = Config(data_dir=self.tmp.name, alert_mode="all")
         self.clock, self.n = Clock(), FakeNotifier()
         self.eng = AlertEngine(self.cfg, self.n, now=self.clock)
 
@@ -206,7 +206,7 @@ class TelegramTests(unittest.TestCase):
 class MacroAlertTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.cfg = Config(data_dir=self.tmp.name, alert_macro=True)
+        self.cfg = Config(data_dir=self.tmp.name, alert_macro=True, alert_mode="all")
         self.clock, self.n = Clock(), FakeNotifier()
         self.eng = AlertEngine(self.cfg, self.n, now=self.clock)
 
@@ -250,7 +250,7 @@ class MacroAlertTests(unittest.TestCase):
         self.assertEqual(self.eng.macro_alerts({"upcoming": [], "past": [pending]}), [])               # pas encore mesure : on attend
 
     def test_disabled_and_run_cycle_dispatch(self):
-        off = AlertEngine(Config(data_dir=self.tmp.name, alert_macro=False), self.n, now=self.clock)
+        off = AlertEngine(Config(data_dir=self.tmp.name, alert_macro=False, alert_mode="all"), self.n, now=self.clock)
         self.assertEqual(off.macro_alerts({"upcoming": [self.ev(55)], "past": []}), [])
         st = make_state([Z3])
         self.eng.run_cycle({"BTCUSDT": st}, {"upcoming": [], "past": []})                              # demarrage
@@ -258,16 +258,32 @@ class MacroAlertTests(unittest.TestCase):
         self.eng.run_cycle({"BTCUSDT": st}, {"upcoming": [self.ev(55)], "past": []})
         self.assertTrue(any("Annonce majeure" in x for x in self.n.sent))
 
-    def test_zone_alerts_can_be_muted_to_keep_only_trade_ideas(self):
-        eng = AlertEngine(Config(data_dir=self.tmp.name, alert_zones=False), self.n, now=self.clock)
-        eng.run_cycle({"BTCUSDT": make_state([Z3])}, None)                                              # demarrage
-        self.assertIn("coupees", self.n.sent[-1])
-        self.assertNotIn("86", self.n.sent[-1])
+    def test_default_mode_sends_only_trade_ideas(self):
+        """Par defaut (mode « ideas ») : ni alerte de zone, ni poche balayee, ni annonce ; un seul message court au demarrage."""
+        cfg = Config(data_dir=self.tmp.name + "/ideas", symbols=("BTCUSDT",))
+        self.assertEqual(cfg.alert_mode, "ideas")
+        eng = AlertEngine(cfg, self.n, now=self.clock)
+        eng.run_cycle({"BTCUSDT": make_state([Z3])}, {"upcoming": [self.ev(55)], "past": []})            # demarrage
+        self.assertEqual(len(self.n.sent), 1)
+        self.assertIn("idées de trade", self.n.sent[0])
+        self.assertNotIn("86", self.n.sent[0])
         self.n.sent.clear()
         self.clock.t += 10
-        eng.run_cycle({"BTCUSDT": make_state([Z3, dict(Z2, mid=85200.0)])}, None)                      # nouvelle zone qualifiante
+        eng.run_cycle({"BTCUSDT": make_state([Z3, Z3b])}, {"upcoming": [self.ev(55)], "past": []})       # nouvelle zone + annonce proche
         self.assertEqual(self.n.sent, [])
-        on = AlertEngine(Config(data_dir=self.tmp.name + "/on"), self.n, now=self.clock)
+        sw = make_state([Z3])
+        sw["sweeps"] = {"stats": {}, "recent": [{"t": 1, "side": "long", "price": 84000.0, "frac": 0.5}]}
+        eng.run_cycle({"BTCUSDT": sw}, None)
+        self.assertEqual(self.n.sent, [])
+
+    def test_all_mode_restores_zone_alerts_and_each_flag_still_works(self):
+        eng = AlertEngine(Config(data_dir=self.tmp.name + "/all", alert_mode="all", alert_zones=False), self.n, now=self.clock)
+        eng.run_cycle({"BTCUSDT": make_state([Z3])}, None)
+        self.n.sent.clear()
+        self.clock.t += 10
+        eng.run_cycle({"BTCUSDT": make_state([Z3, Z3b])}, None)
+        self.assertEqual(self.n.sent, [])                                                               # mode all mais zones coupees
+        on = AlertEngine(Config(data_dir=self.tmp.name + "/on", alert_mode="all"), self.n, now=self.clock)
         on.run_cycle({"BTCUSDT": make_state([Z3])}, None)
         self.clock.t += 10
         on.run_cycle({"BTCUSDT": make_state([Z3, Z3b])}, None)

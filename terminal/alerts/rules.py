@@ -92,6 +92,10 @@ class AlertEngine:
             pass
 
     # --- regles ---
+    def extras_on(self, flag: str) -> bool:
+        """Alertes autres que les idees de trade : seulement en mode « all » (par defaut, le terminal n'envoie que les idees)."""
+        return getattr(self.cfg, "alert_mode", "ideas") == "all" and bool(getattr(self.cfg, flag, False))
+
     def qualifies(self, z: dict) -> bool:
         return z["score"] >= self.cfg.alert_min_score and z["distAtr"] <= self.cfg.alert_max_dist_atr
 
@@ -142,7 +146,7 @@ class AlertEngine:
 
     def sweep_alerts(self, st: dict, first: bool):
         """Grosse poche de liquidation balayee (journal du moteur OI) : une alerte par balayage."""
-        if not getattr(self.cfg, "alert_sweep", False):
+        if not self.extras_on("alert_sweep"):
             return []
         sw = st.get("sweeps") or {}
         seen = self.__dict__.setdefault("_sweeps_seen", set(self._load_seen()))
@@ -182,7 +186,7 @@ class AlertEngine:
     def macro_alerts(self, macro: dict, first: bool = False):
         """Annonce majeure : une alerte environ 1 h avant (consensus + scenarios), puis un bilan quand le marche a reagi.
         Renvoie [(kind, z, texte)] ; le journal des alertes deja envoyees survit aux redemarrages."""
-        if not macro or not getattr(self.cfg, "alert_macro", False):
+        if not macro or not self.extras_on("alert_macro"):
             return []
         seen = self.__dict__.setdefault("_macro_seen", set(self._load_json("macro_seen.json")))
         now, out = self.now() * 1000, []
@@ -235,7 +239,7 @@ class AlertEngine:
         first = not self.started
         for st in states.values():
             zones = self.evaluate(st, first)
-            if not getattr(self.cfg, "alert_zones", True):
+            if not self.extras_on("alert_zones"):
                 zones = []                                    # on garde la memoire des zones mais on n'envoie rien
             self.dispatch(zones + self.sweep_alerts(st, first), st)
         if macro is not None and states:
@@ -245,14 +249,18 @@ class AlertEngine:
             self.started = True
 
     def startup_summary(self, st_by_symbol: dict):
-        lines = []
-        for sym, st in st_by_symbol.items():
-            for z in sorted([z for z in st["zones"] if self.qualifies(z)], key=lambda z: z["distAtr"])[:5]:
-                arrow = {"above": "▲", "below": "▼", "in": "◆"}[z["side"]]
-                names = " + ".join(member_label(m) for m in sorted(zone_members(st, z), key=lambda m: m["price"]))
-                lines.append(f"{arrow} {sym} {fmt_price(z['mid'])} ({z['distPct']:+.2f} %) · {names}")
-        if not getattr(self.cfg, "alert_zones", True):
+        if not self.extras_on("alert_zones"):
+            cfg = self.cfg
+            text = ("✅ Terminal démarré. Tu ne recevras que les idées de trade "
+                    f"({cfg.signal_max_week} par semaine au maximum, qualité minimale {cfg.signal_min_score:.0f}/100)."
+                    if getattr(cfg, "signal_on", True) else "✅ Terminal démarré (idées de trade désactivées dans les réglages).")
+        else:
             lines = []
-        text = "✅ Terminal demarre\n" + ("\n".join(lines) if lines else ("Les alertes de zones sont coupees : tu ne recevras que les idees de trade." if not getattr(self.cfg, "alert_zones", True) else "Aucune confluence active pour l'instant."))
+            for sym, st in st_by_symbol.items():
+                for z in sorted([z for z in st["zones"] if self.qualifies(z)], key=lambda z: z["distAtr"])[:5]:
+                    arrow = {"above": "▲", "below": "▼", "in": "◆"}[z["side"]]
+                    names = " + ".join(member_label(m) for m in sorted(zone_members(st, z), key=lambda m: m["price"]))
+                    lines.append(f"{arrow} {sym} {fmt_price(z['mid'])} ({z['distPct']:+.2f} %) · {names}")
+            text = "✅ Terminal demarre\n" + ("\n".join(lines) if lines else "Aucune confluence active pour l'instant.")
         ok, detail = self.notifier.send(text)
         self._log({"t": self.now(), "symbol": "*", "kind": "startup", "text": text, "sent": ok, "detail": detail})

@@ -856,11 +856,13 @@ async function openSettings() {
     $('#aCool').value = s.alertCooldownHours;
     $('#aSweep').checked = !!s.alertSweep;
     $('#aZones').checked = s.alertZones !== false;
+    $('#aMode').value = s.alertMode === 'all' ? 'all' : 'ideas'; $('#aExtra').hidden = $('#aMode').value !== 'all';
     $('#aMacro').checked = s.alertMacro !== false;
     $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sLev').value = s.signalLeverage;
   } catch (e) { $('#saveRes').textContent = 'Erreur : ' + e.message; }
 }
 const closeSettings = () => { M.hidden = true; };
+$('#aMode').onchange = () => { $('#aExtra').hidden = $('#aMode').value !== 'all'; };
 document.addEventListener('click', e => { if (e.target.closest('[data-open-settings]')) openSettings(); });
 $('#openSettings').onclick = openSettings; $('#srcBadge').onclick = openSettings; $('#tgBadge').onclick = openSettings;
 $('#closeSettings').onclick = closeSettings; $('#cancelSettings').onclick = closeSettings;
@@ -891,7 +893,7 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
   const src = (document.querySelector('input[name=source]:checked') || {}).value;
   const before = st.cfg ? st.cfg.source + '|' + st.cfg.symbols.join(',') + '|' + (st.cfg.historyYears || 0) : '';
   const body = {source: src, symbols: $('#symbols').value.split(/[\s,;]+/).filter(Boolean), telegramChatId: $('#tgChat').value.trim(),
-    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, historyYears: +$('#histYears').value,
+    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMode: $('#aMode').value, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, historyYears: +$('#histYears').value,
     signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalLeverage: +$('#sLev').value};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();
   await api('/api/settings', body);
