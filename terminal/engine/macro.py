@@ -172,7 +172,7 @@ def _log_returns(series):
 
 def correlation(a: dict, b: dict, last=30):
     ks = sorted(set(a) & set(b))[-last:]
-    if len(ks) < 12:
+    if len(ks) < min(12, last):
         return None
     xa, xb = [a[k] for k in ks], [b[k] for k in ks]
     ma, mb = sum(xa) / len(xa), sum(xb) / len(xb)
@@ -201,22 +201,24 @@ def asset_trends(cross5, crossD, btc_daily):
         c1 = (last - px(day_ago)) * 100 if name == "US10Y" and day_ago is not None else _pct(last, px(day_ago) if day_ago else None)
         ref5 = d_vals[-6][1] if len(d_vals) >= 6 else None
         c5 = (last - ref5) * 100 if name == "US10Y" and ref5 is not None else _pct(last, ref5)
-        # ecart-type des variations sur 5 jours (6 mois d'historique) pour juger si le mouvement est inhabituel
+        # ecart-type des variations sur 5 jours (3 dernieres annees) pour juger si le mouvement est inhabituel
         chg = []
-        for i in range(5, len(d_vals)):
+        for i in range(max(5, len(d_vals) - 760), len(d_vals)):
             chg.append((d_vals[i][1] - d_vals[i - 5][1]) * 100 if name == "US10Y" else _pct(d_vals[i][1], d_vals[i - 5][1]))
         chg = [x for x in chg if x is not None]
         sd = math.sqrt(sum(x * x for x in chg) / len(chg)) if chg else None
         z = c5 / sd if (c5 is not None and sd) else None
-        corr = correlation(_log_returns(d_vals), btc_ret) if btc_ret else None
+        rets = _log_returns(d_vals) if btc_ret else {}
+        cors = {w: (correlation(rets, btc_ret, w) if rets else None) for w in (30, 90, 365)}
         out[name] = {"label": LABEL[name], "last": last, "c1d": c1, "c5d": c5, "unit": "pb" if name == "US10Y" else "%",
-                     "z": z, "corr": corr, "t": t_last, "spark": [round(v, 4) for _, v in d_vals[-30:]]}
+                     "z": z, "corr": cors[90] if cors[90] is not None else cors[30], "corr30": cors[30], "corr365": cors[365],
+                     "t": t_last, "spark": [round(v, 4) for _, v in d_vals[-30:]], "years": round(len(d_vals) / 365.0, 1)}
     return out
 
 
 def risk_score(trends):
     """Score risk-on (+) / risk-off (-) en [-100, 100] : mouvement inhabituel de chaque actif x son lien avec le BTC
-    (correlation mesuree sur 30 j, melangee a l'a priori usuel pour eviter les valeurs extremes)."""
+    (correlation mesuree sur 90 j, melangee a l'a priori usuel pour eviter les valeurs extremes)."""
     parts, total, wsum = [], 0.0, 0.0
     for name, t in trends.items():
         if t["z"] is None:
@@ -229,6 +231,46 @@ def risk_score(trends):
         wsum += abs(eff)
     score = max(-100.0, min(100.0, total / max(wsum, 0.5) * 100.0 / 2.0 * 1.6)) if parts else None
     return score, sorted(parts, key=lambda d: -abs(d["contrib"]))
+
+
+def fng_stats(fng, btc_daily):
+    """Que fait le BTC apres chaque zone du Fear & Greed ? Frequence de hausse a 1 / 7 / 30 jours, sur tout l'historique
+    commun (depuis 2018). Les fenetres se chevauchent : les intervalles de confiance utilisent des effectifs reduits."""
+    if not fng or len(btc_daily) < 400:
+        return None
+    from .stats import wilson
+    px = {t // DAY: c for t, c in btc_daily}
+    days = sorted(px)
+    pos = {d: i for i, d in enumerate(days)}
+    zones = [("Peur extrême (≤ 25)", 0, 25), ("Peur (26-45)", 26, 45), ("Neutre (46-55)", 46, 55), ("Avidité (56-75)", 56, 75), ("Avidité extrême (> 75)", 76, 100)]
+    hs = (1, 7, 30)
+    acc = {z[0]: {h: [0, 0, 0.0] for h in hs} for z in zones}
+    base = {h: [0, 0] for h in hs}
+    cur = fng[-1][1]
+    for t, v, _ in fng:
+        d = t // DAY
+        i = pos.get(d)
+        if i is None:
+            continue
+        zname = next(z[0] for z in zones if z[1] <= v <= z[2])
+        for h in hs:
+            if i + h >= len(days) or days[i + h] - d > h + 3:
+                continue
+            up = px[days[i + h]] > px[d]
+            a = acc[zname][h]
+            a[0] += 1; a[1] += up; a[2] += px[days[i + h]] / px[d] - 1
+            base[h][0] += 1; base[h][1] += up
+    out = []
+    for name, lo, hi in zones:
+        row = {"zone": name, "current": lo <= cur <= hi}
+        for h in hs:
+            n, k, r = acc[name][h]
+            neff = max(1, n // h)
+            p, a, b = wilson(round(k / n * neff), neff) if n else (None, None, None)
+            row[str(h)] = {"n": n, "neff": neff, "p": k / n if n else None, "lo": a, "hi": b, "mean": r / n * 100 if n else None}
+        out.append(row)
+    return {"rows": out, "base": {str(h): base[h][1] / base[h][0] if base[h][0] else None for h in hs},
+            "since": fng[0][0], "days": len(fng)}
 
 
 # ---------- analyse complete ----------
@@ -301,6 +343,7 @@ def analyse(now_ms, snap, c5_sym, c5_btc, sym, btc_daily):
     if fng:
         v = fng[-1][1]
         fg = {"value": v, "label": fng[-1][2], "d7": v - fng[-8][1] if len(fng) >= 8 else None,
+              "stats": fng_stats(fng, btc_daily),
               "contrarian": 0.4 if v <= 20 else 0.2 if v <= 30 else -0.4 if v >= 80 else -0.2 if v >= 70 else 0.0,
               "spark": [x[1] for x in fng[-30:]]}
     comps = []
@@ -357,7 +400,7 @@ def narrative(s, now_ms, sym):
             continue
         unusual = t["z"] is not None and abs(t["z"]) >= 1.0
         c = f"{t['c5d']:+.1f} pb" if t["unit"] == "pb" else f"{t['c5d']:+.2f} %"
-        corr = f" (lien mesuré avec le BTC sur 30 j : {t['corr']:+.2f})" if t["corr"] is not None else ""
+        corr = f" (lien mesuré avec le BTC sur 90 j : {t['corr']:+.2f})" if t["corr"] is not None else ""
         eff = (t["corr"] if t["corr"] is not None else PRIOR[name]) * (t["z"] or 0)
         if unusual:
             L.append({"tone": "ok" if eff > 0 else "bad", "text": f"{t['label']} {c} sur 5 jours, mouvement inhabituel : {'plutôt favorable' if eff > 0 else 'plutôt défavorable'} au crypto{corr}."})

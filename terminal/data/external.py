@@ -106,13 +106,28 @@ class RealProviders:
             return {"btc_d": float(d["bitcoin_dominance_percentage"]), "eth_d": None, "total": float(d["market_cap_usd"]),
                     "chg24": float(d.get("market_cap_change_24h", 0.0)), "src": "CoinPaprika"}
 
-    def fear_greed(self, limit=30):
-        d = http_json(f"{self.alt}/fng/?limit={limit}&format=json")["data"]
+    def fear_greed(self, limit=0):
+        """limit=0 : tout l'historique (depuis fevrier 2018)."""
+        d = http_json(f"{self.alt}/fng/?limit={limit}&format=json", timeout=25)["data"]
         return sorted([(int(r["timestamp"]) * 1000, int(r["value"]), r.get("value_classification", "")) for r in d])
 
-    def spot_klines(self, pair, limit=720, interval="1h"):
-        rows = http_json(f"{self.spot}/api/v3/klines?symbol={pair}&interval={interval}&limit={limit}", timeout=25)
+    def spot_klines(self, pair, limit=720, interval="1h", end_ms=None):
+        q = f"symbol={pair}&interval={interval}&limit={limit}" + (f"&endTime={int(end_ms)}" if end_ms else "")
+        rows = http_json(f"{self.spot}/api/v3/klines?{q}", timeout=25)
         return [(int(r[0]), float(r[4])) for r in rows]
+
+    def spot_history(self, pair, interval="1d", pages=3):
+        """Plusieurs pages de 1000 bougies en remontant dans le temps (3 pages quotidiennes = ~8 ans)."""
+        got, end = {}, None
+        for _ in range(pages):
+            page = self.spot_klines(pair, 1000, interval, end)
+            if not page:
+                break
+            got.update(dict(page))
+            if len(page) < 1000:
+                break
+            end = page[0][0] - 1
+        return sorted(got.items())
 
 
 class ExternalHub:
@@ -180,7 +195,7 @@ class ExternalHub:
         self._run("cg", self._cg, force)
         self._run("fng", self._fng, force)
         self._run("cross5", lambda: self._cross("5m", "5d", self.cross5), force)
-        self._run("crossD", lambda: self._cross("1d", "6mo", self.crossD), force)
+        self._run("crossD", lambda: self._cross("1d", "10y", self.crossD), force)
         self._run("alt", self._alt, force)
         self._run("altD", self._altD, force)
         self.save()
@@ -201,7 +216,7 @@ class ExternalHub:
                 self.cg_hist.append((t, g["btc_d"], g["total"]))
 
     def _fng(self):
-        v = self.p.fear_greed(30)
+        v = self.p.fear_greed(0)
         with self.lock:
             self.fng = v
 
@@ -243,7 +258,7 @@ class ExternalHub:
             if len(bad) >= 2 and not got:
                 break
             try:
-                got[pair] = self.p.spot_klines(pair, 1000, "1d")
+                got[pair] = self.p.spot_history(pair, "1d", 3)
             except Exception as e:
                 bad.append(f"{pair}: {str(e)[:50]}")
         if len(got) < 4 or "BTCUSDT" not in got:
@@ -295,18 +310,22 @@ class SimProviders:
         seed = sum(map(ord, symbol))
         base = {"DX-Y.NYB": 104.0, "^TNX": 4.2, "ES=F": 5800.0, "NQ=F": 20500.0, "^VIX": 16.0, "GC=F": 2650.0}[symbol]
         step = 300_000 if interval == "5m" else 86_400_000
-        n = 5 * 288 if interval == "5m" else 130
+        n = 5 * 288 if interval == "5m" else 2500
         vol = {"5m": 0.0006, "1d": 0.008}[interval] * (3 if symbol == "^VIX" else 1)
         return self._walk(seed, n, step, now, base, vol)
 
     def coingecko_global(self):
         return {"btc_d": 58.2 + 0.4 * math.sin(self.now_ms() / 3e8), "eth_d": 12.1, "total": 3.1e12, "chg24": 0.8, "src": "simule"}
 
-    def fear_greed(self, limit=30):
+    def fear_greed(self, limit=0):
         now = self.now_ms()
-        return [(now - (limit - i) * 86_400_000, int(50 + 20 * math.sin(i / 4)), "Neutral") for i in range(limit)]
+        n = limit or 1500
+        return [(now - (n - i) * 86_400_000, int(50 + 35 * math.sin(i / 9)), "Neutral") for i in range(n)]
 
-    def spot_klines(self, pair, limit=720, interval="1h"):
+    def spot_history(self, pair, interval="1d", pages=3):
+        return self.spot_klines(pair, 1000 * pages, interval)
+
+    def spot_klines(self, pair, limit=720, interval="1h", end_ms=None):
         step = 3_600_000 if interval == "1h" else 86_400_000
         base = 85000.0 if pair == "BTCUSDT" else 0.02
         return self._walk(sum(map(ord, pair)), limit, step, self.now_ms(), base, 0.003 if interval == "1h" else 0.02)

@@ -29,6 +29,7 @@ class Config:
     coinbase_ws: str = "wss://ws-feed.exchange.coinbase.com"   # prix Coinbase en direct (meme marche que ton TradingView)
     live_ws: bool = True                 # flux temps reel cote serveur (prix exact pour les alertes, liquidations reelles)
     anchor_date: str = "2024-01-01"      # VWAP ancree
+    history_years: int = 0                # historique d'analyse (bougies 1h) : 0 = le plus long possible (depuis septembre 2019)
     # fenetre autour du prix et confluences (en ATR du timeframe affiche)
     dist_atr: float = 8.0
     min_dist_pct: float = 1.5
@@ -81,6 +82,7 @@ def load_config(env_path: Path | None = None) -> Config:
     c.coinbase_ws = g("TERMINAL_COINBASE_WS", c.coinbase_ws).rstrip("/")
     c.live_ws = g("TERMINAL_LIVE_WS", "1").lower() not in ("0", "false", "non", "no")
     c.anchor_date = g("TERMINAL_ANCHOR_DATE", c.anchor_date)
+    c.history_years = max(0, min(10, int(float(g("TERMINAL_HISTORY_YEARS", c.history_years)))))
     c.alert_tf = g("TERMINAL_ALERT_TF", c.alert_tf)
     c.alert_min_score = int(g("TERMINAL_ALERT_MIN_SCORE", c.alert_min_score))
     c.alert_cooldown_hours = float(g("TERMINAL_ALERT_COOLDOWN_HOURS", c.alert_cooldown_hours))

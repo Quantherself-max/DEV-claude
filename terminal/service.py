@@ -5,6 +5,7 @@ import math
 import threading
 import time
 from bisect import bisect_right
+from pathlib import Path
 
 from config import Config
 from data.store import DataStore, H1, M5, DAY, OI_DAYS
@@ -54,7 +55,8 @@ def pct(a, b):
 class Market:
     def __init__(self, source, symbol: str, cfg: Config):
         self.symbol, self.cfg, self.source = symbol, cfg, source
-        self.store = DataStore(source, symbol, cfg.anchor_ms)
+        self.store = DataStore(source, symbol, cfg.anchor_ms, cfg.history_years,
+                               cfg.data_dir if getattr(source, 'name', '') == 'binance' else None)
         self.trackers = {k: PeriodTracker(k) for k in KINDS}
         self.avwap = AnchoredVWAP(cfg.anchor_ms)
         self.naked = {"D": NakedPocs(30), "W": NakedPocs(12)}
@@ -479,7 +481,15 @@ class Service:
                     fund = self.source.funding_history(sym, candles[0].t, self.source.now_ms())
                 except Exception:
                     fund = m.bias_fund
-                b = bias_engine.analyse(candles, fund)
+                path = Path(self.cfg.data_dir) / f"bias_{sym}.json" if getattr(self.source, "name", "") == "binance" else None
+                b = bias_engine.load(path) if path else None
+                fresh = b and b["since"] == candles[0].t and b["bars"] >= len(candles) - 72 \
+                    and time.time() * 1000 - b["computedAt"] < 24 * 3_600_000
+                if not fresh:                                    # le modele valide est recalcule au plus une fois par jour
+                    b = bias_engine.analyse(candles, fund)
+                    if path and b.get("ready"):
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        bias_engine.save(b, path)
                 with self.lock:
                     m.bias, m.bias_fund = b, fund
                 self.errors.pop(f"biais {sym}", None)
@@ -525,7 +535,7 @@ class Service:
             h1 = list(m.store.closed_h1())
             c5 = list(m.store.m5[-288 * 29:])
             c5b = list(btc.store.m5[-288 * 29:]) if btc else []
-            h1b = list(btc.store.closed_h1()[-24 * 130:]) if btc else []
+            h1b = list(btc.store.closed_h1()) if btc else []
             bias_res, fund = m.bias, m.bias_fund
         if bias_res and bias_res.get("ready") and h1 and bias_res["t"] != h1[-1].t:
             try:
@@ -543,7 +553,7 @@ class Service:
                     if k in self.ext.calendar:
                         self.ext.calendar[k]["reaction"] = v
             self.ext.save()
-        dom = dominance_engine.analyse(snap, h1b or h1, h1, symbol)
+        dom = dominance_engine.analyse(snap, (h1b or h1)[-24 * 400:], h1[-24 * 400:], symbol)
         bpub = bias_engine.public(bias_res)
         syn = synth_engine.synthesize(symbol, state["price"], bpub, macro_state, dom, state["context"], state["zones"],
                                       set(state["ladder"]["essential"]))

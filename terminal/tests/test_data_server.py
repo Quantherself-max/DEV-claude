@@ -1,4 +1,4 @@
-import json, threading, time, unittest, urllib.error, urllib.request
+import json, tempfile, threading, time, unittest, urllib.error, urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -134,7 +134,7 @@ class BinanceAdapterTests(unittest.TestCase):
 
     def test_full_pipeline_on_binance_adapter(self):
         """Service complet alimente par l'adaptateur Binance (faux serveur) : meme chaine que sur ton PC."""
-        cfg = Config(source="binance", symbols=("BTCUSDT",))
+        cfg = Config(source="binance", symbols=("BTCUSDT",), history_years=2, data_dir=tempfile.mkdtemp())
         svc = Service(FixedBinance(self.base, pause=0, spot_base=self.base, coinbase_base=self.base), cfg)
         svc.refresh_all()
         self.assertEqual(svc.errors, {})
@@ -152,6 +152,47 @@ class BinanceAdapterTests(unittest.TestCase):
         n = FakeBinance.calls.__len__()
         svc.refresh_all()                                         # 2e passage : seulement l'increment
         self.assertLess(len(FakeBinance.calls) - n, 8)
+
+
+class HistoryCacheTests(unittest.TestCase):
+    def test_second_start_loads_cache_and_only_fetches_the_missing_part(self):
+        import tempfile
+        from data.store import DataStore, H1
+        with tempfile.TemporaryDirectory() as d:
+            src = FixedBinance(self.base, pause=0, spot_base=self.base, coinbase_base=self.base)
+            s1 = DataStore(src, "BTCUSDT", NOW - 400 * 86_400_000, 2, d)
+            s1.refresh()
+            self.assertGreater(len(s1.h1), 3000)
+            self.assertTrue((__import__("pathlib").Path(d) / "h1_BTCUSDT.json.gz").exists())
+            self.assertTrue(all(b.t - a.t == H1 for a, b in zip(s1.h1, s1.h1[1:])))
+            n_calls = len(FakeBinance.calls)
+            s2 = DataStore(src, "BTCUSDT", NOW - 400 * 86_400_000, 2, d)                       # redemarrage
+            s2.refresh()
+            kl = [c for c in FakeBinance.calls[n_calls:] if c[0] == "/fapi/v1/klines" and c[1].get("interval") == "1h"]
+            self.assertEqual(len(kl), 1)                                    # une seule page : l'increment, pas tout l'historique
+            self.assertEqual(len(s2.closed_h1()), len(s1.closed_h1()))
+            self.assertEqual(s2.h1[100].c, s1.h1[100].c)
+            s3 = DataStore(src, "BTCUSDT", NOW - 400 * 86_400_000, 2, d + "/vide")              # autre dossier : pas de cache
+            s3.refresh()
+            self.assertEqual(s3._saved_n, len(s3.closed_h1()))
+            # un cache fait avec moins d'historique que demande est ignore
+            s4 = DataStore(src, "BTCUSDT", NOW - 400 * 86_400_000, 3, d)
+            n_calls = len(FakeBinance.calls)
+            s4.refresh()
+            kl = [c for c in FakeBinance.calls[n_calls:] if c[0] == "/fapi/v1/klines" and c[1].get("interval") == "1h"]
+            self.assertGreater(len(kl), 10)                                 # tout est retelecharge (3 ans > 2 ans en cache)
+            self.assertGreater(len(s4.h1), len(s1.h1) + 8000)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = HTTPServer(("127.0.0.1", 0), FakeBinance)
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.srv.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
 
 
 class MissingOiTests(unittest.TestCase):

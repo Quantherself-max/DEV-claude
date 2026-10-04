@@ -55,11 +55,11 @@ const Analysis = (() => {
       h += card('Modèle statistique', `<div class="muted">${an.biasPending ? 'Calcul de l\'historique en cours (1 à 2 minutes après le chargement des données)…' : esc((b && b.reason) || 'indisponible')}</div>`);
     } else {
       const m = h24;
-      h += card(`Modèle statistique <small class="muted">${b.bars.toLocaleString('fr-FR')} h d'historique · ${m.folds} périodes de test</small>`,
+      h += card(`Modèle statistique <small class="muted">${b.bars.toLocaleString('fr-FR')} h d'historique${b.since ? ' depuis le ' + new Date(b.since).toLocaleDateString('fr-FR') + ' (' + n1((b.t - b.since) / 31557600000, 1) + ' ans)' : ''} · ${m.folds} périodes de test</small>`,
         `<table class="t"><tr><th></th><th>AUC (0,5 = hasard)</th><th style="width:30%"></th><th class="r">Gain de précision</th><th class="r">Score de Brier</th></tr>` +
         [['24 h', h24], ['4 h', h4]].map(([l, r]) => `<tr><td style="white-space:nowrap">${l}</td><td style="white-space:nowrap">${n1(r.auc, 3)} <span class="muted small">[${n1(r.aucCI[0], 3)} – ${n1(r.aucCI[1], 3)}]</span></td><td>${aucScale(r.auc, r.aucCI)}</td><td class="r">${sg(r.edge * 100, 1, ' pt')}</td><td class="r ${r.skill > 0 ? 'up' : 'dn'}">${sg(r.skill * 100, 2, ' %')}</td></tr>`).join('') + `</table>` +
         `<div class="note">Chaque ligne est mesurée <b>hors échantillon</b> : le modèle apprend sur le passé, est testé sur les 30 jours suivants, puis on avance (${m.n.toLocaleString('fr-FR')} prévisions testées, environ ${m.neff} indépendantes). ` +
-        `Validé = l'intervalle de confiance de l'AUC est entièrement au-dessus de 0,5 <u>et</u> le score de Brier bat le taux de base. Sinon, le terminal ne tire aucun biais du modèle.</div>` +
+        `Validé = l'intervalle de confiance de l'AUC est entièrement au-dessus de 0,5 <u>et</u> le score de Brier bat le taux de base. Sinon, le terminal ne tire aucun biais du modèle. Entraînement sur une fenêtre glissante de 3 ans ; les statistiques descriptives utilisent tout l'historique.</div>` +
         `<div class="sect">Calibration (24 h) : quand il annonce X %, que se passe-t-il vraiment ?</div><div id="calibHost"></div>`);
       h += card('Ce qui pèse aujourd\'hui <small class="muted">horizon 24 h</small>',
         `<table class="t"><tr><th>Variable</th><th class="r">Valeur</th><th style="width:34%">Poussée (haussière →)</th></tr>` +
@@ -73,6 +73,16 @@ const Analysis = (() => {
     h += `</div>`;
     el.className = ''; el.innerHTML = h;
     if (b && b.ready) { const ch = $('#calibHost'); if (ch) Charts.calib(ch, b.horizons['24'].calibration || []); }
+  }
+
+  function fngTable(s) {
+    if (!s) return '';
+    return `<div class="sect">Que fait le BTC après chaque zone ? <small class="muted">${s.days.toLocaleString('fr-FR')} jours depuis le ${new Date(s.since).toLocaleDateString('fr-FR')}</small></div>` +
+      `<table class="t"><tr><th>Zone</th><th class="r">Hausse à 1 j</th><th class="r">à 7 j</th><th class="r">à 30 j</th><th class="r">Gain moyen 7 j</th></tr>` +
+      s.rows.map(r => { const c = h => { const v = r[h], b = s.base[h], e = v.lo != null && v.lo > b ? 'up' : v.hi != null && v.hi < b ? 'dn' : ''; return `<td class="r ${e}">${p0(v.p)}</td>`; };
+        return `<tr class="${r.current ? 'hl' : ''}"><td>${r.current ? '▶ ' : ''}${esc(r.zone)} <span class="muted small">n=${r['7'].n}</span></td>${c('1')}${c('7')}${c('30')}<td class="r ${r['7'].mean > 0 ? 'up' : 'dn'}">${sg(r['7'].mean, 1, ' %')}</td></tr>`; }).join('') +
+      `<tr><td class="muted">Hasard (tous les jours)</td><td class="r muted">${p0(s.base['1'])}</td><td class="r muted">${p0(s.base['7'])}</td><td class="r muted">${p0(s.base['30'])}</td><td></td></tr></table>` +
+      `<div class="note">Vert / rouge : l'intervalle de confiance à 90 % est entièrement au-dessus / en dessous du hasard (fenêtres qui se chevauchent : effectifs indépendants réduits).</div>`;
   }
 
   // ---------- Macro & annonces ----------
@@ -92,7 +102,7 @@ const Analysis = (() => {
     h += card('Lecture macro <small class="muted">écrite à partir des chiffres mesurés</small>', m.lines.map(l => `<div class="msg ${l.tone === 'muted' ? '' : l.tone}">${esc(l.text)}</div>`).join('') +
       (m.score != null ? Charts.meter(m.score) + `<table class="t">` + m.components.map(c => `<tr><td>${esc(c.label)}</td><td style="width:40%">${Charts.dvBar(c.score)}</td><td class="r ${tone(c.score)}">${sg(c.score * 100, 0)}</td></tr>`).join('') + `</table>` : ''));
     h += card('Calendrier : 3 jours passés, 5 jours à venir', `<div id="tlHost"></div><div class="note">Orange = à venir, gris = passé. Gros points = impact élevé. Heures affichées dans ton fuseau.</div>` +
-      (m.fng ? `<div class="sect">Fear &amp; Greed</div><div class="hero"><div class="big neu">${m.fng.value}</div><div class="sub">${esc(m.fng.label)}${m.fng.d7 != null ? ` · ${sg(m.fng.d7, 0)} en 7 j` : ''}</div><div style="flex:1;min-width:120px">${Charts.spark(m.fng.spark, '#c98500', 200, 40)}</div></div>` : ''));
+      (m.fng ? `<div class="sect">Fear &amp; Greed</div><div class="hero"><div class="big neu">${m.fng.value}</div><div class="sub">${esc(m.fng.label)}${m.fng.d7 != null ? ` · ${sg(m.fng.d7, 0)} en 7 j` : ''}</div><div style="flex:1;min-width:120px">${Charts.spark(m.fng.spark, '#c98500', 200, 40)}</div></div>` + fngTable(m.fng.stats) : ''));
     h += `</div><div class="ag" style="margin-top:10px">`;
     // a venir
     h += card('Annonces à venir <small class="muted">consensus = prévision moyenne des analystes</small>', m.upcoming.length ? `<table class="t"><tr><th>Quand</th><th>Annonce</th><th class="r">Consensus</th><th class="r">Précédent</th><th>Ce que dit le consensus</th><th>Réaction type du BTC</th></tr>` +
@@ -108,9 +118,9 @@ const Analysis = (() => {
       `<div class="note">Le flux gratuit ne fournit pas le chiffre publié : la « surprise » est lue dans la réaction du marché (restrictive si les taux et le dollar montent dans les 15 min, accommodante s'ils baissent). Les mesures sont archivées et s'accumulent avec le temps.</div>` : '<div class="muted">Pas encore d\'annonce passée mesurée.</div>', 'wide');
     // actifs de reference
     const tr = Object.entries(m.trends || {});
-    h += card('Actifs de référence <small class="muted">5 jours · lien mesuré avec le BTC sur 30 jours</small>', tr.length ? `<div class="spark">` + tr.map(([k, t]) => {
+    h += card('Actifs de référence <small class="muted">5 jours · lien mesuré avec le BTC sur 90 jours et 1 an</small>', tr.length ? `<div class="spark">` + tr.map(([k, t]) => {
       const eff = (t.corr != null ? t.corr : 0) * (t.z || 0), col = Math.abs(t.z || 0) < 1 ? '#6a6e7a' : eff >= 0 ? '#3ddc97' : '#ff6b6b';
-      return `<div class="sp"><div class="l">${esc(t.label)}</div><b>${LT.fmtP(t.last)}</b> <span class="${t.c5d > 0 ? 'up' : 'dn'}">${sg(t.c5d, t.unit === 'pb' ? 1 : 2, ' ' + (t.unit === 'pb' ? 'pb' : '%'))}</span>${Charts.spark(t.spark, col, 170, 34)}<div class="l">corrélation BTC ${t.corr != null ? sg(t.corr, 2) : 'n/d'} · écart ${t.z != null ? sg(t.z, 1) + ' σ' : 'n/d'}</div></div>`;
+      return `<div class="sp"><div class="l">${esc(t.label)}</div><b>${LT.fmtP(t.last)}</b> <span class="${t.c5d > 0 ? 'up' : 'dn'}">${sg(t.c5d, t.unit === 'pb' ? 1 : 2, ' ' + (t.unit === 'pb' ? 'pb' : '%'))}</span>${Charts.spark(t.spark, col, 170, 34)}<div class="l" title="Corrélation des rendements quotidiens avec le BTC : 30 j ${t.corr30 != null ? sg(t.corr30, 2) : 'n/d'} · 90 j ${t.corr != null ? sg(t.corr, 2) : 'n/d'} · 1 an ${t.corr365 != null ? sg(t.corr365, 2) : 'n/d'}">corrélation BTC 90 j ${t.corr != null ? sg(t.corr, 2) : 'n/d'} (1 an ${t.corr365 != null ? sg(t.corr365, 2) : 'n/d'}) · écart ${t.z != null ? sg(t.z, 1) + ' σ' : 'n/d'}</div></div>`;
     }).join('') + `</div><div class="note">Trait gris = mouvement banal ; vert / rouge = mouvement inhabituel plutôt favorable / défavorable au BTC compte tenu de sa corrélation récente. Données Yahoo Finance (futures, presque 24 h).</div>` : '<div class="muted">Données de marché indisponibles (Yahoo Finance injoignable ?).</div>', 'wide');
     const errs = Object.entries(m.errors || {});
     if (errs.length) h += card('État des sources', `<div class="muted small">${errs.map(([k, v]) => `<b>${esc(k)}</b> : ${esc(v)}`).join('<br>')}</div>`, 'wide');
@@ -134,7 +144,8 @@ const Analysis = (() => {
     if (rel['Panier alts/BTC']) h += card('Force des altcoins face au BTC <small class="muted">historique réel Binance, 30 jours</small>',
       `<div class="spark">${Object.entries(rel).map(([k, r]) => `<div class="sp"><div class="l">${esc(k)}</div><b>${sg(r.c24, 2, ' %')}</b> <span class="muted small">24 h</span> · <b>${sg(r.c7, 2, ' %')}</b> <span class="muted small">7 j</span></div>`).join('')}</div><div id="relHost" style="margin-top:8px"></div>` +
       `<div class="note">Panier = ETH, SOL, BNB, XRP, ADA, DOGE, AVAX, LINK cotés en BTC, équipondérés (100 au départ). Il monte = les alts battent le BTC (la dominance baisse).</div>`);
-    if (d.beta) h += card(`${esc(sym)} face au BTC`, `<div class="hero"><div class="big neu">${n1(d.beta.beta)}×</div><div class="sub">bêta 30 jours (corrélation ${n1(d.beta.corr)}, R² ${n1(d.beta.r2)})</div></div>` +
+    if (d.beta) h += card(`${esc(sym)} face au BTC`, `<div class="hero"><div class="big neu">${n1(d.beta.beta)}×</div><div class="sub">bêta ${esc(d.beta.window)} (corrélation ${n1(d.beta.corr)}, R² ${n1(d.beta.r2)})</div></div>` +
+      `<div class="spark" style="margin-top:6px">${Object.entries(d.betas || {}).map(([w, b]) => `<div class="sp"><div class="l">${esc(w)}</div><b>${n1(b.beta)}×</b> <span class="muted small">corr. ${n1(b.corr)}</span></div>`).join('')}</div>` +
       `<div class="msg">${esc(sym)} bouge de <b>${n1(d.beta.beta)} %</b> quand le BTC bouge de 1 %. Un levier 10× sur ${esc(sym)} équivaut à ~${Math.round(10 * d.beta.beta)}× sur le BTC.</div>` +
       (d.symRel ? `<div class="muted small">${esc(d.symRel.name)} spot : ${sg(d.symRel.c24, 2, ' %')} sur 24 h, ${sg(d.symRel.c7, 2, ' %')} sur 7 j.</div>` : ''));
     h += `</div>`;

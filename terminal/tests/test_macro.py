@@ -204,5 +204,45 @@ class DominanceTests(unittest.TestCase):
         self.assertTrue(random_["table"])
 
 
+class SentimentTests(unittest.TestCase):
+    def test_fng_stats_detect_planted_contrarian_effect(self):
+        r = random.Random(4)
+        n = 2000
+        days = [NOW - (n - i) * 86_400_000 for i in range(n)]
+        days = [d - d % 86_400_000 for d in days]
+        fng, px, p = [], [], 20000.0
+        for i, d in enumerate(days):
+            v = int(50 + 45 * math.sin(i / 11.0))
+            fng.append((d, v, "x"))
+            drift = 0.012 if v <= 25 else -0.004 if v > 75 else 0.0       # apres la peur extreme, le prix monte vraiment
+            p *= math.exp(drift + r.gauss(0, 0.01))
+            px.append((d, p))
+        st = macro.fng_stats(fng, px)
+        rows = {x["zone"]: x for x in st["rows"]}
+        fear, greed = rows["Peur extrême (≤ 25)"], rows["Avidité extrême (> 75)"]
+        self.assertGreater(fear["1"]["p"], 0.6)
+        self.assertLess(greed["1"]["p"], 0.45)
+        self.assertGreater(fear["1"]["lo"], st["base"]["1"])                       # l'IC est entierement au-dessus du hasard
+        self.assertEqual(sum(1 for x in st["rows"] if x["current"]), 1)
+        self.assertIsNone(macro.fng_stats(fng, px[:100]))                           # historique trop court : rien
+
+    def test_trends_expose_several_correlation_windows(self):
+        def daily(seed, drift=0.0):
+            r = random.Random(seed)
+            p, out = 100.0, []
+            for i in range(800):
+                p *= math.exp(drift + r.gauss(0, 0.01))
+                out.append((NOW - (800 - i) * 86_400_000, p))
+            return out
+        btc = daily(1)
+        crossD = {"NDX": btc[:], "DXY": daily(2)}                                    # le Nasdaq copie le BTC : correlation ~ 1
+        tr = macro.asset_trends({}, crossD, btc)
+        self.assertGreater(tr["NDX"]["corr30"], 0.9)
+        self.assertGreater(tr["NDX"]["corr"], 0.9)
+        self.assertGreater(tr["NDX"]["corr365"], 0.9)
+        self.assertLess(abs(tr["DXY"]["corr365"]), 0.2)
+        self.assertGreater(tr["NDX"]["years"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -93,6 +93,13 @@ class ExternalTests(unittest.TestCase):
         self.assertEqual(p.fear_greed(2)[0][1], 40)           # trie par date croissante
         self.assertEqual(len(p.spot_klines("SOLBTC")), 720)
 
+    def test_spot_history_pages_backwards_and_deduplicates(self):
+        p = self.prov()
+        h = p.spot_history("SOLBTC", "1d", 3)
+        ts = [t for t, _ in h]
+        self.assertEqual(ts, sorted(set(ts)))                    # pas de doublon meme si le serveur ignore endTime
+        self.assertTrue(any("endTime" in c[1] for c in [(x, {}) for x in Fake.hits]) or len(Fake.hits) >= 2)
+
     def test_hub_refresh_archive_partial_errors_and_persistence(self):
         with tempfile.TemporaryDirectory() as d:
             hub = ExternalHub(self.prov(), lambda: NOW, d)

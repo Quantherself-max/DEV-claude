@@ -1,4 +1,4 @@
-import math, random, time, unittest
+import json, math, random, time, unittest
 
 from engine.atr import Candle
 from engine.bias import (FEATS, WARMUP, analyse, auc, build_features, fit_logistic, first_passage, plan, train, predict,
@@ -129,6 +129,45 @@ class PlanTests(unittest.TestCase):
         self.assertLess(abs(lg["tp"]["p"] - sh["tp"]["p"]), 0.06)                          # marche symetrique
         self.assertLess(lg["ev"], 0.05)                                                     # pas d'esperance miraculeuse sur du hasard
         self.assertEqual(lg["rr"], 2.0)
+
+
+class PersistenceTests(unittest.TestCase):
+    def test_save_load_roundtrip_then_repredict_rebuilds_training_sets(self):
+        import os, tempfile
+        from engine import bias as B
+        c = synth(24 * 330, 31, signal=0.35)
+        res = B.analyse(c)
+        self.assertEqual((res["since"], res["version"]), (c[0].t, B.VERSION))
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "bias_X.json")
+            B.save(res, path)
+            self.assertLess(os.path.getsize(path), 300_000)                          # pas de jeu d'apprentissage sur le disque
+            back = B.load(path)
+            self.assertIsNotNone(back)
+            self.assertNotIn("_X", back["horizons"]["24"])
+            self.assertEqual(back["horizons"]["24"]["validated"], res["horizons"]["24"]["validated"])
+            more = c + synth(30, 32, start=c[-1].t + 3_600_000)[:30]
+            r2 = B.repredict(back, more[:len(c) + 5], None)
+            self.assertEqual(r2["t"], more[len(c) + 4].t)
+            self.assertIn("tables", r2["horizons"]["24"])
+            self.assertTrue(r2["horizons"]["24"]["tables"])
+            pub = B.public(r2)
+            json.dumps(pub)
+            self.assertNotIn("_X", json.dumps(pub))
+            open(path, "w").write("{pas du json")
+            self.assertIsNone(B.load(path))
+            self.assertIsNone(B.load(os.path.join(d, "absent.json")))
+
+    def test_rolling_training_window_and_longer_folds_on_long_history(self):
+        from engine import bias as B
+        n = 24 * 1200
+        idx = list(range(B.WARMUP, n - 24))
+        X = [[(i % 7) / 7.0 - 0.5] * len(B.FEATS) for i in idx]
+        ys = [i % 2 for i in idx]
+        preds, labs, ts, folds = B.walk_forward(X[::3], ys[::3], idx[::3], 24, stride=3, max_train_h=24 * 365)
+        self.assertGreater(folds, 5)
+        self.assertLess(folds, 20)                                                     # plis de 90 j sur un historique long
+        self.assertEqual(len(preds), len(ts))
 
 
 if __name__ == "__main__":

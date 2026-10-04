@@ -118,7 +118,7 @@ class App:
         source ou les paires changent (sinon seules les alertes / Telegram sont remplacees)."""
         with self.reload_lock:
             old = self.cfg
-            if (cfg.source, tuple(cfg.symbols), cfg.anchor_date) != (old.source, tuple(old.symbols), old.anchor_date):
+            if (cfg.source, tuple(cfg.symbols), cfg.anchor_date, cfg.history_years) != (old.source, tuple(old.symbols), old.anchor_date, old.history_years):
                 self._install(cfg)
                 self.wake.set()
             else:
@@ -156,7 +156,7 @@ class App:
                 "telegram": {"configured": c.telegram_on, "tokenHint": ("..." + tok[-4:]) if tok else "",
                              "chatId": c.telegram_chat_id},
                 "alertMinScore": c.alert_min_score, "alertTf": c.alert_tf, "alertCooldownHours": c.alert_cooldown_hours,
-                "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro}
+                "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "historyYears": c.history_years}
 
     def save_settings(self, body: dict):
         upd = {}
@@ -184,6 +184,8 @@ class App:
             upd["TERMINAL_ALERT_TF"] = body["alertTf"]
         if body.get("alertSweep") is not None:
             upd["TERMINAL_ALERT_SWEEP"] = "1" if body["alertSweep"] else "0"
+        if body.get("historyYears") is not None:
+            upd["TERMINAL_HISTORY_YEARS"] = str(max(0, min(10, int(body["historyYears"]))))
         if body.get("alertMacro") is not None:
             upd["TERMINAL_ALERT_MACRO"] = "1" if body["alertMacro"] else "0"
         write_env(self.env_path, upd)
@@ -232,6 +234,7 @@ def make_handler(app: App):
                                        "telegram": c.telegram_on, "alertTf": c.alert_tf, "alertMinScore": c.alert_min_score,
                                        "alertMaxDistAtr": c.alert_max_dist_atr, "refresh": c.refresh_seconds,
                                        "anchor": c.anchor_date, "statsK": c.stats_k, "statsHorizon": c.stats_horizon,
+                                       "historyYears": c.history_years,
                                        "csrf": app.token, "wsBase": c.binance_ws if c.source == "binance" else "",
                                        "cbWs": c.coinbase_ws if c.source == "binance" else ""})
                 if u.path == "/api/analysis":

@@ -936,6 +936,7 @@ async function openSettings() {
     const s = await api('/api/settings');
     document.querySelectorAll('input[name=source]').forEach(r => r.checked = r.value === s.source);
     $('#symbols').value = s.symbols.join(',');
+    $('#histYears').value = String(s.historyYears || 0);
     $('#tgToken').value = '';
     $('#tgToken').placeholder = s.telegram.tokenHint ? `token enregistré (${s.telegram.tokenHint}) : laisse vide pour le garder` : '123456789:AA...';
     $('#tgChat').value = s.telegram.chatId || '';
@@ -977,13 +978,13 @@ $('#testTg').onclick = () => busy($('#testTg'), $('#tgRes'), async () => {
 });
 $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async () => {
   const src = (document.querySelector('input[name=source]:checked') || {}).value;
-  const before = st.cfg ? st.cfg.source + '|' + st.cfg.symbols.join(',') : '';
+  const before = st.cfg ? st.cfg.source + '|' + st.cfg.symbols.join(',') + '|' + (st.cfg.historyYears || 0) : '';
   const body = {source: src, symbols: $('#symbols').value.split(/[\s,;]+/).filter(Boolean), telegramChatId: $('#tgChat').value.trim(),
-    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMacro: $('#aMacro').checked};
+    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMacro: $('#aMacro').checked, historyYears: +$('#histYears').value};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();
   await api('/api/settings', body);
   buildControls(await api('/api/config'));
-  const reloaded = before !== st.cfg.source + '|' + st.cfg.symbols.join(',');
+  const reloaded = before !== st.cfg.source + '|' + st.cfg.symbols.join(',') + '|' + (st.cfg.historyYears || 0);
   closeSettings();
   if (reloaded) { st.data = null; st.key = null; st.sel = null; }
   toast(reloaded ? (st.cfg.source === 'binance' ? 'Enregistré. Chargement des vraies données Binance (1 à 2 min)…' : 'Enregistré. Rechargement des données…') : 'Réglages enregistrés.');

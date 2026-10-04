@@ -11,8 +11,11 @@
 4) Calibration de Platt sur ces predictions hors echantillon : la probabilite affichee est celle qui s'est
    reellement realisee. Si le modele ne bat pas le hasard, on l'affiche tel quel (« pas d'avantage prouve »).
 5) Tables conditionnelles (tiers de chaque variable) et « first passage » (TP avant SL) pour le plan de trade."""
+import json
 import math
+import os
 import random
+import time
 from bisect import bisect_right
 from collections import deque
 
@@ -34,6 +37,8 @@ NAMES = [f[0] for f in FEATS]
 WARMUP = 120                      # heures necessaires avant de pouvoir calculer toutes les variables
 LAMBDA = 60.0                     # ridge : on prefere un modele prudent a un modele qui sur-apprend
 HORIZONS = (4, 24)
+MAX_TRAIN_H = 24 * 365 * 3        # fenetre d'entrainement glissante de 3 ans : le marche change de regime
+VERSION = 2
 
 
 def _clip(x, lo, hi):
@@ -235,14 +240,17 @@ def _platt(preds, ys):
 
 
 # ---------- validation walk-forward ----------
-def walk_forward(X, ys, idx, h, stride=2, min_train_h=24 * 100, fold_h=24 * 30):
-    """idx : position horaire de chaque echantillon. Retourne les predictions hors echantillon."""
+def walk_forward(X, ys, idx, h, stride=2, min_train_h=24 * 100, fold_h=None, max_train_h=MAX_TRAIN_H):
+    """idx : position horaire de chaque echantillon. Retourne les predictions hors echantillon.
+    Entrainement sur les `max_train_h` heures qui precedent (marge h pour eviter toute fuite), test sur le pli suivant."""
     pos = list(range(len(idx)))
-    first_test = idx[0] + max(min_train_h, int((idx[-1] - idx[0]) * 0.4))
+    span = idx[-1] - idx[0]
+    fold_h = fold_h or (24 * 30 if span < 24 * 900 else 24 * 90)      # plis plus longs quand l'historique est tres long
+    first_test = idx[0] + max(min_train_h, int(span * 0.4))
     preds, labs, ts, folds = [], [], [], 0
     start = first_test
     while start <= idx[-1]:
-        tr = [q for q in pos if idx[q] <= start - h and (idx[q] % stride == 0)]
+        tr = [q for q in pos if start - h - max_train_h < idx[q] <= start - h and (idx[q] % stride == 0)]
         te = [q for q in pos if start <= idx[q] < start + fold_h and (idx[q] % stride == 0)]
         if len(tr) > 400 and te:
             ytr = [ys[q] for q in tr]
@@ -299,14 +307,16 @@ def analyse(candles, funding=None, now_ms=None):
     cur = feats[-1]
     if cur is None:
         return {"ready": False, "reason": "variables indisponibles"}
-    res = {"ready": True, "bars": n, "t": candles[-1].t, "features": [], "horizons": {}}
+    res = {"ready": True, "version": VERSION, "bars": n, "t": candles[-1].t, "since": candles[0].t,
+           "computedAt": int(time.time() * 1000), "features": [], "horizons": {}}
+    stride = 2 if n < 30000 else 3
     for h in HORIZONS:
         idx = [i for i in range(WARMUP, n - h)]
         X = [feats[i] for i in idx]
         ys = [1 if candles[i + h].c > candles[i].c else 0 for i in idx]
-        preds, labs, ts, folds = walk_forward(X, ys, idx, h)
+        preds, labs, ts, folds = walk_forward(X, ys, idx, h, stride=stride)
         base = sum(ys) / len(ys)
-        train_idx = [q for q in range(len(idx)) if idx[q] % 2 == 0]
+        train_idx = [q for q in range(len(idx)) if idx[q] % stride == 0 and idx[q] > idx[-1] - MAX_TRAIN_H]
         model = train([X[q] for q in train_idx], [ys[q] for q in train_idx])
         z = _apply(model["mu"], model["sd"], cur)
         p_raw = _predict(model["w"], z)
@@ -337,12 +347,16 @@ def analyse(candles, funding=None, now_ms=None):
 
 def repredict(res, candles, funding=None):
     """Met a jour la prediction avec la derniere bougie fermee SANS re-entrainer (le modele valide reste le meme)."""
-    cur = build_features(candles, funding)[-1]
+    feats = build_features(candles, funding)
+    cur = feats[-1]
     if cur is None or not res.get("ready"):
         return res
     new = {**res, "t": candles[-1].t, "bars": len(candles), "horizons": {}}
     for h, info in res["horizons"].items():
         model = info["_model"]
+        if "_X" not in info:                                    # resultat relu du disque : jeux d'apprentissage reconstruits
+            idx = [i for i in range(WARMUP, len(candles) - int(h))]
+            info = {**info, "_X": [feats[i] for i in idx], "_ys": [1 if candles[i + int(h)].c > candles[i].c else 0 for i in idx]}
         z = _apply(model["mu"], model["sd"], cur)
         p_raw = _predict(model["w"], z)
         out = {**info, "pRaw": p_raw}
@@ -357,6 +371,27 @@ def repredict(res, candles, funding=None):
         new["horizons"][h] = out
     new["features"] = [{"key": k, "label": lab, "raw": cur[j], "help": hp} for j, (k, lab, hp) in enumerate(FEATS)]
     return new
+
+
+def save(res, path):
+    """Ecrit le resultat valide (sans les jeux d'apprentissage, reconstruits au besoin) : le redemarrage est instantane."""
+    out = {**res, "horizons": {h: {k: v for k, v in info.items() if k not in ("_X", "_ys")} for h, info in res["horizons"].items()}}
+    try:
+        tmp = str(path) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(out, f)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def load(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if d.get("version") == VERSION and d.get("ready") else None
+    except (OSError, ValueError):
+        return None
 
 
 def public(res):

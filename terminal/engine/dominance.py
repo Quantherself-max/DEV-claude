@@ -62,14 +62,14 @@ def _dir(x, thr):
 
 
 def beta(c_sym, c_btc, last=720):
-    """Regression des rendements horaires (30 j) de la paire sur ceux du BTC : beta, correlation, R2."""
+    """Regression des rendements horaires (`last` heures) de la paire sur ceux du BTC : beta, correlation, R2."""
     a = {k.t: k.c for k in c_sym}
     b = {k.t: k.c for k in c_btc}
     ts = sorted(set(a) & set(b))[-(last + 1):]
     ra = [math.log(a[t1] / a[t0]) for t0, t1 in zip(ts, ts[1:]) if a[t0] > 0 and a[t1] > 0]
     rb = [math.log(b[t1] / b[t0]) for t0, t1 in zip(ts, ts[1:]) if b[t0] > 0 and b[t1] > 0]
     n = min(len(ra), len(rb))
-    if n < 100:
+    if n < min(100, last // 2):
         return None
     ra, rb = ra[-n:], rb[-n:]
     ma, mb = sum(ra) / n, sum(rb) / n
@@ -151,9 +151,12 @@ def analyse(snap, c_btc_h1, c_sym_h1, sym):
         cur = rs["table"].get(rs["cur"])
         out["statsCurrent"] = {"key": rs["cur"], **(cur or {})}
     if sym != "BTCUSDT":
-        b = beta(c_sym_h1, c_btc_h1)
-        if b:
-            out["beta"] = b
+        betas = {w: beta(c_sym_h1, c_btc_h1, 24 * d) for w, d in (("30 j", 30), ("90 j", 90), ("1 an", 365))}
+        betas = {w: b for w, b in betas.items() if b}
+        if betas:
+            out["betas"] = betas
+            out["beta"] = betas.get("90 j") or next(iter(betas.values()))
+            out["beta"]["window"] = "90 j" if "90 j" in betas else next(iter(betas))
     else:
         out["isBtc"] = True
     pair = alt.get(sym.replace("USDT", "BTC"))
@@ -172,7 +175,7 @@ def analyse(snap, c_btc_h1, c_sym_h1, sym):
                      f"(hasard : {rs['base1'] * 100:.0f} %) et à 3 jours dans {c['p3'] * 100:.0f} % (hasard : {rs['base3'] * 100:.0f} %), sur {c['n']} jours dont {c['neff']} indépendants.")
     if "beta" in out:
         b = out["beta"]
-        lines.append(f"{sym.replace('USDT', '')} bouge de {b['beta']:.2f} % quand le BTC bouge de 1 % (30 j, corrélation {b['corr']:.2f}) : "
+        lines.append(f"{sym.replace('USDT', '')} bouge de {b['beta']:.2f} % quand le BTC bouge de 1 % ({b['window']}, corrélation {b['corr']:.2f}) : "
                      f"un levier 10x sur {sym.replace('USDT', '')} équivaut à ~{10 * b['beta']:.0f}x sur le BTC.")
     out["lines"] = lines
     return out
