@@ -23,7 +23,7 @@ Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble sur une se
 
 1. **Télécharger.** Ouvre ce lien et dézippe le fichier :
    https://github.com/Quantherself-max/DEV-claude/archive/refs/heads/claude/festive-gates-viq9oo.zip
-   Ouvre ensuite le dossier `terminal`.
+   **Extrais tout le ZIP** (clic droit > « Extraire tout… », ou WinRAR > « Extraire ici ») : le lanceur ne marche pas si tu l'ouvres depuis l'intérieur du ZIP. Ouvre ensuite le dossier extrait, puis le dossier `terminal`.
 2. **Lancer.** Double-clique sur le lanceur de ton système :
    - Windows : `Lancer-Terminal-Windows.bat` ;
    - Mac : `Lancer-Terminal-Mac.command`. La première fois, fais clic droit > Ouvrir.

@@ -1,6 +1,12 @@
 #!/bin/bash
 # Double-clique sur ce fichier pour lancer le terminal (la premiere fois : clic droit > Ouvrir).
 cd "$(dirname "$0")"
+if [ ! -f run.py ]; then
+  echo "Le terminal a ete lance sans le reste du programme (fichier ZIP pas extrait ?)."
+  echo "Double-clique d'abord sur le ZIP pour l'extraire, puis ouvre le dossier terminal et relance ce fichier."
+  read -r -p "Appuie sur Entree pour fermer..."
+  exit 1
+fi
 if command -v python3 >/dev/null 2>&1; then
   python3 run.py
 else
