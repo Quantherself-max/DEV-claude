@@ -236,3 +236,4 @@ table.plan{width:100%;border-collapse:collapse;margin:4px 0}table.plan td{paddin
 details.rej{margin:6px 0;font-size:12px}details.rej summary{cursor:pointer;color:var(--mut)}details.rej ul{margin:4px 0 0;padding-left:16px;color:#9a9eac}
 table.vtab{width:100%;border-collapse:collapse;margin:6px 0;font-size:11.5px}table.vtab th{font-weight:500;color:var(--mut);text-align:left;padding:2px 4px;border-bottom:1px solid var(--line)}table.vtab td{padding:3px 4px;border-bottom:1px solid #1b2030}
 ul.jr{list-style:none;margin:6px 0 0;padding:0}ul.jr li{padding:6px 0;border-bottom:1px solid #1b2030;font-size:12.5px}
+[hidden]{display:none !important}
