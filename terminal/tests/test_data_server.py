@@ -53,6 +53,10 @@ class FakeBinance(BaseHTTPRequestHandler):
                              "shortAccount": "0.4000", "timestamp": t})
                 t += 3_600_000
             return self._send(rows)
+        if u.path in ("/fapi/v1/ticker/price", "/fapi/v2/ticker/price"):
+            if q["symbol"] == "V2ONLY" and "/v1/" in u.path:
+                return self._send({"code": -1, "msg": "gone"}, 404)
+            return self._send({"symbol": q["symbol"], "price": "80001.50", "time": NOW})
         if u.path == "/api/v3/ticker/price":
             return self._send({"symbol": q["symbol"], "price": "80005.00"})
         if u.path.startswith("/products/") and u.path.endswith("/ticker"):
@@ -122,6 +126,11 @@ class BinanceAdapterTests(unittest.TestCase):
         self.assertIn("451", str(cm.exception))
         with self.assertRaises(DataError):
             BinanceSource("http://127.0.0.1:9", retries=1, timeout=1)._get("/x")
+
+    def test_last_price_with_v2_fallback(self):
+        src = FixedBinance(self.base, pause=0)
+        self.assertEqual(src.last_price("BTCUSDT"), (80001.5, NOW))
+        self.assertEqual(src.last_price("V2ONLY"), (80001.5, NOW))          # /fapi/v1 retire -> /fapi/v2
 
     def test_full_pipeline_on_binance_adapter(self):
         """Service complet alimente par l'adaptateur Binance (faux serveur) : meme chaine que sur ton PC."""
@@ -300,6 +309,15 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(cfg["telegram"])
         self.assertEqual(cfg["csrf"], self.app.token)
         self.assertIn("log", json.loads(self.get("/api/alerts")[1]))
+
+    def test_live_price_fallback_endpoint(self):
+        code, body, _ = self.get("/api/price?symbol=BTCUSDT")
+        self.assertEqual(code, 200)
+        r = json.loads(body)
+        self.assertGreater(r["price"], 0)
+        self.assertEqual(r["t"], NOW)
+        self.assertEqual(self.get("/api/price?symbol=XXX")[0], 404)
+        self.assertEqual(json.loads(self.get("/api/config")[1])["wsBase"], "")   # simule : pas de flux Binance
 
     def test_foreign_host_and_missing_token_are_refused(self):
         # un site pirate qui pointe son nom de domaine vers 127.0.0.1 (DNS rebinding) : Host etranger -> refus

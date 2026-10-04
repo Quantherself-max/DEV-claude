@@ -24,7 +24,8 @@ class Config:
     symbols: tuple = ("BTCUSDT", "SOLUSDT")
     host: str = "127.0.0.1"              # local uniquement : le terminal n'est pas expose sur le reseau
     port: int = 8765
-    refresh_seconds: int = 30
+    refresh_seconds: int = 10            # recalcul des niveaux / alertes ; le prix, lui, arrive en temps reel
+    binance_ws: str = "wss://fstream.binance.com/market"   # flux temps reel Binance futures (route /market depuis 2026)
     anchor_date: str = "2024-01-01"      # VWAP ancree
     # fenetre autour du prix et confluences (en ATR du timeframe affiche)
     dist_atr: float = 8.0
@@ -72,7 +73,8 @@ def load_config(env_path: Path | None = None) -> Config:
     c.symbols = tuple(s.strip().upper() for s in g("TERMINAL_SYMBOLS", ",".join(c.symbols)).split(",") if s.strip())
     c.host = g("TERMINAL_HOST", c.host)
     c.port = int(g("TERMINAL_PORT", c.port))
-    c.refresh_seconds = int(g("TERMINAL_REFRESH_SECONDS", c.refresh_seconds))
+    c.refresh_seconds = max(3, int(g("TERMINAL_REFRESH_SECONDS", c.refresh_seconds)))
+    c.binance_ws = g("TERMINAL_BINANCE_WS", c.binance_ws).rstrip("/")
     c.anchor_date = g("TERMINAL_ANCHOR_DATE", c.anchor_date)
     c.alert_tf = g("TERMINAL_ALERT_TF", c.alert_tf)
     c.alert_min_score = int(g("TERMINAL_ALERT_MIN_SCORE", c.alert_min_score))

@@ -54,7 +54,7 @@ function explain(name) {
   return '';
 }
 
-const st = {symbol: null, tf: '1h', data: null, mode: 'conf', pools: true, sel: null, lines: [], key: null, version: 0, cfg: null, tab: 'levels', statSide: 'all', lastBar: 0};
+const st = {symbol: null, tf: '1h', data: null, mode: 'conf', pools: true, sel: null, lines: [], key: null, version: 0, cfg: null, tab: 'levels', statSide: 'all', lastBar: 0, lastBarObj: null};
 async function api(path, body) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
   const r = await fetch(path, opt);
@@ -97,14 +97,113 @@ function setData(d) {
   const bars = d.candles.map(c => ({time: c[0], open: c[1], high: c[2], low: c[3], close: c[4]}));
   if (key !== st.key) {
     st.key = key;
+    live.bar = null;
     series.setData(bars);
     const n = bars.length;
     chart.timeScale().setVisibleLogicalRange({from: Math.max(0, n - 130), to: n + 16});
+    st.lastBar = n ? bars[n - 1].time : 0;
   } else {
-    // mise a jour douce (ne deplace pas la vue) : la bibliotheque n'accepte que la derniere bougie ou une plus recente
-    bars.filter(b => b.time >= st.lastBar).forEach(b => series.update(b));
+    // mise a jour douce (ne deplace pas la vue) : la bibliotheque n'accepte que la derniere bougie ou une plus
+    // recente. La bougie en cours garde les extremes et la cloture du flux temps reel s'il est plus frais.
+    bars.filter(b => b.time >= st.lastBar).forEach(b => {
+      const lb = live.bar;
+      if (lb && lb.time === b.time && liveFresh()) {
+        b = {...b, high: Math.max(b.high, lb.high), low: Math.min(b.low, lb.low), close: lb.close};
+        live.bar = b;
+      }
+      series.update(b);
+      st.lastBar = b.time;
+    });
   }
-  st.lastBar = bars.length ? bars[bars.length - 1].time : 0;
+  st.lastBarObj = bars.length ? {...bars[bars.length - 1]} : null;
+  if (live.bar && st.lastBarObj && live.bar.time === st.lastBarObj.time) st.lastBarObj = {...live.bar};
+}
+
+// ---------- temps reel : flux des transactions Binance (WebSocket) directement dans le navigateur ----------
+// Le prix et la bougie en cours bougent a chaque transaction ; le serveur, lui, recalcule niveaux, poches et
+// alertes toutes les 10 s. Si le flux ne passe pas, secours : dernier prix demande au serveur chaque seconde.
+const TF_SEC = {'5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400};
+const live = {ws: null, sym: null, price: null, t: 0, wsT: 0, src: '', bar: null, barDirty: false, dirty: false,
+  retry: 0, retryTimer: null, opened: 0, panelT: 0, polling: false};
+const liveFresh = () => live.price != null && live.sym === st.symbol && Date.now() - live.t < 5000;
+const livePrice = d => liveFresh() ? live.price : d.price;
+function onTick(price, tms, src) {
+  if (!(price > 0)) return;
+  live.price = price; live.t = Date.now(); live.src = src; live.dirty = true;
+  const d = st.data;
+  if (!d || d.symbol !== live.sym || !st.lastBarObj) return;
+  const per = TF_SEC[st.tf], bt = Math.floor(tms / 1000 / per) * per;
+  if (bt < st.lastBar) return;                                  // transaction plus ancienne que la derniere bougie
+  let b = live.bar && live.bar.time === bt ? live.bar : null;
+  if (!b) b = st.lastBarObj.time === bt ? {...st.lastBarObj} : {time: bt, open: price, high: price, low: price, close: price};
+  b.high = Math.max(b.high, price); b.low = Math.min(b.low, price); b.close = price;
+  live.bar = b; live.barDirty = true;
+}
+function liveStop() {
+  clearTimeout(live.retryTimer);
+  if (live.ws) { const w = live.ws; live.ws = null; try { w.close(); } catch (e) { /* deja ferme */ } }
+}
+function liveConnect() {
+  liveStop();
+  if (live.sym !== st.symbol) { live.price = null; live.bar = null; }    // une reconnexion garde le dernier prix
+  live.sym = st.symbol; live.wsT = 0;
+  if (!st.cfg || !st.cfg.wsBase || !st.symbol) return;
+  let ws;
+  try { ws = new WebSocket(`${st.cfg.wsBase}/stream?streams=${st.symbol.toLowerCase()}@aggTrade`); }
+  catch (e) { liveRetry(); return; }
+  live.ws = ws; live.opened = Date.now();
+  ws.onmessage = ev => {
+    let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+    const x = m.data || m;
+    if (x.e === 'aggTrade' && x.s === live.sym) { live.wsT = Date.now(); live.retry = 0; onTick(+x.p, x.T, 'ws'); }
+  };
+  ws.onerror = () => { try { ws.close(); } catch (e) { /* rien */ } };
+  ws.onclose = () => { if (live.ws === ws) { live.ws = null; liveRetry(); } };
+}
+function liveRetry() {
+  clearTimeout(live.retryTimer);
+  const wait = Math.min(30000, 1000 * Math.pow(2, live.retry++));
+  live.retryTimer = setTimeout(liveConnect, wait);
+}
+async function livePoll() {                                     // secours, une fois par seconde
+  if (!st.cfg || !st.cfg.wsBase || !st.symbol || live.polling) return;
+  // flux ouvert mais muet depuis 15 s : on le relance
+  if (live.ws && Date.now() - Math.max(live.wsT, live.opened) > 15000) { live.retry = 0; liveConnect(); }
+  if (Date.now() - live.wsT < 2500) return;                     // le flux temps reel fonctionne
+  live.polling = true;
+  try {
+    const sym = st.symbol, r = await (await fetch(`/api/price?symbol=${sym}`)).json();
+    if (r.price && sym === st.symbol && Date.now() - live.wsT >= 2500) onTick(r.price, r.t, 'rest');
+  } catch (e) { /* le serveur est peut-etre arrete : le statut l'indique deja */ }
+  finally { live.polling = false; }
+}
+function liveBadge() {
+  const b = $('#liveBadge');
+  if (!st.cfg || !st.cfg.wsBase) { b.hidden = true; return; }
+  b.hidden = false;
+  const ws = Date.now() - live.wsT < 2500, rest = !ws && liveFresh();
+  const txt = ws ? '● TEMPS RÉEL' : rest ? '● PRIX ~1 s' : '● DIFFÉRÉ';
+  if (b.textContent !== txt) {
+    b.textContent = txt;
+    b.className = 'badge ' + (ws ? 'ok' : rest ? 'warn' : '');
+    b.title = ws ? 'Prix et bougie en cours mis à jour à chaque transaction (flux Binance).' :
+      rest ? 'Le flux temps réel ne passe pas : prix demandé chaque seconde (reconnexion automatique).' :
+      'Prix mis à jour avec les niveaux (toutes les ' + st.cfg.refresh + ' s).';
+  }
+}
+function liveRender() {                                          // appele a chaque image
+  const d = st.data;
+  if (!d || !liveFresh()) return;
+  if (live.barDirty && live.bar && live.bar.time >= st.lastBar) {
+    try { series.update(live.bar); st.lastBar = live.bar.time; } catch (e) { live.bar = null; }
+    live.barDirty = false;
+  }
+  if (live.dirty) {
+    const t = fmtP(live.price), lp = $('#ladderPrice');
+    if ($('#price').textContent !== t) $('#price').textContent = t;
+    if (lp && lp.textContent !== t) lp.textContent = t;
+    if (Date.now() - live.panelT > 1000) { live.panelT = Date.now(); live.dirty = false; liveDistances(d); }
+  }
 }
 
 function rebuildLines(d) {
@@ -198,7 +297,7 @@ function draw() {
     ctx.fillStyle = g2; ctx.fillRect(r.x0, r.yc - r.thick * 0.9, r.len, r.thick * 1.8);
     ctx.fillStyle = g; ctx.fillRect(r.x0, r.yc - r.thick / 2, r.len, r.thick);
     if (st.sel && st.sel.type === 'pool' && st.sel.id === i) { ctx.strokeStyle = rgba(col, 1); ctx.lineWidth = 1.5; ctx.strokeRect(r.x0, r.yc - r.thick / 2 - 2, r.len, r.thick + 4); }
-    const dist = (p.price / d.price - 1) * 100;
+    const dist = (p.price / livePrice(d) - 1) * 100;
     pills.push({y: r.yc, x1: r.x1, col, magnet: p.magnet, text: (p.magnet ? 'AIMANT ' : '') + fmtP(p.price) + '  ' + fmtPct(dist)});
   });
   placeLabels(pills, 19, 12, h - 30).forEach(it => {
@@ -231,13 +330,25 @@ function loop() {
     const ts = chart.timeScale(), r = ts.getVisibleLogicalRange();
     const s = [series.priceToCoordinate(d.price) | 0, series.priceToCoordinate(d.price * 1.03) | 0,
       ts.timeToCoordinate(d.candles[d.candles.length - 1][0]) | 0, r ? (r.from | 0) + ':' + (r.to | 0) : '',
-      overlay.clientWidth, overlay.clientHeight, st.version].join();
+      overlay.clientWidth, overlay.clientHeight, st.version, (livePrice(d) / d.price).toFixed(4)].join();
     if (s !== sig) { sig = s; draw(); }
+    liveRender();
   }
   requestAnimationFrame(loop);
 }
 
 // ---------- panneaux ----------
+function zoneDist(z, d, p) {
+  if (z.side === 'in') return 'le prix est dans la zone';
+  const edge = z.side === 'above' ? z.lo - p : z.hi - p;
+  return fmtPct(edge / p * 100) + ' · ' + num(Math.abs(edge) / d.atr, 1) + ' ATR';
+}
+function liveDistances(d) {
+  const p = livePrice(d), zs = byId(d.zones);
+  document.querySelectorAll('#ladder [data-zd]').forEach(el => { const z = zs[el.dataset.zd]; if (z) el.textContent = zoneDist(z, d, p); });
+  document.querySelectorAll('#pools [data-pd]').forEach(el => { const q = d.liquidity.pools[+el.dataset.pd]; if (q) el.textContent = fmtPct((q.price / p - 1) * 100); });
+  const lp = $('#ladderPrice'); if (lp) lp.textContent = fmtP(p);
+}
 function probLine(z) {
   const p = z.prob;
   if (!p) return '<span class="prob muted">probabilités : calcul en cours…</span>';
@@ -253,7 +364,7 @@ function zoneRow(z, d) {
   const dots = '●'.repeat(Math.min(5, z.score));
   const sel = st.sel && st.sel.type === 'zone' && st.sel.id === z.id ? ' sel' : '';
   return `<div class="row${z.score < 3 ? ' weak' : ''}${sel}" data-zone="${z.id}">${ar}<span class="nm" title="${esc(names.join(' + '))}">${esc(names.join(' + '))}</span>` +
-    `<span class="pv">${fmtP(z.mid)}</span><span class="sub">${z.side === 'in' ? 'le prix est dans la zone' : fmtPct(z.distPct) + ' · ' + num(z.distAtr, 1) + ' ATR'}<span class="dots">${dots}</span>${z.hasMagnet ? ' · poche AIMANT' : ''}` +
+    `<span class="pv">${fmtP(z.mid)}</span><span class="sub"><span data-zd="${z.id}">${zoneDist(z, d, livePrice(d))}</span><span class="dots">${dots}</span>${z.hasMagnet ? ' · poche AIMANT' : ''}` +
     probLine(z) + '</span></div>';
 }
 function renderLadder(d) {
@@ -261,7 +372,7 @@ function renderLadder(d) {
   let h = '';
   d.ladder.above.forEach(i => h += zoneRow(zs[i], d));
   d.ladder.inside.forEach(i => h += zoneRow(zs[i], d));
-  h += `<div class="pricerow"><span>PRIX</span><span>${fmtP(d.price)}</span></div>`;
+  h += `<div class="pricerow"><span>PRIX</span><span id="ladderPrice">${fmtP(livePrice(d))}</span></div>`;
   d.ladder.below.forEach(i => h += zoneRow(zs[i], d));
   if (!d.zones.length) h = '<div class="muted">Aucune confluence pour l\'instant.</div>' + h;
   $('#ladder').innerHTML = h;
@@ -271,11 +382,11 @@ function renderPools(d) {
   const q = d.liquidity, pools = q.pools;
   let h = '';
   [...pools].sort((a, b) => b.price - a.price).forEach(p => {
-    const i = pools.indexOf(p), dist = (p.price / d.price - 1) * 100, c = p.side === 'long' ? UP : DN;
+    const i = pools.indexOf(p), dist = (p.price / livePrice(d) - 1) * 100, c = p.side === 'long' ? UP : DN;
     const sel = st.sel && st.sel.type === 'pool' && st.sel.id === i ? ' sel' : '';
     h += `<div class="row${sel}" data-pool="${i}"><span class="ar" style="color:${c}">${p.side === 'long' ? '▼' : '▲'}</span>` +
       `<span class="nm">${p.magnet ? '<b>AIMANT</b> · ' : ''}${p.side === 'long' ? 'longs' : 'shorts'}</span><span class="pv">${fmtP(p.price)}</span>` +
-      `<span class="sub">${fmtPct(dist)} · score ${p.score}${p.reach ? ' · <span class="pr">' + pr(p.reach['24']) + '</span> d\'y aller en 24 h' : ''}<div class="bar"><i style="width:${p.score}%;background:${c}"></i></div></span></div>`;
+      `<span class="sub"><span data-pd="${i}">${fmtPct(dist)}</span> · score ${p.score}${p.reach ? ' · <span class="pr">' + pr(p.reach['24']) + '</span> d\'y aller en 24 h' : ''}<div class="bar"><i style="width:${p.score}%;background:${c}"></i></div></span></div>`;
   });
   if (!pools.length) h = '<div class="muted">Aucune poche assez forte dans la fenêtre.</div>';
   const tot = q.sumLong + q.sumShort, up = tot ? q.sumShort / tot * 100 : 50;
@@ -486,7 +597,7 @@ function updateBanner(d) {
   else banner(null);
 }
 function header(d) {
-  $('#price').textContent = fmtP(d.price);
+  $('#price').textContent = fmtP(livePrice(d));
   $('#atr').textContent = `ATR ${st.tf} ${fmtP(d.atr)} (${num(d.atrPct)} %)`;
   const sb = $('#srcBadge');
   sb.textContent = d.source === 'simulated' ? 'DONNÉES SIMULÉES' : 'BINANCE';
@@ -495,7 +606,7 @@ function header(d) {
   tb.textContent = st.cfg && st.cfg.telegram ? 'TELEGRAM ON' : 'TELEGRAM OFF';
   tb.className = 'badge ' + (st.cfg && st.cfg.telegram ? 'ok' : '');
   const age = Math.max(0, Math.round(Date.now() / 1000 - d.lastUpdate));
-  $('#status').textContent = d.error ? 'erreur' : `mis à jour il y a ${age} s`;
+  $('#status').textContent = d.error ? 'erreur' : `niveaux : il y a ${age} s`;
   $('#status').className = d.error ? 'bad' : 'muted';
   updateBanner(d);
 }
@@ -526,7 +637,7 @@ function buildControls(cfg) {
   st.cfg = cfg;
   if (!cfg.symbols.includes(st.symbol)) st.symbol = cfg.symbols[0];
   const sel = $('#symbol'); sel.innerHTML = cfg.symbols.map(s => `<option${s === st.symbol ? ' selected' : ''}>${s}</option>`).join('');
-  sel.onchange = () => { st.symbol = sel.value; st.sel = null; st.data = null; poll(); };
+  sel.onchange = () => { st.symbol = sel.value; st.sel = null; st.data = null; liveConnect(); poll(); };
   const box = $('#tfs');
   box.innerHTML = cfg.tfs.map(t => `<button data-tf="${t}" class="${t === st.tf ? 'on' : ''}">${t}</button>`).join('');
   box.onclick = e => { const b = e.target.closest('button'); if (!b) return; st.tf = b.dataset.tf; st.sel = null; st.data = null;
@@ -534,6 +645,7 @@ function buildControls(cfg) {
   document.querySelectorAll('input[name=mode]').forEach(r => r.onchange = () => { st.mode = r.value; if (st.data) { rebuildLines(st.data); st.version++; } });
   $('#showPools').onchange = e => { st.pools = e.target.checked; st.version++; };
   updateBanner(st.data);
+  if (!live.ws || live.sym !== st.symbol || !cfg.wsBase) liveConnect();
 }
 // onglets du panneau de droite
 $('#tabs').onclick = e => {
@@ -616,6 +728,7 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
   try { buildControls(await api('/api/config')); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
   try { const t = localStorage.getItem('liqTab'); if (t && t !== 'levels') { const b = document.querySelector(`#tabs button[data-tab="${t}"]`); if (b) b.click(); } } catch (err) { /* rien */ }
   poll(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop);
-  window.__term = {st, chart, series, select, draw, layout, poolRect, overlay, openSettings};      // pour les tests automatiques
+  setInterval(() => { livePoll(); liveBadge(); }, 1000);
+  window.__term = {st, chart, series, select, draw, layout, poolRect, overlay, openSettings, live};      // pour les tests automatiques
 })();
 })();

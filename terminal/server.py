@@ -40,12 +40,32 @@ class App:
         self.stop = threading.Event()
         self.wake = threading.Event()
         self.reload_lock = threading.Lock()
+        self.price_lock = threading.Lock()
         self._install(cfg)
 
     def _install(self, cfg):
         source, service, alerts, notifier = build_parts(cfg, self.make_source)
         service.listeners.append(self.alert_cycle)
         self.cfg, self.source, self.service, self.alerts, self.notifier = cfg, source, service, alerts, notifier
+        self.price_cache = {}
+
+    def live_price(self, sym: str) -> dict:
+        """Dernier prix (cache 0,5 s) : secours quand le flux WebSocket du navigateur ne passe pas."""
+        if sym not in self.service.markets:
+            raise KeyError(f"symbole inconnu : {sym}")
+        now = time.time()
+        with self.price_lock:
+            hit = self.price_cache.get(sym)
+            if hit and now - hit[0] < 0.5:
+                return hit[1]
+        try:
+            p, t = self.source.last_price(sym)
+            res = {"symbol": sym, "price": p, "t": t}
+        except Exception as e:
+            res = {"symbol": sym, "error": f"{type(e).__name__}: {e}"}
+        with self.price_lock:
+            self.price_cache[sym] = (now, res)
+        return res
 
     def reload(self, cfg):
         """Applique de nouveaux reglages sans redemarrer le programme. Les donnees ne sont rechargees que si la
@@ -154,7 +174,9 @@ def make_handler(app: App):
                                        "telegram": c.telegram_on, "alertTf": c.alert_tf, "alertMinScore": c.alert_min_score,
                                        "alertMaxDistAtr": c.alert_max_dist_atr, "refresh": c.refresh_seconds,
                                        "anchor": c.anchor_date, "statsK": c.stats_k, "statsHorizon": c.stats_horizon,
-                                       "csrf": app.token})
+                                       "csrf": app.token, "wsBase": c.binance_ws if c.source == "binance" else ""})
+                if u.path == "/api/price":
+                    return self._json(app.live_price((q.get("symbol") or [app.cfg.symbols[0]])[0].upper()))
                 if u.path == "/api/settings":
                     return self._json(app.settings())
                 if u.path == "/api/alerts":

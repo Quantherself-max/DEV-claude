@@ -116,6 +116,9 @@ class SimulatedSource(Source):
     def spot_price(self, symbol):
         return self._last_close(symbol) * (1 - 0.0002)
 
+    def last_price(self, symbol):
+        return self._last_close(symbol), self.now_ms()
+
     def coinbase_price(self, product):
         sym = product.replace("-USD", "USDT")
         return self.spot_price(sym) * (1 + 0.0005 * math.sin(self.now_ms() / 4e7))

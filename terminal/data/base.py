@@ -35,3 +35,7 @@ class Source:
 
     def coinbase_price(self, product: str) -> float:
         raise NotImplementedError
+
+    def last_price(self, symbol: str) -> tuple:
+        """Dernier prix echange et son horodatage (ms) : secours du flux temps reel."""
+        raise NotImplementedError

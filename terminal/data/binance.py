@@ -24,17 +24,19 @@ class BinanceSource(Source):
         self.base, self.timeout, self.pause, self.retries = base.rstrip("/"), timeout, pause, retries
         self.spot_base, self.coinbase_base = spot_base.rstrip("/"), coinbase_base.rstrip("/")
 
-    def _get(self, path: str, params: dict | None = None, host: str | None = None):
+    def _get(self, path: str, params: dict | None = None, host: str | None = None, retries: int | None = None,
+             timeout: float | None = None):
         url = (host or self.base) + path + ("?" + urllib.parse.urlencode(params) if params else "")
         last = None
-        for attempt in range(self.retries):
+        retries = retries or self.retries
+        for attempt in range(retries):
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "liq-terminal/1.0"})
-                with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:
                     return json.loads(r.read().decode("utf-8"))
             except urllib.error.HTTPError as e:
                 body = e.read().decode("utf-8", "replace")[:200]
-                if e.code in (429, 418, 500, 502, 503, 504) and attempt < self.retries - 1:
+                if e.code in (429, 418, 500, 502, 503, 504) and attempt < retries - 1:
                     time.sleep(1.5 * (attempt + 1))
                     last = f"HTTP {e.code}"
                     continue
@@ -112,6 +114,15 @@ class BinanceSource(Source):
 
     def coinbase_price(self, product):
         return float(self._get(f"/products/{product}/ticker", None, host=self.coinbase_base)["price"])
+
+    def last_price(self, symbol):
+        """Dernier prix (une seule tentative, delai court : appele chaque seconde quand le flux temps reel
+        du navigateur est coupe)."""
+        try:
+            r = self._get("/fapi/v1/ticker/price", {"symbol": symbol}, retries=1, timeout=4)
+        except DataError:
+            r = self._get("/fapi/v2/ticker/price", {"symbol": symbol}, retries=1, timeout=4)
+        return float(r["price"]), int(r.get("time") or self.now_ms())
 
     def selftest(self, symbol="BTCUSDT"):
         """Verifications rapides : renvoie une liste de (nom, ok, detail)."""

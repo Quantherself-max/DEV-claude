@@ -42,7 +42,9 @@ Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble sur une se
 
 Si Binance est injoignable depuis ton PC, un bandeau rouge l'affiche avec un bouton « Tester la connexion ». Si tu choisis un jour le mode simulé, un bandeau orange te rappelle que les prix sont fictifs.
 
-**Tout est réel en mode Binance.** Les bougies, le volume acheteur, l'Open Interest, le funding et les ratios viennent de Binance. L'historique utilisé pour les probabilités, ce sont les vraies bougies passées de la paire. Le terminal se met à jour toutes les 30 secondes (réglable avec `TERMINAL_REFRESH_SECONDS` dans `.env`).
+**Tout est réel en mode Binance.** Les bougies, le volume acheteur, l'Open Interest, le funding et les ratios viennent de Binance. L'historique utilisé pour les probabilités, ce sont les vraies bougies passées de la paire. Le **prix et la bougie en cours arrivent en temps réel** : le navigateur se branche directement sur le flux des transactions Binance (badge **● TEMPS RÉEL**). Les niveaux, les poches, les probabilités et les alertes sont recalculés toutes les 10 secondes (réglable avec `TERMINAL_REFRESH_SECONDS` dans `.env`). Si le flux ne passe pas, le badge affiche **● PRIX ~1 s** : le prix est alors redemandé chaque seconde et le flux se reconnecte tout seul.
+
+**Comparer avec TradingView.** Le terminal affiche le **perpétuel Binance** (BTCUSDT, SOLUSDT). Un graphique « Bitcoin / Dollar · Coinbase » est un autre marché, le spot américain : l'écart de quelques dizaines de dollars est normal, même sans aucun retard. L'onglet Contexte l'affiche (« Prime Coinbase »). Pour comparer les mêmes prix, ouvre `BINANCE:BTCUSDT.P` ou `BINANCE:SOLUSDT.P` sur TradingView.
 
 ## Lire le terminal
 
@@ -124,6 +126,7 @@ Le terminal utilise les endpoints publics de Binance futures USDT-M. Il n'a beso
 | Open Interest 5 min | Environ 29 jours, limite imposée par Binance |
 | Funding, premium index, ratios long/short | Récents |
 | Prix spot Binance et prix Coinbase | Prix actuel |
+| Transactions en temps réel | Flux WebSocket public `wss://fstream.binance.com/market`, ouvert par le navigateur |
 
 Les probabilités sont recalculées toutes les 6 heures, en tâche de fond. Si une donnée facultative est bloquée, par exemple Coinbase dans certains pays, le terminal continue de fonctionner sans elle.
 

@@ -47,6 +47,7 @@ input{background:#0f131c;color:var(--text);border:1px solid var(--line);border-r
 input:focus,select:focus{outline:1px solid var(--acc)}
 .regime{font-size:11px;padding:2px 8px;border-radius:5px;background:#1e2333;color:#c6c9d2;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #banner{padding:7px 14px;font-size:12.5px;display:flex;gap:12px;align-items:center;border-bottom:1px solid var(--line)}
+#banner[hidden]{display:none}
 #banner.warn{background:#ffb30014;color:#ffcf66}#banner.bad{background:#ff6b6b14;color:#ff9a9a}
 #banner button{padding:3px 10px}
 .tabs{display:flex;gap:2px;position:sticky;top:-8px;z-index:4;background:var(--bg);padding:2px 0 6px}
