@@ -20,6 +20,7 @@ from . import vwapstrat as vs
 from .backtest import DAY
 
 KEYS = ("n", "winRate", "expR", "expLo", "expHi", "pf", "ret", "cagr", "maxDD", "sharpe", "perWeek", "exposure", "tstat", "avgWin", "avgLoss")
+SUBJECT_VWAP = "Ta règle telle que tu la décris (clôture 1 h ou 4 h au-dessus ou en dessous d'un VWAP ou VWAP ancré de la semaine ou du mois)"
 MIN_N_EXIT = 300           # une sortie n'est retenue que si elle repose sur au moins 300 trades d'apprentissage
 MIN_N_RULE = 150
 STOP_LABEL = {"struct": "stop sous la structure", "atr15": "stop à 1,5 ATR", "atr3": "stop à 3 ATR", "atr5": "stop à 5 ATR"}
@@ -36,9 +37,13 @@ def d0(e: dict) -> int:
     return -e["dir"] if e.get("fade") else e["dir"]
 
 
+def tp_label(t: str) -> str:
+    return TP_LABEL.get(t) or (f"objectif {t[:-1].replace('.', ',')} R" if t.endswith("R") else t)
+
+
 def cfg_label(cfg: str) -> str:
     s, t, h = cfg.split("|")
-    return f"{STOP_LABEL[s]} · {TP_LABEL[t]} · {HOLD_LABEL[h]}"
+    return f"{STOP_LABEL[s]} · {tp_label(t)} · {HOLD_LABEL[h]}"
 
 
 # =====================================================================================================
@@ -171,20 +176,23 @@ class Sims:
 # =====================================================================================================
 def run(ds: "bt.Dataset", events: list[dict], label: str, start_ms: int, end_ms: int, split_ms: int, eras: list, costs: dict | None = None,
         control_runs: int = 40, n_exits: int = 3, extra_hedges: dict | None = None, progress=None, workers: int = 1,
-        min_exit: int = MIN_N_EXIT, min_rule: int = MIN_N_RULE) -> dict:
+        min_exit: int = MIN_N_EXIT, min_rule: int = MIN_N_RULE, rule_list=None, configs=None, kind: str = "vwap-strategy", subject: str | None = None,
+        with_hedge: bool = True) -> dict:
+    """rule_list : [(nom, groupe, regle)] (defaut : les filtres de la strategie VWAP / profil de volume) ; configs : sorties a essayer (defaut : les 48)."""
     t0 = time.time()
     costs = costs or bt.DEFAULT_COSTS
     say = progress or (lambda *_: None)
     lit, inv = _side(events, False), _side(events, True)
-    R = rules()
+    R = rule_list or rules()
+    cfgs = configs or vs.CONFIGS
     base_rule = R[0][2]
     years = range(_year(start_ms), _year(end_ms - 1) + 1)
 
     sims = Sims(ds, workers)
     # ---- 2. sorties (regle litterale, apprentissage) -------------------------------------------------
     exits = []
-    for i, cfg in enumerate(vs.CONFIGS):
-        say(f"sorties {i + 1}/{len(vs.CONFIGS)}")
+    for i, cfg in enumerate(cfgs):
+        say(f"sorties {i + 1}/{len(cfgs)}")
         sims.ensure(lit, cfg)
         tr, sm = run_rule(lit, base_rule, cfg, costs, start_ms, end_ms, split_ms, eras)
         s_, tp, h = cfg.split("|")
@@ -215,11 +223,11 @@ def run(ds: "bt.Dataset", events: list[dict], label: str, start_ms: int, end_ms:
     best_literal = next((r for r in elig if r["side"] == "suivre"), None)
     n_tests = len(rows)
 
-    out = {"kind": "vwap-strategy", "label": label, "computedAt": int(time.time() * 1000),
+    out = {"kind": kind, "label": label, "computedAt": int(time.time() * 1000),
            "period": {"start": start_ms, "end": end_ms, "split": split_ms}, "costs": costs,
            "eras": [{"label": lab, "start": a, "end": b} for lab, a, b in eras],
-           "counts": {"events": len(events), "levels": len(vs.LEVELS), "exits": len(vs.CONFIGS), "rules": len(R), "tests": n_tests, "tested": len(rows)},
-           "exits": exits, "chosenExits": chosen_exits, "variants": rows, "ranking": [_key(r) for r in elig[:25]]}
+           "counts": {"events": len(events), "levels": len(vs.LEVELS) if rule_list is None else None, "exits": len(cfgs), "rules": len(R), "tests": n_tests, "tested": len(rows)},
+           "subject": subject or SUBJECT_VWAP, "exits": exits, "chosenExits": chosen_exits, "variants": rows, "ranking": [_key(r) for r in elig[:25]]}
     if not best:
         out["seconds"] = round(time.time() - t0)
         return out
@@ -235,8 +243,9 @@ def run(ds: "bt.Dataset", events: list[dict], label: str, start_ms: int, end_ms:
     out["literal"] = {**{k2: lit0[k2] for k2 in ("name", "cfg", "all", "is", "oos", "eras")}, "years": per_year(store[(R[0][0], False, chosen_exits[0])], years)}
 
     # ---- 5. couverture -----------------------------------------------------------------------------
-    say("couverture…")
-    out["hedge"] = hedge_study(store, rows, best, start_ms, end_ms, split_ms, extra_hedges or {}, R, min_rule)
+    if with_hedge:
+        say("couverture…")
+        out["hedge"] = hedge_study(store, rows, best, start_ms, end_ms, split_ms, extra_hedges or {}, R, min_rule)
     out["verdict"] = verdict(out)
     out["seconds"] = round(time.time() - t0)
     return out
@@ -408,8 +417,8 @@ def verdict(rep: dict) -> dict:
     n_tests = rep["counts"]["tests"]
     t_best = b["is"].get("tstat")
     chance = math.sqrt(2 * math.log(max(2, n_tests)))
-    side = "ta règle (suivre la clôture)" if b["side"] == "suivre" else "l'inverse de ta règle (prendre le contre de la clôture)"
-    head = (f"Ta règle telle que tu la décris (clôture 1 h ou 4 h au-dessus ou en dessous d'un VWAP ou VWAP ancré de la semaine ou du mois) fait {_r(lit['all']['expR'])} R par trade après frais "
+    side = "en suivant la clôture" if b["side"] == "suivre" else "en prenant le contre de la clôture"
+    head = (f"{rep.get('subject') or SUBJECT_VWAP} fait {_r(lit['all']['expR'])} R par trade après frais "
             f"({lit['all']['n']} trades : {_r(lit['is']['expR'])} R sur l'apprentissage, {_r(lit['oos']['expR'])} R sur le test) : aucun avantage tel quel.")
     ci = f"intervalle à 90 % de {_r(b['oos']['expLo'])} à {_r(b['oos']['expHi'])}"
     one = f"« {b['name']} » ({side}, {b['cfgLabel']}) : {_r(b['is']['expR'])} R à l'apprentissage, {_r(b['oos']['expR'])} R sur le test ({ci}, {b['oos']['n']} trades)"
@@ -440,13 +449,14 @@ def verdict(rep: dict) -> dict:
     sd = b.get("bySide") or {}
     if sd.get("long") and sd.get("short"):
         notes.append(f"Achats : {_r(sd['long']['expR'])} R sur {sd['long']['n']} trades ; ventes : {_r(sd['short']['expR'])} R sur {sd['short']['n']}"
-                     + (" : l'effet n'est donc pas seulement la hausse de long terme du bitcoin." if sd['long']['expR'] > 0 and sd['short']['expR'] > 0 else "."))
+                     + (" : l'effet n'est donc pas seulement la hausse de long terme du bitcoin." if level != "none" and sd['long']['expR'] > 0 and sd['short']['expR'] > 0 else "."))
     es = exit_summary(rep)
-    if es["stop"].get("struct") and es["stop"].get("atr5"):
-        notes.append(f"Sorties (ta règle littérale, moyenne sur l'apprentissage) : stop sous la structure {_r(es['stop']['struct']['is'])} R, à 1,5 ATR {_r(es['stop']['atr15']['is'])} R, "
-                     f"à 3 ATR {_r(es['stop']['atr3']['is'])} R, à 5 ATR {_r(es['stop']['atr5']['is'])} R : les stops serrés perdent presque toujours (bruit + frais). "
-                     f"Objectif sur la poche de liquidité {_r(es['tp']['pool']['is'])} R contre objectif fixe de 2 R {_r(es['tp']['2R']['is'])} R. "
-                     f"Durée 24 h {_r(es['hold']['H24']['is'])} R, 48 h {_r(es['hold']['H48']['is'])} R, 24 h prolongées à 48 h s'il y a du volume {_r(es['hold']['H24x']['is'])} R : la prolongation selon le volume ne fait pas mieux que 48 h fixes.")
+    parts = []
+    for field, lab, fmt in (("stop", "stops", lambda g: STOP_LABEL.get(g, g)), ("tp", "objectifs", tp_label), ("hold", "durées", lambda g: HOLD_LABEL.get(g, g))):
+        if len(es[field]) > 1:
+            parts.append(f"{lab} : " + ", ".join(f"{fmt(g)} {_r(v['is'])} R" for g, v in es[field].items()))
+    if parts:
+        notes.append("Sorties (règle littérale, moyenne sur l'apprentissage) — " + " ; ".join(parts) + ".")
     hs = hedge_summary(rep)
     if hs:
         h = rep["hedge"]["choice"] if rep["hedge"].get("choice") else None

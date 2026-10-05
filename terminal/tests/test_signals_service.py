@@ -134,6 +134,16 @@ class ServiceSignalsTests(unittest.TestCase):
         self.assertTrue(all(p["price"] > v["price"] for p in v["pools"]["up"]))
         self.assertTrue(all(p["price"] < v["price"] for p in v["pools"]["dn"]))
         self.assertTrue(all(p["distAtr"] > 0 for p in v["pools"]["up"] + v["pools"]["dn"]))
+        sw = v["swing"]
+        self.assertEqual(sw["pct"], 0.05)
+        for a in sw["anchors"]:
+            self.assertIn(a["kind"], ("H", "L"))
+            self.assertLessEqual(a["ageD"], 30.01)
+            self.assertGreater(a["tc"], a["t"])
+            self.assertEqual(a["side"], "below" if a["value"] < v["price"] else "above")
+            if a["touch"]:
+                self.assertIn(a["touch"]["dir"], (-1, 1))
+        self.assertEqual([a["t"] for a in sw["anchors"]], sorted((a["t"] for a in sw["anchors"]), reverse=True))
         with self.assertRaises(KeyError):
             self.svc.strategy("XXX")
 

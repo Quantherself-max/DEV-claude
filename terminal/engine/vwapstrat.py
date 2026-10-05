@@ -189,8 +189,8 @@ def geometry(ev: dict, stop_mode: str, tp_mode: str, min_r: float = 1.0, max_poo
         return (stop, pools[0], None, 1.0) if pools else None
     if tp_mode == "pool2R":
         return (stop, pools[0] if pools else px + d * 2 * risk, None, 1.0)
-    if tp_mode == "2R":
-        return (stop, px + d * 2 * risk, None, 1.0)
+    if tp_mode.endswith("R") and tp_mode[:-1].replace(".", "", 1).isdigit():        # « 1R », « 1.5R », « 2R », « 3R » : objectif fixe en multiples du risque
+        return (stop, px + d * float(tp_mode[:-1]) * risk, None, 1.0)
     if tp_mode == "poolhalf":
         return (stop, pools[0], pools[1] if len(pools) > 1 else None, 0.5) if pools else None
     raise ValueError(tp_mode)

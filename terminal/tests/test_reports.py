@@ -64,8 +64,10 @@ class ReportsTests(unittest.TestCase):
         self.put(self.shipped, fake_report("BTC"))
         self.put(self.shipped, fake_strategy("BTC"), name="strategy_BTC.json")
         self.put(self.own, fake_strategy("SOL", 0.1), name="strategy_SOL.json")
+        self.put(self.shipped, {**fake_strategy("BTC"), "kind": "avwap-swing"}, name="avwap_BTC.json")
         lst = reports.summaries(self.dirs)
-        self.assertEqual([(r["kind"], r["label"]) for r in lst], [("backtest", "BTC"), ("strategy", "BTC"), ("strategy", "SOL")])
+        self.assertEqual([(r["kind"], r["label"]) for r in lst], [("backtest", "BTC"), ("strategy", "BTC"), ("strategy", "SOL"), ("avwap", "BTC")])
+        self.assertEqual(reports.load(self.dirs, "BTC", "avwap")["kind"], "avwap-swing")
         self.assertEqual(reports.load(self.dirs, "BTC")["trend"]["aligned"]["n"], 1303)        # par defaut : les idees du terminal
         self.assertEqual(reports.load(self.dirs, "BTC", "strategy")["kind"], "vwap-strategy")
         self.assertIsNone(reports.load(self.dirs, "ETH", "strategy"))

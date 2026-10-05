@@ -1,9 +1,10 @@
-# Liq Terminal (V7)
+# Liq Terminal (V8)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Les VWAP ancrés sur un mouvement d'au moins 5 %** (V8, onglet **Stratégie** et rapport « VWAP ancrés sur un mouvement » dans la page **Backtest**) : VWAP ancré sur le sommet de la baisse (résistance) et sur le creux (support), réaction du prix mesurée sur 13 ans de BTC (voir « V8 » plus bas).
 - **Des idées de trade rares, envoyées sur Telegram** (V5) : achat ou vente sur une zone où plusieurs niveaux importants (VWAP, VWAP ancrés, profils de volume, de l'heure à l'année) et des poches de liquidités se superposent, avec entrée, stop, deux objectifs, probabilités et une explication complète sans abréviation. Cinq idées par semaine au maximum, réglable (voir « V5 » plus bas).
 - **Un espace de travail (menu à gauche)** : **Desk** (les graphiques), **Overview** (une carte par paire : prix, biais, niveaux essentiels, contexte, macro, dominance, Fear & Greed) et **Analyse** (biais, macro, dominance, plan de trade, lexique). Le menu se replie avec la flèche.
 - **Trois graphiques synchronisés** (zoom et curseur liés) : **Principal** (bougies + niveaux essentiels), **Liquidité** (uniquement les poches : carte de chaleur, balayages, vraies liquidations) et **VWAP · AVWAP · Volume Profile** (uniquement ces niveaux). Boutons de disposition en haut du Desk : 1 graphique, Liquidité seule, VP seul, 2 ou 3 graphiques ; chaque panneau peut être agrandi.
@@ -100,6 +101,30 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V8 : les VWAP ancrés sur un mouvement d'au moins −5 %
+
+### Ce qui est testé
+Un mouvement est détecté **sans regarder le futur** (zigzag confirmé) : un sommet n'est connu qu'une fois le prix redescendu d'au moins 5 % depuis lui, un creux une fois remonté d'au moins 5 % depuis lui. Deux VWAP ancrés en sortent : **sur le sommet de la baisse** (le prix est dessous, résistance) et **sur le creux** (le prix est dessus, support). Ils sont suivis 30 jours. Un « contact » est une bougie 1 h fermée qui touche le VWAP ancré, le sens étant le côté de la clôture (même convention que tes autres niveaux). Même chose avec des mouvements d'au moins 8 % et 12 %.
+
+### Le résultat, sans détour : le prix ne réagit pas à ces niveaux
+- **Réaction** (BTC 2013-2026, 98 078 contacts de 1 530 sommets et 1 521 creux) : après un contact, le rendement à 4 / 24 / 48 h dans le sens de la clôture, moins la dérive moyenne du marché, ne montre **aucun écart solide à 24 h** (|t| ≥ 3) sur les 12 lignes (sommet ou creux × la clôture tient ou traverse × premier contact ou suivants). Même résultat à 8 % et à 12 %. Le plus marqué, un rejet sous le sommet, donne l'inverse de l'attendu (−0,22 % à 24 h dans le sens de la vente : le prix monte un peu plus que la dérive) et reste insignifiant (t = −1,5).
+- **Probabilité d'aller d'abord d'1 ATR dans le sens de la clôture** (50 % = hasard) : de 43 % à 54 % selon les cas, contre 47 % à 53 % pour des instants au hasard. Pas de différence nette.
+- **Seule trace** : à 4 h, après une clôture qui traverse le VWAP ancré, le prix revient en moyenne de 0,12 % (t ≈ −3,5, pour le sommet comme pour le creux). Moins que les frais d'un aller-retour au marché (0,14 %) : pas exploitable.
+- **Trades** (mêmes règles que pour ta stratégie, 12 sorties, 26 filtres, deux sens, 156 combinaisons) : la règle littérale fait **−0,01 R par trade** (1 939 trades ; +0,01 sur 2013-2021, −0,05 sur 2022-2026). La meilleure variante sur l'apprentissage (« volume ≥ 1,5 × la moyenne et la clôture traverse », stop 5 ATR, objectif 2 R, 48 h) fait +0,05 R puis **+0,02 R** sur le test (intervalle à 90 % de −0,05 à +0,08). Sa statistique t sur l'apprentissage (1,7) est **en dessous** de ce que le hasard donne en essayant 156 combinaisons (≈ 3,2) : aucune variante n'atteint t = 3. Stop serré (sous la structure) : −0,10 R par trade en moyenne ; stop à 5 ATR : le moins mauvais, comme pour tes autres niveaux.
+
+### Ce que ça veut dire
+Sur BTC, un VWAP ancré sur le sommet ou le creux d'un mouvement de 5 % ou plus **n'est pas un niveau où le prix réagit de façon mesurable** (ni rejet, ni rebond, ni cassure), ni plus ni moins que n'importe quelle autre ligne autour de laquelle le prix oscille. Cela ne dit rien de ton tri à l'œil (mouvement que tu juges important, contexte, moment), ni de SOL.
+
+### Dans le terminal
+- **Onglet Stratégie** : tableau des VWAP ancrés sur mouvement ≥ 5 % encore suivis (sommet ou creux, prix de l'ancre, VWAP ancré, distance en ATR, âge, ampleur de la baisse, ▲ / ▼ de la dernière bougie 1 h fermée), plus le verdict du backtest. Aucune alerte Telegram.
+- **Page Backtest, menu « Rapport » → « VWAP ancrés sur un mouvement de 5 % ou plus »** : verdict, tableau de réaction (par ancre, par réaction, par contact, apprentissage / test, probabilité d'1 ATR d'abord, selon la taille du mouvement), variante retenue, classement, sorties, méthode.
+
+### Relancer sur SOL
+```
+python tools/fetch_history.py SOLUSDT
+python tools/run_avwap_swing.py SOLUSDT      # 5 à 20 minutes ; écrit data_local/reports/avwap_SOL.json ; --pct 5 règle la taille du mouvement
+```
 
 ## Ce qui est nouveau en V7 : ta stratégie, traduite en règles et mesurée
 
@@ -323,7 +348,8 @@ engine/             calculs : profils de volume (auto et choisis), séries VWAP 
                     objectifs, score, textes), sigtest.py (rejeu historique face au hasard) ; V6 : fine.py (séries 1 min à 1 h avec sommes cumulées),
                     liqsweep.py (poches visibles dans le prix, balayages), cvd.py (déséquilibre, divergences, absorption), trend.py (tendance de fond),
                     backtest.py (génération des idées, exécution 1 min, frais, métriques, témoins), study.py (rapport complet), history.py (archives Binance) ;
-                    V7 : vwapstrat.py (signaux de ta stratégie, 48 sorties, simulation 5 min), hedge.py (corrélation et portefeuille de couverture), stratstudy.py (protocole, variantes, verdict)
+                    V7 : vwapstrat.py (signaux de ta stratégie, 48 sorties, simulation 5 min), hedge.py (corrélation et portefeuille de couverture), stratstudy.py (protocole, variantes, verdict) ;
+                    V8 : swingavwap.py (zigzag confirmé, VWAP ancrés sur sommet / creux, contacts), swingstudy.py (réaction du prix et trades)
 data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase) ; social.py (posts X, facultatif)
 alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées)
 service.py          relie les données et les moteurs, fabrique l'état JSON
@@ -331,8 +357,8 @@ server.py           serveur local : API, réglages, sécurité
 web/                interface : index.html + style.css ; app.js (Desk, état, alertes), panels.js (les trois graphiques),
                     overview.js (vue d'ensemble), signals.js (idées de trade), analysis.js et charts.js (analyse, graphiques SVG) ;
                     TradingView Lightweight Charts (vendor/)
-tools/              fetch_history.py (historique 1 min Binance), run_study.py (rapport de backtest des idées du terminal) et run_strategy.py (rapport de ta stratégie VWAP / profil de volume)
-reports/            rapports livrés (BTC) : backtest_BTC.json (idées du terminal) et strategy_BTC.json (ta stratégie) ; les tiens vont dans data_local/reports/
+tools/              fetch_history.py (historique 1 min Binance), run_study.py (rapport de backtest des idées du terminal), run_strategy.py (rapport de ta stratégie VWAP / profil de volume) et run_avwap_swing.py (VWAP ancrés sur un mouvement de 5 % ou plus)
+reports/            rapports livrés (BTC) : backtest_BTC.json (idées du terminal), strategy_BTC.json (ta stratégie) et avwap_BTC.json (VWAP ancrés sur un mouvement) ; les tiens vont dans data_local/reports/
 serveur/            installation sur un serveur 24 h/24 (script et guide)
 tests/              tests automatiques (plus de deux cent cinquante)
 ```

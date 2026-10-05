@@ -60,6 +60,24 @@ const Strategy = (() => {
     }
     return out;
   }
+  function swingTable(sw) {
+    const a = (sw && sw.anchors) || [];
+    if (!a.length) return '<div class="muted small">Aucun mouvement de ' + (sw ? Math.round(sw.pct * 100) : 5) + ' % ou plus confirmé sur les 30 derniers jours.</div>';
+    const when = ms => new Date(ms).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit'}) + ' ' + new Date(ms).toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'});
+    const rows = a.map(x => {
+      const t = x.touch ? `<span class="pill ${x.touch.dir > 0 ? 'up' : 'dn'}" title="La dernière bougie 1 h fermée touche ce VWAP ancré et clôture ${x.touch.dir > 0 ? 'au-dessus' : 'en dessous'}">${x.touch.dir > 0 ? '▲ achat' : '▼ vente'}${x.touch.type === 'cross' ? ' ↔' : ''}</span>` : '<span class="muted">·</span>';
+      return `<tr><td>${x.kind === 'H' ? 'sommet' : 'creux'} du ${when(x.t)}</td><td class="r">${px(x.px)}</td><td class="r">${px(x.value)}</td><td class="r muted">${x.distAtr >= 0 ? '+' : '−'}${n1(Math.abs(x.distAtr))} ATR</td><td class="r muted">${n1(x.ageD, 1)} j</td><td class="r muted">${x.depth == null ? '-' : '−' + n1(x.depth * 100, 1) + ' %'}</td><td>${t}</td></tr>`;
+    }).join('');
+    return `<table class="bttab"><thead><tr><th>Ancre</th><th class="r">Prix de l'ancre</th><th class="r">VWAP ancré</th><th class="r">Distance</th><th class="r">Âge</th><th class="r">Baisse</th><th>Bougie 1 h</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  function avwapBox(v) {
+    const r = v.avwapReport;
+    if (!r) return '';
+    const f = m => m && m.expR != null ? `${m.expR >= 0 ? '+' : '−'}${n1(Math.abs(m.expR), 2)} R (${m.n} trades)` : '-';
+    return `<div class="trendbox"><b>Ce que dit le backtest des VWAP ancrés sur mouvement</b> <span class="muted small">${esc(r.label)}${r.proxy ? ' (rapport BTC)' : ''}</span>
+      <div class="small">${esc(r.verdict || '')}</div>
+      <div class="small muted">Meilleure variante : ${esc(r.bestName || '-')} · tout l'historique ${f(r.all)} · depuis 2022 ${f(r.oos)}. Détail : page Backtest, rapport « VWAP ancrés sur mouvement ».</div></div>`;
+  }
   function reportBox(v) {
     const r = v.report;
     if (!r) return '<div class="trendbox muted small">Aucun rapport de backtest de cette stratégie dans <code>reports/</code>.</div>';
@@ -86,6 +104,10 @@ const Strategy = (() => {
       <section class="card"><h2>Niveaux <small>VWAP et VWAP ancrés</small></h2>
         <table class="bttab"><thead><tr><th>Niveau</th><th class="r">Prix</th><th class="r">Distance</th><th>Bougie 1 h</th><th>Bougie 4 h</th></tr></thead><tbody>${lv}</tbody></table>
         <div class="muted small">▲ / ▼ : la dernière bougie fermée touche le niveau et clôture au-dessus / en dessous. ↔ : elle a changé de côté.</div></section>
+      <section class="card"><h2>VWAP ancrés sur un mouvement d'au moins ${Math.round(((v.swing || {}).pct || 0.05) * 100)} % <small>sommet de la baisse = résistance, creux = support</small></h2>
+        ${swingTable(v.swing)}
+        <div class="muted small">Mouvement détecté sans regarder le futur : un sommet n'est connu qu'une fois le prix redescendu de ${Math.round(((v.swing || {}).pct || 0.05) * 100)} %, un creux une fois rebondi d'autant. Suivi pendant 30 jours. Calculé sur les bougies 1 h fermées.</div>
+        ${avwapBox(v)}</section>
       <section class="card"><h2>Volume profile <small>zone de valeur (70 % du volume)</small></h2>
         <table class="bttab"><thead><tr><th>Profil</th><th class="r">VAL</th><th class="r">POC</th><th class="r">VAH</th><th>Clôture 1 h</th><th>Clôture 4 h</th></tr></thead><tbody>${['cw', 'pw', 'cm', 'pm'].map(k => vpRow(k, v.vp[k], v.bars)).join('')}</tbody></table>
         <div class="muted small">Réintégration : la clôture précédente était hors de la zone de valeur et celle-ci est dedans. Rejet : deux clôtures de suite hors de la zone, du même côté.</div></section>

@@ -24,7 +24,7 @@ from engine import sigtest
 from engine import synth as synth_engine
 from engine import trend as trend_engine
 from engine import vpx, vwapx
-from engine import vwapstrat
+from engine import swingavwap, vwapstrat
 from engine.confluence import Level, find_zones
 from engine.liquidity import LiqEngine
 from engine.periods import AnchoredVWAP, KINDS, NakedPocs, PeriodTracker
@@ -448,12 +448,52 @@ class Market:
         up = sorted([p for p in pools if p["price"] > price], key=lambda p: p["price"])[:6]
         dn = sorted([p for p in pools if p["price"] < price], key=lambda p: -p["price"])[:6]
         tdef = {n: (g, f) for n, g, f in vwapstrat.LEVELS}
+        swing = self.swing_view(closed, price, atr)
         return {"ready": True, "symbol": self.symbol, "now": now, "price": price, "atr": atr, "atrPct": atr / price * 100.0,
                 "levels": sorted([{"name": n, "grp": tdef[n][0], "fam": tdef[n][1], "value": v, "distAtr": (price - v) / atr, "side": "below" if v < price else "above"}
                                   for n, v in vals.items()], key=lambda x: -x["value"]),
-                "bars": bars, "vp": {k: ({"val": x.get("val"), "poc": x.get("poc"), "vah": x.get("vah")} if x else None) for k, x in vps.items()},
+                "bars": bars, "swing": swing, "vp": {k: ({"val": x.get("val"), "poc": x.get("poc"), "vah": x.get("vah")} if x else None) for k, x in vps.items()},
                 "pools": {"up": [{k: p[k] for k in ("price", "lo", "hi", "score", "src")} | {"distAtr": (p["price"] - price) / atr} for p in up],
                           "dn": [{k: p[k] for k in ("price", "lo", "hi", "score", "src")} | {"distAtr": (price - p["price"]) / atr} for p in dn]}}
+
+    def swing_view(self, closed, price: float, atr: float, pct: float = 0.05) -> dict:
+        """VWAP ancres sur un mouvement d'au moins 5 % (voir engine/swingavwap.py) encore suivis (30 jours) : sommet de la baisse (resistance) et creux (support),
+        valeur actuelle, distance, et ce que la derniere bougie 1 h fermee fait face a chacun. Calcule sur les 120 derniers jours de bougies 1 h fermees."""
+        seg = closed[-24 * 120:]
+        if len(seg) < 24 * 30:
+            return {"pct": pct, "anchors": []}
+        key = (seg[-1].t, len(seg), pct)
+        cache = getattr(self, "_swing_cache", None)
+        if cache and cache[0] == key:
+            piv, b = cache[1], cache[2]
+        else:
+            b = fine.from_candles(seg, H1)
+            piv = swingavwap.zigzag(b, pct)
+            self._swing_cache = (key, piv, b)
+        n = len(b.t)
+        last = n - 1
+        out = []
+        for a_k, p in enumerate(piv):
+            ia, ic = p["i"], p["ic"]
+            age = (b.t[last] + H1 - b.t[ia]) / DAY
+            if age > swingavwap.MAX_AGE_DAYS or ic >= last:
+                continue
+            v = swingavwap.avwap_at(b, ia, last)
+            if v is None:
+                continue
+            if p["kind"] == "H":
+                depth = (p["px"] - min(b.l[ia:ic + 1] + b.l[ic + 1:last + 1])) / p["px"]
+            else:
+                prev = piv[a_k - 1] if a_k > 0 and piv[a_k - 1]["kind"] == "H" else None
+                depth = (prev["px"] - p["px"]) / prev["px"] if prev else None
+            lo, hi, cl, pc = b.l[last], b.h[last], b.c[last], b.c[last - 1]
+            touch = None
+            if lo <= v <= hi and cl != v:
+                touch = {"dir": 1 if cl > v else -1, "type": "cross" if (pc - v) * (cl - v) < 0 else "bounce"}
+            out.append({"kind": p["kind"], "t": int(b.t[ia]), "tc": int(b.t[ic] + H1), "px": p["px"], "value": v, "distAtr": (price - v) / atr, "side": "below" if v < price else "above",
+                        "ageD": age, "depth": depth, "touch": touch})
+        out.sort(key=lambda x: -x["t"])
+        return {"pct": pct, "maxAgeDays": swingavwap.MAX_AGE_DAYS, "anchors": out[:10]}
 
     def price_pools(self, price: float, atr: float):
         """Poches d'ordres d'arret VISIBLES dans le prix (plus hauts / plus bas de la veille, de la semaine, du mois ; creux et sommets recents ;
@@ -1170,6 +1210,7 @@ class Service:
             out = m.strategy_view()
         out["regime"] = self.regime(symbol)
         out["report"] = reports_mod.strategy_summary(self.report_dirs, symbol)
+        out["avwapReport"] = reports_mod.strategy_summary(self.report_dirs, symbol, "avwap")
         return out
 
     def get_state(self, symbol: str, tf: str) -> dict:

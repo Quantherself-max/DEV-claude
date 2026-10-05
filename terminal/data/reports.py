@@ -4,8 +4,8 @@ import json
 import re
 from pathlib import Path
 
-_LABEL = re.compile(r"^(backtest|strategy)_([A-Za-z0-9]+)\.json$")
-KINDS = ("backtest", "strategy")           # backtest : idees du terminal ; strategy : ta strategie (VWAP / profil de volume)
+_LABEL = re.compile(r"^(backtest|strategy|avwap)_([A-Za-z0-9]+)\.json$")
+KINDS = ("backtest", "strategy", "avwap")           # backtest : idees du terminal ; strategy : ta strategie (VWAP / profil de volume) ; avwap : VWAP ancres sur un mouvement d'au moins 5 %
 
 
 def base_of(symbol: str) -> str:
@@ -45,15 +45,15 @@ def summaries(dirs):
                 continue
             out.append({"kind": kind, "label": lab, "computedAt": r.get("computedAt"), "period": r.get("period"), "verdict": (r.get("verdict") or {}).get("text"),
                         "source": r.get("source"), "own": "data_local" in str(f)})
-    return sorted(out, key=lambda x: (x["kind"] != "backtest", x["label"]))
+    return sorted(out, key=lambda x: (KINDS.index(x["kind"]), x["label"]))
 
 
-def strategy_summary(dirs, symbol: str):
-    """Resume du rapport « ta strategie » pour ce symbole (a defaut celui du BTC, indique comme tel)."""
+def strategy_summary(dirs, symbol: str, kind: str = "strategy"):
+    """Resume du rapport « ta strategie » (kind « strategy ») ou « VWAP ancres sur un mouvement » (kind « avwap ») pour ce symbole (a defaut celui du BTC, indique comme tel)."""
     base = base_of(symbol).upper()
-    rep, proxy = load(dirs, base, "strategy"), False
+    rep, proxy = load(dirs, base, kind), False
     if rep is None:
-        rep, proxy = load(dirs, "BTC", "strategy"), True
+        rep, proxy = load(dirs, "BTC", kind), True
     if not rep:
         return None
     b = rep.get("best") or {}

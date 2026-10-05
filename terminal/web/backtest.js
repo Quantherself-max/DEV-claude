@@ -10,6 +10,8 @@ const Backtest = (() => {
   const dateFr = ms => new Date(ms).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit', year: 'numeric'});
   let LT = null, list = null, label = null, kind = 'backtest', rep = null, loading = false, error = null, sortKey = null, showAll = false;
 
+  const repKind = r => ({'vwap-strategy': 'strategy', 'avwap-swing': 'avwap'})[r.kind] || 'backtest';
+
   async function show() {
     if (loading) return;
     if (!list) {
@@ -22,7 +24,7 @@ const Backtest = (() => {
       const pick = list.find(r => r.kind === 'backtest' && r.label === base) || list.find(r => r.kind === 'backtest' && r.label === 'BTC') || list[0];
       label = pick.label; kind = pick.kind;
     }
-    if (label && (!rep || rep.label !== label || (rep.kind === 'vwap-strategy') !== (kind === 'strategy'))) {
+    if (label && (!rep || rep.label !== label || repKind(rep) !== kind)) {
       loading = true; render();
       try { rep = await LT.api('/api/backtest?label=' + encodeURIComponent(label) + '&kind=' + kind); error = null; } catch (e) { error = e.message; }
       loading = false;
@@ -212,19 +214,19 @@ const Backtest = (() => {
   }
 
   // ---------- rapport « ta stratégie » ----------
-  const sideTxt = s => s === 'inverse' ? 'inverse (le contre)' : 'ta règle (suivre la clôture)';
-  const cfgTxt = c => { const [a, b, h] = c.split('|'); return ({struct: 'stop sous la structure', atr15: 'stop 1,5 ATR', atr3: 'stop 3 ATR', atr5: 'stop 5 ATR'}[a]) + ' · ' + ({pool: 'objectif poche', pool2R: 'poche sinon 2 R', '2R': 'objectif 2 R', poolhalf: 'moitié poche 1, reste poche 2'}[b]) + ' · ' + ({H24: '24 h', H48: '48 h', H24x: '24 h (48 h si volume)'}[h]); };
-  const cfgShort = c => { const [a, b, h] = c.split('|'); return ({struct: 'stop structure', atr15: 'stop 1,5 ATR', atr3: 'stop 3 ATR', atr5: 'stop 5 ATR'}[a]) + ' · ' + ({pool: 'poche', pool2R: 'poche/2R', '2R': '2 R', poolhalf: 'poche ½'}[b]) + ' · ' + ({H24: '24 h', H48: '48 h', H24x: '24→48 h'}[h]); };
+  const sideTxt = s => s === 'inverse' ? 'inverse (le contre de la clôture)' : 'suivre la clôture';
+  const cfgTxt = c => { const [a, b, h] = c.split('|'); return ({struct: 'stop sous la structure', atr15: 'stop 1,5 ATR', atr3: 'stop 3 ATR', atr5: 'stop 5 ATR'}[a]) + ' · ' + ({pool: 'objectif poche', pool2R: 'poche sinon 2 R', poolhalf: 'moitié poche 1, reste poche 2'}[b] || 'objectif ' + b.replace('R', ' R')) + ' · ' + ({H24: '24 h', H48: '48 h', H24x: '24 h (48 h si volume)'}[h]); };
+  const cfgShort = c => { const [a, b, h] = c.split('|'); return ({struct: 'stop structure', atr15: 'stop 1,5 ATR', atr3: 'stop 3 ATR', atr5: 'stop 5 ATR'}[a]) + ' · ' + ({pool: 'poche', pool2R: 'poche/2R', poolhalf: 'poche ½'}[b] || b.replace('R', ' R')) + ' · ' + ({H24: '24 h', H48: '48 h', H24x: '24→48 h'}[h]); };
   const rcell = (m, big) => !m || m.expR == null ? '<td class="r muted">-</td>' : `<td class="r ${rcol(m.expR)}" title="${m.n} trades">${big ? '<b>' + sgn(m.expR) + '</b>' : sgn(m.expR)}</td>`;
 
   function stratVerdict(r) {
-    const b = r.best, lit = r.literal, v = r.verdict, tone = v.level === 'edge' ? 'ok' : v.level === 'weak' ? 'warn' : 'bad';
+    const sw = r.kind === 'avwap-swing', b = r.best, lit = r.literal, v = r.verdict, tone = v.level === 'edge' ? 'ok' : v.level === 'weak' ? 'warn' : 'bad';
     const kp = (t, big, sub, cls = '') => `<div class="kpi"><small>${t}</small><b class="${cls}">${big}</b><span>${sub}</span></div>`;
-    return `<section class="card btv ${tone}"><div class="bthead"><h2>Verdict : ta stratégie <small>${esc(r.label)} · ${dateFr(r.period.start)} → ${dateFr(r.period.end)} · ${r.counts.events.toLocaleString('fr-FR')} signaux, ${r.counts.tests} combinaisons testées</small></h2></div>
+    return `<section class="card btv ${tone}"><div class="bthead"><h2>Verdict : ${sw ? 'VWAP ancrés sur un mouvement de ' + Math.round(r.swing.mainPct * 100) + ' % ou plus' : 'ta stratégie'} <small>${esc(r.label)} · ${dateFr(r.period.start)} → ${dateFr(r.period.end)} · ${r.counts.events.toLocaleString('fr-FR')} ${sw ? 'contacts (dans les deux sens)' : 'signaux'}, ${r.counts.tests} combinaisons testées</small></h2></div>
       <div class="btverdict">${esc(v.text)}</div>
       <ul class="btnotes">${v.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
       <div class="kpis">
-        ${kp('Ta règle, telle quelle', sgn(lit.all.expR) + ' R', `par trade, après frais · ${lit.all.n} trades`, rcol(lit.all.expR))}
+        ${kp(sw ? 'Règle littérale (toute clôture)' : 'Ta règle, telle quelle', sgn(lit.all.expR) + ' R', `par trade, après frais · ${lit.all.n} trades`, rcol(lit.all.expR))}
         ${kp('Meilleure variante : apprentissage', sgn(b.is.expR) + ' R', `${yr(r.period.start)}-${yr(r.period.split) - 1} · ${b.is.n} trades`, rcol(b.is.expR))}
         ${kp('… sur le test (jamais vu)', sgn(b.oos.expR) + ' R', `${yr(r.period.split)}-${yr(r.period.end - 1)} · ${b.oos.n} trades`, rcol(b.oos.expR))}
         ${kp('Avant frais', sgn(b.gross) + ' R', `les frais retirent ${num(b.costR)} R par trade`, rcol(b.gross))}
@@ -273,7 +275,7 @@ const Backtest = (() => {
     const ch = new Set(r.chosenExits || []);
     const rows = r.exits.map(x => `<tr class="${ch.has(x.cfg) ? 'cur' : ''}"><td>${esc(cfgTxt(x.cfg))}${ch.has(x.cfg) ? ' <span class="pill ok">retenue</span>' : ''}</td><td class="r">${x.is.n}</td><td class="r ${rcol(x.is.expR)}"><b>${sgn(x.is.expR)}</b></td><td class="r ${rcol(x.oos.expR)}">${sgn(x.oos.expR)}</td><td class="r">${pc(x.is.winRate)}</td><td class="r">${num(x.is.perWeek, 1)}</td></tr>`).join('');
     return `<section class="card"><h2>Les sorties <small>stop, objectif, durée</small></h2>
-      <div class="muted small">Ta règle telle quelle (toute clôture sur un niveau), jouée avec ${r.exits.length} façons de sortir : stop sous la structure ou à 1,5 / 3 / 5 ATR, objectif sur la poche de liquidité ou à 2 R, durée 24 h, 48 h ou 24 h prolongées à 48 h si le volume de la dernière heure dépasse la moyenne. Classées sur l'apprentissage ; les trois premières sont gardées pour la suite.</div>
+      <div class="muted small">${r.kind === 'avwap-swing' ? 'La règle littérale (toute clôture sur un VWAP ancré)' : 'Ta règle telle quelle (toute clôture sur un niveau)'}, jouée avec ${r.exits.length} façons de sortir (stop, objectif, durée). Classées sur l'apprentissage ; les meilleures sont gardées pour la suite.</div>
       <div class="scroll"><table class="bttab vt"><thead><tr><th>Sortie</th><th class="r">Trades appr.</th><th class="r">Gain appr. (R)</th><th class="r">Gain test (R)</th><th class="r">Réussite</th><th class="r">Par sem.</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
   }
 
@@ -309,6 +311,34 @@ const Backtest = (() => {
       <li>Un résultat passé n'est pas une garantie.</li></ul></section>`;
   }
 
+  function reactionCard(r) {
+    const sizes = r.swing.sizes, main = sizes.find(x => Math.abs(x.pct - r.swing.mainPct) < 1e-9) || sizes[0];
+    const AN = {H: 'sommet de la baisse', L: 'creux de la baisse'}, RE = {tient: 'tient (rejet / rebond)', traverse: 'traverse (cassure)'}, TO = {tous: 'tous', '1er': '1er contact', '2e+': '2e et suivants'};
+    const ex = c => !c ? '<td class="r muted">-</td>' : `<td class="r ${Math.abs(c.t) >= 3 ? (c.ex > 0 ? 'up' : 'dn') : 'muted'}" title="${c.n} contacts, t = ${num(c.t, 1)}">${sgn(c.ex * 100)} %</td>`;
+    const pr = p => !p ? '<td class="r muted">-</td>' : `<td class="r ${Math.abs(p.sigma) >= 3 ? (p.sigma > 0 ? 'up' : 'dn') : 'muted'}" title="${p.n} cas ; hasard ${pc(p.pBase, 1)}">${pc(p.p, 1)}</td>`;
+    const rows = main.reaction.map(x => `<tr><td>${AN[x.anchor]}</td><td>${RE[x.reaction]}</td><td>${TO[x.touch]}</td><td class="r">${x.n}</td>${ex(x.f4)}${ex(x.f24)}${ex(x.f48)}<td class="r ${x.f24 && Math.abs(x.f24.t) >= 3 ? '' : 'muted'}">${x.f24 ? sgn(x.f24.t, 1) : '-'}</td>${ex(x.is24)}${ex(x.oos24)}${pr(x.p)}${pr(x.pOos)}</tr>`).join('');
+    const sens = sizes.map(s => {
+      const cell = (a, re) => { const x = s.reaction.find(y => y.anchor === a && y.reaction === re && y.touch === 'tous'); return x && x.f24 ? `<td class="r ${Math.abs(x.f24.t) >= 3 ? (x.f24.ex > 0 ? 'up' : 'dn') : 'muted'}" title="${x.n} contacts">${sgn(x.f24.ex * 100)} % <small>t ${sgn(x.f24.t, 1)}</small></td>` : '<td class="r muted">-</td>'; };
+      return `<tr><td>≥ ${Math.round(s.pct * 100)} %</td><td class="r">${s.anchorsH + s.anchorsL}</td><td class="r">${s.events.toLocaleString('fr-FR')}</td>${cell('H', 'tient')}${cell('H', 'traverse')}${cell('L', 'tient')}${cell('L', 'traverse')}</tr>`;
+    }).join('');
+    return `<section class="card"><h2>Comment le prix réagit à ces VWAP ancrés <small>mouvement d'au moins ${Math.round(main.pct * 100)} %</small></h2>
+      <div class="muted small">Chaque ligne : après une bougie 1 h qui touche le VWAP ancré, que fait le prix <b>dans le sens de la clôture</b> (au-dessus = achat, en dessous = vente), par rapport à la dérive moyenne du marché ? « Tient » = la clôture reste du même côté qu'avant le contact (rejet sous un sommet, rebond sur un creux) ; « traverse » = elle passe de l'autre côté. Vert / rouge seulement si l'écart est solide (|t| ≥ 3). Dernières colonnes : probabilité d'aller d'abord d'1 ATR dans le sens de la clôture en 24 h (50 % = hasard).</div>
+      <div class="scroll"><table class="bttab vt"><thead><tr><th>VWAP ancré sur le</th><th>La clôture</th><th>Contact</th><th class="r">Fois</th><th class="r">4 h</th><th class="r">24 h</th><th class="r">48 h</th><th class="r">t (24 h)</th><th class="r">Appr. 24 h</th><th class="r">Test 24 h</th><th class="r">1 ATR d'abord</th><th class="r">… test</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="muted small">Selon la taille du mouvement (rendement à 24 h dans le sens de la clôture, tous contacts) :</div>
+      <div class="scroll"><table class="bttab"><thead><tr><th>Mouvement</th><th class="r">Ancres</th><th class="r">Contacts</th><th class="r">Sommet : tient</th><th class="r">Sommet : traverse</th><th class="r">Creux : tient</th><th class="r">Creux : traverse</th></tr></thead><tbody>${sens}</tbody></table></div></section>`;
+  }
+
+  function swingMethod(r) {
+    const pct = Math.round(r.swing.mainPct * 100);
+    return `<section class="card"><h2>Méthode et limites</h2><ul class="btnotes">
+      <li><b>Le mouvement</b> : un zigzag confirmé, sans regarder le futur. Un sommet n'est connu qu'une fois le prix redescendu d'au moins ${pct} % depuis lui ; un creux, une fois remonté d'autant. Le VWAP ancré part de ce sommet (début de la baisse, le prix est dessous : résistance) ou de ce creux (fin de la baisse, le prix est dessus : support), il est suivi ${r.swing.maxAgeDays} jours.</li>
+      <li><b>Le contact</b> : une bougie 1 h fermée qui touche le VWAP ancré ; le sens est le côté de la clôture, comme pour tes autres niveaux. Un même VWAP ancré est touché de nombreuses fois (le prix oscille autour) : la ligne « 1er contact » isole le seul moment où ce niveau est « neuf ».</li>
+      <li><b>Réaction</b> : rendement après 4 / 24 / 48 h moins la dérive moyenne du marché ; erreur-type regroupée par jour (les contacts d'une même journée ne sont pas indépendants, plusieurs ancres se recouvrent). Probabilité d'aller d'abord d'1 ATR dans le bon sens, comparée à des instants au hasard.</li>
+      <li><b>Trades</b> : mêmes règles que pour ta stratégie (entrée au marché à la bougie 5 minutes suivante, frais 0,05 % + glissement 0,02 % + financement), 12 sorties (stop sous la structure, 3 ou 5 ATR ; objectif 1 R ou 2 R ; 24 h ou 48 h), ${r.counts.rules} filtres, deux sens, sortie choisie sur la règle littérale, filtres classés sur l'apprentissage, jugement unique sur le test, témoin au hasard.</li>
+      <li><b>Limites</b> : BTC au comptant (Bitstamp), pas SOL ; le zigzag fixe un seuil unique (5, 8 ou 12 %) alors qu'à l'œil on choisit les mouvements ; plusieurs ancres se recouvrent. Un résultat passé n'est pas une garantie.</li>
+      <li><b>Relancer sur ton actif</b> : <code>python tools/run_avwap_swing.py SOLUSDT</code> après <code>python tools/fetch_history.py SOLUSDT</code>.</li></ul></section>`;
+  }
+
   function render() {
     const root = $('#btBox');
     if (!root) return;
@@ -316,10 +346,11 @@ const Backtest = (() => {
     if (loading && !rep) { root.innerHTML = '<section class="card"><div class="muted">Chargement du rapport…</div></section>'; return; }
     if (!list || !list.length) { root.innerHTML = '<section class="card"><h2>Backtest</h2><div class="muted">Aucun rapport trouvé. Lance <code>python tools/run_study.py BTCUSDT</code> après avoir téléchargé l\'historique (<code>python tools/fetch_history.py BTCUSDT</code>).</div></section>'; return; }
     if (!rep) return;
-    const kname = k => k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : 'idées du terminal';
+    const kname = k => k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : 'idées du terminal';
     const sel = `<div class="btbar"><label>Rapport <select id="btSel">${list.map(x => `<option value="${esc(x.kind)}|${esc(x.label)}" ${x.label === label && x.kind === kind ? 'selected' : ''}>${esc(x.label)} · ${kname(x.kind)}${x.own ? ' (calculé sur tes données)' : ' (livré avec le terminal)'}</option>`).join('')}</select></label>
       <span class="muted small">Calculé le ${dateFr(rep.computedAt)} en ${Math.round(rep.seconds / 60)} min</span></div>`;
     if (rep.kind === 'vwap-strategy') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + stratHedge(rep) + stratMethod(rep) + '</div>'; return; }
+    if (rep.kind === 'avwap-swing') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + reactionCard(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + swingMethod(rep) + '</div>'; return; }
     root.innerHTML = sel + '<div class="btgrid">' + verdictCard(rep) + trendCard(rep) + equityCard(rep) + variantsCard(rep) + eventsCard(rep) + touchCard(rep) + regimeCard(rep) + costsCard(rep) + methodCard(rep) + '</div>';
   }
 

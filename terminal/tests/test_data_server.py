@@ -542,6 +542,14 @@ class ServerTests(unittest.TestCase):
             self.assertIn(k, rep)
         self.assertIn(rep["verdict"]["level"], ("edge", "weak", "none"))
         self.assertEqual(len(rep["exits"]), 48)
+        code, body, _ = self.get("/api/backtest?label=BTC&kind=avwap")
+        self.assertEqual(code, 200)
+        av = json.loads(body)
+        self.assertEqual(av["kind"], "avwap-swing")
+        for k in ("verdict", "best", "literal", "exits", "variants", "swing", "counts"):
+            self.assertIn(k, av)
+        self.assertEqual(len(av["exits"]), 12)
+        self.assertTrue(av["swing"]["sizes"][0]["reaction"])
         self.assertEqual(self.get("/api/backtest?label=BTC&kind=autre")[0], 400)
         self.assertEqual(self.get("/api/backtest?label=XXX&kind=strategy")[0], 404)
 
@@ -553,6 +561,8 @@ class ServerTests(unittest.TestCase):
         self.assertIn("levels", v)
         self.assertIn("report", v)
         self.assertEqual(v["report"]["label"], "BTC")
+        self.assertEqual(v["avwapReport"]["label"], "BTC")
+        self.assertIn("anchors", v["swing"])
         self.assertFalse(v["report"]["proxy"])
         sol = json.loads(self.get("/api/strategy?symbol=SOLUSDT")[1])
         if sol.get("ready"):
