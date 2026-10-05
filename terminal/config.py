@@ -63,6 +63,7 @@ class Config:
     signal_min_struct: float = 7.0        # qualite minimale des niveaux superposes
     signal_leverage: float = 10.0         # levier utilise pour les calculs de liquidation affiches
     signal_valid_hours: int = 48          # duree de validite d'un ordre limite
+    signal_trend_gate: bool = True        # n'envoyer que les idees dans le sens de la tendance de fond (moyennes 50 j / 200 j) : seul filtre valide par le backtest
     # avis d'influenceurs sur X (facultatif, indicatif, hors score) : jeton X (API officielle) + comptes a suivre
     x_on: bool = True
     x_token: str = ""
@@ -112,6 +113,7 @@ def load_config(env_path: Path | None = None) -> Config:
     c.signal_min_struct = max(4.0, min(20.0, float(g("TERMINAL_SIGNAL_MIN_STRUCT", c.signal_min_struct))))
     c.signal_leverage = max(1.0, min(125.0, float(g("TERMINAL_SIGNAL_LEVERAGE", c.signal_leverage))))
     c.signal_valid_hours = max(4, min(168, int(float(g("TERMINAL_SIGNAL_VALID_HOURS", c.signal_valid_hours)))))
+    c.signal_trend_gate = g("TERMINAL_SIGNAL_TREND_GATE", "1").lower() not in ("0", "false", "non", "no")
     c.x_on = g("TERMINAL_X_ON", "1").lower() not in ("0", "false", "non", "no")
     c.x_token = g("TERMINAL_X_BEARER_TOKEN", "").strip()
     from data.social import clean_handles

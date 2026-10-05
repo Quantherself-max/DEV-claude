@@ -62,8 +62,8 @@ class ServiceSignalsTests(unittest.TestCase):
         self.assertEqual(sum(c["max"] for c in i["comps"]), 100)
         self.assertGreater(i["rr1"], 1.4)
         self.assertGreaterEqual(abs(i["entry"] - i["stop"]), 1.5 * s["atr"] - 1e-9)
-        scores = [x["score"] for x in s["ideas"]]
-        self.assertEqual(scores, sorted(scores, reverse=True))
+        rank = lambda x: (0 if x["eligible"] else 1 if not x["gates"] else 2, -x["score"])
+        self.assertEqual([rank(x) for x in s["ideas"]], sorted(rank(x) for x in s["ideas"]))     # celles qui passent les filtres d'abord, puis par score
         text = sg.to_text(i, i["desc"], 1, 3)
         self.assertIsNone(BANNED.search(text), BANNED.search(text))
         self.assertLess(len(text), 3900)
@@ -72,6 +72,43 @@ class ServiceSignalsTests(unittest.TestCase):
             self.assertLess(i["stop"], i["entry"] < i["tp1"] and i["entry"])
         else:
             self.assertGreater(i["stop"], i["entry"])
+
+    def test_price_pools_sweeps_and_detailed_cvd_are_in_the_state(self):
+        st = self.svc.get_state("BTCUSDT", "1h")
+        pp = st["liquidity"]["pricePools"]
+        self.assertTrue(pp, "des poches visibles dans le prix existent toujours (plus haut / plus bas de la veille, creux, sommets)")
+        for p in pp:
+            self.assertIn(p["side"], ("long", "short"))
+            self.assertGreater(p["hi"], p["lo"])
+            self.assertTrue(p["src"])
+            self.assertFalse(p["magnet"])
+        self.assertTrue(any(l["name"].endswith("(prix)") for l in st["levels"]))
+        self.assertTrue(all(l["family"] is None for l in st["levels"] if l["name"].endswith("(prix)")))
+        cv = st["context"]["cvd"]
+        for k in ("swingDiv", "absorb", "imb1", "imb4", "imb24"):
+            self.assertIn(k, cv)
+        json.dumps(st["context"])
+        names = " ".join(p["src"] for p in pp)
+        self.assertIsNone(re.search(r"\b(PDL|PDH|PWL|PWH|PML|PMH)\b", names), names)
+
+    def test_period_profiles_use_five_minute_candles_when_they_cover_the_period(self):
+        from engine import vpx
+        m = self.svc.markets["BTCUSDT"]
+        self.assertTrue(m.store.m5_old, "les bougies 5 min plus anciennes (70 jours) sont chargees")
+        m5 = m.store.fine_m5()
+        self.assertTrue(all(m5[i].t < m5[i + 1].t for i in range(len(m5) - 1)))
+        self.assertGreater(m5[-1].t - m5[0].t, 60 * 86_400_000)
+        st = self.svc.get_state("BTCUSDT", "1h")
+        now = self.svc.source.now_ms()
+        ws = sg.week_start(now)
+        lv = {l["name"]: l["price"] for l in st["levels"]}
+        closed = [k for k in m5 if k.t + 300_000 <= now]
+        ref = vpx.build(closed, ws, now + 300_000, rows_cap=160, hvn_n=1)
+        self.assertIn("wPOC", lv)
+        self.assertAlmostEqual(lv["wPOC"], ref["poc"], places=6)
+        pw = vpx.build(closed, ws - 7 * 86_400_000, ws, rows_cap=160, hvn_n=1)
+        self.assertIn("pwPOC", lv)
+        self.assertAlmostEqual(lv["pwPOC"], pw["poc"], places=6)
 
     def test_announcement_in_the_next_hours_puts_the_idea_on_hold(self):
         s = self.svc.signals("BTCUSDT")

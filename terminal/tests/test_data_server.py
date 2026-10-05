@@ -498,6 +498,33 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.app.desk.week(NOW)["cap"], 2)
         self.assertIn("TERMINAL_SIGNAL_MAX_WEEK=2", self.env.read_text())
         self.post("/api/settings", {"signalMinScore": 60, "signalMaxWeek": 5, "signalLeverage": 10})        # valeurs par defaut
+
+    def test_trend_gate_setting_and_signal_fields(self):
+        code, res = self.post("/api/settings", {"signalTrendGate": False})
+        self.assertEqual(code, 200, res)
+        self.assertFalse(res["signalTrendGate"])
+        self.assertFalse(self.app.cfg.signal_trend_gate)
+        self.assertIn("TERMINAL_SIGNAL_TREND_GATE=0", self.env.read_text())
+        code, res = self.post("/api/settings", {"signalTrendGate": True})
+        self.assertTrue(res["signalTrendGate"])
+        sg = json.loads(self.get("/api/signals?symbol=BTCUSDT")[1])["symbols"]["BTCUSDT"]
+        self.assertIn("regime", sg)
+        self.assertTrue(sg["trendGate"])
+        for i in sg["ideas"]:
+            self.assertIn("align", i)
+            if i["align"] is not None and i["align"] <= 0:
+                self.assertFalse(i["eligible"], "une idee a contre-courant ou en tendance indecise n'est jamais envoyee")
+
+    def test_backtest_endpoint(self):
+        code, body, _ = self.get("/api/backtest")
+        self.assertEqual(code, 200)
+        lst = json.loads(body)["reports"]
+        self.assertTrue(any(r["label"] == "BTC" for r in lst), "le rapport BTC est livre avec le terminal")
+        code, body, _ = self.get("/api/backtest?label=BTC")
+        rep = json.loads(body)
+        for k in ("verdict", "terminal", "variants", "events", "trend", "period"):
+            self.assertIn(k, rep)
+        self.assertEqual(self.get("/api/backtest?label=XXX")[0], 404)
         self.assertEqual(self.app.cfg.signal_max_week, 5)
         code, res = self.post("/api/settings", {"signalOn": False})
         self.assertFalse(res["signalOn"])

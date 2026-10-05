@@ -10,15 +10,19 @@ from bisect import bisect_right
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config import Config
+from config import Config, ROOT
+from data import reports as reports_mod
 from data.store import DataStore, H1, M5, DAY, OI_DAYS
 from engine.atr import INTERVAL_MS, resample, rma_atr
 from engine import bias as bias_engine
+from engine import cvd as cvd_engine
+from engine import fine, liqsweep
 from engine import dominance as dominance_engine
 from engine import macro as macro_engine
 from engine import signals as signals_engine
 from engine import sigtest
 from engine import synth as synth_engine
+from engine import trend as trend_engine
 from engine import vpx, vwapx
 from engine.confluence import Level, find_zones
 from engine.liquidity import LiqEngine
@@ -52,7 +56,7 @@ def family_of(lv: Level):
     if k == "round":
         return "Nombres ronds"
     if k == "liq":
-        return SWEEP_FAMILY
+        return None if (lv.extra.get("pool") or {}).get("src") else SWEEP_FAMILY      # poche visible dans le prix : pas de famille OI
     return None
 
 
@@ -85,6 +89,9 @@ class Market:
         self.sigval = None            # rejeu historique des idees (structure seule), calcule en tache de fond
         self._avs: dict[int, AnchoredVWAP] = {}      # VWAP ancrees supplementaires (dates choisies + extremes automatiques)
         self._sw_cache = (None, [])
+        self._fvp: dict = {}                    # profils de volume fins (bougies 5 min) : (type de periode, debut, derniere bougie) -> niveaux
+        self._pl = (None, None)                 # poches visibles dans le prix : (nombre de bougies 1 h, PriceLiquidity)
+        self._psw_cache = (None, [])
 
     def update(self) -> None:
         self.store.refresh()
@@ -150,6 +157,15 @@ class Market:
         for kind in KINDS:
             p = NAMES[kind]
             s = self.trackers[kind].snapshot(forming)
+            try:
+                fv = self._fine_vp(kind, s)
+            except Exception:
+                fv = None
+            if fv:                                                   # profils plus precis quand les bougies 5 min couvrent la periode
+                if fv["cur"]:
+                    s = {**s, "vp": fv["cur"]}
+                if fv["prev"] and s["prev"]:
+                    s = {**s, "prev": {**s["prev"], "vp": fv["prev"]}}
             add(f"{p}VWAP", s["vwap"], f"{p}VWAP", "vwap", sd=s["sd"])
             if kind != "Y" and s["vwap"] is not None and s["sd"]:
                 add(f"{p}VWAP+2σ", s["vwap"] + 2 * s["sd"], f"{p}VWAP", "band")
@@ -256,6 +272,15 @@ class Market:
                 ctx["cvd"]["div"] = "baissière : le prix monte sans acheteurs agressifs"
             elif p4 < -0.3 and cvd4 > 0:
                 ctx["cvd"]["div"] = "haussière : le prix baisse malgré des acheteurs agressifs (absorption)"
+        try:                                   # flux d'ordres detaille (volume acheteur agressif reel) : divergence sur pivots et absorption
+            if len(m5) > 400:
+                b15 = fine.resample(fine.from_candles(m5[-3 * 288:], M5), 900_000)
+                j = len(b15) - 1 - (1 if b15.t[-1] + 900_000 > now else 0)
+                an = cvd_engine.analyse(b15, j)
+                ctx.setdefault("cvd", {}).update(swingDiv=an["div"], swingDivStrength=an["divStrength"], absorb=an["absorb"],
+                                                 imb1=an["imb1"], imb4=an["imb4"], imb24=an["imb24"])
+        except Exception as e:
+            ctx["errors"]["cvd detaille"] = f"{type(e).__name__}: {str(e)[:100]}"
         pr = s.ctx["premium"]
         if pr:
             f = pr["funding"] * 100
@@ -303,6 +328,76 @@ class Market:
         base = st["family"].get(BASELINE, {}).get(sd or "all")
         return {"reach": reach, "distAtrH1": d, "bounce": sc, "base": base, "bucket": bucket, "side": sd}
 
+    @staticmethod
+    def _prev_start(kind: str, start: int) -> int:
+        if kind == "D":
+            return start - DAY
+        if kind == "W":
+            return start - 7 * DAY
+        d = datetime.fromtimestamp(start / 1000, timezone.utc)
+        m = d.year * 12 + d.month - 2
+        return int(datetime(m // 12, m % 12 + 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+
+    def _fine_vp(self, kind: str, snap: dict):
+        """Profils de volume du jour / de la semaine / du mois (courant et precedent) recalcules sur des bougies 5 min plutot que 1 h :
+        sur l'historique, le POC hebdomadaire sur bougies 1 h s'ecarte en moyenne de 1,2 ATR du profil reel (minute par minute), 0,7 ATR sur 5 min.
+        Renvoie {'cur': niveaux ou None, 'prev': niveaux ou None} ; None quand les bougies fines ne couvrent pas toute la periode (repli sur 1 h)."""
+        if kind not in ("D", "W", "M") or not snap.get("start"):
+            return None
+        m5 = self.store.fine_m5()
+        if not m5:
+            return None
+        last = self.store.m5[-1].t if self.store.m5 else 0
+        key = (kind, snap["start"], last)
+        hit = self._fvp.get(key)
+        if hit is not None:
+            return hit
+        now = self.source.now_ms()
+        closed = [k for k in m5 if k.t + M5 <= now]
+        out = {"cur": None, "prev": None}
+        if closed and closed[0].t <= snap["start"] + M5:
+            r = vpx.build(closed, snap["start"], now + M5, rows_cap=160, hvn_n=1)
+            if r:
+                out["cur"] = {"poc": r["poc"], "vah": r["vah"], "val": r["val"], "hvn": r["hvn"][:1]}
+        ps = self._prev_start(kind, snap["start"])
+        if closed and closed[0].t <= ps + M5 and snap.get("prev"):
+            r = vpx.build(closed, ps, snap["start"], rows_cap=160, hvn_n=1)
+            if r:
+                out["prev"] = {"poc": r["poc"], "vah": r["vah"], "val": r["val"], "hvn": r["hvn"][:1]}
+        if len(self._fvp) > 60:
+            self._fvp.clear()
+        self._fvp[key] = out
+        return out
+
+    def price_pools(self, price: float, atr: float):
+        """Poches d'ordres d'arret VISIBLES dans le prix (plus hauts / plus bas de la veille, de la semaine, du mois ; creux et sommets recents ;
+        niveaux egaux) : elles existent sur tout l'historique, donc elles se testent (voir le rapport Backtest)."""
+        h1 = self.store.closed_h1()
+        if not h1:
+            return []
+        key = (len(h1), h1[-1].t)
+        if self._pl[0] != key:
+            self._pl = (key, liqsweep.PriceLiquidity(fine.from_candles(h1[-24 * 120:], H1)))
+        ext = liqsweep.extremes_from_trackers(self.trackers, self.source.now_ms())
+        return self._pl[1].pools(price, atr, self.source.now_ms(), ext)
+
+    def price_sweeps(self, pools):
+        """Balayages recents de ces poches (bougies 15 min fermees) : meche qui perce la poche puis cloture qui la reprend."""
+        m5 = self.store.m5
+        now = self.source.now_ms()
+        if len(m5) < 200:
+            return []
+        key = (m5[-1].t, len(pools))
+        if self._psw_cache[0] == key:
+            return self._psw_cache[1]
+        b15 = fine.resample(fine.from_candles(m5[-4 * 288:], M5), 900_000)
+        i = len(b15) - 1
+        if b15.t[i] + 900_000 > now:
+            i -= 1                                           # la bougie en formation n'est pas fermee
+        out = liqsweep.detect_sweeps([p for p in pools if p["score"] >= 60], b15, i, now, hours=8) if i > 4 else []
+        self._psw_cache = (key, out)
+        return out
+
     def sweeps(self):
         h1, atrs = self.h1_atrs()
         summ, res = sweep_outcomes(self.liq.events, h1, atrs, self.cfg.stats_horizon, self.cfg.stats_k)
@@ -334,6 +429,14 @@ class Market:
             p["reach"] = pr["reach"] if pr else None
             nm = f"Liq {'longs' if p['side'] == 'long' else 'shorts'}"
             levels.append(Level(f"LIQ|{p['side']}{i}", nm, p["price"], "LIQ", "liq", {"pool": p}))
+        try:
+            pprices = self.price_pools(price, atr)
+        except Exception:                                        # un probleme ici ne doit pas bloquer le reste de l'etat
+            pprices = []
+        for i, p in enumerate(pprices):
+            pr = self._prob_for("above" if p["price"] > price else "below", p["price"] - price, 1)
+            p["reach"] = pr["reach"] if pr else None
+            levels.append(Level(f"LIQ|P{p['side']}{i}", f"Stops {'acheteurs' if p['side'] == 'long' else 'vendeurs'} (prix)", p["price"], "LIQ", "liq", {"pool": p}))
         tol = max(cfg.conf_atr * atr, cfg.conf_min_pct / 100.0 * price)
         sweeps = self.sweeps()
         zones = []
@@ -396,7 +499,7 @@ class Market:
             "levels": lv_out, "zones": zones,
             "ladder": {"above": [z["id"] for z in reversed(above)], "inside": [z["id"] for z in inside],
                        "below": [z["id"] for z in below], "essential": essential},
-            "liquidity": {"pools": liq["pools"], "total": liq["total"], "sumLong": liq["sum_long"],
+            "liquidity": {"pools": liq["pools"], "pricePools": pprices, "total": liq["total"], "sumLong": liq["sum_long"],
                           "sumShort": liq["sum_short"], "steps": self.liq.steps, "oiPoints": len(t.oi)},
             "sweeps": sweeps, "context": self.context(),
             "vp": [{k: pf[k] for k in ("id", "label", "kind", "start", "end", "poc", "vah", "val", "hvn", "bars")} for pf in vps],
@@ -517,6 +620,8 @@ class Service:
         self._sig_cache: dict = {}
         self._fp_cache: dict = {}
         self._plan_cache: dict = {}
+        self._regime_cache: dict = {}
+        self._ev_cache: dict = {}
         self.load_vp()
 
     def attach_ext(self, hub) -> None:
@@ -784,6 +889,33 @@ class Service:
             out["bounce"], out["baseBounce"] = zp.get("bounce"), zp.get("base")
         return out
 
+    @property
+    def report_dirs(self):
+        return [ROOT / "reports", Path(self.cfg.data_dir) / "reports"]
+
+    def regime(self, symbol: str):
+        """Tendance de fond (moyennes 50 j / 200 j sur les clotures horaires fermees), mise en memoire tant qu'une nouvelle bougie n'est pas fermee."""
+        m = self.markets.get(symbol)
+        if m is None or not m.ready:
+            return None
+        with self.lock:
+            h1 = m.store.closed_h1()
+            key = (len(h1), h1[-1].t if h1 else 0)
+            hit = self._regime_cache.get(symbol)
+            if hit and hit[0] == key:
+                return hit[1]
+            st = trend_engine.state([k.c for k in h1[-trend_engine.SLOW_DAYS * 24:]])
+        self._regime_cache[symbol] = (key, st)
+        return st
+
+    def evidence(self, symbol: str):
+        hit = self._ev_cache.get(symbol)
+        if hit and time.time() - hit[0] < 300:
+            return hit[1]
+        ev = reports_mod.evidence(self.report_dirs, symbol)
+        self._ev_cache[symbol] = (time.time(), ev)
+        return ev
+
     def signals(self, symbol: str) -> dict:
         """Idees de trade du moment pour ce symbole : candidates classees par score, rejets et validation historique."""
         m = self.markets.get(symbol)
@@ -804,14 +936,22 @@ class Service:
             cs = list(m.store.closed_h1()[-14:])
             events = [dict(e) for e in m.liq.events[-30:]]
             h1, atrs = m.h1_atrs()
+            try:
+                pprices = list(state["liquidity"].get("pricePools") or [])
+                events += m.price_sweeps(pprices)
+            except Exception as e:
+                pprices = []
+                self.errors[f"balayages {symbol}"] = f"{type(e).__name__}: {e}"
             tab, sigval = m.reach, m.sigval
-        opts = {"min_struct": cfg.signal_min_struct, "valid_hours": cfg.signal_valid_hours, "leverage": cfg.signal_leverage}
+        opts = {"min_struct": cfg.signal_min_struct, "valid_hours": cfg.signal_valid_hours, "leverage": cfg.signal_leverage,
+                "trend_gate": cfg.signal_trend_gate}
+        regime, evidence = self.regime(symbol), self.evidence(symbol)
         vw = {l["name"][0].upper(): l["price"] for l in state["levels"] if l["kind"] == "vwap" and l["name"] in ("wVWAP", "mVWAP", "yVWAP")}
         inp = {"symbol": symbol, "now": now, "price": state["price"], "atr": state["atr"], "levels": state["levels"], "zones": state["zones"],
-               "pools": state["liquidity"]["pools"], "candles": cs, "sweeps": events, "opts": opts}
+               "pools": list(state["liquidity"]["pools"]) + pprices, "candles": cs, "sweeps": events, "opts": opts}
         raw, rejects = signals_engine.build_ideas(inp)
         ctx = {"price": state["price"], "vwap": vw, "flow": synth_engine.flow_score(state["context"]), "macro": an["macro"],
-               "synth": an["synth"], "dom": an["dom"], "is_alt": symbol != "BTCUSDT", "now": now}
+               "synth": an["synth"], "dom": an["dom"], "is_alt": symbol != "BTCUSDT", "now": now, "regime": regime, "evidence": evidence}
         zprob = {z["id"]: z.get("prob") for z in state["zones"]}
         ideas = []
         for idea in raw:
@@ -836,14 +976,19 @@ class Service:
             pub = {k: v for k, v in sc.items() if k not in ("tp1Ref", "tp2Ref")}
             pub["st"] = {**sc["st"], "items": [{k: it[k] for k in ("tf", "fam", "w", "text", "price", "name")} for it in sc["st"]["items"]]}
             ideas.append(pub)
-        ideas.sort(key=lambda i: -i["score"])
+        ideas.sort(key=lambda i: (0 if i["eligible"] else 1 if not i["gates"] else 2, -i["score"]))      # d'abord celles qui passent tous les filtres
         rej = [{"side": r["side"], "S": r["st"]["S"], "label": r["label"], "why": r["why"], "entry": r["entry"]}
                for r in sorted([r for r in rejects if r["distAtr"] <= 12], key=lambda r: -r["st"]["S"])[:4]]
         out = {"ready": True, "on": True, "symbol": symbol, "t": now, "price": state["price"], "atr": state["atr"], "ideas": ideas,
                "rejected": rej, "minScore": cfg.signal_min_score, "maxWeek": cfg.signal_max_week, "minStruct": cfg.signal_min_struct,
-               "validation": sigval, "leverage": cfg.signal_leverage, "warm": m.stats is not None and sigval is not None}
+               "validation": sigval, "leverage": cfg.signal_leverage, "warm": m.stats is not None and sigval is not None,
+               "regime": regime if regime and regime.get("ready") else None, "evidence": evidence, "trendGate": cfg.signal_trend_gate}
         self._sig_cache[symbol] = (time.time(), out)
         return out
+
+    def _trend_brief(self, sym):
+        r = self.regime(sym)
+        return {"regime": r["regime"], "label": r["label"], "distFast": r["distFast"], "distSlow": r["distSlow"]} if r and r.get("ready") else None
 
     def _idea_brief(self, sym):
         """Meilleure idee du moment (resume pour la vue d'ensemble)."""
@@ -874,7 +1019,7 @@ class Service:
                          "oi24": (ctx.get("oi") or {}).get("d24h"), "buy24": (ctx.get("cvd") or {}).get("buy24h"),
                          "ls": ((ctx.get("ls") or {}).get("global") or {}).get("now"),
                          "history": {"bars": (an["bias"] or {}).get("bars"), "since": (an["bias"] or {}).get("since")},
-                         "idea": self._idea_brief(sym)})
+                         "idea": self._idea_brief(sym), "trend": self._trend_brief(sym)})
         g = {}
         if first:
             m = first["macro"]

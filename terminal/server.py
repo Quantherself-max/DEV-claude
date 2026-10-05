@@ -16,6 +16,7 @@ from alerts.notifier import ConsoleNotifier, TelegramNotifier
 from alerts.rules import AlertEngine
 from alerts.trades import OPEN, TradeDesk
 from config import ROOT, load_config, write_env
+from data import reports as reports_mod
 from data.binance import BinanceSource
 from data.live import LiveFeed
 from data.social import Influencers, clean_handles
@@ -187,7 +188,7 @@ class App:
                 "alertMinScore": c.alert_min_score, "alertTf": c.alert_tf, "alertCooldownHours": c.alert_cooldown_hours,
                 "alertMode": c.alert_mode, "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "alertZones": c.alert_zones, "historyYears": c.history_years,
                 "signalOn": c.signal_on, "signalMinScore": c.signal_min_score, "signalMaxWeek": c.signal_max_week,
-                "signalLeverage": c.signal_leverage,
+                "signalLeverage": c.signal_leverage, "signalTrendGate": c.signal_trend_gate,
                 "x": {"on": c.x_on, "configured": bool(c.x_token and c.x_accounts), "tokenHint": ("..." + c.x_token[-4:]) if c.x_token else "",
                       "accounts": list(c.x_accounts), "posts": c.x_posts}}
 
@@ -233,6 +234,8 @@ class App:
             upd["TERMINAL_SIGNAL_MAX_WEEK"] = str(max(1, min(10, int(body["signalMaxWeek"]))))
         if body.get("signalLeverage") is not None:
             upd["TERMINAL_SIGNAL_LEVERAGE"] = str(max(1, min(125, float(body["signalLeverage"]))))
+        if body.get("signalTrendGate") is not None:
+            upd["TERMINAL_SIGNAL_TREND_GATE"] = "1" if body["signalTrendGate"] else "0"
         if body.get("xToken"):
             tok = str(body["xToken"]).strip()
             if len(tok) > 400 or re.search(r"\s", tok):
@@ -318,6 +321,14 @@ def make_handler(app: App):
                             raise KeyError(f"symbole inconnu : {sy}")
                     return self._json({"symbols": {sy: app.service.signals(sy) for sy in syms}, "desk": app.desk.public(app.source.now_ms()),
                                        "on": app.cfg.signal_on})
+                if u.path == "/api/backtest":
+                    lab = (q.get("label") or [""])[0]
+                    if not lab:
+                        return self._json({"reports": reports_mod.summaries(app.service.report_dirs)})
+                    rep = reports_mod.load(app.service.report_dirs, lab)
+                    if rep is None:
+                        raise KeyError(f"rapport introuvable : {lab}")
+                    return self._json(rep)
                 if u.path == "/api/influencers":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     side = (q.get("side") or ["long"])[0]

@@ -15,12 +15,12 @@ Limites assumees : l'historique des poches de liquidation (29 jours), des annonc
 import random
 import time
 
-from . import signals
+from . import signals, trend
 from .confluence import Level, find_zones
 from .periods import NakedPocs, PeriodTracker
 from .stats import atr_series, wilson
 
-VERSION = 1
+VERSION = 2
 TIERS = (7.0, 9.0, 11.0)
 WARMUP = 24 * 60
 DAY_MS = 86_400_000
@@ -148,6 +148,16 @@ def replay(candles, atrs=None, params=None, seed=5, step=2, ctrl_n=3, max_week=5
     if n < WARMUP + 24 * 30:
         return {"ready": False, "bars": n}
     rnd = random.Random(seed)
+    # tendance de fond a chaque bougie (moyennes 50 j / 200 j des clotures horaires) : None tant que 200 jours d'historique manquent
+    reg = [None] * n
+    nf, ns = trend.FAST_DAYS * 24, trend.SLOW_DAYS * 24
+    cs, run = [0.0], 0.0
+    for k_ in candles:
+        run += k_.c
+        cs.append(run)
+    for q in range(ns - 1, n):
+        px_, fa, sl = candles[q].c, (cs[q + 1] - cs[q + 1 - nf]) / nf, (cs[q + 1] - cs[q + 1 - ns]) / ns
+        reg[q] = 1 if px_ > fa and px_ > sl else -1 if px_ < fa and px_ < sl else 0
     tr = {k: PeriodTracker(k) for k in ("D", "W", "M", "Y")}
     nd, nw = NakedPocs(30), NakedPocs(12)
     cur_vp: dict = {}
@@ -199,8 +209,14 @@ def replay(candles, atrs=None, params=None, seed=5, step=2, ctrl_n=3, max_week=5
             sd_ = abs(idea["entry"] - idea["stop"]) / a
             td = abs(idea["tp1"] - idea["entry"]) / a
             ctrl = []
+            align = None if reg[i] is None else reg[i] * sgn
             for _ in range(ctrl_n):
                 j0 = rnd.randrange(WARMUP, n - o["valid_hours"] - 74)
+                if align is not None:                                  # temoin dans la MEME tendance (aligne / indecise / a contre-courant)
+                    for _try in range(60):
+                        if reg[j0] is not None and reg[j0] * sgn == align:
+                            break
+                        j0 = rnd.randrange(WARMUP, n - o["valid_hours"] - 74)
                 cp, ca = candles[j0].c, atrs[j0]
                 if not ca:
                     continue
@@ -208,7 +224,7 @@ def replay(candles, atrs=None, params=None, seed=5, step=2, ctrl_n=3, max_week=5
                 s_ = e - sgn * sd_ * ca
                 t_ = e + sgn * td * ca
                 ctrl.append(simulate(candles, j0, idea["side"], e, s_, t_, market, o["valid_hours"]))
-            ideas_all.append((k.t, (k.t // DAY_MS + 3) // 7, idea["st"]["S"], idea["side"], res, ctrl))
+            ideas_all.append((k.t, (k.t // DAY_MS + 3) // 7, idea["st"]["S"], idea["side"], res, ctrl, align))
     first_w = (candles[WARMUP].t // DAY_MS + 3) // 7
     last_w = (candles[-1].t // DAY_MS + 3) // 7
     total_w = max(1, last_w - first_w + 1)
@@ -242,9 +258,14 @@ def replay(candles, atrs=None, params=None, seed=5, step=2, ctrl_n=3, max_week=5
         x = [t for t in sel if t[3] == sd]
         real, ctrl = _agg([t[4] for t in x]), _agg([c for t in x for c in t[5]])
         sides[sd] = {"real": real, "ctrl": ctrl, "verdict": verdict(real, ctrl)}
+    trend_split = {}
+    for name, a in (("aligned", 1), ("counter", -1), ("neutral", 0)):
+        x = [t for t in sel if t[6] == a]
+        real, ctrl = _agg([t[4] for t in x]), _agg([c for t in x for c in t[5]])
+        trend_split[name] = {"real": real, "ctrl": ctrl, "verdict": verdict(real, ctrl)}
     return {"ready": True, "version": VERSION, "bars": n, "from": candles[WARMUP].t, "to": candles[-1].t,
             "computedAt": int(time.time() * 1000), "seconds": round(time.time() - t0, 1), "ideas": len(ideas_all),
-            "weeks": total_w, "cap": max_week, "tiers": tiers, "sides": sides,
+            "weeks": total_w, "cap": max_week, "tiers": tiers, "sides": sides, "trend": trend_split,
             "params": {"minStruct": min_s, "validHours": o["valid_hours"], "holdHours": 72, "step": step, "ctrl": ctrl_n}}
 
 
@@ -270,6 +291,11 @@ def validation_text(val, S, side=None):
     since = time.strftime("%m/%Y", time.gmtime(val["from"] / 1000))
     base = (f"Rejeu de la structure depuis {since} (zones de qualité ≥ {t['minS']:.0f}, sans poches ni annonces) : "
             f"{r['n']} idées, {r['filled']} exécutées ; objectif 1 atteint avant le stop dans {r['win']['p'] * 100:.0f} % des cas résolus "
-            f"({r['win']['lo'] * 100:.0f}-{r['win']['hi'] * 100:.0f} %), contre {c['win']['p'] * 100:.0f} % pour des entrées au hasard de même forme. ")
-    return base + {"edge": "→ MIEUX que le hasard.", "none": "→ pas de différence prouvée avec le hasard : à prendre comme un scénario, pas comme un avantage démontré.",
-                   "worse": "→ moins bien que le hasard.", "thin": "→ trop peu de cas pour conclure."}[t["verdict"]]
+            f"({r['win']['lo'] * 100:.0f}-{r['win']['hi'] * 100:.0f} %), contre {c['win']['p'] * 100:.0f} % pour des entrées au hasard de même forme dans la même tendance. ")
+    out = base + {"edge": "→ MIEUX que le hasard.", "none": "→ pas de différence prouvée avec le hasard : à prendre comme un scénario, pas comme un avantage démontré.",
+                  "worse": "→ moins bien que le hasard.", "thin": "→ trop peu de cas pour conclure."}[t["verdict"]]
+    tr = (val.get("trend") or {}).get("aligned")
+    if tr and tr["real"]["tp"] + tr["real"]["sl"] >= 20 and tr["real"]["win"]["p"] is not None and tr["ctrl"]["win"]["p"] is not None:
+        out += (f" Dans le sens de la tendance de fond (moyennes 50 et 200 jours) : {tr['real']['n']} idées, objectif 1 avant le stop dans {tr['real']['win']['p'] * 100:.0f} % des cas, "
+                f"contre {tr['ctrl']['win']['p'] * 100:.0f} % au hasard dans la même tendance.")
+    return out

@@ -14,6 +14,7 @@ H1 = 3_600_000
 M5 = 300_000
 DAY = 86_400_000
 OI_DAYS = 29       # Binance ne donne l'OI 5 min que sur ~30 jours
+M5_FINE_DAYS = 70  # bougies 5 min gardees pour les profils de volume du jour, de la semaine et du mois (courants et precedents)
 EARLIEST = 1_567_296_000_000      # 2019-09-01 : debut des futures perpetuels Binance (BTC)
 CACHE_VERSION = 1
 
@@ -40,6 +41,8 @@ class DataStore:
         self._saved_n = 0
         self.h1: list[Candle] = []
         self.m5: list[Candle] = []
+        self.m5_old: list[Candle] = []                       # bougies 5 min plus anciennes que m5 (profils de volume precis)
+        self._m5_old_try = 0.0
         self.oi: dict[int, float] = {}                       # ouverture de la bougie 5 min -> OI a sa fin
         self.oi_t: list[int] = []                            # memes donnees, triees (recherche par date)
         self.oi_v: list[float] = []
@@ -89,6 +92,7 @@ class DataStore:
         s5 = self.m5[-1].t if self.m5 else now - OI_DAYS * DAY
         s5 -= s5 % M5
         merge(self.m5, self.source.candles(self.symbol, "5m", s5, now))
+        self._load_old_m5(now)
         so = (self.oi_t[-1] + M5 + M5) if self.oi_t else now - OI_DAYS * DAY
         for ts, v in self.source.open_interest(self.symbol, "5m", so, now):
             k = ts - M5
@@ -100,6 +104,25 @@ class DataStore:
         self.last_refresh = now
         self.last_error = None
         self._save_cache()
+
+    def _load_old_m5(self, now: int) -> None:
+        """Une seule fois : les bougies 5 min des (M5_FINE_DAYS - OI_DAYS) jours qui precedent m5. Un echec n'arrete rien (nouvel essai dans l'heure)."""
+        if self.m5_old or not self.m5 or time.time() - self._m5_old_try < 3600:
+            return
+        self._m5_old_try = time.time()
+        a = now - M5_FINE_DAYS * DAY
+        a -= a % M5
+        b = self.m5[0].t - M5
+        if b <= a:
+            return
+        try:
+            self.m5_old = [k for k in self.source.candles(self.symbol, "5m", a, b) if k.t < self.m5[0].t]
+        except Exception:
+            self.m5_old = []
+
+    def fine_m5(self) -> list:
+        """Toutes les bougies 5 min disponibles (anciennes + recentes), dans l'ordre."""
+        return self.m5_old + self.m5 if self.m5_old else self.m5
 
     def refresh_context(self) -> None:
         """Donnees de contexte (V2). Chacune peut echouer sans bloquer le reste."""

@@ -59,20 +59,26 @@ const Signals = (() => {
     return arr.map(x => /^\s{2}•/.test(x) ? `<li class="sub">${esc(x.replace(/^\s*•\s*/, ''))}</li>` : `<li class="${cls || ''}">${esc(x)}</li>`).join('');
   }
 
+  const GATE_SHORT = [[/^l'idée va contre la tendance/, 'contre la tendance de fond'], [/^tendance de fond indécise/, 'tendance de fond indécise'], [/^pas assez de liquidité/, 'pas assez de liquidité'],
+    [/^le contexte macro/, 'macro contraire']];
+  const shortGate = g => { const m = GATE_SHORT.find(([re]) => re.test(g)); return m ? m[1] : g.length > 42 ? g.slice(0, 40) + '…' : g; };
+
   function card(i, sg, trade) {
     const buy = i.side === 'long', col = buy ? 'up' : 'dn', d = i.desc;
     const status = trade ? (trade.status === 'closed' ? RESULT[trade.result] : STATUS[trade.status]) : null;
     const sent = trade ? `<span class="pill ${status ? status[1] : ''}">${esc(status ? status[0] : '')}</span>` : '';
     const gate = (i.gates || [])[0];
-    const state = trade ? sent : gate ? `<span class="pill warn" title="${esc(i.gates.join(' · '))}">Filtre : ${esc(gate.split(' (')[0])}</span>` : i.hold.length ? `<span class="pill warn" title="${esc(i.hold.join(' · '))}">En attente : annonce</span>`
+    const state = trade ? sent : gate ? `<span class="pill warn" title="${esc(i.gates.join(' · '))}">Filtre : ${esc(shortGate(gate))}</span>` : i.hold.length ? `<span class="pill warn" title="${esc(i.hold.join(' · '))}">En attente : annonce</span>`
       : i.eligible ? '<span class="pill up">Au-dessus du seuil</span>' : `<span class="pill muted">Sous le seuil (${sg.minScore})</span>`;
+    const al = i.align, tpill = al == null ? '' : al > 0 ? '<span class="pill up" title="Le cours est du même côté des moyennes de 50 et 200 jours que l\'idée : c\'est la seule catégorie qui a rapporté dans le backtest">Dans le sens de la tendance</span>'
+      : al < 0 ? '<span class="pill dn" title="Idée à contre-courant : la catégorie qui a perdu dans le backtest">À contre-courant</span>' : '<span class="pill warn" title="Cours entre les moyennes de 50 et 200 jours : aucun avantage mesuré">Tendance indécise</span>';
     const comps = i.comps.map(c => `<div class="cmp"><span>${esc(c.label)}</span><i><b style="width:${Math.round(100 * c.pts / c.max)}%"></b></i><em>${c.pts.toFixed(0)}/${c.max}</em></div>`).join('');
     const best = sg.ideas.find(x => x.eligible);
     const shown = LT.st.planOn && (LT.st.planKey === i.key || (LT.st.planKey == null && best && best.key === i.key));
     return `<div class="idea ${col}">
       <div class="ihead"><b class="side ${col}">${buy ? 'ACHAT' : 'VENTE'}</b><span class="muted small">${esc(KIND[i.kind] || i.kind)}</span>
         <span class="score ${tone(i.score)}" title="Qualité de l'idée sur 100">${i.score.toFixed(0)}<small>/100</small></span></div>
-      <div class="irow">${state}<span class="muted small">${esc(i.grade)} · niveaux : qualité ${String(i.st.S.toFixed(1)).replace('.', ',')}</span></div>
+      <div class="irow">${state}${tpill}<span class="muted small">${esc(i.grade)} · niveaux : qualité ${String(i.st.S.toFixed(1)).replace('.', ',')}</span></div>
       <table class="plan">
         <tr><td>Entrée</td><td><b>${px(i.entry)}</b></td><td class="muted">${i.entryType === 'marché' ? 'près du prix actuel' : `ordre limite, à ${LT.num(i.distAtr * i.atrPct)} % du prix`}</td></tr>
         <tr><td>Stop</td><td><b class="dn">${px(i.stop)}</b></td><td class="muted">${chg(i.stop, i.entry)} (sortie si l'idée est fausse)</td></tr>
@@ -82,6 +88,7 @@ const Signals = (() => {
       <div class="ibtns">${shown ? '<button data-plan-off="1">Masquer sur le graphique</button>' : `<button data-plan="${esc(i.key)}">Voir sur le graphique</button>`}</div>
       <details data-key="${esc(i.key)}" ${open.has(i.key) ? 'open' : ''}><summary>Tout comprendre : pourquoi, contexte, probabilités</summary>
         <h5>Quoi faire</h5><ul>${lines(d.action)}</ul>
+        ${d.trend && d.trend.length ? `<h5>Tendance de fond</h5><ul>${lines(d.trend)}</ul>` : ''}
         <h5>Pourquoi ici</h5><ul>${lines(d.why)}</ul>
         ${d.macro && d.macro.length ? `<h5>Contexte macro</h5><ul>${lines(d.macro)}</ul>` : ''}
         ${d.news.length ? `<h5>Annonces économiques</h5><ul>${lines(d.news)}</ul>` : ''}
@@ -91,6 +98,16 @@ const Signals = (() => {
         <h5>Prudence</h5><ul>${lines(d.risks, 'warnl')}${i.hold.length ? lines(i.hold.map(h => 'En attente : ' + h), 'warnl') : ''}${(i.gates || []).length ? lines(i.gates.map(g => 'Filtre : ' + g), 'warnl') : ''}</ul>
         ${xBlock(i, sg.symbol)}
       </details></div>`;
+  }
+
+  function trendBox(sg) {
+    const r = sg.regime, ev = sg.evidence;
+    if (!r) return '<div class="trendbox muted small">Tendance de fond : pas assez d\'historique (200 jours) pour la calculer.</div>';
+    const cls = r.regime > 0 ? 'up' : r.regime < 0 ? 'dn' : 'amb';
+    const what = r.regime > 0 ? 'Seuls les <b>achats</b> sont retenus.' : r.regime < 0 ? 'Seules les <b>ventes</b> sont retenues.' : 'Aucune idée n\'est retenue tant que le cours reste entre les deux moyennes.';
+    const stat = ev && ev.aligned != null ? ` Mesuré sur ${esc(ev.label)} : <b class="up">${LT.num(ev.aligned, 2)} R</b> par trade dans le sens de la tendance, <b class="dn">${LT.num(ev.counter, 2)} R</b> à contre-courant (voir la page Backtest).` : '';
+    return `<div class="trendbox"><b class="${cls}">Tendance de fond : ${esc(r.label)}</b> <span class="muted small">cours ${px(r.price)} · moyenne 50 j ${px(r.fast)} (${LT.sPct(r.distFast)}) · moyenne 200 j ${px(r.slow)} (${LT.sPct(r.distSlow)})</span>
+      <div class="small">${sg.trendGate ? what : 'Filtre désactivé dans les réglages : les idées à contre-courant sont aussi proposées.'}${stat}</div></div>`;
   }
 
   function validation(v, minS) {
@@ -133,7 +150,7 @@ const Signals = (() => {
       <div class="week"><span class="dots">${dots}</span><b>${w.sent}/${w.cap}</b> idées envoyées · seuil de qualité <b>${sg.minScore}/100</b> (la dernière place exige ${sg.minScore + 8})</div>
       ${desk.waiting && desk.waiting.why ? `<div class="muted small">${esc(desk.waiting.why)}</div>` : ''}
       <div class="muted small">Idées d'achat ou de vente fondées sur trois piliers : les <b>liquidités</b> (poches d'ordres d'arrêt), les <b>VWAP et VWAP ancrés</b> (de l'heure à l'année) et le <b>contexte macro</b>. Rien n'est envoyé sous le seuil ni sans liquidité ou avec une macro nettement contraire : mieux vaut aucune idée qu'une idée moyenne.</div></section>`;
-    html += `<section class="card"><h2>Idées du moment <small>${esc(sym)}</small></h2>${ideas.length
+    html += `<section class="card"><h2>Idées du moment <small>${esc(sym)}</small></h2>${trendBox(sg)}${ideas.length
       ? ideas.map(i => card(i, sg, matchTrade(i))).join('')
       : '<div class="muted">Aucune configuration ne passe les filtres pour l\'instant. C\'est normal : une bonne idée est rare.</div>'}`;
     if (sg.rejected && sg.rejected.length) {

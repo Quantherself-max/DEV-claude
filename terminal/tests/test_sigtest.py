@@ -104,6 +104,25 @@ class ReplayTests(unittest.TestCase):
         again = sigtest.replay(self.cs)
         self.assertEqual(again["tiers"], self.res["tiers"])
 
+    def test_trend_split_with_same_trend_controls(self):
+        """420 jours d'historique : la tendance de fond (200 j) existe pour la derniere partie ; les idees sont ventilees dans le sens / contre / indecise."""
+        r = self.res
+        self.assertEqual(sorted(r["trend"]), ["aligned", "counter", "neutral"])
+        n = sum(r["trend"][k]["real"]["n"] for k in r["trend"])
+        self.assertGreater(n, 0)
+        for k in r["trend"]:
+            self.assertIn(r["trend"][k]["verdict"], ("edge", "none", "worse", "thin"))
+        self.assertEqual(r["version"], sigtest.VERSION)
+        self.assertGreaterEqual(sigtest.VERSION, 2)
+
+    def test_validation_text_mentions_trend_when_enough_cases(self):
+        fake = {"ready": True, "from": 1_600_000_000_000, "tiers": [{"minS": 7.0, "verdict": "none", "real": {"n": 50, "filled": 40, "tp": 15, "sl": 20, "win": {"p": 0.43, "lo": 0.3, "hi": 0.56}},
+                                                                        "ctrl": {"win": {"p": 0.4, "lo": 0.3, "hi": 0.5}}}],
+                "trend": {"aligned": {"real": {"n": 30, "tp": 12, "sl": 12, "win": {"p": 0.5, "lo": 0.3, "hi": 0.7}}, "ctrl": {"win": {"p": 0.42, "lo": 0.3, "hi": 0.5}}}}}
+        t = sigtest.validation_text(fake, 8.0)
+        self.assertIn("Dans le sens de la tendance de fond", t)
+        self.assertIn("50 %", t)
+
     def test_too_short_history_is_not_ready(self):
         self.assertFalse(sigtest.replay(self.cs[:500])["ready"])
 

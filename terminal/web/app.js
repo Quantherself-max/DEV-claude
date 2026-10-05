@@ -58,7 +58,7 @@ function explain(name) {
   return '';
 }
 
-const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, sel: null, key: null, version: 0, cfg: null, tab: 'levels',
+const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools: true, sel: null, key: null, version: 0, cfg: null, tab: 'levels',
   statSide: 'all', lastBar: 0, lastBarObj: null, heat: null, liqs: null, an: null, series: null, vpd: null, serN: 0, vpFocus: null,
   liqOpts: {hours: 168, pools: true, sweeps: true, real: true, profile: true},
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
@@ -122,13 +122,14 @@ const panels = [];
 const LAYOUTS = {'1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp']};
 const needs = k => LAYOUTS[st.layout].includes(k) && st.page === 'desk';
 function savePrefs() {
-  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn})); } catch (e) { /* stockage indisponible */ }
+  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn})); } catch (e) { /* stockage indisponible */ }
 }
 function loadPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem('liqPrefs') || '{}');
     if (['ess', 'conf', 'all'].includes(p.mode)) st.mode = p.mode;
     if (typeof p.pools === 'boolean') st.pools = p.pools;
+    if (typeof p.ppools === 'boolean') st.ppools = p.ppools;
     Object.assign(st.liqOpts, p.liqOpts || {}); Object.assign(st.vpOpts, p.vpOpts || {});
     if (LAYOUTS[p.layout]) st.layout = p.layout;
     if (typeof p.side === 'boolean') st.sideOpen = p.side;
@@ -324,6 +325,15 @@ function renderPools(d) {
     `<div class="muted" style="font-size:11px">au-dessus ${up.toFixed(0)} % · en dessous ${(100 - up).toFixed(0)} % · ${q.total} poches détectées → ${pools.length} retenues</div>`;
   $('#pools').innerHTML = h;
 }
+function renderPricePools(d) {
+  const el = $('#pricePools'); if (!el) return;
+  const ps = (d.liquidity.pricePools || []).slice().sort((a, b) => b.price - a.price), px = livePrice(d);
+  el.innerHTML = ps.length ? ps.map(p => {
+    const c = p.side === 'long' ? UP : DN, dist = (p.price / px - 1) * 100;
+    return `<div class="row"><span class="ar" style="color:${c}">${p.side === 'long' ? '▼' : '▲'}</span><span class="nm">${esc(p.src)}</span><span class="pv">${fmtP(p.price)}</span>` +
+      `<span class="sub">${fmtPct(dist)} · ${p.side === 'long' ? 'ordres d\'arrêt des acheteurs sous ce niveau' : 'ordres d\'arrêt des vendeurs au-dessus'} · force ${p.score}<div class="bar"><i style="width:${p.score}%;background:${c}"></i></div></span></div>`;
+  }).join('') : '<div class="muted">Aucun plus haut / plus bas notable dans la fenêtre.</div>';
+}
 function renderPools2(d) {
   const el = $('#pools2'); if (!el) return;
   const ps = d.liquidity.pools.map((p, i) => ({p, i})).sort((a, b) => b.p.size * b.p.price - a.p.size * a.p.price);
@@ -512,7 +522,7 @@ function select(sel) {
   st.sel = sel; st.version++;
   if (st.data) {
     panels.forEach(p => p.rebuildLines());
-    renderLadder(st.data); renderPools(st.data); renderPools2(st.data); renderDetail(st.data);
+    renderLadder(st.data); renderPools(st.data); renderPricePools(st.data); renderPools2(st.data); renderDetail(st.data);
     const d2 = $('#detail2'); if (d2) { d2.className = $('#detail').className; d2.innerHTML = $('#detail').innerHTML; }
   }
 }
@@ -575,7 +585,7 @@ function pushBars(d) {
 function apply(d) {
   st.data = d;
   pushBars(d); header(d); panels.forEach(p => p.rebuildLines());
-  renderLadder(d); renderPools(d); renderPools2(d); renderDetail(d); renderContext(d); renderStats(d);
+  renderLadder(d); renderPools(d); renderPricePools(d); renderPools2(d); renderDetail(d); renderContext(d); renderStats(d);
   st.version++;
 }
 let timer = null;
@@ -630,7 +640,7 @@ $('#stats').addEventListener('click', e => {
 });
 
 // ---------- workspace : pages, menu lateral, mise en page ----------
-const PAGES = {desk: 'Desk', overview: 'Overview', analysis: 'Analyse'};
+const PAGES = {desk: 'Desk', overview: 'Overview', backtest: 'Backtest', analysis: 'Analyse'};
 const SUBS = {synth: 'Biais & probabilités', macro: 'Macro & annonces', dom: 'Dominance BTC / alts', plan: 'Plan de trade', lex: 'Lexique du graphique'};
 function navigate(page, sub) {
   if (!PAGES[page]) page = 'desk';
@@ -642,6 +652,7 @@ function navigate(page, sub) {
   if (page === 'analysis') Analysis.show(st.sub);
   if (page === 'desk') setTimeout(() => { syncRange(); refreshAll(); }, 60);
   if (page === 'overview') pollOverview();
+  if (page === 'backtest') Backtest.show();
   try { localStorage.setItem('liqPage', page + (page === 'analysis' ? '/' + st.sub : '')); } catch (e) { /* rien */ }
 }
 function routeFromHash() {
@@ -860,7 +871,7 @@ async function openSettings() {
     $('#aMacro').checked = s.alertMacro !== false;
     const x = s.x || {}; $('#xOn').checked = x.on !== false; $('#xAccounts').value = (x.accounts || []).join(', '); $('#xPosts').value = String(x.posts || 10);
     $('#xToken').value = ''; $('#xToken').placeholder = x.tokenHint ? `jeton enregistré (${x.tokenHint}) : laisse vide pour le garder` : 'Bearer token X (API officielle)'; $('#xRes').textContent = '';
-    $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sLev').value = s.signalLeverage;
+    $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sLev').value = s.signalLeverage; $('#sTrend').checked = s.signalTrendGate !== false;
   } catch (e) { $('#saveRes').textContent = 'Erreur : ' + e.message; }
 }
 const closeSettings = () => { M.hidden = true; };
@@ -902,7 +913,7 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
   const body = {source: src, symbols: $('#symbols').value.split(/[\s,;]+/).filter(Boolean), telegramChatId: $('#tgChat').value.trim(),
     alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMode: $('#aMode').value, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, historyYears: +$('#histYears').value,
     xOn: $('#xOn').checked, xAccounts: $('#xAccounts').value, xPosts: +$('#xPosts').value,
-    signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalLeverage: +$('#sLev').value};
+    signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalLeverage: +$('#sLev').value, signalTrendGate: $('#sTrend').checked};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();
   if ($('#xToken').value.trim()) body.xToken = $('#xToken').value.trim();
   await api('/api/settings', body);
@@ -940,6 +951,7 @@ function openSymbol(sym, page) {
     shownPools, levelColor, livePrice, placeLabels, usdFmt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
   Overview.init(window.LT);
   Signals.init(window.LT);
+  Backtest.init(window.LT);
   createPanels();
   buildControls(cfg);
   Analysis.init(window.LT);

@@ -54,6 +54,7 @@ DEFAULTS = {
     "leverage": 10.0,
     "min_liq_pts": 6.0,       # filtre : points de liquidite minimaux (sur 30)
     "min_macro_pts": 5.0,     # filtre : points de macro minimaux (sur 20) ; en dessous, la macro va nettement contre l'idee
+    "trend_gate": True,       # filtre : seulement les idees dans le sens de la tendance de fond (moyennes 50 j et 200 j), seul filtre valide par le backtest
 }
 
 
@@ -403,12 +404,29 @@ def score_idea(idea: dict, c: dict, o: dict | None = None) -> dict:
     else:
         comps.append({"key": "flow", "label": "Flux d'ordres", "pts": 4.0 + 4.0 * _clip(sgn * fs), "max": 8,
                       "note": "; ".join(t for s, t in fnotes if s * sgn > 0.15) or "ne soutient ni n'empêche"})
-    # 5) tendance de fond (7)
+    # 5) tendance de fond (7) : moyennes 50 j / 200 j si disponibles (c'est ce que mesure le backtest), sinon position face aux VWAP
     tr = trend_score(c["price"], c.get("vwap") or {})
-    if sgn * tr < -0.3:
-        warn.append("l'idée va contre la tendance de fond (prix " + ("sous" if tr < 0 else "au-dessus de") + " les VWAP de la semaine, du mois et de l'année) : plus risquée")
-    comps.append({"key": "trend", "label": "Tendance de fond", "pts": max(0.0, min(7.0, 3.5 + 3.5 * sgn * tr)), "max": 7,
-                  "note": ("dans le sens de la tendance de fond" if sgn * tr > 0.3 else "contre la tendance de fond" if sgn * tr < -0.3 else "tendance de fond neutre")})
+    rg = c.get("regime")
+    align = (rg["regime"] * sgn) if rg and rg.get("ready") else None
+    if align is not None:
+        side_word = "au-dessus des" if rg["regime"] > 0 else "sous les" if rg["regime"] < 0 else "entre les"
+        t_pts = 7.0 if align > 0 else 3.5 if align == 0 else 0.0
+        t_note = (f"dans le sens de la tendance de fond ({fmt_price(rg['price'])} {side_word} moyennes de {rg['fastDays']} et {rg['slowDays']} jours)" if align > 0 else
+                  f"tendance de fond indécise (cours entre les moyennes de {rg['fastDays']} et {rg['slowDays']} jours)" if align == 0 else
+                  f"CONTRE la tendance de fond (cours {side_word} moyennes de {rg['fastDays']} et {rg['slowDays']} jours)")
+        comps.append({"key": "trend", "label": "Tendance de fond", "pts": t_pts, "max": 7, "note": t_note})
+        ev = c.get("evidence") or {}
+        stat = (f" Mesuré sur {ev['label']} : {fmt_num(ev['aligned'], 2)} fois le risque gagné en moyenne par trade dans le sens de la tendance, "
+                f"{fmt_num(ev['counter'], 2)} à contre-courant." if ev.get("aligned") is not None and ev.get("counter") is not None else "")
+        if o.get("trend_gate") and align < 0:
+            gates.append("l'idée va contre la tendance de fond : le cours est " + side_word + " moyennes de 50 et 200 jours, et c'est la catégorie d'idées qui a perdu de l'argent dans le backtest." + stat)
+        elif o.get("trend_gate") and align == 0:
+            gates.append("tendance de fond indécise (cours entre les moyennes de 50 et 200 jours) : aucun avantage mesuré dans le backtest pour ces idées." + stat)
+    else:
+        if sgn * tr < -0.3:
+            warn.append("l'idée va contre la tendance de fond (prix " + ("sous" if tr < 0 else "au-dessus de") + " les VWAP de la semaine, du mois et de l'année) : plus risquée")
+        comps.append({"key": "trend", "label": "Tendance de fond", "pts": max(0.0, min(7.0, 3.5 + 3.5 * sgn * tr)), "max": 7,
+                      "note": ("dans le sens de la tendance de fond" if sgn * tr > 0.3 else "contre la tendance de fond" if sgn * tr < -0.3 else "tendance de fond neutre")})
     # 6) biais et dominance (5)
     sy, dom = c.get("synth") or {}, c.get("dom") or {}
     b_pts, notes = 2.5, []
@@ -423,7 +441,8 @@ def score_idea(idea: dict, c: dict, o: dict | None = None) -> dict:
     total = sum(x["pts"] for x in comps)
     mlines = [ln["text"] for ln in (macro.get("lines") or []) if ln.get("text", "").startswith("Lecture macro") or "mouvement inhabituel" in ln.get("text", "")][:3]
     return {**idea, "score": round(total, 1), "comps": comps, "warn": warn, "hold": hold, "gates": gates, "eventHours": ev_h,
-            "trend": tr, "news": news_lines(macro, c.get("now") or 0), "macroLines": mlines}
+            "trend": tr, "align": align, "regime": rg if rg and rg.get("ready") else None, "evidence": c.get("evidence"),
+            "news": news_lines(macro, c.get("now") or 0), "macroLines": mlines}
 
 
 DAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
@@ -473,6 +492,28 @@ def leverage_lines(idea, lev, mmr=0.4):
     return out, {"lev": lev, "stopPct": sp, "liqPrice": liq, "liqPct": liq_pct, "levMax": lev_max, "marginLoss": sp * lev}
 
 
+def trend_text(idea: dict) -> list[str]:
+    """Tendance de fond et ce que le backtest en dit, en clair (liste vide si la tendance est inconnue)."""
+    rg, align = idea.get("regime"), idea.get("align")
+    if not rg or align is None:
+        return []
+    px = lambda v: fmt_price(v)
+    pos = (f"Le cours ({px(rg['price'])}) est {'au-dessus de' if rg['regime'] > 0 else 'sous' if rg['regime'] < 0 else 'entre'} "
+           f"la moyenne de {rg['fastDays']} jours ({px(rg['fast'])}) et {'de ' if rg['regime'] > 0 else ''}la moyenne de {rg['slowDays']} jours ({px(rg['slow'])}) : tendance de fond {rg['label']}.")
+    out = [pos]
+    if align > 0:
+        out.append("L'idée va DANS LE SENS de cette tendance : c'est la seule catégorie d'idées qui a rapporté de l'argent dans le backtest.")
+    elif align < 0:
+        out.append("L'idée va À CONTRE-COURANT de cette tendance : c'est la catégorie qui a perdu de l'argent dans le backtest.")
+    else:
+        out.append("La tendance est indécise : aucun avantage n'a été mesuré dans ce cas.")
+    ev = idea.get("evidence")
+    if ev and ev.get("aligned") is not None and ev.get("counter") is not None:
+        out.append(f"Mesuré sur {ev['label']} ({ev.get('n', '?')} idées dans le sens de la tendance) : en moyenne {fmt_num(ev['aligned'], 2)} fois le risque pris par trade après frais "
+                   f"dans le sens de la tendance, {fmt_num(ev['counter'], 2)} à contre-courant. C'est un avantage modeste, qui vient surtout de la tendance elle-même, et qui n'est pas une garantie.")
+    return out
+
+
 def describe(idea: dict, probs: dict | None, valid: dict | None, lev: float, symbol: str, week_n: int | None = None) -> dict:
     """Texte complet de l'idee, sans abreviation : quoi faire, pourquoi, contexte, probabilites, prudence."""
     side = idea["side"]
@@ -501,17 +542,22 @@ def describe(idea: dict, probs: dict | None, valid: dict | None, lev: float, sym
     # 1) la liquidite : ce vers quoi le prix est attire, et ce que le stop evite
     liq = []
     who = lambda p: "longues" if p["side"] == "long" else "courtes"
+    def pool_name(p):
+        if p.get("src"):                         # poche visible dans le prix (plus haut / plus bas, creux, sommet)
+            return f"ordres d'arrêt {'sous' if p['side'] == 'long' else 'au-dessus de'} le {p['src']}"
+        return f"liquidations de positions {who(p)}"
     for p in idea["pools"]:
         if (p["side"] == "long") == buy:
-            liq.append(f"  • Poche de liquidations de positions {who(p)} entre {fmt_price(p['lo'])} et {fmt_price(p['hi'])} dans la zone (force {p.get('score', 0):.0f}/100) : "
+            liq.append(f"  • Poche de {pool_name(p)} entre {fmt_price(p['lo'])} et {fmt_price(p['hi'])} dans la zone (force {p.get('score', 0):.0f}/100) : "
                        "beaucoup d'ordres d'arrêt s'y trouvent ; le prix va souvent les chercher, puis repart.")
     for p in idea.get("nearPools", []):
         if (p["side"] == "long") == buy:
-            liq.append(f"  • Grosse poche de liquidations de positions {who(p)} juste {'sous' if buy else 'au-dessus de'} la zone, entre {fmt_price(p['lo'])} et {fmt_price(p['hi'])} "
+            liq.append(f"  • Grosse poche de {pool_name(p)} juste {'sous' if buy else 'au-dessus de'} la zone, entre {fmt_price(p['lo'])} et {fmt_price(p['hi'])} "
                        f"(force {p.get('score', 0):.0f}/100) : le prix peut aller la chercher avant de repartir, c'est pourquoi le stop est placé derrière elle.")
     if idea["sweep"]:
         e0 = idea["sweep"]
-        liq.append(f"  • Une poche de positions {who(e0)} vers {fmt_price(e0['price'])} a été balayée il y a {idea.get('sweepAgeH') or 0:.0f} h : les ordres d'arrêt ont été pris, "
+        what = f"Le {e0['src']} (vers {fmt_price(e0['price'])})" if e0.get("src") else f"Une poche de positions {who(e0)} vers {fmt_price(e0['price'])}"
+        liq.append(f"  • {what} a été balayé{'' if e0.get('src') else 'e'} il y a {idea.get('sweepAgeH') or 0:.0f} h : les ordres d'arrêt ont été pris, "
                    "ce qui précède souvent un retournement.")
     elif idea["kind"] == "reprise" and idea.get("wick"):
         liq.append(f"  • Le prix a percé la zone jusqu'à {fmt_price(idea['wick'])} puis est revenu {'au-dessus' if buy else 'en dessous'} : la mèche a pris les ordres d'arrêt.")
@@ -540,6 +586,7 @@ def describe(idea: dict, probs: dict | None, valid: dict | None, lev: float, sym
         elif cmp["key"] in ("flow", "trend", "bias") and cmp["note"]:
             ctx.append(f"{cmp['label']} ({cmp['pts']:.0f}/{cmp['max']}) : {cmp['note']}")
     macro_lines += list(idea.get("macroLines") or [])
+    trend_lines = trend_text(idea)
     prob = []
     if probs:
         f = probs.get("fill")
@@ -559,7 +606,7 @@ def describe(idea: dict, probs: dict | None, valid: dict | None, lev: float, sym
     levl, levinfo = leverage_lines(idea, lev)
     risks = list(idea["warn"]) + levl
     risks.append("Ce sont des estimations et des statistiques passées, pas une garantie ni un conseil financier. Ne risque que ce que tu acceptes de perdre.")
-    return {"headline": head, "action": action, "why": why, "macro": macro_lines, "context": ctx, "news": list(idea.get("news") or []),
+    return {"headline": head, "action": action, "why": why, "trend": trend_lines, "macro": macro_lines, "context": ctx, "news": list(idea.get("news") or []),
             "probs": prob, "risks": risks, "leverage": levinfo}
 
 
@@ -568,7 +615,10 @@ def to_text(idea: dict, d: dict, n_week: int, max_week: int) -> str:
     stars = "★" * max(1, round((idea["score"] - 40) / 12)) if idea["score"] >= 52 else "★"
     lines = [f"🎯 Idée de trade {n_week}/{max_week} de la semaine · {d['headline']}",
              f"Qualité : {idea['score']:.0f}/100 ({grade(idea['score'])}) {stars}", "",
-             "▶ QUOI FAIRE"] + [f"• {x}" for x in d["action"]] + ["", "▶ POURQUOI ICI"] + d["why"]
+             "▶ QUOI FAIRE"] + [f"• {x}" for x in d["action"]]
+    if d.get("trend"):
+        lines += ["", "▶ TENDANCE DE FOND"] + [f"• {x}" for x in d["trend"]]
+    lines += ["", "▶ POURQUOI ICI"] + d["why"]
     if d.get("macro"):
         lines += ["", "▶ CONTEXTE MACRO"] + [f"• {x}" for x in d["macro"]]
     if d.get("news"):

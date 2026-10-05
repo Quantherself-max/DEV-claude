@@ -74,5 +74,21 @@ class SynthTests(unittest.TestCase):
         self.assertEqual(ctx[2], 0.7)
 
 
+
+class SwingFlowTests(unittest.TestCase):
+    def test_swing_divergence_and_absorption_enter_the_flow_score(self):
+        base = {"cvd": {"buy4h": 50.0, "buy24h": 50.0}}
+        s0, n0 = flow_score(base)
+        bull = {"cvd": {"buy4h": 50.0, "buy24h": 50.0, "swingDiv": "bull", "swingDivStrength": 0.8, "absorb": "bull"}}
+        s1, n1 = flow_score(bull)
+        self.assertGreater(s1, s0)
+        self.assertTrue(any("Divergence haussière du CVD" in t for _, t in n1))
+        self.assertTrue(any("Absorption haussière" in t for _, t in n1))
+        bear = {"cvd": {"buy4h": 50.0, "buy24h": 50.0, "swingDiv": "bear", "swingDivStrength": 0.2, "absorb": "bear"}}
+        s2, n2 = flow_score(bear)
+        self.assertLess(s2, s0)
+        self.assertTrue(any("Divergence baissière du CVD" in t for _, t in n2))
+
+
 if __name__ == "__main__":
     unittest.main()

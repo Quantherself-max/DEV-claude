@@ -365,3 +365,68 @@ class TextTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TrendGateTests(unittest.TestCase):
+    """Filtre de tendance de fond (moyennes 50 j / 200 j) : seul filtre valide par le backtest."""
+
+    def idea(self, side="long"):
+        return ScoreTests.idea(ScoreTests(), side=side)
+
+    def ctx(self, regime, **kw):
+        c = {"price": 100.0, "vwap": {"W": 99.0, "M": 98.0, "Y": 95.0}, "flow": (0.5, [(0.5, "achats agressifs")]), "macro": {"score": 40, "label": "risk-on"},
+             "synth": {}, "dom": {}, "is_alt": False, "now": NOW, "regime": regime,
+             "evidence": {"label": "BTC 2013-2026", "aligned": 0.15, "counter": -0.11, "n": 1303}}
+        c.update(kw)
+        return c
+
+    @staticmethod
+    def rg(code):
+        return {"ready": True, "regime": code, "label": {1: "haussière", -1: "baissière", 0: "indécise"}[code], "price": 100.0, "fast": 98.0, "slow": 90.0,
+                "distFast": 2.0, "distSlow": 11.0, "fastDays": 50, "slowDays": 200}
+
+    def test_aligned_idea_passes_and_counter_trend_is_filtered(self):
+        long_up = sg.score_idea(self.idea("long"), self.ctx(self.rg(1)))
+        self.assertEqual(long_up["align"], 1)
+        self.assertFalse(any("tendance" in g for g in long_up["gates"]))
+        long_down = sg.score_idea(self.idea("long"), self.ctx(self.rg(-1)))
+        self.assertEqual(long_down["align"], -1)
+        self.assertTrue(any("contre la tendance de fond" in g for g in long_down["gates"]))
+        self.assertIn("0,15", " ".join(long_down["gates"]))                 # les chiffres mesures sont cites
+        short_down = sg.score_idea(self.idea("short"), self.ctx(self.rg(-1)))
+        self.assertEqual(short_down["align"], 1)
+        self.assertFalse(any("tendance" in g for g in short_down["gates"]))
+
+    def test_undecided_trend_is_filtered_and_gate_can_be_turned_off(self):
+        und = sg.score_idea(self.idea("long"), self.ctx(self.rg(0)))
+        self.assertTrue(any("indécise" in g for g in und["gates"]))
+        off = sg.score_idea(self.idea("long"), self.ctx(self.rg(-1)), {"trend_gate": False})
+        self.assertFalse(any("tendance" in g for g in off["gates"]))
+        self.assertEqual(off["align"], -1)                                  # l'information reste affichee
+
+    def test_without_regime_the_old_trend_component_is_used(self):
+        r = sg.score_idea(self.idea("long"), self.ctx(None))
+        self.assertIsNone(r["align"])
+        self.assertFalse(any("tendance" in g for g in r["gates"]))
+        self.assertEqual(sum(c["max"] for c in r["comps"]), 100)
+
+    def test_trend_component_points(self):
+        pts = lambda code, side="long": [c for c in sg.score_idea(self.idea(side), self.ctx(self.rg(code)))["comps"] if c["key"] == "trend"][0]["pts"]
+        self.assertEqual(pts(1), 7.0)
+        self.assertEqual(pts(0), 3.5)
+        self.assertEqual(pts(-1), 0.0)
+        self.assertEqual(pts(-1, "short"), 7.0)
+
+    def test_message_has_a_plain_trend_section(self):
+        i = sg.score_idea(self.idea("long"), self.ctx(self.rg(1)))
+        i.update(symbol="BTCUSDT", atr=1.0, atrPct=1.0, validHours=48, price=100.0)
+        d = sg.describe(i, None, None, 10.0, "BTCUSDT")
+        self.assertTrue(d["trend"])
+        text = sg.to_text(i, d, 1, 5)
+        self.assertIn("TENDANCE DE FOND", text)
+        self.assertIn("DANS LE SENS", text)
+        self.assertIn("BTC 2013-2026", text)
+        self.assertIsNone(BANNED.search(text), BANNED.search(text))
+        counter = sg.score_idea(self.idea("long"), self.ctx(self.rg(-1)))
+        counter.update(symbol="BTCUSDT", atr=1.0, atrPct=1.0, validHours=48, price=100.0)
+        self.assertIn("À CONTRE-COURANT", sg.to_text(counter, sg.describe(counter, None, None, 10.0, "BTCUSDT"), 1, 5))

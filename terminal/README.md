@@ -1,7 +1,8 @@
-# Liq Terminal (V5)
+# Liq Terminal (V6)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Des idées de trade rares, envoyées sur Telegram** (V5) : achat ou vente sur une zone où plusieurs niveaux importants (VWAP, VWAP ancrés, profils de volume, de l'heure à l'année) et des poches de liquidités se superposent, avec entrée, stop, deux objectifs, probabilités et une explication complète sans abréviation. Cinq idées par semaine au maximum, réglable (voir « V5 » plus bas).
 - **Un espace de travail (menu à gauche)** : **Desk** (les graphiques), **Overview** (une carte par paire : prix, biais, niveaux essentiels, contexte, macro, dominance, Fear & Greed) et **Analyse** (biais, macro, dominance, plan de trade, lexique). Le menu se replie avec la flèche.
 - **Trois graphiques synchronisés** (zoom et curseur liés) : **Principal** (bougies + niveaux essentiels), **Liquidité** (uniquement les poches : carte de chaleur, balayages, vraies liquidations) et **VWAP · AVWAP · Volume Profile** (uniquement ces niveaux). Boutons de disposition en haut du Desk : 1 graphique, Liquidité seule, VP seul, 2 ou 3 graphiques ; chaque panneau peut être agrandi.
@@ -99,6 +100,44 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V6 : on a mesuré, et on a gardé ce qui tient
+
+### Le résultat, sans détour
+La stratégie du terminal (confluences de niveaux, VWAP et VWAP ancrés, profils de volume, poches de liquidité, balayages, flux d'ordres) a été rejouée **minute par minute sur du BTC réel de 2013 à octobre 2026** (données Bitstamp, 67 000 idées simulées), avec frais, glissement et financement, **uniquement avec ce qui était connu à chaque instant**. Ce que ça donne (en « fois le risque pris » par trade, après frais) :
+
+| | par trade | trades |
+|---|---|---|
+| Idées dans le sens de la tendance de fond (cours au-dessus des moyennes de 50 et 200 jours pour acheter, sous les deux pour vendre) | **+0,15** | 1 302 |
+| Idées à contre-courant | **−0,12** | 1 588 |
+| Tendance indécise (entre les deux moyennes) | +0,02 | 628 |
+| Ancienne règle du terminal (sans filtre de tendance) | −0,04 | 1 787 |
+| **Règle actuelle** (score ≥ 60 **et** dans le sens de la tendance) | **+0,13** (intervalle à 90 % : +0,06 à +0,21) | 1 202 |
+
+- **Le filtre de tendance est le seul qui résiste** : même signe sur chaque grande période (2013-2016, qui n'avait pas servi à le choisir, 2017-2021, 2022-2026) et pour sept réglages différents des moyennes. C'est une règle de bon sens (ne pas lutter contre le marché), pas une découverte magique.
+- **Mais l'avantage s'est affaibli** : +0,23 sur 2013-2016, +0,21 sur 2017-2021, **−0,01 sur 2022-2026** pour la règle actuelle. Sur la période récente, filtrer la tendance évite surtout les pertes ; il n'y a plus d'avantage démontré. Le marché devient plus mûr.
+- **Les niveaux n'ajoutent rien de démontré.** Face à des entrées *au hasard prises dans la même tendance* (+0,11 en moyenne), la règle fait à peine mieux (+0,13) : la tendance explique l'essentiel. Balayages de liquidité, écarts au VWAP, contacts avec un VWAP ancré, divergences du CVD : pris un par un, **aucun ne montre un effet à la fois solide et stable** (la page Backtest donne le tableau complet, 48 signaux testés).
+- **Les frais pèsent lourd** : environ 0,09 fois le risque par trade. Avant frais, la règle rapporte +0,22.
+- **Ce n'est pas une machine à cash.** Avec 1 % du capital risqué par trade, la règle actuelle fait environ +11 % par an sur 13 ans (baisse maximale 32 %), très loin du bitcoin lui-même (×6 500), mais avec une baisse maximale trois fois plus faible et 39 % du temps en position. Un résultat passé n'est pas une garantie.
+
+### Ce qui change dans le terminal
+- **Filtre de tendance de fond** (⚙ section 4, `TERMINAL_SIGNAL_TREND_GATE=1`, activé par défaut) : une idée à contre-courant ou en tendance indécise n'est plus envoyée sur Telegram. Elle reste visible dans l'onglet Idées avec la raison. Les chiffres ci-dessus sont cités dans chaque idée.
+- **Page Backtest** (menu de gauche) : verdict, tendance de fond par période, courbes de capital, **comparaison des raisonnements** (21 façons de choisir les idées, avec intervalle de confiance et résultat par période), étude outil par outil, test de réaction des zones, poids des frais, méthode et limites.
+- **Poches d'ordres d'arrêt visibles dans le prix** (plus haut / plus bas de la veille, de la semaine, du mois ; creux et sommets récents ; niveaux égaux) : elles existent sur tout l'historique, donc elles se testent. Tracées sur le graphique principal (case « Plus hauts / bas »), listées dans le panneau Niveaux, utilisées comme sources de confluence, comme poches d'objectif et pour détecter les **balayages** (mèche qui perce puis reprise, sur bougies 15 minutes) en plus de l'estimation par l'Open Interest.
+- **Flux d'ordres plus fin** : divergence du CVD sur les pivots du prix et absorption (gros volume agressif sans mouvement), calculées sur le **vrai volume acheteur agressif** de Binance, ajoutées à la lecture du flux.
+- **Profils de volume plus précis** : le profil du jour, de la semaine et du mois (courants et précédents) est calculé sur des bougies **5 minutes** (70 jours gardés) au lieu de 1 heure. Mesuré sur 21 mois de BTC : le point de contrôle hebdomadaire s'écarte en moyenne de 1,2 amplitude horaire du profil réel (minute par minute) avec des bougies 1 h, de 0,7 avec 5 minutes ; pour le jour, de 0,47 à 0,32. VWAP et VWAP ancrés étaient déjà précis à 1 h (écart moyen de 0,05 amplitude au plus) ; les bandes ±2σ gagnent un peu.
+- **Rejeu dans le terminal** (validation de l'onglet Idées) : compare désormais aux entrées au hasard *dans la même tendance* et sépare les idées dans le sens / à contre-courant / en tendance indécise.
+
+### Lancer le banc d'essai sur tes propres données (SOL en priorité)
+Les chiffres livrés sont ceux du BTC. Pour SOL (ou toute paire Binance), avec le **vrai** volume acheteur agressif :
+```
+python tools/fetch_history.py SOLUSDT      # télécharge l'historique 1 minute public de Binance (data.binance.vision, sans clé)
+python tools/run_study.py SOLUSDT          # quelques minutes à une demi-heure ; écrit data_local/reports/backtest_SOL.json
+```
+Le rapport apparaît dans la page Backtest (menu « Rapport »), et le filtre de tendance cite alors les chiffres de ta paire plutôt que ceux du BTC. `--market spot` pour le comptant, `--since 2021-01` pour limiter l'historique, `--workers 4` pour les coeurs utilisés. **Ces deux commandes demandent un accès internet vers Binance** ; elles ont été écrites d'après le format public des archives et testées sur de fausses archives, pas encore contre le vrai site.
+
+### Ce qui n'est pas testé (et donc pas démontré)
+Les poches estimées par l'Open Interest (29 jours d'historique seulement), le contexte macro et les annonces, le financement réel, l'écart acheteur / vendeur, et le flux d'ordres réel sur BTC (les archives Bitstamp n'ont pas de volume acheteur agressif : il est estimé par la position de la clôture dans la bougie). Les marchés de 2013 à 2016 étaient peu liquides : les frais réels y étaient plus élevés que ceux supposés.
+
 ## Ce qui est nouveau en V5 : des idées de trade, pas du bruit
 
 ### Ce que c'est
@@ -137,7 +176,7 @@ Une **idée de trade** est un achat ou une vente préparé à l'avance : où ent
 - Désactivé tant qu'il n'y a ni jeton ni compte. Une panne de X n'a aucun effet sur les idées.
 
 ### Réglages (⚙ sections 3 et 4, ou `.env`)
-`TERMINAL_SIGNALS` (1/0), `TERMINAL_ALERT_MODE` (ideas), `TERMINAL_SIGNAL_MIN_SCORE` (60), `TERMINAL_SIGNAL_MAX_WEEK` (5), `TERMINAL_SIGNAL_MIN_STRUCT` (7), `TERMINAL_SIGNAL_LEVERAGE` (10, pour le calcul de liquidation affiché), `TERMINAL_SIGNAL_VALID_HOURS` (48). Avis X : `TERMINAL_X_BEARER_TOKEN`, `TERMINAL_X_ACCOUNTS`, `TERMINAL_X_POSTS` (10), `TERMINAL_X_ON` (1).
+`TERMINAL_SIGNALS` (1/0), `TERMINAL_ALERT_MODE` (ideas), `TERMINAL_SIGNAL_MIN_SCORE` (60), `TERMINAL_SIGNAL_MAX_WEEK` (5), `TERMINAL_SIGNAL_MIN_STRUCT` (7), `TERMINAL_SIGNAL_LEVERAGE` (10, pour le calcul de liquidation affiché), `TERMINAL_SIGNAL_VALID_HOURS` (48), `TERMINAL_SIGNAL_TREND_GATE` (1 : seulement les idées dans le sens de la tendance de fond). Avis X : `TERMINAL_X_BEARER_TOKEN`, `TERMINAL_X_ACCOUNTS`, `TERMINAL_X_POSTS` (10), `TERMINAL_X_ON` (1).
 
 ## Ce qui est nouveau en V4
 
@@ -215,7 +254,9 @@ Tout est gratuit et sans compte ni clé. Si une source tombe en panne, les autre
 | Donnée | Source | Profondeur |
 |---|---|---|
 | Bougies 1h, volume acheteur agressif | Binance futures | Depuis septembre 2019 (ou la cotation de la paire), en cache disque |
-| Bougies 5 min, Open Interest 5 min | Binance futures | Environ 29 jours (limite Binance) |
+| Bougies 5 min | Binance futures | 70 jours (profils de volume du jour, de la semaine, du mois) |
+| Open Interest 5 min | Binance futures | Environ 29 jours (limite Binance) |
+| Historique 1 minute pour le backtest | Binance Vision (archives publiques) ou fichier CSV | Depuis 2019 (futures) ; BTC livré : Bitstamp depuis 2013 |
 | Funding, premium index, ratios long/short | Binance futures | Funding : tout l'historique ; ratios : récent |
 | Transactions et liquidations en direct | WebSocket Binance futures | Temps réel |
 | Prix Coinbase | WebSocket Coinbase | Temps réel |
@@ -236,7 +277,9 @@ config.py           configuration (.env) et écriture des réglages
 engine/             calculs : profils de volume (auto et choisis), séries VWAP / AVWAP, périodes, POC nus, poches de
                     liquidation, confluences, ATR, statistiques (rebond / cassure, atteinte, balayages, Wilson), macro,
                     dominance, biais validé en avançant, synthèse ; stance.py (lecture des avis X) ; signals.py (idées de trade : poids, zones, stop,
-                    objectifs, score, textes) et sigtest.py (rejeu historique face au hasard)
+                    objectifs, score, textes), sigtest.py (rejeu historique face au hasard) ; V6 : fine.py (séries 1 min à 1 h avec sommes cumulées),
+                    liqsweep.py (poches visibles dans le prix, balayages), cvd.py (déséquilibre, divergences, absorption), trend.py (tendance de fond),
+                    backtest.py (génération des idées, exécution 1 min, frais, métriques, témoins), study.py (rapport complet), history.py (archives Binance)
 data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase) ; social.py (posts X, facultatif)
 alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées)
 service.py          relie les données et les moteurs, fabrique l'état JSON
@@ -244,8 +287,10 @@ server.py           serveur local : API, réglages, sécurité
 web/                interface : index.html + style.css ; app.js (Desk, état, alertes), panels.js (les trois graphiques),
                     overview.js (vue d'ensemble), signals.js (idées de trade), analysis.js et charts.js (analyse, graphiques SVG) ;
                     TradingView Lightweight Charts (vendor/)
+tools/              fetch_history.py (historique 1 min Binance) et run_study.py (rapport de backtest)
+reports/            rapports de backtest livrés (BTC) ; les tiens vont dans data_local/reports/
 serveur/            installation sur un serveur 24 h/24 (script et guide)
-tests/              tests automatiques (plus de deux cents)
+tests/              tests automatiques (plus de deux cent cinquante)
 ```
 
 ## Limites connues
@@ -262,6 +307,7 @@ tests/              tests automatiques (plus de deux cents)
 - **Biais.** Un biais « neutre » ou de « faible confiance » est un résultat, pas un défaut. Sur BTC et SOL en 1h, les variables classiques n'offrent le plus souvent qu'un avantage minuscule ou nul.
 - **Flux temps réel.** Les adresses WebSocket de Binance (`/market`) et de Coinbase ont été vérifiées dans leur documentation mais pas testées en conditions réelles depuis cet environnement. Si le badge reste sur ● PRIX ~1 s, le terminal reste utilisable.
 - **Historique long.** Il est téléchargé au premier lancement (quelques minutes) puis mis en cache. L'Open Interest et les bougies 5 min restent limités à ~29 jours par Binance : les poches de liquidation et la carte de chaleur ne peuvent pas être calculées plus loin. Les profils de volume, les VWAP et les statistiques, eux, utilisent tout l'historique 1h.
-- **Volume profiles.** Ils sont construits à partir des bougies 1h (volume réparti sur la plage haut-bas de chaque bougie), pas des transactions : la résolution est inférieure à celle d'un profil TradingView calculé sur des bougies 1 minute.
+- **Volume profiles.** Ceux du jour, de la semaine et du mois (courants et précédents) sont construits à partir des bougies 5 min (volume réparti sur la plage haut-bas de chaque bougie), ceux de l'année et les profils choisis longs à partir des bougies 1 h : la résolution reste inférieure à celle d'un profil TradingView calculé sur des bougies 1 minute (voir V6 pour l'écart mesuré).
+- **Backtest.** Voir « V6 » : l'avantage mesuré est modeste, dû surtout à la tendance de fond, et absent de la période 2022-2026 pour la règle complète. Données Bitstamp au comptant, flux d'ordres estimé.
 - **Idées de trade.** Ce sont des scénarios construits à partir de niveaux, de liquidité estimée, de flux et de macro, pas des conseils financiers. Le rejeu prouve (ou non) la valeur de la structure seule. Les ordres sont supposés exécutés au prix limite, sans frais ni glissement. Le terminal doit tourner pour envoyer les idées et suivre leurs ordres.
 - **À venir.** Flux ETF et on-chain si tu en as besoin.

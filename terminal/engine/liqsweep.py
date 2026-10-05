@@ -19,6 +19,8 @@ BAND_ATR = 0.25               # epaisseur de la poche : 0,25 ATR au-dela du nive
 SWING_N = 3                   # un pivot = extreme sur 3 bougies de chaque cote
 SWING_DAYS = 7
 SCORES = {"M": 95, "W": 85, "D": 70, "mH": 80, "wH": 65, "dH": 55}        # mois/semaine/jour precedents ; periode en cours
+PREV_TXT = {"D": "de la veille", "W": "de la semaine dernière", "M": "du mois dernier"}
+CUR_TXT = {"D": "du jour", "W": "de la semaine", "M": "du mois"}
 
 
 def swing_points(b: Bars, n: int = SWING_N):
@@ -62,8 +64,8 @@ class PriceLiquidity:
         lows72 = [x[2] for x in sw["low"] if x[1] >= t72]
         highs72 = [x[2] for x in sw["high"] if x[1] >= t72]
         lowest, highest = (min(lows72) if lows72 else None), (max(highs72) if highs72 else None)
-        out = [(p, "low", 60 if p == lowest else 50, "creux 1 h", tp) for _, tp, p in sw["low"]]
-        out += [(p, "high", 60 if p == highest else 50, "sommet 1 h", tp) for _, tp, p in sw["high"]]
+        out = [(p, "low", 60 if p == lowest else 50, "creux sur 1 h", tp) for _, tp, p in sw["low"]]
+        out += [(p, "high", 60 if p == highest else 50, "sommet sur 1 h", tp) for _, tp, p in sw["high"]]
         self._cache = (hour, out)
         return out
 
@@ -101,13 +103,13 @@ def extremes_from_trackers(tr, now_ms: int):
         t = tr[kind]
         prev = t.prev
         if prev:
-            out.append((f"P{kind}L", prev["low"], "low", SCORES[kind], now_ms))
-            out.append((f"P{kind}H", prev["high"], "high", SCORES[kind], now_ms))
+            out.append((f"plus bas {PREV_TXT[kind]}", prev["low"], "low", SCORES[kind], now_ms))
+            out.append((f"plus haut {PREV_TXT[kind]}", prev["high"], "high", SCORES[kind], now_ms))
         a = t.acc
         if a.n:
             sc = SCORES[kind.lower() + "H"]
-            out.append((f"{kind.lower()}L", a.low, "low", sc, a.start))
-            out.append((f"{kind.lower()}H", a.high, "high", sc, a.start))
+            out.append((f"plus bas {CUR_TXT[kind]}", a.low, "low", sc, a.start))
+            out.append((f"plus haut {CUR_TXT[kind]}", a.high, "high", sc, a.start))
     return out
 
 

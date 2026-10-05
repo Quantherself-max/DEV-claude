@@ -16,6 +16,7 @@
     <a href="#/desk" data-nav="desk"><i>▥</i><span>Desk</span></a>
     <a href="#/overview" data-nav="overview"><i>▦</i><span>Overview</span></a>
     <a href="#/signals" data-nav="signals"><i>◎</i><span>Idées de trade</span></a>
+    <a href="#/backtest" data-nav="backtest"><i>⌁</i><span>Backtest</span></a>
     <div class="sgroup">ANALYSE</div>
     <a href="#/analysis/synth" data-nav="analysis" data-sub="synth"><i>◆</i><span>Biais &amp; probabilités</span></a>
     <a href="#/analysis/macro" data-nav="analysis" data-sub="macro"><i>▲</i><span>Macro &amp; annonces</span></a>
@@ -84,6 +85,11 @@
           <h2>Poches de liquidation <small>estimées (OI)</small></h2>
           <div id="pools"></div>
         </section>
+        <section class="card">
+          <h2>Plus hauts / plus bas <small>ordres d'arrêt visibles dans le prix</small></h2>
+          <div id="pricePools"></div>
+          <div class="note">Plus haut et plus bas de la veille, de la semaine, du mois ; creux et sommets récents ; deux niveaux presque égaux comptent comme une seule poche plus forte. Contrairement aux poches estimées par l'Open Interest (29 jours d'historique), ceux-ci se testent sur toute l'histoire : voir la page Backtest.</div>
+        </section>
       </div>
       <div class="pane" data-pane="signals" hidden>
         <div id="sigBox" class="sigbox"><section class="card"><div class="muted">Chargement…</div></section></div>
@@ -130,6 +136,10 @@
 
 <section class="page" data-page="overview" hidden>
   <div id="overview" class="ovwrap"><div class="muted">Chargement…</div></div>
+</section>
+
+<section class="page" data-page="backtest" hidden>
+  <div id="btBox" class="btwrap"><div class="muted">Chargement…</div></div>
 </section>
 
 <section class="page" data-page="analysis" hidden>
@@ -202,6 +212,7 @@
           <label class="field">Qualité minimale (sur 100) <input id="sMin" type="number" min="40" max="95" step="1"></label>
           <label class="field">Idées par semaine au maximum <input id="sMax" type="number" min="1" max="10" step="1"></label>
           <label class="field">Ton levier habituel (calcul de liquidation) <input id="sLev" type="number" min="1" max="125" step="1"></label>
+          <label class="field chk"><input id="sTrend" type="checkbox"> Ne garder que les idées dans le sens de la tendance de fond (recommandé : c'est le seul filtre validé par le backtest)</label>
         </div>
         <p class="muted small">Seules les configurations rares où plusieurs niveaux importants se superposent sont envoyées, avec stop, objectifs et explication complète. 65 est un bon point de départ ; baisse le seuil si tu reçois trop peu d'idées, monte-le pour être plus sélectif.</p>
       </section>
@@ -226,6 +237,7 @@
 <script src="analysis.js"></script>
 <script src="overview.js"></script>
 <script src="signals.js"></script>
+<script src="backtest.js"></script>
 <script src="panels.js"></script>
 <script src="app.js"></script>
 </body>

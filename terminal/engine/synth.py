@@ -24,6 +24,18 @@ def flow_score(ctx):
         if cvd.get("div"):
             notes.append((-0.4 if "baissière" in cvd["div"] else 0.4, f"Divergence CVD {cvd['div']}"))
             parts.append(notes[-1][0])
+    sd = cvd.get("swingDiv")
+    if sd:                                     # divergence entre pivots du prix et du CVD (mesuree sur bougies 15 min)
+        s = (0.4 if sd == "bull" else -0.4) * max(0.4, cvd.get("swingDivStrength") or 0.0)
+        parts.append(s)
+        notes.append((s, "Divergence haussière du CVD : le prix fait un plus bas plus bas mais les vendeurs agressifs s'épuisent" if sd == "bull"
+                      else "Divergence baissière du CVD : le prix fait un plus haut plus haut mais les acheteurs agressifs s'épuisent"))
+    ab = cvd.get("absorb")
+    if ab:                                     # gros volume agressif absorbe sans que le prix bouge
+        s = 0.35 if ab == "bull" else -0.35
+        parts.append(s)
+        notes.append((s, "Absorption haussière : de gros volumes vendeurs sont absorbés sans que le prix baisse" if ab == "bull"
+                      else "Absorption baissière : de gros volumes acheteurs sont absorbés sans que le prix monte"))
     f = (ctx.get("funding") or {}).get("now")
     if f is not None:
         s = _clip(-(f - 0.01) / 0.05) * 0.6

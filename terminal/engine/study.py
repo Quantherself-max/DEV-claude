@@ -305,7 +305,8 @@ def event_study(P: Panel, split_ms: int, gap_h: float = 8.0) -> list[dict]:
         row["p_all"], row["p_is"], row["p_oos"] = prob(0, big), prob(0, split_ms), prob(split_ms, big)
         t_all = row["all24"]["t"] if row["all24"] else 0
         a, b = row["is24"], row["oos24"]
-        row["consistent"] = bool(a and b and a["ex"] > 0 and b["ex"] > 0 and abs(t_all) >= 3.0)
+        # « stable » : excedent positif dans les deux periodes, solide sur l'ensemble (t >= 3) ET encore soutenu sur la periode recente (t >= 1)
+        row["consistent"] = bool(a and b and a["ex"] > 0 and b["ex"] > 0 and t_all >= 3.0 and b["t"] >= 1.0)
         out.append(row)
     return out
 
@@ -440,25 +441,36 @@ def _base(r):
 
 
 def variants():
+    """(nom, regle, seuil de score ou None). Deux familles : SANS puis AVEC le filtre « dans le sens de la tendance de fond »."""
     sgn = lambda r: 1 if r["side"] == "long" else -1
+    al = lambda r: _base(r) and r.get("reg") == sgn(r)
     return [
         ("Structure seule (toutes les idées de confluence)", lambda r: True, None),
-        ("+ portes liquidité et contexte", _base, None),
-        ("Qualité de structure ≥ 9", lambda r: _base(r) and r["S"] >= 9, None),
         ("Qualité de structure ≥ 11", lambda r: _base(r) and r["S"] >= 11, None),
         ("Reprises après balayage seulement", lambda r: _base(r) and r["kind"] == "reprise", None),
         ("Rebonds simples seulement", lambda r: _base(r) and r["kind"] == "rebond", None),
         ("Longs seulement", lambda r: _base(r) and r["side"] == "long", None),
         ("Shorts seulement", lambda r: _base(r) and r["side"] == "short", None),
-        ("Longs de qualité ≥ 11", lambda r: _base(r) and r["side"] == "long" and r["S"] >= 11, None),
         ("CVD dans le sens du trade", lambda r: _base(r) and r["fs"] * sgn(r) > 0.1, None),
-        ("CVD contre le trade", lambda r: _base(r) and r["fs"] * sgn(r) < -0.1, None),
-        ("Dans le sens de la tendance 50 j / 200 j", lambda r: _base(r) and r.get("reg") == sgn(r), None),
-        ("Contre la tendance 50 j / 200 j", lambda r: _base(r) and r.get("reg") == -sgn(r), None),
-        ("Score du terminal ≥ 50", lambda r: _base(r) and r["score"] >= 50, 50),
-        ("Score du terminal ≥ 60 (règle actuelle)", lambda r: _base(r) and r["score"] >= 60, 60),
-        ("Score du terminal ≥ 70", lambda r: _base(r) and r["score"] >= 70, 70),
+        (LEGACY, lambda r: _base(r) and r["score"] >= 60, 60),
+        ("Contre la tendance de fond", lambda r: _base(r) and r.get("reg") == -sgn(r), None),
+        ("Tendance de fond indécise", lambda r: _base(r) and r.get("reg") == 0, None),
+        ("Dans le sens de la tendance de fond", al, None),
+        ("… et qualité de structure ≥ 9", lambda r: al(r) and r["S"] >= 9, None),
+        ("… et qualité de structure ≥ 11", lambda r: al(r) and r["S"] >= 11, None),
+        ("… et reprise après balayage", lambda r: al(r) and r["kind"] == "reprise", None),
+        ("… et rebond simple", lambda r: al(r) and r["kind"] == "rebond", None),
+        ("… et ordre limite", lambda r: al(r) and r["etype"] == "limite", None),
+        ("… et CVD dans le sens du trade", lambda r: al(r) and r["fs"] * sgn(r) > 0.1, None),
+        ("… achats seulement", lambda r: al(r) and r["side"] == "long", None),
+        ("… ventes seulement", lambda r: al(r) and r["side"] == "short", None),
+        (CURRENT, lambda r: al(r) and r["score"] >= 60, 60),
+        ("… score du terminal ≥ 70", lambda r: al(r) and r["score"] >= 70, 70),
     ]
+
+
+LEGACY = "Ancienne règle : score ≥ 60, sans filtre de tendance"
+CURRENT = "Règle actuelle : score ≥ 60 ET dans le sens de la tendance de fond"
 
 
 def _slim(m: dict) -> dict:
@@ -466,14 +478,16 @@ def _slim(m: dict) -> dict:
     return {k: m.get(k) for k in keys}
 
 
-def run_variants(cands, costs, start_ms, end_ms, split_ms, years):
+def run_variants(cands, costs, start_ms, end_ms, eras, years):
     out = []
     for name, rule, thr in variants():
         row = {"name": name}
         trs = bt.select(cands, rule, costs, thr=thr, start_ms=start_ms, end_ms=end_ms)
         row["all"] = _slim(bt.metrics(trs, start_ms, end_ms))
-        row["is"] = _slim(bt.metrics([t for t in trs if t["t"] < split_ms], start_ms, split_ms))
-        row["oos"] = _slim(bt.metrics([t for t in trs if t["t"] >= split_ms], split_ms, end_ms))
+        row["eras"] = []
+        for lab, a, z in eras:
+            sub = [t for t in trs if a <= t["t"] < z]
+            row["eras"].append({"label": lab, **_slim(bt.metrics(sub, a, z))})
         yrs = {}
         for y in years:
             a, z = ms(y), min(ms(y + 1), end_ms)
@@ -530,49 +544,60 @@ def _map(fn, args, folder, ds, workers):
 #  Rapport
 # =====================================================================================================
 def run(ds: "bt.Dataset", label: str, start_ms: int, end_ms: int, split_ms: int, folder: str | None = None, workers: int = 1,
-        control_runs: int = 100, costs: dict | None = None, progress=None, source_note: str = "", panel: bool = True) -> dict:
-    """Rapport complet (dict serialisable en JSON)."""
+        control_runs: int = 100, costs: dict | None = None, progress=None, source_note: str = "", panel: bool = True,
+        eras: list | None = None) -> dict:
+    """Rapport complet (dict serialisable en JSON). Les `eras` [(libelle, debut, fin)] decoupent les resultats ; split_ms separe
+    l'apprentissage de l'hors-echantillon pour l'etude d'evenements."""
     costs = costs or bt.DEFAULT_COSTS
     t0 = time.time()
     say = (lambda f, m: progress(f, m)) if progress else (lambda f, m: None)
+    year_of = lambda t: datetime.fromtimestamp(t / 1000, timezone.utc).year
+    if not eras:
+        eras = [("avant " + str(year_of(split_ms)), start_ms, split_ms), ("depuis " + str(year_of(split_ms)), split_ms, end_ms)]
     qs = quarters(start_ms, end_ms)
     say(0.02, "génération des idées de trade")
     parts = _map(_gen_chunk, [(a, b, None) for a, b in qs], folder, ds, workers)
     cands = [x for p in parts for x in p]
     say(0.40, "simulation des trades (bougies 1 minute)")
     bt.attach_outcomes(cands, ds)
-    say(0.55, "variantes")
-    years = list(range(datetime.fromtimestamp(start_ms / 1000, timezone.utc).year, datetime.fromtimestamp((end_ms - 1) / 1000, timezone.utc).year + 1))
-    vr = run_variants(cands, costs, start_ms, end_ms, split_ms, years)
-    ref_name = "Score du terminal ≥ 60 (règle actuelle)"
-    ref_trades = next(tr for row, tr in vr if row["name"] == ref_name)
-    ref_row = next(row for row, tr in vr if row["name"] == ref_name)
-    say(0.62, "témoin : trades au hasard de même forme")
-    ctrl = bt.random_control([t["c"] for t in ref_trades], ds, costs, start_ms, end_ms, runs=control_runs) if ref_trades else {}
-    exps = ctrl.pop("_exps", []) if ctrl else []
-    p_val = bt.percentile_of(exps, ref_row["all"]["expR"]) if exps and ref_row["all"]["expR"] is not None else None
-    gross = (sum(t["r_gross"] for t in ref_trades) / len(ref_trades)) if ref_trades else None
+    say(0.52, "variantes")
+    years = list(range(year_of(start_ms), year_of(end_ms - 1) + 1))
+    vr = run_variants(cands, costs, start_ms, end_ms, eras, years)
+    byname = {row["name"]: (row, tr) for row, tr in vr}
+    cur_row, cur_trades = byname[CURRENT]
+    leg_row, leg_trades = byname[LEGACY]
+    al_row, al_trades = byname["Dans le sens de la tendance de fond"]
+    co_row, _ = byname["Contre la tendance de fond"]
+    ne_row, _ = byname["Tendance de fond indécise"]
+    ma = bt.regime_series(ds.b1h)
+    say(0.60, "témoins : trades au hasard de même forme")
+    ctrl_un = bt.random_control([t["c"] for t in cur_trades], ds, costs, start_ms, end_ms, runs=control_runs) if cur_trades else {}
+    ctrl_tr = bt.random_control([t["c"] for t in cur_trades], ds, costs, start_ms, end_ms, runs=control_runs, seed=4, match_regime=True, ma=ma) if cur_trades else {}
+    ex_un, ex_tr = ctrl_un.pop("_exps", []), ctrl_tr.pop("_exps", [])
+    real = cur_row["all"]["expR"]
+    p_un = bt.percentile_of(ex_un, real) if ex_un and real is not None else None
+    p_tr = bt.percentile_of(ex_tr, real) if ex_tr and real is not None else None
+    gross = (sum(t["r_gross"] for t in cur_trades) / len(cur_trades)) if cur_trades else None
     bh = bt.buy_hold(ds, start_ms, end_ms)
-    m_all = bt.metrics(ref_trades, start_ms, end_ms)
+    m_all = bt.metrics(cur_trades, start_ms, end_ms)
     eq_bh = []
     b1h = ds.b1h
     i0, i1 = b1h.idx(start_ms), b1h.idx(end_ms)
     step = max(1, (i1 - i0) // 400)
     for j in range(i0, i1, step):
         eq_bh.append((int(b1h.t[j]), round(b1h.c[j] / b1h.c[i0], 4)))
-    say(0.70, "sensibilité aux frais")
+    say(0.72, "sensibilité aux frais")
     sens = []
     for lab, mult in (("sans frais", 0.0), ("frais prévus", 1.0), ("frais doublés", 2.0)):
         cc = {k: v * mult for k, v in costs.items()}
-        tr = bt.select(cands, lambda r: _base(r) and r["score"] >= 60, cc, thr=60, start_ms=start_ms, end_ms=end_ms)
+        tr = bt.select(cands, lambda r: _base(r) and r.get("reg") == (1 if r["side"] == "long" else -1) and r["score"] >= 60, cc, thr=60, start_ms=start_ms, end_ms=end_ms)
         mm = bt.metrics(tr, start_ms, end_ms)
         sens.append({"name": lab, "n": mm["n"], "expR": mm.get("expR"), "ret": mm.get("ret")})
-    say(0.74, "réaction aux zones")
+    say(0.76, "réaction aux zones")
     touch = touch_test(cands, ds, start_ms, end_ms)
-    say(0.80, "tendance de fond")
-    eras = [("jusqu'à 2016", ms(2013), ms(2017)), ("2017-2020", ms(2017), ms(2021)), ("2021-2023", ms(2021), ms(2024)), ("2024 →", ms(2024), end_ms)]
-    eras = [e for e in eras if e[1] >= ds.b1h.t[0] + 220 * DAY and e[1] < end_ms]
-    reg = regime_table(ds, eras + [("tout l'historique", eras[0][1] if eras else start_ms, end_ms)]) if eras else []
+    say(0.80, "tendance de fond sur tout l'historique")
+    reg_eras = [(lab, a, z) for lab, a, z in eras if a >= ds.b1h.t[0] + 220 * DAY]
+    reg = regime_table(ds, reg_eras + [("tout l'historique", reg_eras[0][1], end_ms)]) if reg_eras else []
     events = []
     if panel:
         say(0.84, "étude d'événements par outil")
@@ -583,27 +608,47 @@ def run(ds: "bt.Dataset", label: str, start_ms: int, end_ms: int, split_ms: int,
         events = event_study(P, split_ms)
     say(0.97, "synthèse")
     n_sig = [e for e in events if e.get("consistent")]
-    best = max((row for row, _ in vr), key=lambda r: (r["oos"]["expR"] if r["oos"]["expR"] is not None and r["oos"]["n"] >= 30 else -9))
-    edge = bool(ref_row["all"]["expLo"] is not None and ref_row["all"]["expLo"] > 0 and ref_row["oos"]["expR"] and ref_row["oos"]["expR"] > 0
-                and p_val is not None and p_val < 0.05)
+    ci_lo = cur_row["all"]["expLo"]
+    edge = bool(ci_lo is not None and ci_lo > 0 and real and real > 0 and p_un is not None and p_un < 0.05)
+    levels_add = bool(p_tr is not None and p_tr < 0.05)
+    f2 = lambda x: "n/a" if x is None else f"{x:+.2f}".replace(".", ",")
     notes = []
-    if gross is not None:
-        notes.append(f"Avant frais, la règle du terminal rapporte {gross:+.2f} R par trade en moyenne ; après frais {ref_row['all']['expR']:+.2f} R : "
-                     "les frais et le glissement coûtent environ " + f"{gross - ref_row['all']['expR']:.2f} R par trade.")
-    if p_val is not None:
-        notes.append(f"Des trades pris au hasard avec la même forme font {ctrl['expMean']:+.2f} R en moyenne ; la règle du terminal fait mieux que le hasard dans "
-                     f"{100 * (1 - p_val):.0f} % des tirages (il faudrait au moins 95 % pour parler d'avantage).")
+    if al_row["all"]["expR"] is not None and co_row["all"]["expR"] is not None:
+        notes.append(f"Tendance de fond : les idées dans son sens rapportent {f2(al_row['all']['expR'])} fois le risque par trade après frais "
+                     f"({al_row['all']['n']} trades), celles à contre-courant {f2(co_row['all']['expR'])} ({co_row['all']['n']} trades), celles en tendance indécise {f2(ne_row['all']['expR'])}.")
+    if leg_row["all"]["expR"] is not None:
+        notes.append(f"Sans ce filtre (ancienne règle du terminal) : {f2(leg_row['all']['expR'])} par trade, c'est-à-dire perdant une fois les frais comptés.")
+    if p_un is not None and p_tr is not None:
+        notes.append(f"Face à des entrées au hasard de même forme : la règle actuelle fait mieux dans {100 * (1 - p_un):.0f} % des tirages ; "
+                     f"mais face à des entrées au hasard prises DANS LA MÊME TENDANCE ({f2(ctrl_tr['expMean'])} en moyenne) seulement dans {100 * (1 - p_tr):.0f} % : "
+                     + ("les niveaux apportent un plus significatif." if levels_add else "la tendance explique l'essentiel de l'avantage, les niveaux (liquidité, VWAP, profils) n'apportent qu'un petit plus non démontré."))
+    if gross is not None and real is not None:
+        notes.append(f"Les frais, le glissement et le financement coûtent environ {f2(gross - real).lstrip('+')} fois le risque par trade (avant frais : {f2(gross)}).")
     if n_sig:
         notes.append("Outils dont l'effet est de même sens sur les deux périodes et significatif : " + "; ".join(e["name"] for e in n_sig[:6]) + ".")
     else:
-        notes.append("Aucun outil pris isolément ne montre un effet à la fois significatif (|t| ≥ 3) et de même sens sur les deux périodes.")
-    verdict = ("Avantage statistique démontré sur cet historique." if edge else
-               "Aucun avantage démontré : les idées du terminal ne battent pas des entrées au hasard une fois les frais comptés.")
+        notes.append("Aucun outil pris isolément (balayage, écart au VWAP, VWAP ancré, CVD) ne montre un effet à la fois significatif et de même sens sur les deux périodes.")
+    recent = cur_row["eras"][-1] if cur_row["eras"] else None
+    recent_edge = bool(recent and recent["expLo"] is not None and recent["expLo"] > 0)
+    if recent and recent["expR"] is not None:
+        notes.insert(1, f"Sur la période la plus récente ({recent['label']}) : {f2(recent['expR'])} fois le risque par trade ({recent['n']} trades, intervalle à 90 % de "
+                        f"{f2(recent['expLo'])} à {f2(recent['expHi'])}). " + ("L'avantage y est encore démontré." if recent_edge else
+                        "L'avantage n'y est plus démontré : il s'est affaibli avec le temps (marché plus mûr), prudence."))
+    if edge and recent_edge:
+        verdict = "Avantage statistique modeste, démontré sur l'ensemble de l'historique et encore sur la période récente."
+    elif edge:
+        verdict = (f"Avantage modeste sur l'ensemble de l'historique, mais PLUS démontré sur la période récente ({recent['label']}) : "
+                   "il vient surtout de la tendance de fond et s'est affaibli avec le temps.") if recent else "Avantage statistique modeste sur l'ensemble de l'historique."
+    else:
+        verdict = "Aucun avantage démontré : la règle ne bat pas des entrées au hasard une fois les frais comptés."
+    best = max((row for row, _ in vr), key=lambda r: (r["all"]["expR"] if r["all"]["expR"] is not None and r["all"]["n"] >= 100 else -9))
     return {"version": VERSION, "label": label, "source": source_note, "computedAt": int(time.time() * 1000), "seconds": round(time.time() - t0),
-            "period": {"start": start_ms, "end": end_ms, "split": split_ms}, "costs": costs, "candidates": len(cands),
-            "verdict": {"edge": edge, "text": verdict, "notes": notes},
-            "terminal": {"name": ref_name, **{k: ref_row[k] for k in ("all", "is", "oos", "years")}, "grossR": gross,
-                         "control": {k: v for k, v in (ctrl or {}).items()}, "pValue": p_val, "buyHold": bh,
-                         "equity": m_all.get("equity", []), "equityBuyHold": eq_bh},
-            "variants": [row for row, _ in vr], "bestVariantOos": best["name"], "costSens": sens, "events": events, "touch": touch, "regime": reg,
+            "period": {"start": start_ms, "end": end_ms, "split": split_ms}, "eras": [{"label": l, "start": a, "end": z} for l, a, z in eras],
+            "costs": costs, "candidates": len(cands),
+            "verdict": {"edge": edge, "recentEdge": recent_edge, "levelsAdd": levels_add, "text": verdict, "notes": notes},
+            "trend": {"aligned": al_row["all"], "counter": co_row["all"], "neutral": ne_row["all"], "alignedEras": al_row["eras"], "counterEras": co_row["eras"]},
+            "terminal": {"name": CURRENT, **{k: cur_row[k] for k in ("all", "eras", "years")}, "grossR": gross, "pValue": p_un, "pValueTrend": p_tr,
+                         "control": ctrl_un, "controlTrend": ctrl_tr, "buyHold": bh, "equity": m_all.get("equity", []), "equityBuyHold": eq_bh,
+                         "legacy": {"name": LEGACY, **{k: leg_row[k] for k in ("all", "eras", "years")}}},
+            "variants": [row for row, _ in vr], "bestVariant": best["name"], "costSens": sens, "events": events, "touch": touch, "regime": reg,
             "eventThreshold": 3.0}

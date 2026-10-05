@@ -20,6 +20,13 @@ const Overview = (() => {
     return `<div class="sect">Idée de trade</div><div class="hero" style="gap:10px"><div class="big ${cls}" style="font-size:18px">${buy ? 'ACHAT' : 'VENTE'}</div><div class="muted small">qualité <b>${Math.round(i.score)}/100</b> ${state}<br>entrée ${fmtP(i.entry)} · stop ${fmtP(i.stop)} · objectif ${fmtP(i.tp1)}</div></div>`;
   }
 
+  function trendBlock(s) {
+    const t = s.trend;
+    if (!t) return '';
+    const cls = t.regime > 0 ? 'up' : t.regime < 0 ? 'dn' : 'neu';
+    return `<div class="sect">Tendance de fond</div><div class="muted small"><b class="${cls}">${esc(t.label)}</b> · cours ${sg(t.distFast, 1, ' %')} / moyenne 50 j, ${sg(t.distSlow, 1, ' %')} / moyenne 200 j${t.regime === 0 ? ' · aucune idée retenue' : t.regime > 0 ? ' · seuls les achats sont retenus' : ' · seules les ventes sont retenues'}</div>`;
+  }
+
   function symCard(s) {
     if (!s.ready) return card(esc(s.symbol), '<div class="muted">Chargement des données…</div>');
     const sy = s.synth, dirCls = sy.direction === 'haussier' ? 'up' : sy.direction === 'baissier' ? 'dn' : 'neu';
@@ -31,7 +38,7 @@ const Overview = (() => {
       `<div class="hero"><div class="big neu" style="font-size:28px">${fmtP(s.price)}</div><div><div class="${s.change24 > 0 ? 'up' : 'dn'}" style="font-weight:600">${sg(s.change24, 2, ' %')} <span class="muted small">24 h</span></div><div class="muted small">ATR 1h ${n1(s.atrPct)} %</div></div><div style="flex:1;min-width:110px">${Charts.spark(s.spark, col, 180, 44)}</div></div>` +
       `<div class="sect">Biais</div><div class="hero" style="gap:10px"><div class="big ${dirCls}" style="font-size:18px">${esc(sy.label.toUpperCase())}</div><div class="muted small">${sg(sy.score, 0)}/100 · confiance <span class="tag ${sy.confidence === 'faible' ? 'warn' : 'ok'}">${sy.confidence}</span><span class="tag ${sy.validated ? 'ok' : 'warn'}">${sy.validated ? 'modèle validé' : 'non validé'}</span></div></div>` +
       `<div class="muted small" style="margin-top:4px">P(hausse 24 h) ${sy.validated ? '<b>' + p0(sy.pUp24) + '</b>' : p0(sy.base24) + ' (taux de base)'}${s.history && s.history.since ? ' · historique depuis ' + new Date(s.history.since).getFullYear() : ''}</div>` +
-      ideaBlock(s) +
+      trendBlock(s) + ideaBlock(s) +
       (rows ? `<div class="sect">Niveaux essentiels</div><table class="t"><tr><th></th><th class="r">Prix</th><th class="r">Distance</th><th class="r">Atteinte 24 h</th><th class="r">Rebond</th></tr>${rows}</table>` : '<div class="muted small">Aucune zone essentielle.</div>') +
       `<div class="sect">Contexte</div><div class="muted small">${s.regime ? esc(s.regime) + '<br>' : ''}Funding ${s.funding != null ? sg(s.funding, 4, ' %') : '-'} · OI 24 h ${sg(s.oi24, 1, ' %')} · achats agressifs 24 h ${s.buy24 != null ? n1(s.buy24, 1) + ' %' : '-'} · L/S ${s.ls != null ? n1(s.ls) : '-'}</div>` +
       `<div class="line" style="margin-top:8px"><button data-ovgo="${esc(s.symbol)}" class="primary">Ouvrir sur le Desk</button><button data-ovan="${esc(s.symbol)}">Analyse</button></div>`);
