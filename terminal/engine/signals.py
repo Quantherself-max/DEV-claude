@@ -50,6 +50,7 @@ DEFAULTS = {
     "target_min_struct": 4.0,
     "valid_hours": 48,
     "sweep_hours": 8,
+    "recent_hours": 10,       # fenetre de recherche d'une meche qui perce la zone puis la reprend
     "leverage": 10.0,
     "min_liq_pts": 6.0,       # filtre : points de liquidite minimaux (sur 30)
     "min_macro_pts": 5.0,     # filtre : points de macro minimaux (sur 20) ; en dessous, la macro va nettement contre l'idee
@@ -238,7 +239,7 @@ def build_ideas(inp: dict) -> tuple[list[dict], list[dict]]:
                 res.append({**t, "rr": rr})
         return res
 
-    recent = cs[-10:]
+    recent = [c for c in cs if c.t >= now - o["recent_hours"] * 3_600_000] or cs[-1:]       # bougies fermees recentes (toute granularite)
     last_close = cs[-1].c if cs else price
     sweeps = [e for e in (inp.get("sweeps") or []) if now - e["t"] <= o["sweep_hours"] * 3_600_000]
     for z in zi:
