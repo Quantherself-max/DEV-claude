@@ -134,8 +134,10 @@ class ServiceSignalsTests(unittest.TestCase):
         with mock.patch.object(service_mod.signals_engine, "score_idea", no_hold):
             self.app.trade_cycle(self.svc, ["BTCUSDT"])
         self.assertEqual(len(self.app.desk.trades), 1)
-        self.assertEqual(len(notifier.sent), 1)
+        self.assertIn(len(notifier.sent), (1, 2))                              # une idee longue part en deux messages au plus, sans rien perdre
         self.assertIn("Idée de trade 1/5", notifier.sent[0])
+        self.assertIn("PRUDENCE", "\n".join(notifier.sent))
+        self.assertTrue(all(len(m) < 4096 for m in notifier.sent))
         tr = self.app.desk.trades[0]
         self.assertIn(tr["status"], ("pending", "active"))
         self.assertLess(self.svc.recent_m5("BTCUSDT", NOW - 3_600_000)[0][0], NOW)
