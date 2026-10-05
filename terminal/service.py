@@ -24,6 +24,7 @@ from engine import sigtest
 from engine import synth as synth_engine
 from engine import trend as trend_engine
 from engine import vpx, vwapx
+from engine import lecture as lecture_engine
 from engine import swingavwap, vwapstrat
 from engine.confluence import Level, find_zones
 from engine.liquidity import LiqEngine
@@ -752,6 +753,8 @@ class Service:
 
     def attach_ext(self, hub) -> None:
         self.ext = hub
+        if not getattr(hub, "symbols", None):
+            hub.symbols = tuple(self.cfg.symbols)          # financement / OI multi-bourses des paires suivies
 
     # ---------- volume profiles choisis (sauvegardes sur le disque) ----------
     @property
@@ -1127,6 +1130,31 @@ class Service:
         best = sg["ideas"][0]
         return {"n": sum(1 for i in sg["ideas"] if i["eligible"]), "side": best["side"], "score": best["score"], "entry": best["entry"],
                 "stop": best["stop"], "tp1": best["tp1"], "eligible": best["eligible"], "hold": best["hold"][:1], "minScore": sg["minScore"]}
+
+    def lecture(self, symbol: str) -> dict:
+        """L'essentiel du marche pour cette paire en une page (engine/lecture.py) : tendance, idee, ce qui arrive, positionnement, derives, macro, liquidite."""
+        m = self.markets.get(symbol)
+        if m is None:
+            raise KeyError(f"symbole inconnu : {symbol}")
+        if not m.ready:
+            return {"ready": False}
+        an = self.analysis(symbol)
+        now = self.source.now_ms()
+        snap = self.ext.snapshot() if self.ext else {}
+        dv = snap.get("derivs") or {}
+        base = symbol[:-4] if symbol.endswith("USDT") else symbol
+        ocoin = base if base in ("BTC", "ETH") else "BTC"            # options et base : Deribit ne cote que le BTC et l'ETH ; sinon le BTC sert de repere au marche crypto
+        rep = reports_mod.load(self.report_dirs, "BTC", "indicators")
+        levels = {r["key"]: r["level"] for r in (rep or {}).get("rows", [])}
+        macro = an.get("macro") or {}
+        d = {"symbol": symbol, "price": an["price"], "change24": an.get("change24"), "now_ms": now, "ctx": an["context"], "synth": an["synth"], "macro": macro,
+             "fng": macro.get("fng"), "dom": {"btc_d": ((an["dom"].get("cg") or {}).get("btc_d")), "regime": (an["dom"].get("regime") or {}).get("name")},
+             "trend": self._trend_brief(symbol), "idea": self._idea_brief(symbol), "perps": ((dv.get("perps") or {}).get(symbol) or {}).get("rows"),
+             "options": (dv.get("options") or {}).get(ocoin), "optionsCoin": ocoin, "dvol": (dv.get("dvol") or {}).get(ocoin),
+             "futures": ((dv.get("futures") or {}).get(ocoin) or {}).get("rows"), "indicators": snap.get("indicators"), "indicatorLevels": levels, "sources": an.get("sources")}
+        out = lecture_engine.build(d)
+        out["symbol"] = symbol
+        return out
 
     def overview(self) -> dict:
         """Vue d'ensemble : une carte par paire (prix, biais, niveaux essentiels, contexte) + macro, dominance, sentiment."""

@@ -32,14 +32,17 @@ const Overview = (() => {
     const sy = s.synth, dirCls = sy.direction === 'haussier' ? 'up' : sy.direction === 'baissier' ? 'dn' : 'neu';
     const col = s.change24 > 0 ? '#3ddc97' : '#ff6b6b';
     const lv = sy.levels.filter(l => l.side !== 'in').sort((a, b) => b.mid - a.mid);
-    const rows = lv.map(l => `<tr><td class="${l.side === 'above' ? 'up' : 'dn'}">${l.side === 'above' ? '▲' : '▼'} ${'●'.repeat(Math.min(5, l.score))}</td><td class="r">${fmtP(l.mid)}</td><td class="r muted">${n1(l.distAtr, 1)} ATR</td><td class="r">${p0(l.reach24)}</td><td class="r">${l.bounce && l.bounce.n ? p0(l.bounce.p) : '-'}</td></tr>`).join('');
+    const below = lv.filter(l => l.side === 'below'), above = lv.filter(l => l.side === 'above');
+    const nl = (l, up) => `<span class="${up ? 'up' : 'dn'}">${up ? '▲' : '▼'}</span> ${fmtP(l.mid)} <span class="muted">(${n1(l.distAtr, 1)} ATR · ${p0(l.reach24)} en 24 h)</span>`;
+    const near = [above.length ? nl(above[above.length - 1], true) : null, below.length ? nl(below[0], false) : null].filter(Boolean);
     const sym = s.symbol.replace('USDT', '');
     return card(`${esc(sym)} <small class="muted">perpétuel Binance</small>`,
       `<div class="hero"><div class="big neu" style="font-size:28px">${fmtP(s.price)}</div><div><div class="${s.change24 > 0 ? 'up' : 'dn'}" style="font-weight:600">${sg(s.change24, 2, ' %')} <span class="muted small">24 h</span></div><div class="muted small">ATR 1h ${n1(s.atrPct)} %</div></div><div style="flex:1;min-width:110px">${Charts.spark(s.spark, col, 180, 44)}</div></div>` +
-      `<div class="sect">Biais</div><div class="hero" style="gap:10px"><div class="big ${dirCls}" style="font-size:18px">${esc(sy.label.toUpperCase())}</div><div class="muted small">${sg(sy.score, 0)}/100 · confiance <span class="tag ${sy.confidence === 'faible' ? 'warn' : 'ok'}">${sy.confidence}</span><span class="tag ${sy.validated ? 'ok' : 'warn'}">${sy.validated ? 'modèle validé' : 'non validé'}</span></div></div>` +
-      `<div class="muted small" style="margin-top:4px">P(hausse 24 h) ${sy.validated ? '<b>' + p0(sy.pUp24) + '</b>' : p0(sy.base24) + ' (taux de base)'}${s.history && s.history.since ? ' · historique depuis ' + new Date(s.history.since).getFullYear() : ''}</div>` +
+      (sy.validated
+        ? `<div class="sect">Biais</div><div class="hero" style="gap:10px"><div class="big ${dirCls}" style="font-size:18px">${esc(sy.label.toUpperCase())}</div><div class="muted small">${sg(sy.score, 0)}/100 · confiance <span class="tag ${sy.confidence === 'faible' ? 'warn' : 'ok'}">${sy.confidence}</span> <span class="tag ok">modèle validé</span></div></div><div class="muted small" style="margin-top:4px">P(hausse 24 h) <b>${p0(sy.pUp24)}</b></div>`
+        : `<div class="muted small" style="margin-top:6px">Biais statistique non validé (ne bat pas le hasard) : ignoré.</div>`) +
       trendBlock(s) + ideaBlock(s) +
-      (rows ? `<div class="sect">Niveaux essentiels</div><table class="t"><tr><th></th><th class="r">Prix</th><th class="r">Distance</th><th class="r">Atteinte 24 h</th><th class="r">Rebond</th></tr>${rows}</table>` : '<div class="muted small">Aucune zone essentielle.</div>') +
+      (near.length ? `<div class="sect">Niveaux proches</div><div class="small">${near.join(' · ')}</div>` : '') +
       `<div class="sect">Contexte</div><div class="muted small">${s.regime ? esc(s.regime) + '<br>' : ''}Funding ${s.funding != null ? sg(s.funding, 4, ' %') : '-'} · OI 24 h ${sg(s.oi24, 1, ' %')} · achats agressifs 24 h ${s.buy24 != null ? n1(s.buy24, 1) + ' %' : '-'} · L/S ${s.ls != null ? n1(s.ls) : '-'}</div>` +
       `<div class="line" style="margin-top:8px"><button data-ovgo="${esc(s.symbol)}" class="primary">Ouvrir sur le Desk</button><button data-ovan="${esc(s.symbol)}">Analyse</button></div>`);
   }
@@ -65,7 +68,6 @@ const Overview = (() => {
         (st.ideas ? `<div class="muted small" style="margin-top:4px">Total : ${st.ideas} idées · stop ${st.stop} · objectif 2 ${st.tp2}</div>` : ''));
     }
     top += card('Santé', `<div class="muted small">Flux prix : ${feed && feed.trades && feed.trades.connected ? '<span class="up">connecté</span>' : '<span class="dn">hors ligne</span>'}<br>Flux liquidations : ${feed && feed.liqs && feed.liqs.connected ? '<span class="up">connecté</span>' : '<span class="dn">hors ligne</span>'}<br>Sources externes : ${srcErr.length ? '<span class="dn">' + srcErr.length + ' en erreur</span>' : '<span class="up">OK</span>'}${errs.length ? '<br><span class="dn">' + errs.length + ' erreur(s) serveur</span>' : ''}</div>`);
-    top += card('Dernières alertes', (o.alerts || []).length ? o.alerts.map(a => `<div class="alert"><time>${new Date(a.t * 1000).toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'})}</time>${a.sent ? '✓' : '✗'} ${esc(a.text)}</div>`).join('') : '<div class="muted small">Aucune alerte pour l\'instant.</div>');
     top += '</div>';
     el.className = 'ovwrap';
     el.innerHTML = top + `<div class="ag two" style="margin-top:10px">${o.symbols.map(symCard).join('')}</div>`;

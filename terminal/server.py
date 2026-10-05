@@ -34,8 +34,8 @@ def default_hub(cfg, source):
     """Donnees externes (calendrier, actifs de reference, dominance) : reelles avec Binance, fictives en mode simule."""
     from data.external import ExternalHub, RealProviders, SimProviders
     if cfg.source == "binance":
-        return ExternalHub(RealProviders(), source.now_ms, cfg.data_dir)
-    return ExternalHub(SimProviders(source.now_ms), source.now_ms, str(Path(cfg.data_dir) / "simulated"))
+        return ExternalHub(RealProviders(), source.now_ms, cfg.data_dir, cfg.symbols)
+    return ExternalHub(SimProviders(source.now_ms), source.now_ms, str(Path(cfg.data_dir) / "simulated"), cfg.symbols)
 
 
 def default_feed(cfg):
@@ -334,6 +334,9 @@ def make_handler(app: App):
                     if rep is None:
                         raise KeyError(f"rapport introuvable : {lab}")
                     return self._json(rep)
+                if u.path == "/api/lecture":
+                    sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
+                    return self._json(app.service.lecture(sym))
                 if u.path == "/api/strategy":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.service.strategy(sym))

@@ -64,16 +64,21 @@
     <div id="desk"></div>
     <aside id="side">
       <nav id="tabs" class="tabs" role="tablist">
-        <button data-tab="levels" class="on">Niveaux</button>
+        <button data-tab="lecture" class="on">Lecture</button>
         <button data-tab="signals">Idées</button>
+        <button data-tab="levels">Niveaux</button>
         <button data-tab="mine">Stratégie</button>
-        <button data-tab="context">Contexte</button>
-        <button data-tab="stats">Stats</button>
-        <button data-tab="liquidity">Liquidité</button>
-        <button data-tab="vp">VP</button>
-        <button data-tab="alerts">Alertes</button>
+        <button data-tab="context" data-expert hidden>Contexte</button>
+        <button data-tab="stats" data-expert hidden>Stats</button>
+        <button data-tab="liquidity" data-expert hidden>Liquidité</button>
+        <button data-tab="vp" data-expert hidden>VP</button>
+        <button data-tab="alerts" data-expert hidden>Alertes</button>
+        <button id="tabMore" class="more" title="Afficher / masquer les onglets détaillés (contexte, statistiques, liquidité, profils, alertes)">Détails ▾</button>
       </nav>
-      <div class="pane" data-pane="levels">
+      <div class="pane" data-pane="lecture">
+        <div id="lectureBox" class="sigbox"><section class="card"><div class="muted">Chargement…</div></section></div>
+      </div>
+      <div class="pane" data-pane="levels" hidden>
         <section class="card">
           <h2>Confluences <small id="confHint"></small></h2>
           <div id="ladder"></div>
@@ -244,6 +249,7 @@
 <script src="signals.js"></script>
 <script src="backtest.js"></script>
 <script src="strategy.js"></script>
+<script src="lecture.js"></script>
 <script src="panels.js"></script>
 <script src="app.js"></script>
 </body>

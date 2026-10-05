@@ -276,3 +276,11 @@ ul.mine{margin:4px 0 0;padding-left:18px;font-size:12.5px;color:#c6c9d2}ul.mine 
 
 .rkbar{display:inline-block;position:relative;width:70px;height:5px;background:#2a2f3a;border-radius:3px;margin-top:3px}.rkbar i{position:absolute;top:-2px;width:3px;height:9px;background:#9db7ff;border-radius:2px;transform:translateX(-1px)}
 .seg-like.on{background:#1f3b78;border-color:#3b6cd9;color:#fff}
+
+/* onglets du panneau de droite : plus de coupure a droite, bouton « Détails » */
+#tabs{display:flex;flex-wrap:wrap;gap:3px}#tabs button{flex:0 0 auto}#tabs .more{margin-left:auto;opacity:.75;font-size:11.5px}#tabs .more.on{opacity:1}
+/* Lecture */
+.lrow{margin:7px 0;padding-bottom:7px;border-bottom:1px solid #20242c}.lrow:last-child{border-bottom:0}.lrow .lt{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin-bottom:2px}
+.lchip{border-left:3px solid #2a2f3a;padding:5px 0 6px 9px;margin:7px 0}.lchip.warn{border-left-color:var(--amb)}.lchip.up{border-left-color:var(--up)}.lchip.dn{border-left-color:var(--dn)}
+.lchip .lhd{display:flex;justify-content:space-between;gap:8px;align-items:baseline}.lchip .lt{font-size:11.5px;color:#aab1c0}.lchip .lv{font-weight:600;font-size:13.5px;margin-top:1px}.lchip .ln{font-size:11.5px;color:var(--mut);margin-top:1px;line-height:1.35}
+.lidea{margin-top:2px}

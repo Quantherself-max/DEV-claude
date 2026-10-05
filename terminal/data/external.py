@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .base import DataError
+from .derivs import DerivMixin, SimDerivMixin, compare_view
+from .opendata import OpenData
 
 FF_URL = "https://nfs.faireconomy.media"
 YAHOO = "https://query1.finance.yahoo.com"
@@ -71,9 +73,15 @@ def normalize_event(raw: dict):
             "fnum": fnum, "pnum": pnum, "unit": unit or unit2}
 
 
-class RealProviders:
+class RealProviders(DerivMixin):
     def __init__(self, ff=FF_URL, yahoo=YAHOO, coingecko=COINGECKO, paprika=PAPRIKA, alt=ALTERNATIVE, spot=SPOT):
         self.ff, self.yahoo, self.cg, self.pp, self.alt, self.spot = (u.rstrip("/") for u in (ff, yahoo, coingecko, paprika, alt, spot))
+
+    def _get(self, url):
+        return http_json(url, timeout=12, retries=2)
+
+    def opendata_refresh(self, od):
+        return od.refresh()
 
     def calendar(self):
         out, err = [], None
@@ -132,10 +140,13 @@ class RealProviders:
 
 class ExternalHub:
     """Rafraichit les sources a leur propre rythme (appele regulierement) et garde un instantane lisible."""
-    DUE = {"calendar": 1800, "cross5": 300, "crossD": 3600, "fng": 3600, "cg": 600, "alt": 900, "altD": 21600}
+    DUE = {"calendar": 1800, "cross5": 300, "crossD": 3600, "fng": 3600, "cg": 600, "alt": 900, "altD": 21600,
+           "options": 300, "dvol": 600, "futures": 300, "perps": 120, "opendata": 21600}
+    DERIV_CURRENCIES = ("BTC", "ETH")                      # options et futures datees de Deribit
 
-    def __init__(self, providers, now_ms=lambda: int(time.time() * 1000), data_dir: str | None = None):
+    def __init__(self, providers, now_ms=lambda: int(time.time() * 1000), data_dir: str | None = None, symbols=()):
         self.p, self.now_ms = providers, now_ms
+        self.symbols = tuple(symbols)
         self.dir = Path(data_dir) if data_dir else None
         self.lock = threading.Lock()
         self.calendar: dict[str, dict] = {}                 # archive des evenements (id -> evenement)
@@ -146,9 +157,13 @@ class ExternalHub:
         self.cg_hist: list = []                             # [(t_ms, btc_d, total)] : historique construit par le terminal
         self.alt: dict[str, list] = {}
         self.altD: dict[str, list] = {}                     # cloture quotidienne (2,7 ans) des paires alt/BTC + BTCUSDT
+        self.derivs: dict = {"options": {}, "dvol": {}, "futures": {}, "perps": {}}      # derives Deribit / Bybit / OKX / Hyperliquid (V9)
+        self.indicators: dict = {}                          # derniere valeur et rang percentile des indicateurs en chaine / macro (jeux libres)
         self.errors: dict[str, str] = {}
         self.updated: dict[str, float] = {}
         self._due: dict[str, float] = {}
+        self._rec_last: dict[str, int] = {}
+        self.opendata = OpenData(Path(data_dir) / "opendata") if data_dir else None
         self._load()
 
     # --- persistance (calendrier + dominance) ---
@@ -198,6 +213,11 @@ class ExternalHub:
         self._run("crossD", lambda: self._cross("1d", "10y", self.crossD), force)
         self._run("alt", self._alt, force)
         self._run("altD", self._altD, force)
+        self._run("options", self._options, force)
+        self._run("dvol", self._dvol, force)
+        self._run("futures", self._futures, force)
+        self._run("perps", self._perps, force)
+        self._run("opendata", self._opendata, force)
         self.save()
 
     def _calendar(self):
@@ -268,19 +288,116 @@ class ExternalHub:
         if bad:
             raise DataError("partiel : " + "; ".join(bad))
 
+    # --- derives et jeux libres (V9) ---
+    def _each_currency(self, fn, target):
+        got, bad = {}, []
+        for cur in self.DERIV_CURRENCIES:
+            try:
+                got[cur] = fn(cur)
+            except Exception as e:
+                bad.append(f"{cur}: {str(e)[:70]}")
+        if not got:
+            raise DataError("; ".join(bad) or "aucune devise")
+        with self.lock:
+            target.update(got)
+        if bad:
+            raise DataError("partiel : " + "; ".join(bad))
+
+    def _options(self):
+        self._each_currency(lambda c: {**self.p.deribit_options(c, self.now_ms()), "t": self.now_ms()}, self.derivs["options"])
+
+    def _dvol(self):
+        self._each_currency(lambda c: self.p.deribit_dvol(c, self.now_ms()), self.derivs["dvol"])
+
+    def _futures(self):
+        self._each_currency(lambda c: {"rows": self.p.deribit_futures(c, self.now_ms()), "t": self.now_ms()}, self.derivs["futures"])
+
+    def _perps(self):
+        got, bad = {}, []
+        for sym in self.symbols:
+            try:
+                got[sym] = {"rows": self.p.perp_others(sym), "t": self.now_ms()}
+            except Exception as e:
+                bad.append(f"{sym}: {str(e)[:70]}")
+        if not got and self.symbols:
+            raise DataError("; ".join(bad))
+        with self.lock:
+            self.derivs["perps"].update(got)
+        for sym in got:
+            self._record(sym)
+        if bad:
+            raise DataError("partiel : " + "; ".join(bad))
+
+    def _opendata(self):
+        if not self.opendata:
+            return
+        from engine import indstudy                            # import tardif : le hub reste leger tant qu'on n'a pas besoin des indicateurs
+        status = self.p.opendata_refresh(self.opendata)
+        reading = indstudy.now_reading(self.opendata) if "btc" in self.opendata.available() else {}
+        with self.lock:
+            self.indicators = {"readings": reading, "status": status, "t": self.now_ms()}
+        bad = [f"{k}: {v}" for k, v in status.items() if v.startswith("indisponible")]
+        if bad and not reading:
+            raise DataError("jeux libres indisponibles : " + "; ".join(bad[:3]))
+
+    def _record(self, sym: str) -> None:
+        """Enregistre un instantane (au plus toutes les 15 min) pour pouvoir backtester le financement, l'OI et la base plus tard : data_local/history/derivs/<paire>.csv."""
+        if not self.dir:
+            return
+        now = self.now_ms()
+        if now - self._rec_last.get(sym, 0) < 900_000:
+            return
+        try:
+            snap = self.derivs["perps"].get(sym)
+            cmp_ = compare_view(list(snap["rows"])) if snap else None
+            if not cmp_:
+                return
+            row = {"t": now, "meanFundingAnn": cmp_["meanAnnualized"], "spreadAnn": cmp_["spread"], "oiOthersUsd": cmp_["oiUsd"]}
+            for r in cmp_["rows"]:
+                row[r["ex"] + "_fundingAnn"] = r.get("annualized")
+                row[r["ex"] + "_oiUsd"] = r.get("oiUsd")
+            coin = sym[:-4] if sym.endswith("USDT") else sym
+            if coin in self.derivs["options"]:
+                o = self.derivs["options"][coin]
+                row["putCall"] = o.get("putCall")
+                row["maxPainNext"] = (o["expiries"][0] or {}).get("maxPain") if o.get("expiries") else None
+            if coin in self.derivs["dvol"]:
+                row["dvol"] = self.derivs["dvol"][coin]["value"]
+            if coin in self.derivs["futures"]:
+                q = [r for r in self.derivs["futures"][coin]["rows"] if not r.get("perp")]
+                row["basisAnnNear"] = q[0]["annualized"] if q else None
+            path = self.dir / "history" / "derivs"
+            path.mkdir(parents=True, exist_ok=True)
+            f = path / f"{sym}.csv"
+            keys = list(row)
+            new = not f.exists()
+            if not new:
+                head = f.read_text(encoding="utf-8").split("\n", 1)[0].split(",")
+                keys = head + [k for k in row if k not in head]        # les colonnes ajoutees apres coup restent a droite
+            with f.open("a", encoding="utf-8") as fh:
+                if new:
+                    fh.write(",".join(keys) + "\n")
+                fh.write(",".join("" if row.get(k) is None else str(row.get(k)) for k in keys) + "\n")
+            self._rec_last[sym] = now
+        except (OSError, KeyError, TypeError, ValueError, IndexError):
+            pass
+
     def snapshot(self) -> dict:
         with self.lock:
-            return {"calendar": dict(self.calendar), "cross5": dict(self.cross5), "crossD": dict(self.crossD),
+            return {"derivs": {k: dict(v) for k, v in self.derivs.items()}, "indicators": dict(self.indicators), "calendar": dict(self.calendar), "cross5": dict(self.cross5), "crossD": dict(self.crossD),
                     "fng": list(self.fng), "cg": self.cg, "cg_hist": list(self.cg_hist), "alt": dict(self.alt),
                     "altD": dict(self.altD),
                     "errors": dict(self.errors), "updated": dict(self.updated)}
 
 
-class SimProviders:
+class SimProviders(SimDerivMixin):
     """Donnees externes fictives mais plausibles (mode simule) : l'interface complete fonctionne hors ligne."""
 
     def __init__(self, now_ms=lambda: int(time.time() * 1000)):
         self.now_ms = now_ms
+
+    def opendata_refresh(self, od):
+        return {}                                            # mode simule : aucun telechargement
 
     def _walk(self, seed, n, step_ms, end, base, vol):
         import random

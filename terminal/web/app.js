@@ -58,7 +58,7 @@ function explain(name) {
   return '';
 }
 
-const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools: true, sel: null, key: null, version: 0, cfg: null, tab: 'levels',
+const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools: true, sel: null, key: null, version: 0, cfg: null, tab: 'lecture', expert: false,
   statSide: 'all', lastBar: 0, lastBarObj: null, heat: null, liqs: null, an: null, series: null, vpd: null, serN: 0, vpFocus: null,
   liqOpts: {hours: 168, pools: true, sweeps: true, real: true, profile: true},
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
@@ -122,7 +122,7 @@ const panels = [];
 const LAYOUTS = {'1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp']};
 const needs = k => LAYOUTS[st.layout].includes(k) && st.page === 'desk';
 function savePrefs() {
-  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn})); } catch (e) { /* stockage indisponible */ }
+  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, expert: st.expert})); } catch (e) { /* stockage indisponible */ }
 }
 function loadPrefs() {
   try {
@@ -135,6 +135,7 @@ function loadPrefs() {
     if (typeof p.side === 'boolean') st.sideOpen = p.side;
     if (typeof p.sb === 'boolean') st.sbCollapsed = p.sb;
     if (typeof p.plan === 'boolean') st.planOn = p.plan;
+    if (typeof p.expert === 'boolean') st.expert = p.expert;
   } catch (e) { /* preferences illisibles : valeurs par defaut */ }
 }
 function syncAllTools() { panels.forEach(p => p.syncTools()); }
@@ -613,7 +614,7 @@ function buildControls(cfg) {
   st.cfg = cfg;
   if (!cfg.symbols.includes(st.symbol)) st.symbol = cfg.symbols[0];
   const sel = $('#symbol'); sel.innerHTML = cfg.symbols.map(s => `<option${s === st.symbol ? ' selected' : ''}>${s}</option>`).join('');
-  sel.onchange = () => { st.symbol = sel.value; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); pollOverview(); pollSignals(); };
+  sel.onchange = () => { st.symbol = sel.value; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); pollOverview(); pollSignals(); reloadSideTab(); };
   const box = $('#tfs');
   box.innerHTML = cfg.tfs.map(t => `<button data-tf="${t}" class="${t === st.tf ? 'on' : ''}">${t}</button>`).join('');
   box.onclick = e => { const b = e.target.closest('button'); if (!b) return; st.tf = b.dataset.tf; st.sel = null; st.data = null; st.series = null; st.vpd = null;
@@ -633,7 +634,17 @@ function showPane(name) {
   if (name === 'vp') pollVP();
   if (name === 'signals') { pollSignals(); if (st.sig) Signals.render(st.sig); }
   if (name === 'mine') Strategy.show();
+  if (name === 'lecture') Lecture.show();
 }
+// onglets detailles (contexte, stats, liquidite, profils, alertes) : caches par defaut, un bouton les affiche
+function reloadSideTab() { if (st.tab === 'lecture') Lecture.show(); else if (st.tab === 'mine') Strategy.show(); }
+const EXPERT_TABS = ['context', 'stats', 'liquidity', 'vp', 'alerts'];
+function applyExpert() {
+  document.querySelectorAll('#tabs button[data-expert]').forEach(b => { b.hidden = !st.expert; });
+  const more = $('#tabMore'); if (more) { more.textContent = st.expert ? 'Détails ▴' : 'Détails ▾'; more.classList.toggle('on', st.expert); }
+  if (!st.expert && EXPERT_TABS.includes(st.tab)) showPane('lecture');
+}
+$('#tabMore').onclick = () => { st.expert = !st.expert; applyExpert(); savePrefs(); };
 $('#tabs').onclick = e => { const b = e.target.closest('button[data-tab]'); if (b) showPane(b.dataset.tab); };
 $('#stats').addEventListener('click', e => {
   const b = e.target.closest('button[data-side]'); if (!b) return;
@@ -940,7 +951,7 @@ async function pollOverview() {
 }
 function openSymbol(sym, page) {
   if (st.cfg && st.cfg.symbols.includes(sym) && sym !== st.symbol) {
-    st.symbol = sym; $('#symbol').value = sym; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll();
+    st.symbol = sym; $('#symbol').value = sym; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); reloadSideTab();
   }
   location.hash = page === 'analysis' ? '#/analysis/synth' : '#/desk';
 }
@@ -954,11 +965,13 @@ function openSymbol(sym, page) {
   Signals.init(window.LT);
   Backtest.init(window.LT);
   Strategy.init(window.LT);
+  Lecture.init(window.LT);
   createPanels();
   buildControls(cfg);
   Analysis.init(window.LT);
   renderLqLegend(); applySidebar(); applyLayout();
-  try { const t = localStorage.getItem('liqTab'); showPane(['levels', 'signals', 'context', 'stats', 'liquidity', 'vp', 'alerts'].includes(t) ? t : 'levels'); } catch (err) { showPane('levels'); }
+  applyExpert();
+  try { const t = localStorage.getItem('liqTab'); showPane((['lecture', 'signals', 'levels', 'mine'].includes(t) || (st.expert && EXPERT_TABS.includes(t))) ? t : 'lecture'); } catch (err) { showPane('lecture'); }
   $('#navSettings').onclick = e => { e.preventDefault(); openSettings(); };
   routeFromHash();
   poll(); pollAnalysis(); pollSignals(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop);
