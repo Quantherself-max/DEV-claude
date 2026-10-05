@@ -186,6 +186,10 @@ Régression logistique sur 10 variables calculées à chaque clôture horaire (m
 - Niveaux, poches et alertes recalculés toutes les 5 secondes (`TERMINAL_REFRESH_SECONDS`).
 - **Pourquoi ton prix TradingView diffère** : ton graphique « Bitcoin / Dollar · Coinbase » est le marché spot américain, le terminal affiche le **perpétuel Binance**. L'écart de quelques dizaines de dollars est normal. Le prix Coinbase est affiché à côté pour comparer.
 
+## Faire tourner le terminal 24 h/24 sans ton ordinateur
+
+Le terminal n'envoie des idées que **tant qu'il tourne**. Pour ne pas laisser ton PC allumé, installe-le sur un petit serveur loué en Europe (environ 4 à 7 € par mois, 2 Go de mémoire) ou sur un Raspberry Pi toujours allumé. Un script installe tout comme service permanent (démarrage automatique, redémarrage après panne) : **voir `serveur/GUIDE.md`** (pas à pas, 10 minutes). Le terminal reste accessible depuis ton PC par un tunnel sécurisé, sans rien exposer sur Internet.
+
 ## Sécurité
 
 - Le serveur n'écoute que sur ta machine (`127.0.0.1`). Il refuse les requêtes qui viennent d'un autre site : vérification de l'en-tête Host et jeton de session.
@@ -240,7 +244,8 @@ server.py           serveur local : API, réglages, sécurité
 web/                interface : index.html + style.css ; app.js (Desk, état, alertes), panels.js (les trois graphiques),
                     overview.js (vue d'ensemble), signals.js (idées de trade), analysis.js et charts.js (analyse, graphiques SVG) ;
                     TradingView Lightweight Charts (vendor/)
-tests/              tests automatiques (plus de cent)
+serveur/            installation sur un serveur 24 h/24 (script et guide)
+tests/              tests automatiques (plus de deux cents)
 ```
 
 ## Limites connues
