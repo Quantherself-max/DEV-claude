@@ -499,6 +499,14 @@ class ServerTests(unittest.TestCase):
         self.assertIn("TERMINAL_SIGNAL_MAX_WEEK=2", self.env.read_text())
         self.post("/api/settings", {"signalMinScore": 60, "signalMaxWeek": 5, "signalLeverage": 10})        # valeurs par defaut
 
+    def test_per_pair_cap_setting(self):
+        code, res = self.post("/api/settings", {"signalMaxPerSymbol": 2})
+        self.assertEqual(code, 200, res)
+        self.assertEqual(res["signalMaxPerSymbol"], 2)
+        self.assertEqual(self.app.cfg.signal_max_per_symbol, 2)
+        self.assertIn("TERMINAL_SIGNAL_MAX_PER_SYMBOL=2", self.env.read_text())
+        self.post("/api/settings", {"signalMaxPerSymbol": 3})
+
     def test_trend_gate_setting_and_signal_fields(self):
         code, res = self.post("/api/settings", {"signalTrendGate": False})
         self.assertEqual(code, 200, res)

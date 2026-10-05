@@ -252,7 +252,8 @@ class AlertEngine:
         if not self.extras_on("alert_zones"):
             cfg = self.cfg
             text = ("✅ Terminal démarré. Tu ne recevras que les idées de trade "
-                    f"({cfg.signal_max_week} par semaine au maximum, qualité minimale {cfg.signal_min_score:.0f}/100)."
+                    f"({cfg.signal_max_week} par semaine au maximum, qualité minimale {cfg.signal_min_score:.0f}/100) "
+                    f"sur : {', '.join(cfg.symbols)}."
                     if getattr(cfg, "signal_on", True) else "✅ Terminal démarré (idées de trade désactivées dans les réglages).")
         else:
             lines = []

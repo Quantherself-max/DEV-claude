@@ -68,6 +68,29 @@ class DeskTests(unittest.TestCase):
         self.assertEqual(self.desk.week(MON)["sent"], 1)                 # une seule idee comptee, meme en plusieurs messages
         self.assertTrue(out[0]["sent"])
 
+    def test_one_pair_cannot_take_every_slot_of_the_week(self):
+        """BTC et SOL suivis : BTC a de meilleures idees, mais au plus 3 sur 5 pour une meme paire ; SOL passe ensuite."""
+        self.cfg.signal_max_week, self.cfg.signal_max_per_symbol = 5, 3
+        for k in range(3):
+            btc = idea("BTCUSDT", score=90.0, entry=100.0 + 10 * k, stop=98.0 + 10 * k, tp1=104.0 + 10 * k, tp2=108.0 + 10 * k)
+            self.assertEqual(len(self.desk.consider(sigs(btc, idea("SOLUSDT", score=40.0, entry=20.0, stop=19.0, tp1=22.0, tp2=24.0)), MON + k * 13 * H)), 1)
+            self.desk.trades[-1]["status"] = "closed"                          # (la regle « 2 idees ouvertes par paire » est testee ailleurs)
+        self.assertEqual(sum(1 for t in self.desk.trades if t["symbol"] == "BTCUSDT"), 3)
+        late = MON + 3 * 13 * H
+        btc4 = idea("BTCUSDT", score=95.0, entry=150.0, stop=148.0, tp1=154.0, tp2=158.0)
+        sol = idea("SOLUSDT", score=70.0, entry=20.0, stop=19.0, tp1=22.0, tp2=24.0)
+        out = self.desk.consider(sigs(btc4, sol), late)
+        self.assertEqual([t["symbol"] for t in out], ["SOLUSDT"])
+        self.assertEqual(sum(1 for t in self.desk.trades if t["symbol"] == "BTCUSDT"), 3)
+        self.assertIn("maximum 3 par paire", self.desk.waiting.get("why", ""))
+
+    def test_per_pair_cap_does_not_apply_to_a_single_pair(self):
+        self.cfg.signal_max_week, self.cfg.signal_max_per_symbol = 5, 2
+        for k in range(4):
+            i = idea("BTCUSDT", score=90.0, entry=100.0 + 10 * k, stop=98.0 + 10 * k, tp1=104.0 + 10 * k, tp2=108.0 + 10 * k)
+            self.assertEqual(len(self.desk.consider(sigs(i), MON + k * 13 * H)), 1)
+            self.desk.trades[-1]["status"] = "closed"
+
     def test_below_threshold_or_on_hold_or_not_warm_is_not_sent(self):
         low = idea(score=60.0)
         low["eligible"] = False

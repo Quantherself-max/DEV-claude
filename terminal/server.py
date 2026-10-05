@@ -187,7 +187,7 @@ class App:
                              "chatId": c.telegram_chat_id},
                 "alertMinScore": c.alert_min_score, "alertTf": c.alert_tf, "alertCooldownHours": c.alert_cooldown_hours,
                 "alertMode": c.alert_mode, "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "alertZones": c.alert_zones, "historyYears": c.history_years,
-                "signalOn": c.signal_on, "signalMinScore": c.signal_min_score, "signalMaxWeek": c.signal_max_week,
+                "signalOn": c.signal_on, "signalMinScore": c.signal_min_score, "signalMaxWeek": c.signal_max_week, "signalMaxPerSymbol": c.signal_max_per_symbol,
                 "signalLeverage": c.signal_leverage, "signalTrendGate": c.signal_trend_gate,
                 "x": {"on": c.x_on, "configured": bool(c.x_token and c.x_accounts), "tokenHint": ("..." + c.x_token[-4:]) if c.x_token else "",
                       "accounts": list(c.x_accounts), "posts": c.x_posts}}
@@ -232,6 +232,8 @@ class App:
             upd["TERMINAL_SIGNAL_MIN_SCORE"] = str(max(40, min(95, float(body["signalMinScore"]))))
         if body.get("signalMaxWeek") is not None:
             upd["TERMINAL_SIGNAL_MAX_WEEK"] = str(max(1, min(10, int(body["signalMaxWeek"]))))
+        if body.get("signalMaxPerSymbol") is not None:
+            upd["TERMINAL_SIGNAL_MAX_PER_SYMBOL"] = str(max(1, min(10, int(body["signalMaxPerSymbol"]))))
         if body.get("signalLeverage") is not None:
             upd["TERMINAL_SIGNAL_LEVERAGE"] = str(max(1, min(125, float(body["signalLeverage"]))))
         if body.get("signalTrendGate") is not None:

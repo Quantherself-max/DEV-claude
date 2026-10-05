@@ -871,7 +871,7 @@ async function openSettings() {
     $('#aMacro').checked = s.alertMacro !== false;
     const x = s.x || {}; $('#xOn').checked = x.on !== false; $('#xAccounts').value = (x.accounts || []).join(', '); $('#xPosts').value = String(x.posts || 10);
     $('#xToken').value = ''; $('#xToken').placeholder = x.tokenHint ? `jeton enregistré (${x.tokenHint}) : laisse vide pour le garder` : 'Bearer token X (API officielle)'; $('#xRes').textContent = '';
-    $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sLev').value = s.signalLeverage; $('#sTrend').checked = s.signalTrendGate !== false;
+    $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sMaxSym').value = s.signalMaxPerSymbol; $('#sLev').value = s.signalLeverage; $('#sTrend').checked = s.signalTrendGate !== false;
   } catch (e) { $('#saveRes').textContent = 'Erreur : ' + e.message; }
 }
 const closeSettings = () => { M.hidden = true; };
@@ -913,7 +913,7 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
   const body = {source: src, symbols: $('#symbols').value.split(/[\s,;]+/).filter(Boolean), telegramChatId: $('#tgChat').value.trim(),
     alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMode: $('#aMode').value, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, historyYears: +$('#histYears').value,
     xOn: $('#xOn').checked, xAccounts: $('#xAccounts').value, xPosts: +$('#xPosts').value,
-    signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalLeverage: +$('#sLev').value, signalTrendGate: $('#sTrend').checked};
+    signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalMaxPerSymbol: +$('#sMaxSym').value, signalLeverage: +$('#sLev').value, signalTrendGate: $('#sTrend').checked};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();
   if ($('#xToken').value.trim()) body.xToken = $('#xToken').value.trim();
   await api('/api/settings', body);

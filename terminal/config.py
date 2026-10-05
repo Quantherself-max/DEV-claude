@@ -60,6 +60,7 @@ class Config:
     signal_on: bool = True
     signal_min_score: float = 60.0        # score minimal sur 100 (la derniere place de la semaine exige +8)
     signal_max_week: int = 5              # idees par semaine au maximum (lundi 00:00 UTC)
+    signal_max_per_symbol: int = 3        # dont au plus N pour une meme paire (plusieurs paires suivies) : evite qu'une paire prenne toutes les places
     signal_min_struct: float = 7.0        # qualite minimale des niveaux superposes
     signal_leverage: float = 10.0         # levier utilise pour les calculs de liquidation affiches
     signal_valid_hours: int = 48          # duree de validite d'un ordre limite
@@ -110,6 +111,7 @@ def load_config(env_path: Path | None = None) -> Config:
     c.signal_on = g("TERMINAL_SIGNALS", "1").lower() not in ("0", "false", "non", "no")
     c.signal_min_score = max(40.0, min(95.0, float(g("TERMINAL_SIGNAL_MIN_SCORE", c.signal_min_score))))
     c.signal_max_week = max(1, min(10, int(float(g("TERMINAL_SIGNAL_MAX_WEEK", c.signal_max_week)))))
+    c.signal_max_per_symbol = max(1, min(10, int(float(g("TERMINAL_SIGNAL_MAX_PER_SYMBOL", c.signal_max_per_symbol)))))
     c.signal_min_struct = max(4.0, min(20.0, float(g("TERMINAL_SIGNAL_MIN_STRUCT", c.signal_min_struct))))
     c.signal_leverage = max(1.0, min(125.0, float(g("TERMINAL_SIGNAL_LEVERAGE", c.signal_leverage))))
     c.signal_valid_hours = max(4, min(168, int(float(g("TERMINAL_SIGNAL_VALID_HOURS", c.signal_valid_hours)))))
