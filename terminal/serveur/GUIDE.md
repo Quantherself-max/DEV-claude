@@ -3,9 +3,9 @@
 Le terminal est un programme : il surveille le marché, calcule les idées de trade et les envoie sur Telegram **tant qu'il tourne**. Éteins ton PC et plus rien n'est envoyé ni suivi. La solution : l'installer sur un petit **serveur loué** (ou un mini-ordinateur toujours allumé). Il ne dépend plus de ton PC.
 
 ## Ce qu'il te faut
-- **Un serveur Linux** : Ubuntu 22.04 ou 24.04 (ou Debian 12), **2 Go de mémoire** (j'ai mesuré 350 Mo avec 2,5 ans d'historique simulé ; compte environ 1 Go avec 7 ans d'historique réel, donc 1 Go serait trop juste), 10 Go de disque.
+- **Un serveur Linux** : Ubuntu 22.04 ou 24.04 (ou Debian 12), **2 Go de mémoire** (confortable), 10 Go de disque. Mesures : les calculs lourds (statistiques, biais, rejeu des idées) sur 6,7 ans d'historique pour 2 paires ne dépassent pas ~120 Mo, et le programme complet tourne autour de 350 Mo ; 1 Go suffirait à la rigueur, 2 Go est sans souci.
 - **Hébergé en Europe** (Allemagne, France, Finlande...). Binance bloque certains pays, dont les États-Unis : un serveur là-bas ne recevrait aucune donnée. Prix indicatif : environ 4 à 7 € par mois chez Hetzner, OVHcloud, Scaleway, Contabo... (à vérifier chez le fournisseur).
-- Alternative à la maison : un **Raspberry Pi 4 ou 5** (système 64 bits) ou un vieux PC sous Linux, toujours allumé et branché à Internet.
+- Alternative à la maison : un **Raspberry Pi 4 ou 5** (voir la section Raspberry Pi plus bas) ou un vieux PC sous Linux, toujours allumé et branché à Internet.
 - Le **ZIP du terminal** (le même que d'habitude), et ton **token Telegram** et ton **chat id** (dans ⚙ du terminal, ou dans ton fichier `.env`).
 
 ## Installation (10 minutes)
@@ -32,12 +32,32 @@ Le terminal est un programme : il surveille le marché, calcule les idées de tr
 
 Au premier lancement, le terminal télécharge l'historique (depuis 2019) : compte quelques minutes avant les premières idées.
 
+## Option : un Raspberry Pi à la maison (Raspberry Pi 4 Modèle B, 2 Go suffit)
+Un achat unique au lieu d'un abonnement, consommation de quelques watts. Il te faut, en plus de la carte :
+- une **alimentation officielle USB-C 5 V / 3 A**, une **carte microSD de 32 Go** de bonne marque (classe A1 ou A2), un **boîtier** (de préférence avec dissipateur) et un **câble Ethernet** vers ta box (plus fiable que le Wi-Fi). Un kit « Raspberry Pi 4 » complet évite de tout choisir.
+- Ton PC pour préparer la carte, avec le logiciel gratuit **Raspberry Pi Imager**.
+
+Étapes :
+1. Dans **Raspberry Pi Imager** : choisis ta carte, le système **Raspberry Pi OS Lite (64-bit)**, puis les options (roue dentée) : nom `liq`, **activer SSH**, choisis un nom d'utilisateur et un mot de passe long, et le Wi-Fi seulement si tu n'utilises pas Ethernet. Écris la carte.
+2. Mets la carte dans le Pi, branche l'Ethernet puis l'alimentation. Attends 2 minutes.
+3. Depuis **PowerShell** : `ssh TON_UTILISATEUR@liq.local` (si le nom n'est pas reconnu, utilise l'adresse IP du Pi affichée dans l'interface de ta box).
+4. Envoie le ZIP (dans un autre PowerShell) : `scp "$HOME\Downloads\DEV-claude-claude-festive-gates-viq9oo.zip" TON_UTILISATEUR@liq.local:liq.zip`
+5. Sur le Pi, installe (la même chose que sur un serveur, avec `sudo`) :
+   ```
+   sudo apt-get update && sudo apt-get install -y unzip
+   rm -rf ~/liq && unzip -q ~/liq.zip -d ~/liq
+   sudo bash ~/liq/*/terminal/serveur/installer-serveur.sh
+   ```
+6. Même vérification et mêmes commandes qu'au-dessus (en les faisant précéder de `sudo`).
+
+À savoir : le Pi est environ 3 à 5 fois plus lent qu'un PC. Les calculs lourds (rejeu des idées, biais : environ 40 secondes par paire sur un PC) prennent donc quelques minutes, une fois par jour ; le reste est instantané. Si ta box redémarre ou si le courant saute, le terminal repart tout seul, mais rien n'est envoyé pendant la coupure. Une carte microSD de qualité tient largement : le terminal n'écrit que quelques Mo par heure.
+
 ## Voir l'interface depuis ton PC (facultatif)
 Le terminal ne s'ouvre à personne d'autre que le serveur lui-même : rien n'est exposé sur Internet. Pour voir l'interface (graphiques, onglet Idées, réglages) depuis ton PC, ouvre un tunnel sécurisé dans PowerShell et laisse la fenêtre ouverte :
 ```
 ssh -L 8765:127.0.0.1:8765 root@ADRESSE_IP
 ```
-Puis ouvre **http://127.0.0.1:8765/** dans ton navigateur. Les réglages (⚙) y fonctionnent comme d'habitude. Sans tunnel, modifie le fichier de réglages sur le serveur (`nano /opt/liq-terminal/terminal/.env`) puis `systemctl restart liq-terminal`.
+(Avec un Raspberry Pi : `ssh -L 8765:127.0.0.1:8765 TON_UTILISATEUR@liq.local`.) Puis ouvre **http://127.0.0.1:8765/** dans ton navigateur. Les réglages (⚙) y fonctionnent comme d'habitude. Sans tunnel, modifie le fichier de réglages sur le serveur (`nano /opt/liq-terminal/terminal/.env`) puis `systemctl restart liq-terminal`.
 
 ## Commandes utiles (sur le serveur)
 | Pour... | Commande |
