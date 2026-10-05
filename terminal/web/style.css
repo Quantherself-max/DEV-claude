@@ -273,3 +273,6 @@ table.vt .ci{min-width:110px}
 .btsvg{height:210px}
 .trendbox{border:1px solid #1b2030;border-left:3px solid #4c8dff;background:#0f131c;border-radius:6px;padding:7px 10px;margin:4px 0 8px;font-size:12.5px}.trendbox .small{margin-top:3px;color:#c6c9d2}
 ul.mine{margin:4px 0 0;padding-left:18px;font-size:12.5px;color:#c6c9d2}ul.mine li{margin:3px 0}
+
+.rkbar{display:inline-block;position:relative;width:70px;height:5px;background:#2a2f3a;border-radius:3px;margin-top:3px}.rkbar i{position:absolute;top:-2px;width:3px;height:9px;background:#9db7ff;border-radius:2px;transform:translateX(-1px)}
+.seg-like.on{background:#1f3b78;border-color:#3b6cd9;color:#fff}

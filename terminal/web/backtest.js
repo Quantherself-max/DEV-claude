@@ -10,7 +10,7 @@ const Backtest = (() => {
   const dateFr = ms => new Date(ms).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit', year: 'numeric'});
   let LT = null, list = null, label = null, kind = 'backtest', rep = null, loading = false, error = null, sortKey = null, showAll = false;
 
-  const repKind = r => ({'vwap-strategy': 'strategy', 'avwap-swing': 'avwap'})[r.kind] || 'backtest';
+  const repKind = r => ({'vwap-strategy': 'strategy', 'avwap-swing': 'avwap', indicators: 'indicators'})[r.kind] || 'backtest';
 
   async function show() {
     if (loading) return;
@@ -40,6 +40,8 @@ const Backtest = (() => {
     root.addEventListener('click', e => {
       const th = e.target.closest('th[data-sort]');
       if (th) { sortKey = sortKey === th.dataset.sort ? null : th.dataset.sort; render(); }
+      const ih = e.target.closest('[data-indh]');
+      if (ih) { indH = +ih.dataset.indh; render(); }
       const all = e.target.closest('[data-showall]');
       if (all) { showAll = !showAll; render(); }
     });
@@ -339,6 +341,57 @@ const Backtest = (() => {
       <li><b>Relancer sur ton actif</b> : <code>python tools/run_avwap_swing.py SOLUSDT</code> après <code>python tools/fetch_history.py SOLUSDT</code>.</li></ul></section>`;
   }
 
+  // ---------- rapport « indicateurs » ----------
+  let indH = 14;
+  function indFmt(r, v) {
+    if (v == null) return '-';
+    if (r.unit && r.unit.includes('%')) return (v >= 0 ? '+' : '−') + num(Math.abs(v) * 100, Math.abs(v) < 0.01 ? 2 : 1) + ' %';
+    return num(v, Math.abs(v) >= 100 ? 0 : 2);
+  }
+  function indVerdict(r) {
+    const c = r.counts, tone = c.informative ? 'ok' : c.hints ? 'warn' : 'bad';
+    const kp = (t, big, sub) => `<div class="kpi"><small>${t}</small><b>${big}</b><span>${sub}</span></div>`;
+    return `<section class="card btv ${tone}"><div class="bthead"><h2>Indicateurs : que valent-ils vraiment ? <small>${esc(r.label)} · ${dateFr(r.period.start)} → ${dateFr(r.period.end)} · ${c.indicators} indicateurs, ${c.tests} mesures</small></h2></div>
+      <div class="btverdict">${esc(r.verdict.text)}</div>
+      <ul class="btnotes">${r.verdict.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
+      <div class="kpis">${kp('Informatifs', c.informative, 'au-dessus du seuil du hasard, appris puis confirmés sur le test')}${kp('À surveiller', c.hints, 'même signe partout, mais sous le seuil')}${kp('Seuil du hasard', num(r.threshold, 1), '|t| dépassé dans 1 % des cas par un signal sans lien avec le prix')}${kp('Période test', yr(r.period.split) + '-' + yr(r.period.end - 1), 'jamais regardée pour choisir')}</div>
+      <div class="muted small">Écart = rendement futur attendu en plus entre le haut et le bas de l'historique de l'indicateur (en points de rendement logarithmique, à l'horizon choisi). « t » mesure la solidité : en dessous du seuil du hasard, on ne peut pas distinguer l'effet du hasard.</div></section>`;
+  }
+  function indTable(r) {
+    const hs = r.horizons, hk = String(indH);
+    const sp = (m) => !m ? '<td class="r muted">-</td>' : `<td class="r ${Math.abs(m.t) >= 2 ? (m.spread > 0 ? 'up' : 'dn') : 'muted'}" title="${m.n} jours, t = ${num(m.t, 1)}">${sgn(m.spread * 100, 1)} % <small>t ${sgn(m.t, 1)}</small></td>`;
+    const bk = (b, k) => b && b[k] ? `${sgn(b[k].mean * 100, 1)}` : '-';
+    const LV = {informatif: ['ok', 'informatif'], indice: ['warn', 'à surveiller'], rien: ['', 'rien de prouvé']};
+    let last = null;
+    const GO = ['Prix', 'En chaîne', 'Liquidité', 'Macro'], LO = {informatif: 0, indice: 1, rien: 2};
+    const sorted = r.rows.slice().sort((a, b) => (GO.indexOf(a.group) - GO.indexOf(b.group)) || (LO[a.level] - LO[b.level]));
+    const rows = sorted.map(x => {
+      const d = x.h[hk] || {}, now = x.now;
+      const head = x.group !== last ? `<tr class="grp"><td colspan="8">${esc(x.group)}</td></tr>` : ''; last = x.group;
+      const lv = LV[x.level];
+      const rk = now ? `<span class="rkbar" title="percentile historique ${Math.round(now.rank * 100)} %"><i style="left:${(now.rank * 100).toFixed(0)}%"></i></span>` : '';
+      return head + `<tr><td><b>${esc(x.title)}</b><div class="muted small">${esc(x.hypothesis)}</div></td>
+        <td class="r">${now ? indFmt(x, now.value) : '-'}<div>${rk}</div></td>${sp(d.is)}${sp(d.oos)}
+        <td class="r small">${bk(d.buckets, 'bottom')} / ${bk(d.buckets, 'mid')} / ${bk(d.buckets, 'top')}</td>
+        <td>${x.expect ? (x.expectOk ? '<span class="muted small">sens attendu ✓</span>' : '<span class="muted small">sens inverse de l\'attendu</span>') : '<span class="muted small">sens libre</span>'}</td>
+        <td><span class="pill ${lv[0]}">${lv[1]}</span></td></tr>`;
+    }).join('');
+    const btn = hs.map(h => `<button data-indh="${h}" class="seg-like ${h === indH ? 'on' : ''}">${h} jours</button>`).join(' ');
+    return `<section class="card"><h2>Les indicateurs <small>rendement du bitcoin à ${indH} jours, un jour de décalage</small></h2>
+      <div class="line">Horizon : ${btn}</div>
+      <div class="scroll"><table class="bttab vt"><thead><tr><th>Indicateur</th><th class="r">Aujourd'hui</th><th class="r">Écart · apprentissage</th><th class="r">Écart · test</th><th class="r">Rendement : bas / milieu / haut (%)</th><th>Sens</th><th>Verdict</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="muted small">Bas / milieu / haut = rendement moyen à ${indH} jours quand l'indicateur est dans son quintile bas, central ou haut. La barre « Aujourd'hui » place la valeur actuelle dans l'historique de l'indicateur (gauche = bas).</div></section>`;
+  }
+  function indMethod(r) {
+    return `<section class="card"><h2>Méthode et limites</h2><ul class="btnotes">
+      <li><b>Données libres</b> : ${esc(r.source || '')}</li>
+      <li><b>Pas de futur</b> : chaque indicateur est replacé dans l'historique de ses seules valeurs passées (rang percentile sur fenêtre croissante, un an au moins). Le rendement futur démarre à la clôture du lendemain : la valeur d'un jour n'est connue qu'à la fin du jour.</li>
+      <li><b>Mesure</b> : régression du rendement logarithmique futur (7, 14, 30 jours) sur le signal centré ; erreur-type de Newey-West (les fenêtres se chevauchent). Apprentissage jusqu'au ${dateFr(r.period.split)}, test après.</li>
+      <li><b>Témoin</b> : le même signal décalé au hasard (≥ 400 jours) garde sa forme mais perd tout lien avec le prix ; son |t| fixe le seuil. ${r.counts.tests} mesures sont faites : quelques-unes paraissent bonnes par hasard, d'où le seuil et le test.</li>
+      <li><b>Limites</b> : un seul actif (BTC), des séries journalières, peu de cycles de marché (2013-2026) ; la puissance est limitée. Les indicateurs de dérivés (financement, Open Interest, options, liquidations) n'ont pas d'historique libre : le terminal les enregistre désormais lui-même pour pouvoir les mesurer plus tard.</li>
+      <li><b>Relancer</b> : <code>python tools/run_indicators.py</code> (quelques secondes, aucune clé).</li></ul></section>`;
+  }
+
   function render() {
     const root = $('#btBox');
     if (!root) return;
@@ -346,10 +399,11 @@ const Backtest = (() => {
     if (loading && !rep) { root.innerHTML = '<section class="card"><div class="muted">Chargement du rapport…</div></section>'; return; }
     if (!list || !list.length) { root.innerHTML = '<section class="card"><h2>Backtest</h2><div class="muted">Aucun rapport trouvé. Lance <code>python tools/run_study.py BTCUSDT</code> après avoir téléchargé l\'historique (<code>python tools/fetch_history.py BTCUSDT</code>).</div></section>'; return; }
     if (!rep) return;
-    const kname = k => k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : 'idées du terminal';
+    const kname = k => k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : k === 'indicators' ? 'indicateurs (en chaîne, macro, liquidité)' : 'idées du terminal';
     const sel = `<div class="btbar"><label>Rapport <select id="btSel">${list.map(x => `<option value="${esc(x.kind)}|${esc(x.label)}" ${x.label === label && x.kind === kind ? 'selected' : ''}>${esc(x.label)} · ${kname(x.kind)}${x.own ? ' (calculé sur tes données)' : ' (livré avec le terminal)'}</option>`).join('')}</select></label>
       <span class="muted small">Calculé le ${dateFr(rep.computedAt)} en ${Math.round(rep.seconds / 60)} min</span></div>`;
     if (rep.kind === 'vwap-strategy') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + stratHedge(rep) + stratMethod(rep) + '</div>'; return; }
+    if (rep.kind === 'indicators') { root.innerHTML = sel + '<div class="btgrid">' + indVerdict(rep) + indTable(rep) + indMethod(rep) + '</div>'; return; }
     if (rep.kind === 'avwap-swing') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + reactionCard(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + swingMethod(rep) + '</div>'; return; }
     root.innerHTML = sel + '<div class="btgrid">' + verdictCard(rep) + trendCard(rep) + equityCard(rep) + variantsCard(rep) + eventsCard(rep) + touchCard(rep) + regimeCard(rep) + costsCard(rep) + methodCard(rep) + '</div>';
   }

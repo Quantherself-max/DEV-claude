@@ -4,8 +4,8 @@ import json
 import re
 from pathlib import Path
 
-_LABEL = re.compile(r"^(backtest|strategy|avwap)_([A-Za-z0-9]+)\.json$")
-KINDS = ("backtest", "strategy", "avwap")           # backtest : idees du terminal ; strategy : ta strategie (VWAP / profil de volume) ; avwap : VWAP ancres sur un mouvement d'au moins 5 %
+_LABEL = re.compile(r"^(backtest|strategy|avwap|indicators)_([A-Za-z0-9]+)\.json$")
+KINDS = ("backtest", "strategy", "avwap", "indicators")           # backtest : idees du terminal ; strategy : ta strategie (VWAP / profil de volume) ; avwap : VWAP ancres sur un mouvement d'au moins 5 % ; indicators : valeur des indicateurs (en chaine, macro) sur le prix futur
 
 
 def base_of(symbol: str) -> str:
