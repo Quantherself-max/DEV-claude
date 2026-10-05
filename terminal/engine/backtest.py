@@ -72,8 +72,10 @@ class Dataset:
 #  Simulation d'un trade sur bougies fines
 # =====================================================================================================
 def simulate(b: fine.Bars, t0: float, side: str, etype: str, entry: float, stop: float, tp1: float, tp2,
-             valid_h: float = 48, hold_h: float = 72, partial: float = 0.5) -> dict:
-    """Joue un ordre place a l'instant t0 sur les bougies fines b. Retourne le deroule SANS frais (voir net_r)."""
+             valid_h: float = 48, hold_h: float = 72, partial: float = 0.5, through: float = 0.0) -> dict:
+    """Joue un ordre place a l'instant t0 sur les bougies fines b. Retourne le deroule SANS frais (voir net_r).
+    through : un ordre limite n'est execute que si le prix le DEPASSE de cette fraction (0,0003 = 3 points de base) ; 0 = execute des qu'il est touche
+    (hypothese optimiste : en vrai, la file d'attente fait que toucher le niveau ne suffit pas toujours)."""
     n = len(b.t)
     i = bisect_left(b.t, t0)
     if i >= n:
@@ -89,15 +91,16 @@ def simulate(b: fine.Bars, t0: float, side: str, etype: str, entry: float, stop:
     else:
         end = min(n, i + int(valid_h * per_h))
         j = None
+        trig_l, trig_s = entry * (1 - through), entry * (1 + through)
         for q in range(i, end):
             if long_:
-                if L[q] <= entry:
+                if L[q] <= trig_l:
                     j, fp = q, (O[q] if O[q] < entry else entry)
                     break
                 if H[q] >= tp1:
                     return {"result": "missed", "filled": False}
             else:
-                if H[q] >= entry:
+                if H[q] >= trig_s:
                     j, fp = q, (O[q] if O[q] > entry else entry)
                     break
                 if L[q] <= tp1:
@@ -306,10 +309,11 @@ def generate(ds: Dataset, start_ms: int, end_ms: int, opts: dict | None = None, 
     return out
 
 
-def attach_outcomes(cands: list[dict], ds: Dataset, valid_h: float = 48, hold_h: float = 72, partial: float = 0.5, progress=None) -> None:
+def attach_outcomes(cands: list[dict], ds: Dataset, valid_h: float = 48, hold_h: float = 72, partial: float = 0.5, progress=None,
+                    through: float = 0.0, key: str = "sim") -> None:
     """Joue chaque candidate seule (sans contrainte de position) sur les bougies 1 minute."""
     for k, r in enumerate(cands):
-        r["sim"] = simulate(ds.b1, r["t"], r["side"], r["etype"], r["entry"], r["stop"], r["tp1"], r.get("tp2"), valid_h, hold_h, partial)
+        r[key] = simulate(ds.b1, r["t"], r["side"], r["etype"], r["entry"], r["stop"], r["tp1"], r.get("tp2"), valid_h, hold_h, partial, through)
         if progress and k % 2000 == 0:
             progress(k / max(1, len(cands)), "simulation")
 

@@ -135,6 +135,11 @@ python tools/run_study.py SOLUSDT          # quelques minutes à une demi-heure 
 ```
 Le rapport apparaît dans la page Backtest (menu « Rapport »), et le filtre de tendance cite alors les chiffres de ta paire plutôt que ceux du BTC. `--market spot` pour le comptant, `--since 2021-01` pour limiter l'historique, `--workers 4` pour les coeurs utilisés. **Ces deux commandes demandent un accès internet vers Binance** ; elles ont été écrites d'après le format public des archives et testées sur de fausses archives, pas encore contre le vrai site.
 
+### Vérifications de robustesse faites
+- **Biais de calcul** : niveaux, tendance, ATR et poches n'utilisent que des bougies fermées ; un pivot n'est connu que trois bougies après (test automatique). Un test sur marche aléatoire ne trouve aucun avantage (la machine à tester ne fabrique pas de faux signaux).
+- **Exécution des ordres limites** : supposés exécutés dès que le prix les touche (optimiste). En exigeant que le prix les dépasse de 0,1 %, la règle actuelle passe de +0,134 à +0,125 par trade : le résultat n'en dépend pas.
+- **Erreur corrigée en route** : une première version de l'étude d'événements moyennait par jour au lieu de par événement et faisait apparaître un faux retour à la moyenne vers le VWAP du jour ; la correction (moyenne par événement, erreur-type robuste par jour) le fait disparaître.
+
 ### Ce qui n'est pas testé (et donc pas démontré)
 Les poches estimées par l'Open Interest (29 jours d'historique seulement), le contexte macro et les annonces, le financement réel, l'écart acheteur / vendeur, et le flux d'ordres réel sur BTC (les archives Bitstamp n'ont pas de volume acheteur agressif : il est estimé par la position de la clôture dans la bougie). Les marchés de 2013 à 2016 étaient peu liquides : les frais réels y étaient plus élevés que ceux supposés.
 
