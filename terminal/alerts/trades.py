@@ -48,7 +48,11 @@ class TradeDesk:
                 pass
 
     def _send(self, trade, text, kind):
-        ok, detail = self.notifier.send(text)
+        ok, detail = True, "envoye"
+        for part in sg.split_message(text):                          # un long message part en plusieurs, sans rien perdre
+            ok1, detail1 = self.notifier.send(part)
+            if not ok1:
+                ok, detail = False, detail1
         if self.log:
             self.log({"t": self.now(), "symbol": trade["symbol"], "kind": kind, "mid": trade["entry"], "text": text, "sent": ok, "detail": detail})
         return ok

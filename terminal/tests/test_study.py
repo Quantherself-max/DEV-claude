@@ -93,6 +93,9 @@ class StudyTests(unittest.TestCase):
             self.assertIn(k, rep)
         self.assertEqual(len(rep["variants"]), len(study.variants()))
         self.assertFalse(rep["verdict"]["edge"])                      # marche aleatoire : aucun avantage a trouver
+        import re
+        for n in rep["verdict"]["notes"] + [rep["verdict"]["text"]]:
+            self.assertIsNone(re.search(r"\d\.\d", n), n)               # virgule decimale francaise partout
         import json
         json.dumps(rep)                                              # serialisable
 

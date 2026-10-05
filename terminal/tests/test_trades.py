@@ -55,6 +55,19 @@ class DeskTests(unittest.TestCase):
         self.assertEqual(self.desk.week(MON)["sent"], 1)
         self.assertEqual(self.logs[0]["kind"], "trade")
 
+    def test_long_idea_is_sent_in_several_messages_without_losing_the_caution_section(self):
+        i = idea()
+        i["desc"]["why"] = [f"  • niveau {k} : " + "texte long " * 12 for k in range(40)]
+        i["desc"]["risks"] = ["PRUDENCE-FINALE : ne risque que ce que tu acceptes de perdre."]
+        out = self.desk.consider(sigs(i), MON)
+        self.assertEqual(len(out), 1)
+        self.assertGreaterEqual(len(self.n.sent), 2)
+        self.assertTrue(all(len(m) < 4096 for m in self.n.sent))
+        self.assertIn("(suite 2/", self.n.sent[1])
+        self.assertIn("PRUDENCE-FINALE", self.n.sent[-1])
+        self.assertEqual(self.desk.week(MON)["sent"], 1)                 # une seule idee comptee, meme en plusieurs messages
+        self.assertTrue(out[0]["sent"])
+
     def test_below_threshold_or_on_hold_or_not_warm_is_not_sent(self):
         low = idea(score=60.0)
         low["eligible"] = False

@@ -617,11 +617,15 @@ def run(ds: "bt.Dataset", label: str, start_ms: int, end_ms: int, split_ms: int,
         notes.append(f"Tendance de fond : les idées dans son sens rapportent {f2(al_row['all']['expR'])} fois le risque par trade après frais "
                      f"({al_row['all']['n']} trades), celles à contre-courant {f2(co_row['all']['expR'])} ({co_row['all']['n']} trades), celles en tendance indécise {f2(ne_row['all']['expR'])}.")
     if leg_row["all"]["expR"] is not None:
-        notes.append(f"Sans ce filtre (ancienne règle du terminal) : {f2(leg_row['all']['expR'])} par trade, c'est-à-dire perdant une fois les frais comptés.")
-    if p_un is not None and p_tr is not None:
-        notes.append(f"Face à des entrées au hasard de même forme : la règle actuelle fait mieux dans {100 * (1 - p_un):.0f} % des tirages ; "
-                     f"mais face à des entrées au hasard prises DANS LA MÊME TENDANCE ({f2(ctrl_tr['expMean'])} en moyenne) seulement dans {100 * (1 - p_tr):.0f} % : "
-                     + ("les niveaux apportent un plus significatif." if levels_add else "la tendance explique l'essentiel de l'avantage, les niveaux (liquidité, VWAP, profils) n'apportent qu'un petit plus non démontré."))
+        lg = leg_row["all"]["expR"]
+        notes.append(f"Sans ce filtre (ancienne règle du terminal) : {f2(lg)} par trade" + (", c'est-à-dire perdant une fois les frais comptés." if lg < 0 else "."))
+    if p_un is not None and p_tr is not None and real is not None:
+        if real > 0:
+            notes.append(f"Face à des entrées au hasard de même forme : la règle actuelle fait mieux dans {100 * (1 - p_un):.0f} % des tirages ; "
+                         f"mais face à des entrées au hasard prises DANS LA MÊME TENDANCE ({f2(ctrl_tr['expMean'])} en moyenne) seulement dans {100 * (1 - p_tr):.0f} % : "
+                         + ("les niveaux apportent un plus significatif." if levels_add else "la tendance explique l'essentiel de l'avantage, les niveaux (liquidité, VWAP, profils) n'apportent qu'un petit plus non démontré."))
+        else:
+            notes.append(f"La règle actuelle ne gagne pas d'argent sur cet historique ({f2(real)} par trade) ; des entrées au hasard de même forme font {f2(ctrl_un['expMean'])}.")
     if gross is not None and real is not None:
         notes.append(f"Les frais, le glissement et le financement coûtent environ {f2(gross - real).lstrip('+')} fois le risque par trade (avant frais : {f2(gross)}).")
     if n_sig:
@@ -630,7 +634,7 @@ def run(ds: "bt.Dataset", label: str, start_ms: int, end_ms: int, split_ms: int,
         notes.append("Aucun outil pris isolément (balayage, écart au VWAP, VWAP ancré, CVD) ne montre un effet à la fois significatif et de même sens sur les deux périodes.")
     recent = cur_row["eras"][-1] if cur_row["eras"] else None
     recent_edge = bool(recent and recent["expLo"] is not None and recent["expLo"] > 0)
-    if recent and recent["expR"] is not None:
+    if recent and recent["expR"] is not None and len(cur_row["eras"]) > 1:
         notes.insert(1, f"Sur la période la plus récente ({recent['label']}) : {f2(recent['expR'])} fois le risque par trade ({recent['n']} trades, intervalle à 90 % de "
                         f"{f2(recent['expLo'])} à {f2(recent['expHi'])}). " + ("L'avantage y est encore démontré." if recent_edge else
                         "L'avantage n'y est plus démontré : il s'est affaibli avec le temps (marché plus mûr), prudence."))

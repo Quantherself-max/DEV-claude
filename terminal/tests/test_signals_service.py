@@ -66,7 +66,8 @@ class ServiceSignalsTests(unittest.TestCase):
         self.assertEqual([rank(x) for x in s["ideas"]], sorted(rank(x) for x in s["ideas"]))     # celles qui passent les filtres d'abord, puis par score
         text = sg.to_text(i, i["desc"], 1, 3)
         self.assertIsNone(BANNED.search(text), BANNED.search(text))
-        self.assertLess(len(text), 3900)
+        self.assertTrue(all(len(x) < 3900 for x in sg.split_message(text)))
+        self.assertIn("PRUDENCE", text)                                       # jamais tronque
         self.assertIn(i["desc"]["headline"], text)
         if i["side"] == "long":
             self.assertLess(i["stop"], i["entry"] < i["tp1"] and i["entry"])

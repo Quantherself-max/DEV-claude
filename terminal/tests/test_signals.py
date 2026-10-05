@@ -328,7 +328,7 @@ class TextTests(unittest.TestCase):
         pos = [text.index(k) for k in order]
         self.assertEqual(pos, sorted(pos), dict(zip(order, pos)))
         self.assertIn("Lecture macro : risk-on", text)
-        self.assertLess(len(text), 3900)
+        self.assertTrue(all(len(x) < 3900 for x in sg.split_message(text)))
 
     def test_text_has_all_sections_and_no_abbreviations(self):
         for side in ("long", "short"):
@@ -337,7 +337,7 @@ class TextTests(unittest.TestCase):
             for part in ("QUOI FAIRE", "POURQUOI ICI", "PROBABILITÉS", "PRUDENCE", "Stop", "Objectif 1", "Validité", "2/3"):
                 self.assertIn(part, text)
             self.assertIsNone(BANNED.search(text), BANNED.search(text))
-            self.assertLess(len(text), 3900)
+            self.assertTrue(all(len(x) < 3900 for x in sg.split_message(text)))
             self.assertIn("ACHAT" if side == "long" else "VENTE", text)
 
     def test_leverage_warning_when_liquidation_comes_first(self):
@@ -430,3 +430,27 @@ class TrendGateTests(unittest.TestCase):
         counter = sg.score_idea(self.idea("long"), self.ctx(self.rg(-1)))
         counter.update(symbol="BTCUSDT", atr=1.0, atrPct=1.0, validHours=48, price=100.0)
         self.assertIn("À CONTRE-COURANT", sg.to_text(counter, sg.describe(counter, None, None, 10.0, "BTCUSDT"), 1, 5))
+
+
+class SplitMessageTests(unittest.TestCase):
+    def test_short_text_is_untouched(self):
+        self.assertEqual(sg.split_message("bonjour"), ["bonjour"])
+
+    def test_long_text_is_split_at_sections_without_losing_anything(self):
+        secs = [f"▶ SECTION {k}\n" + "\n".join(f"• ligne {k}-{j} " + "x" * 90 for j in range(12)) for k in range(7)]
+        text = "\n\n".join(secs)
+        self.assertGreater(len(text), 7000)
+        parts = sg.split_message(text, 3800)
+        self.assertGreaterEqual(len(parts), 2)
+        self.assertTrue(all(len(p) <= 3800 for p in parts))
+        self.assertIn("(suite 2/", parts[1])
+        body = "\n\n".join([parts[0]] + [p.split("\n", 1)[1] for p in parts[1:]])
+        self.assertEqual(body, text)                                      # rien n'est perdu, l'ordre est conserve
+        self.assertTrue(parts[0].startswith("▶ SECTION 0"))
+        self.assertIn("SECTION 6", parts[-1])
+
+    def test_single_huge_block_is_cut_at_lines(self):
+        text = "\n".join("y" * 100 for _ in range(100))
+        parts = sg.split_message(text, 3800)
+        self.assertTrue(all(len(p) <= 3800 for p in parts))
+        self.assertEqual("".join(p.replace("\n", "") for p in [parts[0]] + [q.split("\n", 1)[1] for q in parts[1:]]), text.replace("\n", ""))

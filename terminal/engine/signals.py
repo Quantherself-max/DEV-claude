@@ -510,7 +510,7 @@ def trend_text(idea: dict) -> list[str]:
     ev = idea.get("evidence")
     if ev and ev.get("aligned") is not None and ev.get("counter") is not None:
         out.append(f"Mesuré sur {ev['label']} ({ev.get('n', '?')} idées dans le sens de la tendance) : en moyenne {fmt_num(ev['aligned'], 2)} fois le risque pris par trade après frais "
-                   f"dans le sens de la tendance, {fmt_num(ev['counter'], 2)} à contre-courant. C'est un avantage modeste, qui vient surtout de la tendance elle-même, et qui n'est pas une garantie.")
+                   f"dans le sens de la tendance, {fmt_num(ev['counter'], 2)} à contre-courant. Avantage modeste, venant surtout de la tendance elle-même : pas une garantie.")
     return out
 
 
@@ -611,7 +611,7 @@ def describe(idea: dict, probs: dict | None, valid: dict | None, lev: float, sym
 
 
 def to_text(idea: dict, d: dict, n_week: int, max_week: int) -> str:
-    """Message Telegram complet (moins de ~3 900 caracteres)."""
+    """Message Telegram complet (peut depasser la limite d'un message : voir split_message)."""
     stars = "★" * max(1, round((idea["score"] - 40) / 12)) if idea["score"] >= 52 else "★"
     lines = [f"🎯 Idée de trade {n_week}/{max_week} de la semaine · {d['headline']}",
              f"Qualité : {idea['score']:.0f}/100 ({grade(idea['score'])}) {stars}", "",
@@ -628,5 +628,32 @@ def to_text(idea: dict, d: dict, n_week: int, max_week: int) -> str:
     if d["probs"]:
         lines += ["", "▶ PROBABILITÉS"] + [f"• {x}" for x in d["probs"]]
     lines += ["", "▶ PRUDENCE"] + [f"• {x}" for x in d["risks"]]
-    text = "\n".join(lines)
-    return text if len(text) < 3900 else text[:3880] + "…"
+    return "\n".join(lines)
+
+
+def split_message(text: str, limit: int = 3800) -> list[str]:
+    """Decoupe un long message en plusieurs, SANS rien perdre, aux frontieres de sections (lignes vides) ; chaque morceau tient dans la limite
+    de Telegram (4 096 caracteres, prudence : 3 800). Les morceaux suivants sont annonces par « (suite 2/3) »."""
+    if len(text) <= limit:
+        return [text]
+    blocks, cur, out = text.split("\n\n"), "", []
+    for b in blocks:
+        while len(b) > limit - 20:                                   # un bloc seul trop long : on coupe aux lignes
+            cut = b.rfind("\n", 0, limit - 20)
+            cut = cut if cut > 0 else limit - 20
+            b, rest = b[:cut], b[cut:].lstrip("\n")
+            if cur and len(cur) + 2 + len(b) > limit - 20:
+                out.append(cur)
+                cur = ""
+            cur = (cur + "\n\n" + b) if cur else b
+            out.append(cur)
+            cur, b = "", rest
+        if cur and len(cur) + 2 + len(b) > limit - 20:
+            out.append(cur)
+            cur = b
+        else:
+            cur = (cur + "\n\n" + b) if cur else b
+    if cur:
+        out.append(cur)
+    n = len(out)
+    return [out[0]] + [f"(suite {k + 1}/{n})\n{x}" for k, x in enumerate(out[1:], 1)] if n > 1 else out

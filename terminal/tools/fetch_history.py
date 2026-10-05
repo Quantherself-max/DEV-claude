@@ -8,6 +8,7 @@ en series fines pour le backtest. Le VOLUME ACHETEUR AGRESSIF y est reel : le CV
 
 Les archives brutes sont gardees dans data_local/history/<SYMBOLE>/raw : relancer la commande ne retelecharge que ce qui manque."""
 import argparse
+import calendar
 import sys
 import time
 import urllib.error
@@ -61,19 +62,31 @@ def main(argv=None):
     now = datetime.now(timezone.utc)
     raw = Path(a.out) / sym / "raw"
     files = []
+    def daily(y, m, last_day):
+        got = 0
+        for d in range(1, last_day + 1):
+            f = raw / f"{sym}-1m-{y:04d}-{m:02d}-{d:02d}.zip"
+            if fetch(history.vision_url(sym, a.market, y, m, d), f):
+                files.append(f)
+                got += 1
+        return got
+
+    py, pm = (now.year, now.month - 1) if now.month > 1 else (now.year - 1, 12)
     for y, m in history.months(int(datetime(y0, m0, 1, tzinfo=timezone.utc).timestamp() * 1000), int(now.timestamp() * 1000)):
         if (y, m) < (now.year, now.month):
             f = raw / f"{sym}-1m-{y:04d}-{m:02d}.zip"
             ok = fetch(history.vision_url(sym, a.market, y, m), f)
-            print(f"{y}-{m:02d} {'ok' if ok else 'absent'}", flush=True)
             if ok:
                 files.append(f)
+                print(f"{y}-{m:02d} ok", flush=True)
+            elif (y, m) == (py, pm):                                  # l'archive mensuelle du mois dernier n'est parfois publiee que quelques jours apres
+                n = daily(y, m, calendar.monthrange(y, m)[1])
+                print(f"{y}-{m:02d} archives quotidiennes : {n} jours", flush=True)
+            else:
+                print(f"{y}-{m:02d} absent", flush=True)
         else:                                                         # mois en cours : archives quotidiennes jusqu'a hier
-            for d in range(1, now.day):
-                f = raw / f"{sym}-1m-{y:04d}-{m:02d}-{d:02d}.zip"
-                if fetch(history.vision_url(sym, a.market, y, m, d), f):
-                    files.append(f)
-            print(f"{y}-{m:02d} (jours entiers) ok", flush=True)
+            n = daily(y, m, now.day - 1)
+            print(f"{y}-{m:02d} (mois en cours) : {n} jours", flush=True)
     if not files:
         raise SystemExit("Aucune archive trouvee pour ce symbole / ce marche.")
     bars, state = fine.Bars(60_000), {}
