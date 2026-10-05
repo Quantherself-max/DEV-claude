@@ -8,7 +8,7 @@ const Backtest = (() => {
   const pc = (v, d = 0) => v == null || isNaN(v) ? '-' : (v * 100).toFixed(d).replace('.', ',') + ' %';
   const yr = ms => new Date(ms).getUTCFullYear();
   const dateFr = ms => new Date(ms).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit', year: 'numeric'});
-  let LT = null, list = null, label = null, rep = null, loading = false, error = null, sortKey = null;
+  let LT = null, list = null, label = null, kind = 'backtest', rep = null, loading = false, error = null, sortKey = null, showAll = false;
 
   async function show() {
     if (loading) return;
@@ -19,11 +19,12 @@ const Backtest = (() => {
     }
     if (list && list.length && !label) {
       const base = (LT.st.symbol || 'BTCUSDT').replace(/USDT$/, '');
-      label = (list.find(r => r.label === base) || list.find(r => r.label === 'BTC') || list[0]).label;
+      const pick = list.find(r => r.kind === 'backtest' && r.label === base) || list.find(r => r.kind === 'backtest' && r.label === 'BTC') || list[0];
+      label = pick.label; kind = pick.kind;
     }
-    if (label && (!rep || rep.label !== label)) {
+    if (label && (!rep || rep.label !== label || (rep.kind === 'vwap-strategy') !== (kind === 'strategy'))) {
       loading = true; render();
-      try { rep = await LT.api('/api/backtest?label=' + encodeURIComponent(label)); error = null; } catch (e) { error = e.message; }
+      try { rep = await LT.api('/api/backtest?label=' + encodeURIComponent(label) + '&kind=' + kind); error = null; } catch (e) { error = e.message; }
       loading = false;
     }
     render();
@@ -33,10 +34,12 @@ const Backtest = (() => {
     LT = lt;
     const root = $('#btBox');
     if (!root) return;
-    root.addEventListener('change', e => { if (e.target.id === 'btSel') { label = e.target.value; rep = null; show(); } });
+    root.addEventListener('change', e => { if (e.target.id === 'btSel') { [kind, label] = e.target.value.split('|'); rep = null; show(); } });
     root.addEventListener('click', e => {
       const th = e.target.closest('th[data-sort]');
       if (th) { sortKey = sortKey === th.dataset.sort ? null : th.dataset.sort; render(); }
+      const all = e.target.closest('[data-showall]');
+      if (all) { showAll = !showAll; render(); }
     });
   }
 
@@ -208,6 +211,103 @@ const Backtest = (() => {
       <li>Un résultat passé n'est pas une garantie. Un avantage mesuré de ce genre est modeste et peut disparaître.</li></ul></section>`;
   }
 
+  // ---------- rapport « ta stratégie » ----------
+  const sideTxt = s => s === 'inverse' ? 'inverse (le contre)' : 'ta règle (suivre la clôture)';
+  const cfgTxt = c => { const [a, b, h] = c.split('|'); return ({struct: 'stop sous la structure', atr15: 'stop 1,5 ATR', atr3: 'stop 3 ATR', atr5: 'stop 5 ATR'}[a]) + ' · ' + ({pool: 'objectif poche', pool2R: 'poche sinon 2 R', '2R': 'objectif 2 R', poolhalf: 'moitié poche 1, reste poche 2'}[b]) + ' · ' + ({H24: '24 h', H48: '48 h', H24x: '24 h (48 h si volume)'}[h]); };
+  const rcell = (m, big) => !m || m.expR == null ? '<td class="r muted">-</td>' : `<td class="r ${rcol(m.expR)}" title="${m.n} trades">${big ? '<b>' + sgn(m.expR) + '</b>' : sgn(m.expR)}</td>`;
+
+  function stratVerdict(r) {
+    const b = r.best, lit = r.literal, v = r.verdict, tone = v.edge ? 'ok' : 'bad';
+    const kp = (t, big, sub, cls = '') => `<div class="kpi"><small>${t}</small><b class="${cls}">${big}</b><span>${sub}</span></div>`;
+    return `<section class="card btv ${tone}"><div class="bthead"><h2>Verdict : ta stratégie <small>${esc(r.label)} · ${dateFr(r.period.start)} → ${dateFr(r.period.end)} · ${r.counts.events.toLocaleString('fr-FR')} signaux, ${r.counts.tests} combinaisons testées</small></h2></div>
+      <div class="btverdict">${esc(v.text)}</div>
+      <ul class="btnotes">${v.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
+      <div class="kpis">
+        ${kp('Ta règle, telle quelle', sgn(lit.all.expR) + ' R', `par trade, après frais · ${lit.all.n} trades`, rcol(lit.all.expR))}
+        ${kp('Meilleure variante : apprentissage', sgn(b.is.expR) + ' R', `${yr(r.period.start)}-${yr(r.period.split) - 1} · ${b.is.n} trades`, rcol(b.is.expR))}
+        ${kp('… sur le test (jamais vu)', sgn(b.oos.expR) + ' R', `${yr(r.period.split)}-${yr(r.period.end - 1)} · ${b.oos.n} trades`, rcol(b.oos.expR))}
+        ${kp('Avant frais', sgn(b.gross) + ' R', `les frais retirent ${num(b.costR)} R par trade`, rcol(b.gross))}
+        ${kp('Rythme', num(b.all.perWeek, 1) + ' / sem.', `durée moyenne ${num(b.avgHours, 0)} h`)}
+      </div>
+      <div class="muted small">« R » = multiple du risque pris : +0,10 R signifie que chaque trade rapporte en moyenne 10 % de la somme risquée, frais compris. L'apprentissage sert à choisir, le test (jamais regardé pour choisir) sert à juger.</div></section>`;
+  }
+
+  function stratBest(r) {
+    const b = r.best, eras = r.eras || [];
+    const head = '<th></th><th class="r">Trades</th><th class="r">Gain moyen (R)</th><th>Intervalle à 90 %</th><th class="r">Réussite</th><th class="r">Facteur de profit</th><th class="r">Baisse max.</th>';
+    const row = (lab, m) => `<tr><td>${lab}</td><td class="r">${m.n}</td><td class="r ${rcol(m.expR)}"><b>${sgn(m.expR)}</b></td><td>${ciCell(m)}</td><td class="r">${pc(m.winRate)}</td><td class="r">${num(m.pf)}</td><td class="r">${pc(m.maxDD)}</td></tr>`;
+    const rows = row('Tout', b.all) + row('Apprentissage', b.is) + row('Test', b.oos) + (b.eras || []).map(e => row(esc(e.label), e)).join('');
+    const yrs = Object.entries(b.years || {}).map(([y, v]) => `<td class="r ${rcol(v.expR)}" title="${v.n} trades">${sgn(v.expR)}</td>`).join('');
+    const yh = Object.keys(b.years || {}).map(y => `<th class="r">${y.slice(2)}</th>`).join('');
+    const cs = (b.costSens || []).map(x => `<tr><td>${esc(x.name)}</td><td class="r"><b class="${rcol(x.expR)}">${sgn(x.expR)} R</b> par trade</td></tr>`).join('');
+    const c = b.control, ctrl = c && c.all && c.all.expMean != null ? `<div class="muted small">Témoin (même nombre de trades, même forme, même tendance, instants tirés au hasard) : <b>${sgn(c.all.expMean)} R</b> en moyenne, 90 % des tirages entre ${sgn(c.all.exp5)} et ${sgn(c.all.exp95)}. La variante dépasse ${pc(c.allP)} des tirages${c.oosP != null ? ` (test seul : ${pc(c.oosP)})` : ''}.</div>` : '';
+    const sd = b.bySide ? Object.entries(b.bySide).map(([k, v]) => `${k === 'long' ? 'achats' : 'ventes'} : ${sgn(v.expR)} R sur ${v.n}`).join(' · ') : '';
+    const eq = b.equity && b.equity.length > 2 ? lineChart([{name: 'Capital (1 % de risque par trade)', pts: b.equity, color: '#4c8dff', end: '×' + num(b.equity[b.equity.length - 1][1], 2), w: 1.8}], {log: false}) : '';
+    return `<section class="card"><h2>La variante retenue <small>${esc(b.name)} · ${esc(sideTxt(b.side))}</small></h2>
+      <div class="muted small">Sortie : ${esc(cfgTxt(b.cfg))}. Choisie parce que c'est la meilleure statistique t sur l'apprentissage parmi les ${r.counts.tests} combinaisons ; le test n'a servi qu'à la juger.</div>
+      <div class="scroll"><table class="bttab vt"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="muted small">Par année (gain moyen par trade) :</div>
+      <div class="scroll"><table class="bttab"><thead><tr>${yh}</tr></thead><tbody><tr>${yrs}</tr></tbody></table></div>
+      <div class="muted small">${sd}</div>
+      <div class="btcharts"><div><div class="muted small">Capital en risquant 1 % par trade <small>(échelle linéaire)</small></div>${eq}</div>
+      <div><div class="muted small">Poids des frais</div><table class="bttab"><tbody>${cs}</tbody></table>${ctrl}</div></div></section>`;
+  }
+
+  function stratVariants(r) {
+    const find = k => r.variants.find(v => v.name === k[0] && v.side === k[1] && v.cfg === k[2]);
+    const top = (r.ranking || []).map(find).filter(Boolean);
+    const eras = r.eras || [];
+    const line = v => `<tr class="${r.best && v.name === r.best.name && v.side === r.best.side && v.cfg === r.best.cfg ? 'cur' : ''}"><td>${esc(v.name)}</td><td>${v.side === 'inverse' ? '<span class="pill warn">inverse</span>' : 'suivre'}</td><td class="r">${v.is.n}</td><td class="r ${rcol(v.is.expR)}"><b>${sgn(v.is.expR)}</b></td><td class="r">${num(v.is.tstat, 1)}</td><td class="r">${v.oos.n}</td><td class="r ${rcol(v.oos.expR)}"><b>${sgn(v.oos.expR)}</b></td><td>${ciCell(v.oos)}</td>${(v.eras || []).map(e => rcell(e)).join('')}</tr>`;
+    const th = `<thead><tr><th>Variante</th><th>Sens</th><th class="r">Trades appr.</th><th class="r">Gain appr.</th><th class="r">t</th><th class="r">Trades test</th><th class="r">Gain test</th><th>Test : intervalle 90 %</th>${eras.map(e => `<th class="r">${esc(e.label)}</th>`).join('')}</tr></thead>`;
+    const all = showAll ? r.variants.slice().sort((a, b) => (b.is.expR ?? -9) - (a.is.expR ?? -9)) : [];
+    return `<section class="card"><h2>Toutes les variantes <small>classées sur l'apprentissage seulement</small></h2>
+      <div class="muted small">Chaque ligne est une façon de filtrer tes signaux (échelle, niveau, volume, position face à la zone de valeur du profil de volume, tendance de fond), dans ton sens ou dans le sens contraire. Les 25 meilleures sur l'apprentissage sont ici avec leur résultat sur le test : <b>si le test est loin de l'apprentissage, c'était du hasard</b>.</div>
+      <div class="scroll"><table class="bttab vt">${th}<tbody>${top.map(line).join('')}</tbody></table></div>
+      <div class="muted small"><a href="#" data-showall="1" onclick="return false">${showAll ? 'Masquer' : 'Voir'} les ${r.variants.length} combinaisons</a></div>
+      ${showAll ? `<div class="scroll"><table class="bttab vt">${th}<tbody>${all.map(line).join('')}</tbody></table></div>` : ''}</section>`;
+  }
+
+  function stratExits(r) {
+    const eras = r.eras || [];
+    const ch = new Set(r.chosenExits || []);
+    const rows = r.exits.map(x => `<tr class="${ch.has(x.cfg) ? 'cur' : ''}"><td>${esc(cfgTxt(x.cfg))}${ch.has(x.cfg) ? ' <span class="pill ok">retenue</span>' : ''}</td><td class="r">${x.is.n}</td><td class="r ${rcol(x.is.expR)}"><b>${sgn(x.is.expR)}</b></td><td class="r ${rcol(x.oos.expR)}">${sgn(x.oos.expR)}</td><td class="r">${pc(x.is.winRate)}</td><td class="r">${num(x.is.perWeek, 1)}</td></tr>`).join('');
+    return `<section class="card"><h2>Les sorties <small>stop, objectif, durée</small></h2>
+      <div class="muted small">Ta règle telle quelle (toute clôture sur un niveau), jouée avec ${r.exits.length} façons de sortir : stop sous la structure ou à 1,5 / 3 / 5 ATR, objectif sur la poche de liquidité ou à 2 R, durée 24 h, 48 h ou 24 h prolongées à 48 h si le volume de la dernière heure dépasse la moyenne. Classées sur l'apprentissage ; les trois premières sont gardées pour la suite.</div>
+      <div class="scroll"><table class="bttab vt"><thead><tr><th>Sortie</th><th class="r">Trades appr.</th><th class="r">Gain appr. (R)</th><th class="r">Gain test (R)</th><th class="r">Réussite</th><th class="r">Par sem.</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+  }
+
+  function stratHedge(r) {
+    const h = r.hedge;
+    if (!h || !h.all) return '';
+    const w = 0.5, wi = h.weights.indexOf(w) >= 0 ? h.weights.indexOf(w) : 1;
+    const base = h.all.main;
+    const rows = h.all.rows.slice().sort((a, b) => (a.corr ?? 9) - (b.corr ?? 9)).map(x => {
+      const m = x.mix[wi];
+      return `<tr><td>${esc(x.name)}</td><td class="r">${x.n}</td><td class="r ${x.corr != null && x.corr < 0 ? 'up' : ''}">${x.corr == null ? '-' : sgn(x.corr)}</td><td class="r ${rcol(x.alone.mean * 20)}">${sgn(x.alone.cagr * 100, 0)} %/an</td><td class="r">${pc(m.maxDD)}</td><td class="r ${m.maxDD < base.maxDD ? 'up' : 'dn'}">${sgn((m.maxDD - base.maxDD) * 100, 0)} pts</td><td class="r">${sgn(m.cagr * 100, 0)} %/an</td></tr>`;
+    }).join('');
+    const c = h.choice;
+    const choice = c ? `<div class="btverdict">Choix sur l'apprentissage : <b>${esc(c.name)}</b> à ${pc(c.w)} du risque de la stratégie principale. Apprentissage : baisse maximale ${pc(c.isMain.maxDD)} → ${pc(c.is.maxDD)}. <b>Test (jamais vu)</b> : ${pc(c.oosMain.maxDD)} → ${pc(c.oos.maxDD)}, rendement annualisé ${sgn(c.oosMain.cagr * 100, 0)} % → ${sgn(c.oos.cagr * 100, 0)} %, corrélation des semaines ${c.corrOos == null ? '-' : sgn(c.corrOos)}.</div>` : '<div class="muted">Aucune couverture ne réduit la baisse maximale sans dégrader fortement le rendement.</div>';
+    const cv = r.hedge.curves && r.hedge.curves.main ? lineChart([{name: 'Principale seule', pts: h.curves.main, color: '#9aa0b0', end: '×' + num(h.curves.main[h.curves.main.length - 1][1], 2), w: 1.4}, {name: 'Avec la couverture', pts: h.curves.mix, color: '#4c8dff', end: '×' + num(h.curves.mix[h.curves.mix.length - 1][1], 2), w: 1.8}], {log: true}) : '';
+    return `<section class="card"><h2>Couverture <small>quelle variante gagne quand la principale perd ?</small></h2>
+      <div class="muted small">Principale : « ${esc(h.main.name)} » (${esc(sideTxt(h.main.side))}). Pour chaque autre variante : corrélation des résultats par semaine (négative = gagne quand la principale perd) et portefeuille « principale + 50 % de la variante », à risque égal de 1 % par trade. Un trade de couverture n'est pas une assurance gratuite : il a ses propres frais et son propre risque.</div>
+      ${choice}
+      <div class="scroll"><table class="bttab vt"><thead><tr><th>Variante de couverture</th><th class="r">Trades</th><th class="r">Corrélation</th><th class="r">Seule</th><th class="r">Baisse max. du mélange</th><th class="r">Écart</th><th class="r">Rendement du mélange</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="muted small">Principale seule : baisse maximale ${pc(base.maxDD)}, rendement annualisé ${sgn(base.cagr * 100, 0)} %. Chaque ligne est calculée sur toute la période ; le choix retenu ci-dessus est fait sur l'apprentissage puis jugé sur le test.</div>
+      ${cv}</section>`;
+  }
+
+  function stratMethod(r) {
+    return `<section class="card"><h2>Méthode et limites</h2><ul class="btnotes">
+      <li><b>Ta stratégie, traduite en règles</b> : sur chaque bougie 1 h ou 4 h qui touche le VWAP ou un VWAP ancré (début de semaine, de mois, plus haut / plus bas de 7 ou 30 jours), on regarde où elle <i>clôture</i> : au-dessus = achat, en dessous = vente. Entrée au marché à l'ouverture de la bougie suivante. Objectif : poche de liquidité visible dans le prix (plus hauts et bas, creux, sommets, niveaux égaux). Durée 24 h, 48 h au plus.</li>
+      <li><b>Profil de volume</b> : la clôture est située par rapport à la VAL et à la VAH du profil de la semaine ou du mois (en cours ou précédent). « Réintégration » = la clôture revient dans la zone de valeur depuis l'extérieur, « rejet » = la clôture reste hors de la zone dans le sens du trade.</li>
+      <li><b>Pas de fuite du futur</b> : chaque niveau, chaque profil et chaque poche est calculé avec les bougies fermées à l'instant du signal ; les sorties sont jouées sur des bougies de 5 minutes.</li>
+      <li><b>Frais</b> : ordre au marché ${num(r.costs.taker * 100, 3)} % + glissement ${num(r.costs.slip * 100, 3)} %, ordre limite ${num(r.costs.maker * 100, 3)} %, financement ${num(r.costs.funding8h * 100, 3)} % par 8 h. Avec 8 à 12 signaux par semaine, les frais deviennent le premier ennemi.</li>
+      <li><b>Sélection honnête</b> : sortie choisie sur la règle littérale, filtres classés sur l'apprentissage (${yr(r.period.start)}-${yr(r.period.split) - 1}), jugement unique sur le test (${yr(r.period.split)}-${yr(r.period.end - 1)}). ${r.counts.tests} combinaisons testées : une partie paraît bonne par hasard, d'où le test.</li>
+      <li><b>Couverture</b> : calculée par semaine sur des comptes séparés (les positions opposées ne s'annulent pas entre elles, donc les frais sont comptés deux fois : c'est prudent).</li>
+      <li><b>Relancer sur ton actif</b> : <code>python tools/run_strategy.py SOLUSDT</code> après <code>python tools/fetch_history.py SOLUSDT</code>.</li>
+      <li>Un résultat passé n'est pas une garantie.</li></ul></section>`;
+  }
+
   function render() {
     const root = $('#btBox');
     if (!root) return;
@@ -215,8 +315,10 @@ const Backtest = (() => {
     if (loading && !rep) { root.innerHTML = '<section class="card"><div class="muted">Chargement du rapport…</div></section>'; return; }
     if (!list || !list.length) { root.innerHTML = '<section class="card"><h2>Backtest</h2><div class="muted">Aucun rapport trouvé. Lance <code>python tools/run_study.py BTCUSDT</code> après avoir téléchargé l\'historique (<code>python tools/fetch_history.py BTCUSDT</code>).</div></section>'; return; }
     if (!rep) return;
-    const sel = `<div class="btbar"><label>Rapport <select id="btSel">${list.map(x => `<option value="${esc(x.label)}" ${x.label === label ? 'selected' : ''}>${esc(x.label)}${x.own ? ' (calculé sur tes données)' : ' (livré avec le terminal)'}</option>`).join('')}</select></label>
+    const kname = k => k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : 'idées du terminal';
+    const sel = `<div class="btbar"><label>Rapport <select id="btSel">${list.map(x => `<option value="${esc(x.kind)}|${esc(x.label)}" ${x.label === label && x.kind === kind ? 'selected' : ''}>${esc(x.label)} · ${kname(x.kind)}${x.own ? ' (calculé sur tes données)' : ' (livré avec le terminal)'}</option>`).join('')}</select></label>
       <span class="muted small">Calculé le ${dateFr(rep.computedAt)} en ${Math.round(rep.seconds / 60)} min</span></div>`;
+    if (rep.kind === 'vwap-strategy') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + stratHedge(rep) + stratMethod(rep) + '</div>'; return; }
     root.innerHTML = sel + '<div class="btgrid">' + verdictCard(rep) + trendCard(rep) + equityCard(rep) + variantsCard(rep) + eventsCard(rep) + touchCard(rep) + regimeCard(rep) + costsCard(rep) + methodCard(rep) + '</div>';
   }
 

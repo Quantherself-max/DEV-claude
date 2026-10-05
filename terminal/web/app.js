@@ -632,6 +632,7 @@ function showPane(name) {
   if (name === 'liquidity') { pollLiqs(); renderLqReal(); }
   if (name === 'vp') pollVP();
   if (name === 'signals') { pollSignals(); if (st.sig) Signals.render(st.sig); }
+  if (name === 'mine') Strategy.show();
 }
 $('#tabs').onclick = e => { const b = e.target.closest('button[data-tab]'); if (b) showPane(b.dataset.tab); };
 $('#stats').addEventListener('click', e => {
@@ -952,6 +953,7 @@ function openSymbol(sym, page) {
   Overview.init(window.LT);
   Signals.init(window.LT);
   Backtest.init(window.LT);
+  Strategy.init(window.LT);
   createPanels();
   buildControls(cfg);
   Analysis.init(window.LT);

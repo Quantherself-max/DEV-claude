@@ -327,10 +327,16 @@ def make_handler(app: App):
                     lab = (q.get("label") or [""])[0]
                     if not lab:
                         return self._json({"reports": reports_mod.summaries(app.service.report_dirs)})
-                    rep = reports_mod.load(app.service.report_dirs, lab)
+                    kind = (q.get("kind") or ["backtest"])[0]
+                    if kind not in reports_mod.KINDS:
+                        raise ValueError("type de rapport inconnu")
+                    rep = reports_mod.load(app.service.report_dirs, lab, kind)
                     if rep is None:
                         raise KeyError(f"rapport introuvable : {lab}")
                     return self._json(rep)
+                if u.path == "/api/strategy":
+                    sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
+                    return self._json(app.service.strategy(sym))
                 if u.path == "/api/influencers":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     side = (q.get("side") or ["long"])[0]

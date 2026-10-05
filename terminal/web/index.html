@@ -66,6 +66,7 @@
       <nav id="tabs" class="tabs" role="tablist">
         <button data-tab="levels" class="on">Niveaux</button>
         <button data-tab="signals">Idées</button>
+        <button data-tab="mine">Stratégie</button>
         <button data-tab="context">Contexte</button>
         <button data-tab="stats">Stats</button>
         <button data-tab="liquidity">Liquidité</button>
@@ -93,6 +94,9 @@
       </div>
       <div class="pane" data-pane="signals" hidden>
         <div id="sigBox" class="sigbox"><section class="card"><div class="muted">Chargement…</div></section></div>
+      </div>
+      <div class="pane" data-pane="mine" hidden>
+        <div id="mineBox" class="sigbox"><section class="card"><div class="muted">Chargement…</div></section></div>
       </div>
       <div class="pane" data-pane="context" hidden>
         <section class="card"><h2>Contexte marché <small id="ctxHint"></small></h2><div id="context" class="muted">-</div></section>
@@ -239,6 +243,7 @@
 <script src="overview.js"></script>
 <script src="signals.js"></script>
 <script src="backtest.js"></script>
+<script src="strategy.js"></script>
 <script src="panels.js"></script>
 <script src="app.js"></script>
 </body>

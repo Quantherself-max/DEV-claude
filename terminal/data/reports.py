@@ -4,14 +4,15 @@ import json
 import re
 from pathlib import Path
 
-_LABEL = re.compile(r"^backtest_([A-Za-z0-9]+)\.json$")
+_LABEL = re.compile(r"^(backtest|strategy)_([A-Za-z0-9]+)\.json$")
+KINDS = ("backtest", "strategy")           # backtest : idees du terminal ; strategy : ta strategie (VWAP / profil de volume)
 
 
 def base_of(symbol: str) -> str:
     return symbol[:-4] if symbol.endswith("USDT") else symbol
 
 
-def _files(dirs):
+def _files(dirs, kind: str = "backtest"):
     seen = {}
     for d in dirs:                                   # les dossiers suivants l'emportent (tes propres rapports avant ceux livres)
         d = Path(d)
@@ -19,13 +20,13 @@ def _files(dirs):
             continue
         for f in sorted(d.iterdir()):
             m = _LABEL.match(f.name)
-            if m:
-                seen[m.group(1).upper()] = f
+            if m and m.group(1) == kind:
+                seen[m.group(2).upper()] = f
     return seen
 
 
-def load(dirs, label: str):
-    f = _files(dirs).get(label.upper())
+def load(dirs, label: str, kind: str = "backtest"):
+    f = _files(dirs, kind).get(label.upper())
     if not f:
         return None
     try:
@@ -36,14 +37,28 @@ def load(dirs, label: str):
 
 def summaries(dirs):
     out = []
-    for lab, f in _files(dirs).items():
-        try:
-            r = json.loads(f.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        out.append({"label": lab, "computedAt": r.get("computedAt"), "period": r.get("period"), "verdict": (r.get("verdict") or {}).get("text"),
-                    "source": r.get("source"), "own": "data_local" in str(f)})
-    return sorted(out, key=lambda x: x["label"])
+    for kind in KINDS:
+        for lab, f in _files(dirs, kind).items():
+            try:
+                r = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            out.append({"kind": kind, "label": lab, "computedAt": r.get("computedAt"), "period": r.get("period"), "verdict": (r.get("verdict") or {}).get("text"),
+                        "source": r.get("source"), "own": "data_local" in str(f)})
+    return sorted(out, key=lambda x: (x["kind"] != "backtest", x["label"]))
+
+
+def strategy_summary(dirs, symbol: str):
+    """Resume du rapport « ta strategie » pour ce symbole (a defaut celui du BTC, indique comme tel)."""
+    base = base_of(symbol).upper()
+    rep, proxy = load(dirs, base, "strategy"), False
+    if rep is None:
+        rep, proxy = load(dirs, "BTC", "strategy"), True
+    if not rep:
+        return None
+    b = rep.get("best") or {}
+    return {"label": rep.get("label"), "proxy": proxy, "verdict": (rep.get("verdict") or {}).get("text"), "bestName": b.get("name"), "bestCfg": b.get("cfg"),
+            "all": b.get("all"), "oos": b.get("oos"), "period": rep.get("period")}
 
 
 def evidence(dirs, symbol: str):

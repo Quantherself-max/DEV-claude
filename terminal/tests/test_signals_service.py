@@ -111,6 +111,32 @@ class ServiceSignalsTests(unittest.TestCase):
         self.assertIn("pwPOC", lv)
         self.assertAlmostEqual(lv["pwPOC"], pw["poc"], places=6)
 
+    def test_live_view_of_the_users_strategy(self):
+        v = self.svc.strategy("BTCUSDT")
+        self.assertTrue(v["ready"])
+        json.dumps(v)
+        self.assertGreaterEqual(len(v["levels"]), 6)
+        names = {l["name"] for l in v["levels"]}
+        self.assertIn("VWAP du mois", names)
+        self.assertIn("VWAP de la semaine", names)
+        for l in v["levels"]:
+            self.assertEqual(l["side"], "below" if l["value"] < v["price"] else "above")
+            self.assertIn(l["grp"], ("W", "M"))
+        self.assertTrue(set(v["bars"]) <= {"1h", "4h"} and "1h" in v["bars"])
+        b = v["bars"]["1h"]
+        self.assertLessEqual(b["l"], b["h"])
+        self.assertEqual(b["t"] % 3_600_000, 0)
+        for t in b["triggers"]:
+            self.assertTrue(b["l"] <= t["level"] <= b["h"])
+            self.assertEqual(t["dir"], 1 if b["c"] > t["level"] else -1)
+        for k in ("cw", "pw", "cm", "pm"):
+            self.assertIn(k, v["vp"])
+        self.assertTrue(all(p["price"] > v["price"] for p in v["pools"]["up"]))
+        self.assertTrue(all(p["price"] < v["price"] for p in v["pools"]["dn"]))
+        self.assertTrue(all(p["distAtr"] > 0 for p in v["pools"]["up"] + v["pools"]["dn"]))
+        with self.assertRaises(KeyError):
+            self.svc.strategy("XXX")
+
     def test_announcement_in_the_next_hours_puts_the_idea_on_hold(self):
         s = self.svc.signals("BTCUSDT")
         held = [i for i in s["ideas"] if i["hold"]]

@@ -272,3 +272,4 @@ table.vt .ci{min-width:110px}
 .btcharts{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
 .btsvg{height:210px}
 .trendbox{border:1px solid #1b2030;border-left:3px solid #4c8dff;background:#0f131c;border-radius:6px;padding:7px 10px;margin:4px 0 8px;font-size:12.5px}.trendbox .small{margin-top:3px;color:#c6c9d2}
+ul.mine{margin:4px 0 0;padding-left:18px;font-size:12.5px;color:#c6c9d2}ul.mine li{margin:3px 0}

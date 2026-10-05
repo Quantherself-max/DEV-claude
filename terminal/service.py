@@ -24,6 +24,7 @@ from engine import sigtest
 from engine import synth as synth_engine
 from engine import trend as trend_engine
 from engine import vpx, vwapx
+from engine import vwapstrat
 from engine.confluence import Level, find_zones
 from engine.liquidity import LiqEngine
 from engine.periods import AnchoredVWAP, KINDS, NakedPocs, PeriodTracker
@@ -62,6 +63,18 @@ def family_of(lv: Level):
 
 def pct(a, b):
     return (a / b - 1.0) * 100.0 if a is not None and b else None
+
+
+def bisect_left_t(candles, t_ms):
+    """Index de la premiere bougie dont l'ouverture est >= t_ms."""
+    lo, hi = 0, len(candles)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if candles[mid].t < t_ms:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
 
 
 class Market:
@@ -368,6 +381,79 @@ class Market:
             self._fvp.clear()
         self._fvp[key] = out
         return out
+
+    def strategy_view(self) -> dict:
+        """Ta strategie en direct : niveaux (VWAP et VWAP ancres de la semaine et du mois), derniere bougie 1 h et 4 h FERMEE (touche + cote de la cloture),
+        zone de valeur des profils (semaine / mois), position de la cloture, poches de liquidite au-dessus et en dessous (objectifs)."""
+        now = self.source.now_ms()
+        closed = self.store.closed_h1()
+        if len(closed) < 24 * 40:
+            return {"ready": False}
+        forming = self.store.forming_h1()
+        price = self.price()
+        atr = rma_atr(closed[-300:], 14) or price * 0.005
+        ws, ms_ = vwapstrat.week_start(now), vwapstrat.month_start(now)
+
+        def vwap_from(anchor):
+            pv = v = 0.0
+            for k in closed[bisect_left_t(closed, anchor):] + ([forming] if forming else []):
+                tp = (k.h + k.l + k.c) / 3.0
+                pv, v = pv + tp * k.v, v + k.v
+            return pv / v if v > 0 else None
+
+        def swing(days, low):
+            seg = closed[-days * 24:]
+            if len(seg) < days * 12:
+                return None
+            k = min(seg, key=lambda x: x.l) if low else max(seg, key=lambda x: x.h)
+            return k.t
+        anchors = {"VWAP du mois": ms_, "VWAP de la semaine": ws, "VWAP ancré au début du mois dernier": vwapstrat.month_start(now, 1),
+                   "VWAP ancré au début de la semaine dernière": ws - 7 * DAY, "VWAP ancré sur le plus bas de 30 jours": swing(30, True),
+                   "VWAP ancré sur le plus haut de 30 jours": swing(30, False), "VWAP ancré sur le plus bas de 7 jours": swing(7, True),
+                   "VWAP ancré sur le plus haut de 7 jours": swing(7, False)}
+        vals = {}
+        for name, a in anchors.items():
+            v = vwap_from(a) if a is not None else None
+            if v:
+                vals[name] = v
+        # profils : zone de valeur courante / precedente (bougies 5 min quand elles couvrent la periode)
+        vps = {}
+        for kind, cur_key, prev_key in (("W", "cw", "pw"), ("M", "cm", "pm")):
+            s = self.trackers[kind].snapshot(forming)
+            try:
+                fv = self._fine_vp(kind, s)
+            except Exception:
+                fv = None
+            cur = (fv or {}).get("cur") or s["vp"]
+            prev = (fv or {}).get("prev") or ((s["prev"] or {}).get("vp"))
+            vps[cur_key], vps[prev_key] = cur, prev
+        bars = {}
+        for tf, step in (("1h", H1), ("4h", 4 * H1)):
+            end = now - now % step                                   # fin de la derniere bougie fermee
+            sel = [k for k in closed if end - step <= k.t < end]
+            prv = [k for k in closed if end - 2 * step <= k.t < end - step]
+            hist = [k for k in closed if end - 25 * step <= k.t < end - step]
+            if len(sel) < step // H1 or not prv:
+                continue
+            o, h, l, c, v = sel[0].o, max(k.h for k in sel), min(k.l for k in sel), sel[-1].c, sum(k.v for k in sel)
+            pc = prv[-1].c
+            avg = sum(k.v for k in hist) / max(1, len(hist) // (step // H1)) if hist else 0.0
+            vol = v / avg if avg > 0 else None
+            trig = vwapstrat.triggers(vals, l, h, c, pc)
+            ctx = vwapstrat.vp_context({k: x for k, x in vps.items() if x}, c, pc)
+            bars[tf] = {"t": end - step, "o": o, "h": h, "l": l, "c": c, "pc": pc, "volr": vol,
+                        "triggers": [{"name": n, "level": lv, "dir": d, "type": typ} for d, lst in trig.items() for n, lv, typ in lst],
+                        "pos": ctx["pos"], "posPrev": ctx["posPrev"]}
+        pools = self.price_pools(price, atr)
+        up = sorted([p for p in pools if p["price"] > price], key=lambda p: p["price"])[:6]
+        dn = sorted([p for p in pools if p["price"] < price], key=lambda p: -p["price"])[:6]
+        tdef = {n: (g, f) for n, g, f in vwapstrat.LEVELS}
+        return {"ready": True, "symbol": self.symbol, "now": now, "price": price, "atr": atr, "atrPct": atr / price * 100.0,
+                "levels": sorted([{"name": n, "grp": tdef[n][0], "fam": tdef[n][1], "value": v, "distAtr": (price - v) / atr, "side": "below" if v < price else "above"}
+                                  for n, v in vals.items()], key=lambda x: -x["value"]),
+                "bars": bars, "vp": {k: ({"val": x.get("val"), "poc": x.get("poc"), "vah": x.get("vah")} if x else None) for k, x in vps.items()},
+                "pools": {"up": [{k: p[k] for k in ("price", "lo", "hi", "score", "src")} | {"distAtr": (p["price"] - price) / atr} for p in up],
+                          "dn": [{k: p[k] for k in ("price", "lo", "hi", "score", "src")} | {"distAtr": (price - p["price"]) / atr} for p in dn]}}
 
     def price_pools(self, price: float, atr: float):
         """Poches d'ordres d'arret VISIBLES dans le prix (plus hauts / plus bas de la veille, de la semaine, du mois ; creux et sommets recents ;
@@ -1073,6 +1159,18 @@ class Service:
             return {"ready": False}
         with self.lock:
             return m.heat(hours)
+
+    def strategy(self, symbol: str) -> dict:
+        m = self.markets.get(symbol)
+        if m is None:
+            raise KeyError(f"symbole inconnu : {symbol}")
+        if not m.ready:
+            return {"ready": False, "symbol": symbol}
+        with self.lock:
+            out = m.strategy_view()
+        out["regime"] = self.regime(symbol)
+        out["report"] = reports_mod.strategy_summary(self.report_dirs, symbol)
+        return out
 
     def get_state(self, symbol: str, tf: str) -> dict:
         m = self.markets.get(symbol)
