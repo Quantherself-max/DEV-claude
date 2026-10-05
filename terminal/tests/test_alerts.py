@@ -2,8 +2,16 @@ import json, tempfile, threading, unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from alerts.notifier import TelegramNotifier
-from alerts.rules import AlertEngine, format_alert, fmt_price
+from alerts.rules import AlertEngine, format_alert, fmt_price, fr_prose, fr_text
 from config import Config
+
+
+class FormatTests(unittest.TestCase):
+    def test_french_decimals_in_provider_strings(self):
+        self.assertEqual(fr_prose("Consensus 0.3% contre 0.2%"), "Consensus 0,3% contre 0,2%")
+        self.assertEqual(fr_text("0.3%"), "0,3 %")
+        self.assertEqual(fr_text(None), "")
+        self.assertEqual(fr_prose("v1.2.3 et 85000.5"), "v1,2.3 et 85000,5")
 
 
 class FakeNotifier:
@@ -158,7 +166,8 @@ class AlertRuleTests(unittest.TestCase):
         self.assertIn("Nouvelle confluence", txt)
         self.assertIn("▲", txt)
         self.assertIn("BTCUSDT 87 400", txt)
-        self.assertEqual(fmt_price(190.5), "190.50")
+        self.assertEqual(fmt_price(190.5), "190,50")
+        self.assertEqual(fmt_price(0.0123), "0,0123")
 
 
 class _Telegram(BaseHTTPRequestHandler):
@@ -245,7 +254,8 @@ class MacroAlertTests(unittest.TestCase):
         out = self.eng.macro_alerts({"upcoming": [], "past": [past2]})
         self.assertEqual(len(out), 1)
         self.assertIn("accommodante", out[0][2])
-        self.assertIn("BTC +0.40 % en 15 min", out[0][2])
+        self.assertIn("BTC +0,40 % en 15 min", out[0][2])
+        self.assertIn("Taux 10 ans -3,0 pb, dollar -0,10 % en 15 min", out[0][2])
         pending = self.ev(-40, id="p", reaction=None)
         self.assertEqual(self.eng.macro_alerts({"upcoming": [], "past": [pending]}), [])               # pas encore mesure : on attend
 

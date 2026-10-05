@@ -33,7 +33,9 @@ const Lecture = (() => {
     if (!i) return '<div class="muted small">Idées indisponibles.</div>';
     if (!i.side) return '<div class="muted small">Aucune idée retenue pour l\'instant. Le terminal n\'en envoie que lorsque plusieurs niveaux se superposent, dans le sens de la tendance de fond.</div>';
     const cls = i.side === 'long' ? 'up' : 'dn';
-    return `<div class="lidea"><b class="${cls}">${i.side === 'long' ? 'ACHAT' : 'VENTE'}</b> <span class="muted small">qualité ${Math.round(i.score)}/100${i.eligible ? '' : i.score < i.minScore ? ' · sous le seuil (' + i.minScore + ')' : ' · pas encore envoyée'}${i.hold && i.hold.length ? ' · ' + esc(i.hold[0]) : ''}</span>
+    const why = (i.gates || []).concat(i.hold || [])[0];
+    const status = i.eligible ? '' : i.align != null && i.align <= 0 ? ' · contre la tendance de fond : non retenue' : i.score < i.minScore ? ' · sous le seuil (' + i.minScore + ')' : ' · pas encore envoyée';
+    return `<div class="lidea"><b class="${cls}">${i.side === 'long' ? 'ACHAT' : 'VENTE'}</b> <span class="muted small">qualité ${Math.round(i.score)}/100${status}${why ? ' · ' + esc(why) : ''}</span>
       <div class="small">entrée ${px(i.entry)} · stop ${px(i.stop)} · objectif ${px(i.tp1)}</div></div>`;
   }
   function lv(l, up) { return `<span class="${up ? 'up' : 'dn'}">${up ? '▲' : '▼'}</span> ${px(l.mid)} <span class="muted small">${n1(l.distAtr, 1)} ATR · ${'●'.repeat(Math.min(5, l.score || 0))}${l.reach24 != null ? ' · ' + Math.round(l.reach24 * 100) + ' % en 24 h' : ''}</span>`; }

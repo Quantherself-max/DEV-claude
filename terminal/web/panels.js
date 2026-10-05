@@ -51,7 +51,7 @@ class Panel {
       `<label><input type="checkbox" data-vp="vM"> M</label><label><input type="checkbox" data-vp="vY"> A</label>` +
       `<label title="Bandes ±2σ des VWAP affichées"><input type="checkbox" data-vp="bands"> ±2σ</label>` +
       `<label><input type="checkbox" data-vp="avwap"> AVWAP</label>` +
-      `<label title="Volume profile des fenêtres choisies (onglet VP)"><input type="checkbox" data-vp="profiles"> VP</label>` +
+      `<label title="Volume profile des fenêtres choisies (Détails ▾ → VP)"><input type="checkbox" data-vp="profiles"> VP</label>` +
       `<label title="Volume profile de la plage visible à l'écran, à la résolution de la timeframe"><input type="checkbox" data-vp="range"> Plage visible</label>`;
   }
   syncTools() {

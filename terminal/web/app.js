@@ -53,7 +53,7 @@ function explain(name) {
     return `${what} du profil de volume ${m[1] ? 'précédent ' : 'en cours '}${PN[m[2]]}.`;
   }
   if ((m = /^P([DWMY])([HL])$/.exec(name))) return `Plus ${m[2] === 'H' ? 'haut' : 'bas'} ${PN[m[1].toLowerCase()].replace('du', 'du précédent').replace('de la', 'de la précédente').replace("de l'année", "de l'année précédente")} : liquidité classique (stops au-delà).`;
-  if (/^VP /.test(name)) return 'Niveau d\'un volume profile que tu as choisi (onglet VP) : POC = prix le plus échangé, VAH / VAL = limites de la zone de valeur (70 % du volume), HVN = zone de fort volume.';
+  if (/^VP /.test(name)) return 'Niveau d\'un volume profile que tu as choisi (Détails ▾ → VP) : POC = prix le plus échangé, VAH / VAL = limites de la zone de valeur (70 % du volume), HVN = zone de fort volume.';
   if (/^Liq/.test(name)) return 'Poche de liquidation estimée à partir de l\'Open Interest (proxy).';
   return '';
 }

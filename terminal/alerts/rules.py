@@ -5,10 +5,12 @@ import json
 import time
 from pathlib import Path
 
+from engine import signals as sigeng
+
 
 def fmt_price(p: float) -> str:
-    s = f"{p:,.0f}" if p >= 1000 else f"{p:,.2f}"
-    return s.replace(",", " ")
+    """Meme format que les idees de trade : 84 760 · 184,78 · 0,0123 (virgule decimale, 4 decimales sous 1)."""
+    return sigeng.fmt_price(p)
 
 
 def zone_members(st: dict, z: dict):
@@ -20,6 +22,22 @@ def member_label(lv: dict) -> str:
     if lv["kind"] == "liq" and lv.get("pool"):
         return f"{lv['name']}{' AIMANT' if lv['pool']['magnet'] else ''} [{lv['pool']['score']}]"
     return lv["name"]
+
+
+def fr_text(s) -> str:
+    """Valeur brute d'un fournisseur (« 0.3% ») a la francaise (« 0,3 % »)."""
+    import re
+    return re.sub(r"(\d)\.(\d)", r"\1,\2", str(s or "")).replace("%", " %").replace("  %", " %")
+
+
+def fr_prose(s) -> str:
+    """Prose du serveur : virgule decimale (0.3 -> 0,3), sans toucher au reste."""
+    import re
+    return re.sub(r"(\d)\.(\d)", r"\1,\2", str(s or ""))
+
+
+def signed(x, d=1) -> str:
+    return ("+" if x > 0 else "") + sigeng.fmt_num(x, d)
 
 
 def fmt_pct(x, d=0):
@@ -45,10 +63,9 @@ def format_alert(kind: str, st: dict, z: dict) -> str:
              "below": "sous le prix : plutot attiree vers le bas",
              "in": "le prix est dans la zone"}[z["side"]]
     head = "🔔 Nouvelle confluence" if kind == "new" else "📍 Le prix approche la confluence"
-    sg = "+" if z["distPct"] > 0 else ""
     names = " + ".join(member_label(m) for m in sorted(zone_members(st, z), key=lambda m: m["price"]))
     return (f"{head} {arrow} {st['symbol']} {fmt_price(z['mid'])}\n"
-            f"{sg}{z['distPct']:.2f} % du prix ({z['distAtr']:.1f} ATR {st['tf']})\n"
+            f"{sigeng.fmt_pct(z['distPct'], 2, sign=True)} du prix ({sigeng.fmt_num(z['distAtr'], 1)} ATR {st['tf']})\n"
             f"{names}\n"
             f"Score {z['score']} · prix {fmt_price(st['price'])}\n"
             f"{prob_line(z)}\n"
@@ -163,7 +180,7 @@ class AlertEngine:
             arrow, who = ("▼", "longs") if e["side"] == "long" else ("▲", "shorts")
             d = (e["price"] / st["price"] - 1) * 100
             z = {"mid": e["price"], "side": "below" if e["side"] == "long" else "above", "distPct": d}
-            text = (f"💥 Poche de liquidation balayee {arrow} {st['symbol']} {fmt_price(e['price'])} ({d:+.2f} %)\n"
+            text = (f"💥 Poche de liquidation balayee {arrow} {st['symbol']} {fmt_price(e['price'])} ({sigeng.fmt_pct(d, 2, sign=True)})\n"
                     f"{fmt_pct(e['frac'])} des liquidations de {who} estimees · prix {fmt_price(st['price'])}\n"
                     f"Apres un balayage (historique, 29 j) : {hist}. Estimation par l'OI (proxy).")
             out.append(("sweep", z, text))
@@ -197,8 +214,8 @@ class AlertEngine:
                 seen.add(key)
                 ex = e.get("exp") or {}
                 text = (f"⚠ Annonce majeure dans {int(mins)} min : {e['label']} ({e['country']})\n"
-                        f"{ex.get('text') or 'Pas de consensus publie.'}\n"
-                        f"{ex.get('scen_up', '')}\n{ex.get('scen_dn', '')}\n"
+                        f"{fr_prose(ex.get('text')) or 'Pas de consensus publie.'}\n"
+                        f"{fr_prose(ex.get('scen_up', ''))}\n{fr_prose(ex.get('scen_dn', ''))}\n"
                         f"Fenetre de danger : spreads larges, meches rapides. Reduis le levier ou reste a plat.")
                 out.append(("macro", {"mid": 0.0}, text.replace("\n\n", "\n")))
         for e in macro.get("past", []):
@@ -212,11 +229,11 @@ class AlertEngine:
                 continue
             b = r.get("btc") or {}
             c = r.get("cross") or {}
-            text = (f"📊 {e['label']} publie ({e['forecast'] or 'sans consensus'}) : surprise {r['impulseLabel']}\n"
-                    f"Taux 10 ans {c['US10Y']:+.1f} pb, dollar {c['DXY']:+.2f} % en 15 min" if "US10Y" in c and "DXY" in c else
-                    f"📊 {e['label']} publie ({e['forecast'] or 'sans consensus'}) : surprise {r['impulseLabel']}")
+            text = (f"📊 {e['label']} publie ({fr_text(e['forecast']) or 'sans consensus'}) : surprise {r['impulseLabel']}\n"
+                    f"Taux 10 ans {signed(c['US10Y'], 1)} pb, dollar {sigeng.fmt_pct(c['DXY'], 2, sign=True)} en 15 min" if "US10Y" in c and "DXY" in c else
+                    f"📊 {e['label']} publie ({fr_text(e['forecast']) or 'sans consensus'}) : surprise {r['impulseLabel']}")
             if b.get("r15") is not None:
-                text += f"\nBTC {b['r15']:+.2f} % en 15 min" + (f", {b['r60']:+.2f} % en 1 h" if b.get("r60") is not None else "")
+                text += f"\nBTC {sigeng.fmt_pct(b['r15'], 2, sign=True)} en 15 min" + (f", {sigeng.fmt_pct(b['r60'], 2, sign=True)} en 1 h" if b.get("r60") is not None else "")
             out.append(("macro", {"mid": 0.0}, text))
         self._save_json("macro_seen.json", sorted(seen)[-300:])
         return out
@@ -261,7 +278,7 @@ class AlertEngine:
                 for z in sorted([z for z in st["zones"] if self.qualifies(z)], key=lambda z: z["distAtr"])[:5]:
                     arrow = {"above": "▲", "below": "▼", "in": "◆"}[z["side"]]
                     names = " + ".join(member_label(m) for m in sorted(zone_members(st, z), key=lambda m: m["price"]))
-                    lines.append(f"{arrow} {sym} {fmt_price(z['mid'])} ({z['distPct']:+.2f} %) · {names}")
+                    lines.append(f"{arrow} {sym} {fmt_price(z['mid'])} ({sigeng.fmt_pct(z['distPct'], 2, sign=True)}) · {names}")
             text = "✅ Terminal demarre\n" + ("\n".join(lines) if lines else "Aucune confluence active pour l'instant.")
         ok, detail = self.notifier.send(text)
         self._log({"t": self.now(), "symbol": "*", "kind": "startup", "text": text, "sent": ok, "detail": detail})
