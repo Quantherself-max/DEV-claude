@@ -359,34 +359,102 @@ def _r(v, d=2):
     return "n/d" if v is None else f"{v:+.{d}f}".replace(".", ",").replace("-", "−")
 
 
+def _n(v, d=2):
+    return "n/d" if v is None else f"{v:.{d}f}".replace(".", ",")
+
+
+def _mean(xs):
+    xs = [x for x in xs if x is not None]
+    return sum(xs) / len(xs) if xs else None
+
+
+def exit_summary(rep: dict) -> dict:
+    """Moyenne du gain par trade de la regle litterale (apprentissage / test) selon le stop, l'objectif et la duree."""
+    out = {}
+    for field in ("stop", "tp", "hold"):
+        groups = {}
+        for x in rep["exits"]:
+            groups.setdefault(x[field], []).append(x)
+        out[field] = {g: {"is": _mean([x["is"]["expR"] for x in xs]), "oos": _mean([x["oos"]["expR"] for x in xs]), "n": len(xs)} for g, xs in groups.items()}
+    return out
+
+
+def hedge_summary(rep: dict) -> dict | None:
+    h = rep.get("hedge")
+    if not h or not h.get("oos"):
+        return None
+    base = h["oos"]["main"]
+    mixes = [(r["name"], m) for r in h["oos"]["rows"] for m in r["mix"]]
+    helps = [(n, m) for n, m in mixes if m["maxDD"] <= base["maxDD"] - 0.01]
+    best = min(mixes, key=lambda x: x[1]["maxDD"]) if mixes else None
+    return {"candidates": len(h["oos"]["rows"]), "mixes": len(mixes), "reduceOosDD": len(helps), "mainDD": base["maxDD"],
+            "bestName": best[0] if best else None, "bestW": best[1]["w"] if best else None, "bestDD": best[1]["maxDD"] if best else None}
+
+
 def verdict(rep: dict) -> dict:
-    """Texte et indicateur « avantage demontre » : intervalle a 90 % au-dessus de zero sur l'apprentissage ET le test, meme signe dans chaque grande periode,
-    et meilleur que 95 % des temoins au hasard sur le test."""
+    """Trois niveaux : « edge » (avantage demontre : intervalle a 90 % au-dessus de zero sur l'apprentissage ET le test, meme signe dans chaque grande periode,
+    meilleur que 95 % des tirages au hasard sur le test), « weak » (signe positif partout et meilleur que le hasard, mais intervalle du test qui contient zero),
+    « none » (rien de solide)."""
     b, lit = rep["best"], rep["literal"]
     notes = []
-    eras_ok = all(e["expR"] is not None and e["expR"] > 0 for e in b["eras"])
     ctrl = b.get("control") or {}
-    edge = bool(b["is"]["expLo"] is not None and b["is"]["expLo"] > 0 and b["oos"]["expLo"] is not None and b["oos"]["expLo"] > 0 and eras_ok
-                and (ctrl.get("oosP") is None or ctrl["oosP"] >= 0.95))
+    eras_pos = all(e["expR"] is not None and e["expR"] > 0 for e in b["eras"])
+    p_oos = ctrl.get("oosP")                       # part des tirages au hasard qui font MIEUX que la variante (plus c'est petit, mieux c'est)
+    beats = p_oos is None or p_oos <= 0.05
+    is_ok = b["is"]["expLo"] is not None and b["is"]["expLo"] > 0
+    oos_ok = b["oos"]["expLo"] is not None and b["oos"]["expLo"] > 0
+    oos_pos = b["oos"]["expR"] is not None and b["oos"]["expR"] > 0
+    level = "edge" if (is_ok and oos_ok and eras_pos and beats) else "weak" if (is_ok and oos_pos and eras_pos and beats) else "none"
     n_tests = rep["counts"]["tests"]
     t_best = b["is"].get("tstat")
     chance = math.sqrt(2 * math.log(max(2, n_tests)))
     side = "ta règle (suivre la clôture)" if b["side"] == "suivre" else "l'inverse de ta règle (prendre le contre de la clôture)"
     head = (f"Ta règle telle que tu la décris (clôture 1 h ou 4 h au-dessus ou en dessous d'un VWAP ou VWAP ancré de la semaine ou du mois) fait {_r(lit['all']['expR'])} R par trade après frais "
-            f"({lit['all']['n']} trades, {_r(lit['is']['expR'])} R sur l'apprentissage, {_r(lit['oos']['expR'])} R sur le test).")
-    if edge:
-        text = (f"{head} Une variante tient la route : « {b['name']} » ({side}) avec {b['cfgLabel']} : {_r(b['is']['expR'])} R à l'apprentissage, "
-                f"{_r(b['oos']['expR'])} R sur le test, positive dans chaque période.")
+            f"({lit['all']['n']} trades : {_r(lit['is']['expR'])} R sur l'apprentissage, {_r(lit['oos']['expR'])} R sur le test) : aucun avantage tel quel.")
+    ci = f"intervalle à 90 % de {_r(b['oos']['expLo'])} à {_r(b['oos']['expHi'])}"
+    one = f"« {b['name']} » ({side}, {b['cfgLabel']}) : {_r(b['is']['expR'])} R à l'apprentissage, {_r(b['oos']['expR'])} R sur le test ({ci}, {b['oos']['n']} trades)"
+    if level == "edge":
+        text = f"{head} Une condition tient la route : {one}, positive dans chaque période et meilleure que le hasard."
+    elif level == "weak":
+        text = (f"{head} Une condition ressort : {one}. Elle est positive dans chacune des trois périodes et meilleure que des trades tirés au hasard, "
+                f"mais son intervalle sur le test contient zéro et le gain a fondu : c'est un avantage faible, qui s'érode, pas démontré.")
     else:
-        text = (f"{head} Aucune variante testée n'a d'avantage démontré. La meilleure sur l'apprentissage, « {b['name']} » ({side}, {b['cfgLabel']}), "
-                f"fait {_r(b['is']['expR'])} R à l'apprentissage puis {_r(b['oos']['expR'])} R sur le test : {'elle ne se confirme pas' if (b['oos']['expR'] or 0) <= (b['is']['expR'] or 0) * 0.5 else 'à peine mieux que zéro'}.")
-    notes.append(f"{n_tests} combinaisons (filtres × sorties × sens) ont été essayées : par pur hasard, la meilleure statistique t attendue est d'environ {chance:.1f} ; la meilleure observée sur l'apprentissage est {t_best:.1f}." if t_best is not None else "")
-    notes.append(f"Frais : la variante retenue gagne {_r(b.get('gross'))} R par trade avant frais et {_r(b['all']['expR'])} R après ; les frais pèsent {b.get('costR', 0):.2f} R par trade (ordres au marché, glissement, financement).")
+        text = f"{head} Aucune variante n'a d'avantage démontré. La meilleure sur l'apprentissage : {one} : elle ne se confirme pas."
+    if t_best is not None:
+        notes.append(f"{n_tests} combinaisons (filtres × sorties × sens) ont été essayées : par pur hasard, la meilleure statistique t attendue est d'environ {_n(chance, 1)} ; "
+                     f"la meilleure observée sur l'apprentissage est {_n(t_best, 1)}, mais sur le test elle tombe à {_n(b['oos'].get('tstat'), 1)}.")
+    notes.append(f"Frais : la variante retenue gagne {_r(b.get('gross'))} R par trade avant frais et {_r(b['all']['expR'])} R après ; les frais en retirent {_n(b.get('costR'))} "
+                 f"(ordres au marché, glissement, financement), car les stops larges et les positions de 1 à 2 jours réduisent le nombre de trades.")
     if ctrl.get("all") and ctrl["all"].get("expMean") is not None:
-        notes.append(f"Témoin : des trades de même forme à des instants tirés au hasard, dans la même tendance de fond, donnent {_r(ctrl['all']['expMean'])} R en moyenne (90 % des tirages entre {_r(ctrl['all']['exp5'])} et {_r(ctrl['all']['exp95'])}) ; la variante est au-dessus de {ctrl['allP'] * 100:.0f} % des tirages."
-                     + (f" Sur le test seul : {ctrl['oosP'] * 100:.0f} %." if ctrl.get("oosP") is not None else ""))
-    h = rep.get("hedge", {}).get("choice")
-    if h:
-        notes.append(f"Couverture : « {h['name']} » à {h['w'] * 100:.0f} % du risque. Sur le test, la baisse maximale passe de {h['oosMain']['maxDD'] * 100:.0f} % à {h['oos']['maxDD'] * 100:.0f} % "
-                     f"(corrélation {_r(h['corrOos'])}) ; rendement annualisé {_r(h['oosMain']['cagr'] * 100, 0)} % → {_r(h['oos']['cagr'] * 100, 0)} %.")
-    return {"edge": edge, "text": text, "notes": [n for n in notes if n]}
+        runs = ctrl["all"].get("runs") or 0
+        beat = lambda pv, rn: f"les {rn} tirages" if pv == 0 else f"{(1 - pv) * 100:.0f} % des tirages"
+        notes.append(f"Témoin : des trades de même forme à des instants tirés au hasard, dans la même tendance de fond, donnent {_r(ctrl['all']['expMean'])} R en moyenne "
+                     f"(90 % des tirages entre {_r(ctrl['all']['exp5'])} et {_r(ctrl['all']['exp95'])}). La variante fait mieux que {beat(ctrl['allP'], runs)} sur toute la période"
+                     + (f" et que {beat(p_oos, ctrl['oos'].get('runs') or 0)} sur le test seul (le hasard fait {_r(ctrl['oos']['expMean'])} R sur 2022-2026)." if p_oos is not None and ctrl.get("oos") else "."))
+    yrs = b.get("years") or {}
+    if yrs:
+        sy = _year(rep["period"]["split"])
+        before = [v["expR"] for y, v in yrs.items() if int(y) < sy]
+        after = {y: v["expR"] for y, v in yrs.items() if int(y) >= sy}
+        notes.append(f"Par année : positive {sum(1 for v in before if v > 0)} années sur {len(before)} avant {sy}, puis " + ", ".join(f"{y} : {_r(v)}" for y, v in after.items()) + ".")
+    sd = b.get("bySide") or {}
+    if sd.get("long") and sd.get("short"):
+        notes.append(f"Achats : {_r(sd['long']['expR'])} R sur {sd['long']['n']} trades ; ventes : {_r(sd['short']['expR'])} R sur {sd['short']['n']}"
+                     + (" : l'effet n'est donc pas seulement la hausse de long terme du bitcoin." if sd['long']['expR'] > 0 and sd['short']['expR'] > 0 else "."))
+    es = exit_summary(rep)
+    if es["stop"].get("struct") and es["stop"].get("atr5"):
+        notes.append(f"Sorties (ta règle littérale, moyenne sur l'apprentissage) : stop sous la structure {_r(es['stop']['struct']['is'])} R, à 1,5 ATR {_r(es['stop']['atr15']['is'])} R, "
+                     f"à 3 ATR {_r(es['stop']['atr3']['is'])} R, à 5 ATR {_r(es['stop']['atr5']['is'])} R : les stops serrés perdent presque toujours (bruit + frais). "
+                     f"Objectif sur la poche de liquidité {_r(es['tp']['pool']['is'])} R contre objectif fixe de 2 R {_r(es['tp']['2R']['is'])} R. "
+                     f"Durée 24 h {_r(es['hold']['H24']['is'])} R, 48 h {_r(es['hold']['H48']['is'])} R, 24 h prolongées à 48 h s'il y a du volume {_r(es['hold']['H24x']['is'])} R : la prolongation selon le volume ne fait pas mieux que 48 h fixes.")
+    hs = hedge_summary(rep)
+    if hs:
+        h = rep["hedge"]["choice"] if rep["hedge"].get("choice") else None
+        txt = (f"Couverture : sur {hs['candidates']} variantes candidates et {hs['mixes']} dosages, {hs['reduceOosDD']} réduisent la baisse maximale du test d'au moins 1 point "
+               f"(principale : {hs['mainDD'] * 100:.0f} % ; meilleur mélange : {hs['bestDD'] * 100:.0f} %). ")
+        if h:
+            txt += (f"Le choix fait sur l'apprentissage (« {h['name']} » à {h['w'] * 100:.0f} %) donne sur le test {h['oosMain']['maxDD'] * 100:.0f} % → {h['oos']['maxDD'] * 100:.0f} % de baisse maximale "
+                    f"et un rendement annualisé de {_r(h['oosMain']['cagr'] * 100, 1)} % → {_r(h['oos']['cagr'] * 100, 1)} %, avec une corrélation de {_r(h['corrOos'])}. ")
+        txt += "Une variante inverse est bien anti-corrélée mais perd de l'argent seule : c'est une prime d'assurance sans indemnité, pas une vraie couverture."
+        notes.append(txt)
+    return {"level": level, "edge": level == "edge", "text": text, "notes": [n for n in notes if n], "exitSummary": es, "hedgeSummary": hs}

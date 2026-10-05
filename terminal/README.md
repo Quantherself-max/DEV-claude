@@ -1,8 +1,9 @@
-# Liq Terminal (V6)
+# Liq Terminal (V7)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
+- **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
 - **Des idées de trade rares, envoyées sur Telegram** (V5) : achat ou vente sur une zone où plusieurs niveaux importants (VWAP, VWAP ancrés, profils de volume, de l'heure à l'année) et des poches de liquidités se superposent, avec entrée, stop, deux objectifs, probabilités et une explication complète sans abréviation. Cinq idées par semaine au maximum, réglable (voir « V5 » plus bas).
 - **Un espace de travail (menu à gauche)** : **Desk** (les graphiques), **Overview** (une carte par paire : prix, biais, niveaux essentiels, contexte, macro, dominance, Fear & Greed) et **Analyse** (biais, macro, dominance, plan de trade, lexique). Le menu se replie avec la flèche.
 - **Trois graphiques synchronisés** (zoom et curseur liés) : **Principal** (bougies + niveaux essentiels), **Liquidité** (uniquement les poches : carte de chaleur, balayages, vraies liquidations) et **VWAP · AVWAP · Volume Profile** (uniquement ces niveaux). Boutons de disposition en haut du Desk : 1 graphique, Liquidité seule, VP seul, 2 ou 3 graphiques ; chaque panneau peut être agrandi.
@@ -99,6 +100,43 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V7 : ta stratégie, traduite en règles et mesurée
+
+### La stratégie testée
+Sur chaque bougie **1 h ou 4 h** qui touche un **VWAP ou un VWAP ancré** de la semaine ou du mois (VWAP de la semaine / du mois, ancré au début de la semaine dernière / du mois dernier, sur le plus haut / plus bas de 7 jours, sur le plus haut / plus bas de 30 jours), on regarde où la bougie **clôture** : au-dessus = achat, en dessous = vente. Entrée au marché à l'ouverture de la bougie suivante. Le **volume profile** sert à situer la clôture face à la **VAL / VAH** (zone de valeur de la semaine ou du mois, en cours ou précédent) : *réintégration* (la clôture revient dans la zone) ou *rejet* (la clôture reste hors de la zone, dans le sens du trade). Objectif sur les **poches de liquidité** visibles dans le prix, position gardée **24 h, 48 h au plus** (et la variante « 24 h prolongées à 48 h s'il y a du volume »).
+
+### Protocole (fixé avant de regarder les résultats)
+1. 178 858 signaux de 2013 à octobre 2026 (BTC réel, bougies d'une minute), **dans les deux sens** : suivre la clôture (ta règle) et prendre le contre (variante inverse, pour la couverture).
+2. **48 sorties** : stop sous la structure ou à 1,5 / 3 / 5 ATR (amplitude horaire), objectif sur la poche, la poche sinon 2 R, 2 R, ou moitié à chaque poche, durée 24 h / 48 h / 24 h prolongées. Choisies sur la règle littérale, **apprentissage 2013-2021 seulement**.
+3. **42 filtres** (échelle, niveau, volume, VAL / VAH de quatre profils, tendance de fond) × 3 meilleures sorties × 2 sens = **252 combinaisons**, classées sur l'apprentissage.
+4. La meilleure est jugée **une seule fois** sur 2022-2026 (jamais vu), comparée à des trades au hasard de même forme dans la même tendance, avec sensibilité aux frais et résultat par période et par année.
+5. **Couverture** : corrélation hebdomadaire de toutes les variantes avec la principale, portefeuille « principale + 25 / 50 / 100 % de la variante », choix sur l'apprentissage, jugement sur le test.
+
+### Le résultat, sans détour
+- **Ta règle telle que tu la décris n'a pas d'avantage** : +0,00 fois le risque par trade après frais (3 673 trades ; +0,05 sur 2013-2021, **−0,07 sur 2022-2026**). Avec des stops serrés (sous la structure ou 1,5 ATR) elle perd 8 % du risque par trade en moyenne.
+- **Les sorties qui comptent** : les stops larges (3 à 5 ATR) ramènent la règle à zéro ; l'objectif sur la poche de liquidité fait moins bien qu'un objectif fixe de 2 fois le risque (−0,09 contre −0,01) ; garder 48 h vaut mieux que 24 h, et **prolonger seulement s'il y a du volume ne fait pas mieux que garder 48 h**.
+- **Une condition ressort : le rejet de la zone de valeur du volume profile.** Quand la clôture qui touche le niveau se fait **hors de la VAL / VAH de la semaine en cours, dans le sens du trade**, avec stop à 5 ATR, objectif 2 R et 48 h : **+0,15 R par trade sur 2013-2021, +0,03 R sur 2022-2026** (702 trades, intervalle à 90 % de −0,03 à +0,09). Positive dans les trois périodes, dans les achats (+0,13) comme dans les ventes (+0,08), et meilleure que 98 % des trades tirés au hasard dans la même tendance sur le test (le hasard fait −0,05).
+- **Mais c'est un avantage faible qui s'érode, pas démontré** : positive chaque année de 2013 à 2022, puis +0,20 (2024) entre trois années à −0,04 / −0,06 / −0,05. La statistique t passe de 5,7 à 0,9. Parmi les 62 combinaisons qui avaient un t ≥ 3 à l'apprentissage, 27 seulement restent positives sur le test.
+- **Frais** : 0,16 R avant frais, 0,11 R après sur toute la période (2,8 trades par semaine en moyenne, 39 h de détention).
+- **Couverture : aucune variante ne protège.** Sur 16 variantes candidates et 48 dosages, **aucune** ne réduit la baisse maximale du test d'au moins 1 point. Le miroir (même signal, sens inverse) est bien anti-corrélé (−0,6) mais perd 15 % par an seul : c'est une prime d'assurance sans indemnité. Choisi sur l'apprentissage, il fait passer la baisse maximale du test de 20 % à 23 % et le rendement annualisé de +4 % à +0,3 %.
+
+### Ce que ça veut dire, honnêtement
+Le seul élément de ta lecture qui survit est **le rejet hors de la zone de valeur** (le prix qui continue hors du volume profile plutôt que de le réintégrer), avec des **stops larges et 48 h**. Le gain moyen est faible et il a fondu depuis 2022. Les rebonds sur VWAP et VWAP ancrés seuls, les poches de liquidité comme objectif et la prolongation selon le volume n'ont pas montré d'avantage. Cette étude mesure **la version mécanique** (tous les signaux, sans le tri que tu fais à l'œil : contexte macro, qualité du rebond, moment) sur **BTC au comptant** ; elle ne dit pas ce que vaut ton tri, ni ce que donne SOL avec du levier.
+
+### Dans le terminal
+- **Onglet Stratégie** (panneau de droite) : lecture **en direct** de tes règles. Dernières bougies 1 h et 4 h fermées (touchent-elles un niveau, de quel côté clôturent-elles, volume), tableau des 8 niveaux avec ▲ / ▼, VAL / POC / VAH des quatre profils avec *réintégration* / *rejet*, poches de liquidité au-dessus et en dessous. **Aucune alerte Telegram** : la stratégie n'a pas d'avantage démontré, c'est un tableau de lecture, comme les autres alertes restent réservées aux idées du terminal (tendance de fond).
+- **Page Backtest, menu « Rapport » → « ta stratégie VWAP / profil de volume »** : verdict, variante retenue (par période, par année, frais, témoin), classement des 25 meilleures variantes (et des 252), les 48 sorties, la couverture avec courbes, méthode et limites.
+
+### Relancer sur SOL
+```
+python tools/fetch_history.py SOLUSDT
+python tools/run_strategy.py SOLUSDT      # 15 à 40 minutes, 3 à 6 Go de mémoire pour 13 ans ; moins pour SOL
+```
+Le rapport (`data_local/reports/strategy_SOL.json`) apparaît dans la page Backtest et l'onglet Stratégie le cite pour SOL. `--start 2021-01-01 --split 2024-01-01` pour choisir la période d'apprentissage.
+
+### Limites
+Ordres au marché, frais 0,05 % + glissement 0,02 % + financement 0,01 % par 8 h. BTC Bitstamp (volume acheteur agressif estimé). Les poches estimées par l'Open Interest et le contexte macro ne sont pas testés. 252 combinaisons sont fortement liées entre elles (même famille « rejet du profil ») : la statistique t de la meilleure à l'apprentissage est gonflée par le choix, d'où le test. La couverture est calculée sur comptes séparés (une position opposée ne compense pas l'autre : les frais sont comptés deux fois, c'est prudent). Un résultat passé n'est pas une garantie.
 
 ## Ce qui est nouveau en V6 : on a mesuré, et on a gardé ce qui tient
 
@@ -284,7 +322,8 @@ engine/             calculs : profils de volume (auto et choisis), séries VWAP 
                     dominance, biais validé en avançant, synthèse ; stance.py (lecture des avis X) ; signals.py (idées de trade : poids, zones, stop,
                     objectifs, score, textes), sigtest.py (rejeu historique face au hasard) ; V6 : fine.py (séries 1 min à 1 h avec sommes cumulées),
                     liqsweep.py (poches visibles dans le prix, balayages), cvd.py (déséquilibre, divergences, absorption), trend.py (tendance de fond),
-                    backtest.py (génération des idées, exécution 1 min, frais, métriques, témoins), study.py (rapport complet), history.py (archives Binance)
+                    backtest.py (génération des idées, exécution 1 min, frais, métriques, témoins), study.py (rapport complet), history.py (archives Binance) ;
+                    V7 : vwapstrat.py (signaux de ta stratégie, 48 sorties, simulation 5 min), hedge.py (corrélation et portefeuille de couverture), stratstudy.py (protocole, variantes, verdict)
 data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase) ; social.py (posts X, facultatif)
 alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées)
 service.py          relie les données et les moteurs, fabrique l'état JSON
@@ -292,8 +331,8 @@ server.py           serveur local : API, réglages, sécurité
 web/                interface : index.html + style.css ; app.js (Desk, état, alertes), panels.js (les trois graphiques),
                     overview.js (vue d'ensemble), signals.js (idées de trade), analysis.js et charts.js (analyse, graphiques SVG) ;
                     TradingView Lightweight Charts (vendor/)
-tools/              fetch_history.py (historique 1 min Binance) et run_study.py (rapport de backtest)
-reports/            rapports de backtest livrés (BTC) ; les tiens vont dans data_local/reports/
+tools/              fetch_history.py (historique 1 min Binance), run_study.py (rapport de backtest des idées du terminal) et run_strategy.py (rapport de ta stratégie VWAP / profil de volume)
+reports/            rapports livrés (BTC) : backtest_BTC.json (idées du terminal) et strategy_BTC.json (ta stratégie) ; les tiens vont dans data_local/reports/
 serveur/            installation sur un serveur 24 h/24 (script et guide)
 tests/              tests automatiques (plus de deux cent cinquante)
 ```

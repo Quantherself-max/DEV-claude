@@ -189,6 +189,8 @@ class EventTests(unittest.TestCase):
         self.assertEqual(rep["ranking"][0], [rep["best"]["name"], rep["best"]["side"], rep["best"]["cfg"]])
         self.assertIn("text", rep["verdict"])
         self.assertIsInstance(rep["verdict"]["edge"], bool)
+        self.assertIn(rep["verdict"]["level"], ("edge", "weak", "none"))
+        self.assertEqual(rep["verdict"]["edge"], rep["verdict"]["level"] == "edge")
         # la ligne « regle litterale » vaut une selection directe sur la meme periode
         cfg = rep["chosenExits"][0]
         lit = [e for e in evs if not e["fade"]]

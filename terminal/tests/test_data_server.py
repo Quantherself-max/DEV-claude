@@ -533,6 +533,30 @@ class ServerTests(unittest.TestCase):
         for k in ("verdict", "terminal", "variants", "events", "trend", "period"):
             self.assertIn(k, rep)
         self.assertEqual(self.get("/api/backtest?label=XXX")[0], 404)
+        self.assertTrue(any(r["kind"] == "strategy" and r["label"] == "BTC" for r in lst), "le rapport de la strategie est livre avec le terminal")
+        code, body, _ = self.get("/api/backtest?label=BTC&kind=strategy")
+        self.assertEqual(code, 200)
+        rep = json.loads(body)
+        self.assertEqual(rep["kind"], "vwap-strategy")
+        for k in ("verdict", "best", "literal", "exits", "variants", "ranking", "hedge", "counts", "period", "eras"):
+            self.assertIn(k, rep)
+        self.assertIn(rep["verdict"]["level"], ("edge", "weak", "none"))
+        self.assertEqual(len(rep["exits"]), 48)
+        self.assertEqual(self.get("/api/backtest?label=BTC&kind=autre")[0], 400)
+        self.assertEqual(self.get("/api/backtest?label=XXX&kind=strategy")[0], 404)
+
+    def test_strategy_endpoint(self):
+        code, body, _ = self.get("/api/strategy?symbol=BTCUSDT")
+        self.assertEqual(code, 200)
+        v = json.loads(body)
+        self.assertTrue(v["ready"])
+        self.assertIn("levels", v)
+        self.assertIn("report", v)
+        self.assertEqual(v["report"]["label"], "BTC")
+        self.assertFalse(v["report"]["proxy"])
+        sol = json.loads(self.get("/api/strategy?symbol=SOLUSDT")[1])
+        if sol.get("ready"):
+            self.assertTrue(sol["report"]["proxy"])
         self.assertEqual(self.app.cfg.signal_max_week, 5)
         code, res = self.post("/api/settings", {"signalOn": False})
         self.assertFalse(res["signalOn"])

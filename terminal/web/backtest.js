@@ -214,10 +214,11 @@ const Backtest = (() => {
   // ---------- rapport « ta stratégie » ----------
   const sideTxt = s => s === 'inverse' ? 'inverse (le contre)' : 'ta règle (suivre la clôture)';
   const cfgTxt = c => { const [a, b, h] = c.split('|'); return ({struct: 'stop sous la structure', atr15: 'stop 1,5 ATR', atr3: 'stop 3 ATR', atr5: 'stop 5 ATR'}[a]) + ' · ' + ({pool: 'objectif poche', pool2R: 'poche sinon 2 R', '2R': 'objectif 2 R', poolhalf: 'moitié poche 1, reste poche 2'}[b]) + ' · ' + ({H24: '24 h', H48: '48 h', H24x: '24 h (48 h si volume)'}[h]); };
+  const cfgShort = c => { const [a, b, h] = c.split('|'); return ({struct: 'stop structure', atr15: 'stop 1,5 ATR', atr3: 'stop 3 ATR', atr5: 'stop 5 ATR'}[a]) + ' · ' + ({pool: 'poche', pool2R: 'poche/2R', '2R': '2 R', poolhalf: 'poche ½'}[b]) + ' · ' + ({H24: '24 h', H48: '48 h', H24x: '24→48 h'}[h]); };
   const rcell = (m, big) => !m || m.expR == null ? '<td class="r muted">-</td>' : `<td class="r ${rcol(m.expR)}" title="${m.n} trades">${big ? '<b>' + sgn(m.expR) + '</b>' : sgn(m.expR)}</td>`;
 
   function stratVerdict(r) {
-    const b = r.best, lit = r.literal, v = r.verdict, tone = v.edge ? 'ok' : 'bad';
+    const b = r.best, lit = r.literal, v = r.verdict, tone = v.level === 'edge' ? 'ok' : v.level === 'weak' ? 'warn' : 'bad';
     const kp = (t, big, sub, cls = '') => `<div class="kpi"><small>${t}</small><b class="${cls}">${big}</b><span>${sub}</span></div>`;
     return `<section class="card btv ${tone}"><div class="bthead"><h2>Verdict : ta stratégie <small>${esc(r.label)} · ${dateFr(r.period.start)} → ${dateFr(r.period.end)} · ${r.counts.events.toLocaleString('fr-FR')} signaux, ${r.counts.tests} combinaisons testées</small></h2></div>
       <div class="btverdict">${esc(v.text)}</div>
@@ -240,7 +241,7 @@ const Backtest = (() => {
     const yrs = Object.entries(b.years || {}).map(([y, v]) => `<td class="r ${rcol(v.expR)}" title="${v.n} trades">${sgn(v.expR)}</td>`).join('');
     const yh = Object.keys(b.years || {}).map(y => `<th class="r">${y.slice(2)}</th>`).join('');
     const cs = (b.costSens || []).map(x => `<tr><td>${esc(x.name)}</td><td class="r"><b class="${rcol(x.expR)}">${sgn(x.expR)} R</b> par trade</td></tr>`).join('');
-    const c = b.control, ctrl = c && c.all && c.all.expMean != null ? `<div class="muted small">Témoin (même nombre de trades, même forme, même tendance, instants tirés au hasard) : <b>${sgn(c.all.expMean)} R</b> en moyenne, 90 % des tirages entre ${sgn(c.all.exp5)} et ${sgn(c.all.exp95)}. La variante dépasse ${pc(c.allP)} des tirages${c.oosP != null ? ` (test seul : ${pc(c.oosP)})` : ''}.</div>` : '';
+    const c = b.control, ctrl = c && c.all && c.all.expMean != null ? `<div class="muted small">Témoin (même nombre de trades, même forme, même tendance, instants tirés au hasard) : <b>${sgn(c.all.expMean)} R</b> en moyenne, 90 % des tirages entre ${sgn(c.all.exp5)} et ${sgn(c.all.exp95)}. La variante fait mieux que ${pc(1 - c.allP)} des tirages${c.oosP != null ? ` (test seul : ${pc(1 - c.oosP)})` : ''}.</div>` : '';
     const sd = b.bySide ? Object.entries(b.bySide).map(([k, v]) => `${k === 'long' ? 'achats' : 'ventes'} : ${sgn(v.expR)} R sur ${v.n}`).join(' · ') : '';
     const eq = b.equity && b.equity.length > 2 ? lineChart([{name: 'Capital (1 % de risque par trade)', pts: b.equity, color: '#4c8dff', end: '×' + num(b.equity[b.equity.length - 1][1], 2), w: 1.8}], {log: false}) : '';
     return `<section class="card"><h2>La variante retenue <small>${esc(b.name)} · ${esc(sideTxt(b.side))}</small></h2>
@@ -257,8 +258,8 @@ const Backtest = (() => {
     const find = k => r.variants.find(v => v.name === k[0] && v.side === k[1] && v.cfg === k[2]);
     const top = (r.ranking || []).map(find).filter(Boolean);
     const eras = r.eras || [];
-    const line = v => `<tr class="${r.best && v.name === r.best.name && v.side === r.best.side && v.cfg === r.best.cfg ? 'cur' : ''}"><td>${esc(v.name)}</td><td>${v.side === 'inverse' ? '<span class="pill warn">inverse</span>' : 'suivre'}</td><td class="r">${v.is.n}</td><td class="r ${rcol(v.is.expR)}"><b>${sgn(v.is.expR)}</b></td><td class="r">${num(v.is.tstat, 1)}</td><td class="r">${v.oos.n}</td><td class="r ${rcol(v.oos.expR)}"><b>${sgn(v.oos.expR)}</b></td><td>${ciCell(v.oos)}</td>${(v.eras || []).map(e => rcell(e)).join('')}</tr>`;
-    const th = `<thead><tr><th>Variante</th><th>Sens</th><th class="r">Trades appr.</th><th class="r">Gain appr.</th><th class="r">t</th><th class="r">Trades test</th><th class="r">Gain test</th><th>Test : intervalle 90 %</th>${eras.map(e => `<th class="r">${esc(e.label)}</th>`).join('')}</tr></thead>`;
+    const line = v => `<tr class="${r.best && v.name === r.best.name && v.side === r.best.side && v.cfg === r.best.cfg ? 'cur' : ''}"><td>${esc(v.name)}</td><td class="muted small">${esc(cfgShort(v.cfg))}</td><td>${v.side === 'inverse' ? '<span class="pill warn">inverse</span>' : 'suivre'}</td><td class="r">${v.is.n}</td><td class="r ${rcol(v.is.expR)}"><b>${sgn(v.is.expR)}</b></td><td class="r">${num(v.is.tstat, 1)}</td><td class="r">${v.oos.n}</td><td class="r ${rcol(v.oos.expR)}"><b>${sgn(v.oos.expR)}</b></td><td>${ciCell(v.oos)}</td>${(v.eras || []).map(e => rcell(e)).join('')}</tr>`;
+    const th = `<thead><tr><th>Variante</th><th>Sortie</th><th>Sens</th><th class="r">Trades appr.</th><th class="r">Gain appr.</th><th class="r">t</th><th class="r">Trades test</th><th class="r">Gain test</th><th>Test : intervalle 90 %</th>${eras.map(e => `<th class="r">${esc(e.label)}</th>`).join('')}</tr></thead>`;
     const all = showAll ? r.variants.slice().sort((a, b) => (b.is.expR ?? -9) - (a.is.expR ?? -9)) : [];
     return `<section class="card"><h2>Toutes les variantes <small>classées sur l'apprentissage seulement</small></h2>
       <div class="muted small">Chaque ligne est une façon de filtrer tes signaux (échelle, niveau, volume, position face à la zone de valeur du profil de volume, tendance de fond), dans ton sens ou dans le sens contraire. Les 25 meilleures sur l'apprentissage sont ici avec leur résultat sur le test : <b>si le test est loin de l'apprentissage, c'était du hasard</b>.</div>
