@@ -6,6 +6,8 @@ const Charts = (() => {
   const NS = 'http://www.w3.org/2000/svg';
   const SURFACE = '#131722';
   const esc = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+  // texte en français venu du serveur : virgule décimale (0.3 -> 0,3) ; uniquement pour de la prose, jamais pour des identifiants
+  const prose = s => esc(String(s == null ? '' : s).replace(/(\d)\.(\d)/g, '$1,$2'));
   let tipEl = null;
   function tip(html, x, y) {
     if (!tipEl) { tipEl = document.createElement('div'); tipEl.className = 'ctip'; document.body.appendChild(tipEl); }
@@ -46,7 +48,7 @@ const Charts = (() => {
     y0 -= pad; y1 += pad;
     const X = x => m.l + (x - x0) / (x1 - x0 || 1) * (W - m.l - m.r), Y = y => m.t + (1 - (y - y0) / (y1 - y0)) * (H - m.t - m.b);
     const svg = el('svg', {class: 'ch', viewBox: `0 0 ${W} ${H}`, height: H}, host);
-    const yf = opts.yFmt || (v => v.toFixed(2)), xf = opts.xFmt || (v => v);
+    const yf = opts.yFmt || (v => v.toFixed(2).replace('.', ',')), xf = opts.xFmt || (v => v);
     ticks(y0, y1, 4).forEach(v => {
       el('line', {x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), class: 'grid'}, svg);
       el('text', {x: m.l - 6, y: Y(v) + 3, 'text-anchor': 'end'}, svg).textContent = yf(v);
@@ -116,7 +118,7 @@ const Charts = (() => {
     el('path', {d: bins.map((b, i) => (i ? 'L' : 'M') + X(b.p) + ' ' + Y(b.freq)).join(''), fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round'}, svg);
     bins.forEach(b => {
       const c = el('circle', {cx: X(b.p), cy: Y(b.freq), r: 5, fill: color, stroke: SURFACE, 'stroke-width': 2}, svg);
-      c.addEventListener('mousemove', ev => tip(`Annoncé <b>${(b.p * 100).toFixed(1)} %</b><br>Réalisé <b>${(b.freq * 100).toFixed(1)} %</b><br><span class="muted">${b.n} cas</span>`, ev.clientX, ev.clientY));
+      c.addEventListener('mousemove', ev => tip(`Annoncé <b>${(b.p * 100).toFixed(1).replace('.', ',')} %</b><br>Réalisé <b>${(b.freq * 100).toFixed(1).replace('.', ',')} %</b><br><span class="muted">${b.n} cas</span>`, ev.clientX, ev.clientY));
       c.addEventListener('mouseleave', hideTip);
     });
   }
@@ -165,5 +167,5 @@ const Charts = (() => {
     const w = Math.min(50, Math.abs(v) / max * 50);
     return `<div class="dv"><u></u><i style="${v >= 0 ? 'left:50%' : `left:${50 - w}%`};width:${w}%;background:${v >= 0 ? up : dn}"></i></div>`;
   }
-  return {line, calib, timeline, spark, meter, dvBar, hideTip, esc, ticks};
+  return {line, calib, timeline, spark, meter, dvBar, hideTip, esc, prose, ticks};
 })();

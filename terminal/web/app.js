@@ -640,11 +640,14 @@ function showPane(name) {
 function reloadSideTab() { if (st.tab === 'lecture') Lecture.show(); else if (st.tab === 'mine') Strategy.show(); }
 const EXPERT_TABS = ['context', 'stats', 'liquidity', 'vp', 'alerts'];
 function applyExpert() {
-  document.querySelectorAll('#tabs button[data-expert]').forEach(b => { b.hidden = !st.expert; });
+  document.querySelectorAll('#tabs button[data-expert], #sidebar a[data-expert]').forEach(b => { b.hidden = !st.expert; });
+  const nt = $('#navExpertTxt'); if (nt) nt.textContent = 'Mode détaillé : ' + (st.expert ? 'oui' : 'non');
   const more = $('#tabMore'); if (more) { more.textContent = st.expert ? 'Détails ▴' : 'Détails ▾'; more.classList.toggle('on', st.expert); }
   if (!st.expert && EXPERT_TABS.includes(st.tab)) showPane('lecture');
 }
-$('#tabMore').onclick = () => { st.expert = !st.expert; applyExpert(); savePrefs(); };
+const toggleExpert = () => { st.expert = !st.expert; applyExpert(); savePrefs(); };
+$('#tabMore').onclick = toggleExpert;
+$('#navExpert').onclick = e => { e.preventDefault(); toggleExpert(); };
 $('#tabs').onclick = e => { const b = e.target.closest('button[data-tab]'); if (b) showPane(b.dataset.tab); };
 $('#stats').addEventListener('click', e => {
   const b = e.target.closest('button[data-side]'); if (!b) return;

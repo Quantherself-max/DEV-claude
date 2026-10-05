@@ -56,7 +56,7 @@ const Overview = (() => {
       const r = mac.risk, lvl = r ? (r.minutes <= 90 ? 'bad' : r.minutes <= 720 ? 'warn' : '') : '';
       top += card('Macro', `<div class="hero"><div class="big ${mac.label === 'risk-on' ? 'up' : mac.label === 'risk-off' ? 'dn' : 'neu'}" style="font-size:24px">${esc((mac.label || 'n/d').toUpperCase())}</div><div class="muted small">${mac.score != null ? sg(mac.score, 0) + '/100' : ''}</div></div>` +
         (mac.risk ? `<div class="msg ${lvl}"><b>${esc(mac.risk.label)}</b> dans ${cd(mac.risk.t - Date.now())}</div>` : '<div class="msg ok">Aucune annonce majeure imminente.</div>') +
-        (mac.upcoming || []).slice(0, 3).map(e => `<div class="muted small">${new Date(e.t).toLocaleString('fr-FR', {weekday: 'short', hour: '2-digit', minute: '2-digit'})} · ${'●'.repeat(e.impact)} ${esc(e.label)}${e.forecast ? ' (' + esc(e.forecast) + ')' : ''}</div>`).join(''));
+        (mac.upcoming || []).slice(0, 3).map(e => `<div class="muted small">${new Date(e.t).toLocaleString('fr-FR', {weekday: 'short', hour: '2-digit', minute: '2-digit'})} · ${'●'.repeat(e.impact)} ${esc(e.label)}${e.forecast ? ' (' + Charts.prose(e.forecast) + ')' : ''}</div>`).join(''));
     }
     if (o.dom && o.dom.btc_d != null) top += card('Dominance BTC', `<div class="hero"><div class="big neu" style="font-size:24px">${n1(o.dom.btc_d, 1)} %</div></div><div class="msg ${o.dom.tone === 'muted' ? '' : o.dom.tone || ''}">${esc(o.dom.regime || '')}</div>`);
     if (o.fng) top += card('Fear & Greed', `<div class="hero"><div class="big neu" style="font-size:24px">${o.fng.value}</div><div class="sub muted">${esc(o.fng.label)}${o.fng.d7 != null ? ' · ' + sg(o.fng.d7, 0) + ' en 7 j' : ''}</div></div>`);

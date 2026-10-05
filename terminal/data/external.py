@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .base import DataError
-from .derivs import DerivMixin, SimDerivMixin, compare_view
+from .derivs import BYBIT, DERIBIT, HYPER, OKX, DerivMixin, SimDerivMixin, compare_view
 from .opendata import OpenData
 
 FF_URL = "https://nfs.faireconomy.media"
@@ -74,8 +74,9 @@ def normalize_event(raw: dict):
 
 
 class RealProviders(DerivMixin):
-    def __init__(self, ff=FF_URL, yahoo=YAHOO, coingecko=COINGECKO, paprika=PAPRIKA, alt=ALTERNATIVE, spot=SPOT):
+    def __init__(self, ff=FF_URL, yahoo=YAHOO, coingecko=COINGECKO, paprika=PAPRIKA, alt=ALTERNATIVE, spot=SPOT, deribit=DERIBIT, bybit=BYBIT, okx=OKX, hyper=HYPER):
         self.ff, self.yahoo, self.cg, self.pp, self.alt, self.spot = (u.rstrip("/") for u in (ff, yahoo, coingecko, paprika, alt, spot))
+        self.deribit, self.bybit, self.okx, self.hyper = (u.rstrip("/") for u in (deribit, bybit, okx, hyper))
 
     def _get(self, url):
         return http_json(url, timeout=12, retries=2)
@@ -144,9 +145,10 @@ class ExternalHub:
            "options": 300, "dvol": 600, "futures": 300, "perps": 120, "opendata": 21600}
     DERIV_CURRENCIES = ("BTC", "ETH")                      # options et futures datees de Deribit
 
-    def __init__(self, providers, now_ms=lambda: int(time.time() * 1000), data_dir: str | None = None, symbols=()):
+    def __init__(self, providers, now_ms=lambda: int(time.time() * 1000), data_dir: str | None = None, symbols=(), derivs: bool = False):
         self.p, self.now_ms = providers, now_ms
         self.symbols = tuple(symbols)
+        self.derivs_on = derivs                            # derives multi-bourses + jeux libres (V9) : actives par l'application, pas par defaut
         self.dir = Path(data_dir) if data_dir else None
         self.lock = threading.Lock()
         self.calendar: dict[str, dict] = {}                 # archive des evenements (id -> evenement)
@@ -213,11 +215,12 @@ class ExternalHub:
         self._run("crossD", lambda: self._cross("1d", "10y", self.crossD), force)
         self._run("alt", self._alt, force)
         self._run("altD", self._altD, force)
-        self._run("options", self._options, force)
-        self._run("dvol", self._dvol, force)
-        self._run("futures", self._futures, force)
-        self._run("perps", self._perps, force)
-        self._run("opendata", self._opendata, force)
+        if self.derivs_on:
+            self._run("options", self._options, force)
+            self._run("dvol", self._dvol, force)
+            self._run("futures", self._futures, force)
+            self._run("perps", self._perps, force)
+            self._run("opendata", self._opendata, force)
         self.save()
 
     def _calendar(self):
@@ -329,16 +332,30 @@ class ExternalHub:
             raise DataError("partiel : " + "; ".join(bad))
 
     def _opendata(self):
-        if not self.opendata:
+        """Telechargement et calcul des indicateurs en chaine dans un fil a part : une connexion lente ne doit pas bloquer le rafraichissement du reste."""
+        if not self.opendata or getattr(self, "_od_busy", False):
             return
-        from engine import indstudy                            # import tardif : le hub reste leger tant qu'on n'a pas besoin des indicateurs
-        status = self.p.opendata_refresh(self.opendata)
-        reading = indstudy.now_reading(self.opendata) if "btc" in self.opendata.available() else {}
-        with self.lock:
-            self.indicators = {"readings": reading, "status": status, "t": self.now_ms()}
-        bad = [f"{k}: {v}" for k, v in status.items() if v.startswith("indisponible")]
-        if bad and not reading:
-            raise DataError("jeux libres indisponibles : " + "; ".join(bad[:3]))
+        self._od_busy = True
+
+        def work():
+            try:
+                from engine import indstudy                      # import tardif : le hub reste leger tant qu'on n'a pas besoin des indicateurs
+                status = self.p.opendata_refresh(self.opendata)
+                reading = indstudy.now_reading(self.opendata) if "btc" in self.opendata.available() else {}
+                with self.lock:
+                    self.indicators = {"readings": reading, "status": status, "t": self.now_ms()}
+                bad = [f"{k}: {v}" for k, v in status.items() if v.startswith("indisponible")]
+                if bad and not reading:
+                    raise DataError("jeux libres indisponibles : " + "; ".join(bad[:3]))
+                self.errors.pop("opendata_work", None)
+            except Exception as e:
+                self.errors["opendata_work"] = f"{type(e).__name__}: {str(e)[:160]}"
+            finally:
+                self._od_busy = False
+        if getattr(self, "sync_opendata", False):               # tests : pas de fil
+            work()
+        else:
+            threading.Thread(target=work, daemon=True).start()
 
     def _record(self, sym: str) -> None:
         """Enregistre un instantane (au plus toutes les 15 min) pour pouvoir backtester le financement, l'OI et la base plus tard : data_local/history/derivs/<paire>.csv."""

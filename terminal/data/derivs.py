@@ -173,10 +173,10 @@ def compare_view(rows: list[dict]) -> dict:
 #  Reseau
 # =====================================================================================================
 class DerivMixin:
-    """Methodes ajoutees aux fournisseurs (RealProviders) ; _get(url) = http_json."""
+    """Methodes ajoutees aux fournisseurs (RealProviders) ; _get(url) = http_json ; adresses de base : self.deribit, self.bybit, self.okx, self.hyper."""
 
     def deribit_summary(self, currency: str, kind: str) -> list:
-        d = self._get(f"{DERIBIT}/api/v2/public/get_book_summary_by_currency?currency={currency}&kind={kind}")
+        d = self._get(f"{self.deribit}/api/v2/public/get_book_summary_by_currency?currency={currency}&kind={kind}")
         res = d.get("result") if isinstance(d, dict) else None
         if not isinstance(res, list) or not res:
             raise DataError(f"Deribit {kind} {currency} : réponse inattendue")
@@ -189,14 +189,14 @@ class DerivMixin:
         return futures_basis(self.deribit_summary(currency, "future"), now_ms)
 
     def deribit_dvol(self, currency: str, now_ms: int) -> dict:
-        d = self._get(f"{DERIBIT}/api/v2/public/get_volatility_index_data?currency={currency}&start_timestamp={now_ms - 14 * DAY}&end_timestamp={now_ms}&resolution=3600")
+        d = self._get(f"{self.deribit}/api/v2/public/get_volatility_index_data?currency={currency}&start_timestamp={now_ms - 14 * DAY}&end_timestamp={now_ms}&resolution=3600")
         data = ((d or {}).get("result") or {}).get("data") if isinstance(d, dict) else None
         if not isinstance(data, list):
             raise DataError("Deribit DVOL : réponse inattendue")
         return dvol_view(data)
 
     def perp_bybit(self, coin: str) -> dict:
-        d = self._get(f"{BYBIT}/v5/market/tickers?category=linear&symbol={coin}USDT")
+        d = self._get(f"{self.bybit}/v5/market/tickers?category=linear&symbol={coin}USDT")
         rows = (((d or {}).get("result") or {}).get("list")) if isinstance(d, dict) else None
         if not rows:
             raise DataError("Bybit : paire absente")
@@ -209,9 +209,9 @@ class DerivMixin:
 
     def perp_okx(self, coin: str) -> dict:
         inst = f"{coin}-USDT-SWAP"
-        f = self._get(f"{OKX}/api/v5/public/funding-rate?instId={inst}")
-        o = self._get(f"{OKX}/api/v5/public/open-interest?instType=SWAP&instId={inst}")
-        m = self._get(f"{OKX}/api/v5/public/mark-price?instType=SWAP&instId={inst}")
+        f = self._get(f"{self.okx}/api/v5/public/funding-rate?instId={inst}")
+        o = self._get(f"{self.okx}/api/v5/public/open-interest?instType=SWAP&instId={inst}")
+        m = self._get(f"{self.okx}/api/v5/public/mark-price?instType=SWAP&instId={inst}")
         fr = ((f or {}).get("data") or [None])[0]
         oi = ((o or {}).get("data") or [None])[0]
         mk = ((m or {}).get("data") or [None])[0]
@@ -224,7 +224,7 @@ class DerivMixin:
         return {"ex": "OKX", "funding": num(fr.get("fundingRate")), "intervalH": interval, "oiUsd": oi_usd, "mark": mark}
 
     def perp_hyperliquid(self, coin: str) -> dict:
-        d = post_json(f"{HYPER}/info", {"type": "metaAndAssetCtxs"})
+        d = post_json(f"{self.hyper}/info", {"type": "metaAndAssetCtxs"})
         if not (isinstance(d, list) and len(d) == 2 and isinstance(d[0], dict) and isinstance(d[1], list)):
             raise DataError("Hyperliquid : réponse inattendue")
         names = [u.get("name") for u in d[0].get("universe", [])]

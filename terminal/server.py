@@ -34,8 +34,8 @@ def default_hub(cfg, source):
     """Donnees externes (calendrier, actifs de reference, dominance) : reelles avec Binance, fictives en mode simule."""
     from data.external import ExternalHub, RealProviders, SimProviders
     if cfg.source == "binance":
-        return ExternalHub(RealProviders(), source.now_ms, cfg.data_dir, cfg.symbols)
-    return ExternalHub(SimProviders(source.now_ms), source.now_ms, str(Path(cfg.data_dir) / "simulated"), cfg.symbols)
+        return ExternalHub(RealProviders(), source.now_ms, cfg.data_dir, cfg.symbols, derivs=cfg.derivs_on)
+    return ExternalHub(SimProviders(source.now_ms), source.now_ms, str(Path(cfg.data_dir) / "simulated"), cfg.symbols, derivs=cfg.derivs_on)
 
 
 def default_feed(cfg):

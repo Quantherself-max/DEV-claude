@@ -1,9 +1,10 @@
-# Liq Terminal (V8)
+# Liq Terminal (V9)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Un écran de lecture épuré et de nouvelles données** (V9) : onglet **Lecture** (l'essentiel en une page, chaque ligne avec son niveau de preuve), dérivés multi-bourses (options, volatilité implicite, base, financement, Open Interest), données en chaîne et macro libres, et un **laboratoire d'indicateurs** qui mesure ce que vaut chaque indicateur (voir « V9 » plus bas).
 - **Les VWAP ancrés sur un mouvement d'au moins 5 %** (V8, onglet **Stratégie** et rapport « VWAP ancrés sur un mouvement » dans la page **Backtest**) : VWAP ancré sur le sommet de la baisse (résistance) et sur le creux (support), réaction du prix mesurée sur 13 ans de BTC (voir « V8 » plus bas).
 - **Des idées de trade rares, envoyées sur Telegram** (V5) : achat ou vente sur une zone où plusieurs niveaux importants (VWAP, VWAP ancrés, profils de volume, de l'heure à l'année) et des poches de liquidités se superposent, avec entrée, stop, deux objectifs, probabilités et une explication complète sans abréviation. Cinq idées par semaine au maximum, réglable (voir « V5 » plus bas).
 - **Un espace de travail (menu à gauche)** : **Desk** (les graphiques), **Overview** (une carte par paire : prix, biais, niveaux essentiels, contexte, macro, dominance, Fear & Greed) et **Analyse** (biais, macro, dominance, plan de trade, lexique). Le menu se replie avec la flèche.
@@ -101,6 +102,37 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V9 : plus de données, moins de bruit
+
+### L'écran de lecture (onglet **Lecture**, par défaut)
+Une page, dans l'ordre où l'on décide : **tendance de fond** (le seul filtre validé par le backtest), **idée de trade** en cours (ou « aucune »), **prochaine annonce**, **niveaux proches**, puis trois blocs : *Positionnement* (financement comparé entre bourses, Open Interest, flux d'ordres, liquidations réelles), *Dérivés* (options du bitcoin : max pain, put/call, volatilité implicite DVOL, base des futures), *Macro et liquidité* (macro, Fear & Greed, dominance pour les alts, offre de stablecoins). **Chaque ligne porte son niveau de preuve** : « validé » (mesuré par le backtest du terminal), « indice » (même signe sur l'apprentissage et le test, sans preuve), « contexte » (lecture seule, aucun avantage démontré). Le biais statistique non validé n'occupe plus qu'une ligne.
+- **Épuration** : le panneau de droite ne montre plus que Lecture · Idées · Niveaux · Stratégie. Contexte, Stats, Liquidité, VP, Alertes, ainsi que les pages « Biais & probabilités » et « Dominance », sont derrière **Détails ▾** (ou « Mode détaillé » dans le menu de gauche). La vue d'ensemble garde l'essentiel (biais non validé réduit à une ligne, niveaux proches, plus de carte d'alertes).
+
+### Les nouvelles données (gratuites, sans clé)
+- **Jeux libres sur GitHub** (téléchargés dans `data_local/opendata/`) : **Coin Metrics** (`coinmetrics/data`, CC BY-NC 4.0) pour le BTC en chaîne depuis 2009 (flux vers et depuis les bourses, offre sur les bourses, MVRV, hashrate, adresses actives, transactions, frais, volume) et l'offre de USDT, USDC et DAI ; **`datasets/*`** pour le VIX (depuis 1990), le pétrole WTI et Brent, le gaz naturel et les taux de change, dont on reconstruit un **indice dollar** (formule du DXY ; vérifié contre des niveaux connus : environ 80,6 en juin 2014, 97 en juin 2017, 103 en juin 2022).
+- **Dérivés en direct** (`data/derivs.py`) : Deribit (options BTC / ETH : intérêt ouvert par strike et échéance → max pain, put/call, murs d'options ; DVOL ; base annualisée des futures), Bybit, OKX et Hyperliquid (financement, Open Interest, prix de marque de la paire suivie). **Ces API n'ont pas pu être appelées depuis mon environnement** (seuls les dépôts GitHub y sont joignables) : le code suit leur documentation publique et il est testé sur de faux serveurs, mais **pas encore sur les vrais**. Une réponse inattendue donne une erreur lisible dans l'état de santé, jamais un faux chiffre. Désactivable : `TERMINAL_DERIVS=0`.
+- **Le terminal enregistre ces séries** toutes les 15 minutes (`data_local/history/derivs/<PAIRE>.csv`) : il n'existe pas d'historique libre du financement multi-bourses ni des options, donc c'est le seul moyen de les backtester un jour.
+
+### Ce que la mesure dit des indicateurs (BTC, 2013-2026, 25 indicateurs × 3 horizons)
+Méthode : chaque indicateur est replacé dans l'historique de ses seules valeurs passées, puis relié au rendement du bitcoin à 7, 14 et 30 jours (un jour de décalage), avec une erreur-type robuste, un apprentissage jusqu'en 2021 et un test depuis 2022. Un **témoin** (le même signal décalé au hasard) donne le seuil du hasard : |t| ≥ 3,1 dans 5 % des cas, ≥ 4,0 dans 1 %.
+- **Aucun indicateur ne dépasse le seuil à la fois sur l'apprentissage et sur le test.**
+- **À surveiller** (même signe partout, sous le seuil) : momentum 30 et 90 jours et écart à la moyenne 200 jours (c'est la tendance de fond, déjà dans le terminal), **multiple de Puell** (revenu des mineurs ; le signe est l'inverse de l'intuition : un Puell haut précède plutôt des rendements plus hauts) et **la variation sur 30 jours de l'offre de stablecoins** : écart de +9,4 % à 14 jours à l'apprentissage (t = 2,2) et +8,3 % sur le test (t = 2,2), +21,5 % puis +16,1 % à 30 jours : le seul qui garde la même ampleur hors échantillon. Ce n'est **pas** une preuve (75 mesures, un seuil à 4,0), c'est un indice : il apparaît donc dans la Lecture avec l'étiquette « indice ».
+- **Rien de prouvé** : MVRV (fort à l'apprentissage, nul sur le test), flux nets vers les bourses, offre sur les bourses, hashrate, adresses actives, frais, volume, **VIX, pétrole Brent, gaz naturel, dollar**. La part de l'offre détenue sur les bourses (−25 % à 14 jours à l'apprentissage, t = −3,2) disparaît sur le test (−4,7 %, t = −0,7).
+- **Limite de puissance** : l'écart à la moyenne 200 jours, effet connu, reste lui-même sous le seuil (t = 2,5 puis 1,4) : avec une dizaine d'années de données journalières, ce test ne détecte que des effets forts. « Pas de preuve » ne veut pas dire « pas d'effet ».
+- Page **Backtest → Rapport → indicateurs** : tableau complet (valeur du jour et position dans l'historique, écart et t à l'apprentissage et au test, rendement par quintile, sens attendu ou non, verdict), horizon au choix.
+
+### Corrections et précisions
+- La barre d'onglets du panneau de droite ne coupe plus « Alertes » ; l'onglet **Stratégie** est mémorisé au rechargement.
+- Décimales à la française partout (le texte de l'analyse macro, du biais et de la dominance, les consensus d'annonces, les axes des graphiques affichaient « 0.3 » ou « 58.59 % »).
+- Le téléchargement des jeux libres tourne dans un fil à part (une connexion lente ne bloque plus le rafraîchissement) ; les adresses des bourses sont injectables, les tests restent hermétiques.
+- Un test a attrapé une erreur de signe dans mon calcul de l'indice dollar (les taux de change du jeu de données sont en monnaie locale pour 1 USD : tous les exposants du DXY sont positifs) ; corrigé avant publication du rapport.
+
+### Relancer / backtester plus tard
+```
+python tools/run_indicators.py                 # quelques secondes ; télécharge les jeux libres puis écrit data_local/reports/indicators_BTC.json
+python tools/run_derivs_study.py SOLUSDT       # après 3 à 4 semaines d'enregistrement : financement, OI, options, base contre le prix futur
+```
 
 ## Ce qui est nouveau en V8 : les VWAP ancrés sur un mouvement d'au moins −5 %
 
@@ -349,16 +381,17 @@ engine/             calculs : profils de volume (auto et choisis), séries VWAP 
                     liqsweep.py (poches visibles dans le prix, balayages), cvd.py (déséquilibre, divergences, absorption), trend.py (tendance de fond),
                     backtest.py (génération des idées, exécution 1 min, frais, métriques, témoins), study.py (rapport complet), history.py (archives Binance) ;
                     V7 : vwapstrat.py (signaux de ta stratégie, 48 sorties, simulation 5 min), hedge.py (corrélation et portefeuille de couverture), stratstudy.py (protocole, variantes, verdict) ;
-                    V8 : swingavwap.py (zigzag confirmé, VWAP ancrés sur sommet / creux, contacts), swingstudy.py (réaction du prix et trades)
-data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase) ; social.py (posts X, facultatif)
+                    V8 : swingavwap.py (zigzag confirmé, VWAP ancrés sur sommet / creux, contacts), swingstudy.py (réaction du prix et trades) ;
+                    V9 : indicators.py (25 indicateurs journaliers), indstudy.py (mesure avec témoin), derivstudy.py (mesure des dérivés enregistrés), lecture.py (écran de lecture)
+data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase) ; social.py (posts X, facultatif) ; V9 : derivs.py (options, DVOL, base, financement multi-bourses), opendata.py (jeux libres GitHub)
 alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées)
 service.py          relie les données et les moteurs, fabrique l'état JSON
 server.py           serveur local : API, réglages, sécurité
 web/                interface : index.html + style.css ; app.js (Desk, état, alertes), panels.js (les trois graphiques),
                     overview.js (vue d'ensemble), signals.js (idées de trade), analysis.js et charts.js (analyse, graphiques SVG) ;
                     TradingView Lightweight Charts (vendor/)
-tools/              fetch_history.py (historique 1 min Binance), run_study.py (rapport de backtest des idées du terminal), run_strategy.py (rapport de ta stratégie VWAP / profil de volume) et run_avwap_swing.py (VWAP ancrés sur un mouvement de 5 % ou plus)
-reports/            rapports livrés (BTC) : backtest_BTC.json (idées du terminal), strategy_BTC.json (ta stratégie) et avwap_BTC.json (VWAP ancrés sur un mouvement) ; les tiens vont dans data_local/reports/
+tools/              run_indicators.py, run_derivs_study.py (V9), fetch_history.py (historique 1 min Binance), run_study.py (rapport de backtest des idées du terminal), run_strategy.py (rapport de ta stratégie VWAP / profil de volume) et run_avwap_swing.py (VWAP ancrés sur un mouvement de 5 % ou plus)
+reports/            rapports livrés (BTC) : backtest_BTC.json (idées du terminal), strategy_BTC.json (ta stratégie) et avwap_BTC.json (VWAP ancrés sur un mouvement) et indicators_BTC.json (indicateurs en chaîne et macro) ; les tiens vont dans data_local/reports/
 serveur/            installation sur un serveur 24 h/24 (script et guide)
 tests/              tests automatiques (plus de deux cent cinquante)
 ```

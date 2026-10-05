@@ -135,12 +135,9 @@ class NetworkParsingTests(unittest.TestCase):
         self.srv = HTTPServer(("127.0.0.1", 0), FakeExchanges)
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
         base = f"http://127.0.0.1:{self.srv.server_port}"
-        self.old = (derivs.DERIBIT, derivs.BYBIT, derivs.OKX, derivs.HYPER)
-        derivs.DERIBIT = derivs.BYBIT = derivs.OKX = derivs.HYPER = base
-        self.p = RealProviders()
+        self.p = RealProviders(deribit=base, bybit=base, okx=base, hyper=base)
 
     def tearDown(self):
-        derivs.DERIBIT, derivs.BYBIT, derivs.OKX, derivs.HYPER = self.old
         self.srv.shutdown()
         self.srv.server_close()
 
@@ -178,7 +175,8 @@ class HubTests(unittest.TestCase):
     def test_hub_collects_derivatives_records_history_and_survives_errors(self):
         with tempfile.TemporaryDirectory() as d:
             clock = [NOW]
-            hub = ExternalHub(SimProviders(lambda: clock[0]), lambda: clock[0], d, ("SOLUSDT", "BTCUSDT"))
+            hub = ExternalHub(SimProviders(lambda: clock[0]), lambda: clock[0], d, ("SOLUSDT", "BTCUSDT"), derivs=True)
+            hub.sync_opendata = True
             hub.refresh(force=True)
             snap = hub.snapshot()
             self.assertEqual(set(snap["derivs"]["options"]), {"BTC", "ETH"})
@@ -199,15 +197,32 @@ class HubTests(unittest.TestCase):
             hub.refresh(force=True)
             self.assertEqual(len(f.read_text(encoding="utf-8").strip().split("\n")), 3)
 
+    def test_derivatives_are_off_unless_asked(self):
+        hub = ExternalHub(SimProviders(lambda: NOW), lambda: NOW, None, ("SOLUSDT",))
+        hub.refresh(force=True)
+        self.assertEqual(hub.snapshot()["derivs"]["options"], {})
+        self.assertNotIn("perps", hub.errors)
+
     def test_hub_keeps_the_error_when_a_source_fails(self):
         class Broken(SimProviders):
             def perp_others(self, symbol):
                 raise DataError("injoignable")
-        hub = ExternalHub(Broken(lambda: NOW), lambda: NOW, None, ("SOLUSDT",))
+        hub = ExternalHub(Broken(lambda: NOW), lambda: NOW, None, ("SOLUSDT",), derivs=True)
         hub.refresh(force=True)
         self.assertIn("perps", hub.errors)
         self.assertEqual(hub.snapshot()["derivs"]["perps"], {})
         self.assertNotIn("options", hub.errors)
+
+
+class ConfigTests(unittest.TestCase):
+    def test_derivs_option_defaults_on_and_can_be_switched_off(self):
+        from config import load_config
+        with tempfile.TemporaryDirectory() as d:
+            env = Path(d) / ".env"
+            env.write_text("TERMINAL_SOURCE=simulated\n", encoding="utf-8")
+            self.assertTrue(load_config(env).derivs_on)
+            env.write_text("TERMINAL_SOURCE=simulated\nTERMINAL_DERIVS=0\n", encoding="utf-8")
+            self.assertFalse(load_config(env).derivs_on)
 
 
 if __name__ == "__main__":

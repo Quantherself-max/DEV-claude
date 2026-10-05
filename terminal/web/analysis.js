@@ -5,6 +5,7 @@ const Analysis = (() => {
   const S = {an: null, planTimer: null, planSeq: 0, side: 'long', openEv: null};
   const $ = s => document.querySelector(s);
   const esc = s => Charts.esc(s);
+  const prose = s => Charts.prose(s);                 // prose du serveur : virgule décimale
   const p1 = v => v == null ? '-' : (v * 100).toFixed(1).replace('.', ',') + ' %';
   const p0 = v => v == null ? '-' : Math.round(v * 100) + ' %';
   const n1 = (v, d = 2) => v == null || isNaN(v) ? '-' : v.toFixed(d).replace('.', ',');
@@ -37,13 +38,13 @@ const Analysis = (() => {
       `<div class="sub">confiance <span class="tag ${confCls}">${sy.confidence}</span><span class="tag ${sy.validated ? 'ok' : 'warn'}">${sy.validated ? 'modèle validé' : 'modèle non validé'}</span></div></div></div>` +
       Charts.meter(sy.score) +
       `<div class="spark" style="margin-top:8px">${probTile(h4, 'Probabilité de hausse dans 4 h')}${probTile(h24, 'Probabilité de hausse dans 24 h')}</div>` +
-      `<div class="msg ${sy.validated ? 'ok' : 'warn'}" style="margin-top:8px">${esc(sy.statNote)}</div>` +
+      `<div class="msg ${sy.validated ? 'ok' : 'warn'}" style="margin-top:8px">${prose(sy.statNote)}</div>` +
       `<div class="note">Un biais n'est pas un signal d'entrée : il dit de quel côté le contexte penche, avec quel niveau de preuve. L'entrée, le stop et la taille restent ton plan.</div>`) +
       card('Pourquoi', `<table class="t"><tr><th>Composante</th><th class="r">Poids</th><th style="width:38%">Lecture</th><th class="r">Score</th></tr>` +
         sy.components.map(c => `<tr><td>${esc(c.label)}</td><td class="r">${Math.round(c.weight * 100)} %</td><td>${Charts.dvBar(c.score)}</td><td class="r ${tone(c.score)}">${sg(c.score * 100, 0)}</td></tr>`).join('') + `</table>` +
-        (sy.pros.length ? `<div class="sect">Pour</div><ul class="ln">${sy.pros.map(t => `<li class="pro">${esc(t)}</li>`).join('')}</ul>` : '') +
-        (sy.cons.length ? `<div class="sect">Contre</div><ul class="ln">${sy.cons.map(t => `<li class="con">${esc(t)}</li>`).join('')}</ul>` : '') +
-        (sy.invalidation.length ? `<div class="sect">Ce qui invaliderait</div><ul class="ln">${sy.invalidation.map(t => `<li class="inv">${esc(t)}</li>`).join('')}</ul>` : '')) + `</div>`;
+        (sy.pros.length ? `<div class="sect">Pour</div><ul class="ln">${sy.pros.map(t => `<li class="pro">${prose(t)}</li>`).join('')}</ul>` : '') +
+        (sy.cons.length ? `<div class="sect">Contre</div><ul class="ln">${sy.cons.map(t => `<li class="con">${prose(t)}</li>`).join('')}</ul>` : '') +
+        (sy.invalidation.length ? `<div class="sect">Ce qui invaliderait</div><ul class="ln">${sy.invalidation.map(t => `<li class="inv">${prose(t)}</li>`).join('')}</ul>` : '')) + `</div>`;
     h += `<div class="ag two" style="margin-top:10px">`;
     // niveaux a surveiller
     h += card('Niveaux essentiels <small class="muted">les seuls tracés en mode Essentiel</small>', sy.levels.length ?
@@ -99,7 +100,7 @@ const Analysis = (() => {
         `${r.level === 'danger' ? 'Fenêtre de danger : spreads élargis, mèches rapides, stops balayés. Réduis le levier ou reste à plat.' : r.level === 'attention' ? 'Volatilité attendue dans les prochaines heures : évite les entrées de faible conviction juste avant.' : ''}</div>`;
     }
     h += `<div class="ag two">`;
-    h += card('Lecture macro <small class="muted">écrite à partir des chiffres mesurés</small>', m.lines.map(l => `<div class="msg ${l.tone === 'muted' ? '' : l.tone}">${esc(l.text)}</div>`).join('') +
+    h += card('Lecture macro <small class="muted">écrite à partir des chiffres mesurés</small>', m.lines.map(l => `<div class="msg ${l.tone === 'muted' ? '' : l.tone}">${prose(l.text)}</div>`).join('') +
       (m.score != null ? Charts.meter(m.score) + `<table class="t">` + m.components.map(c => `<tr><td>${esc(c.label)}</td><td style="width:40%">${Charts.dvBar(c.score)}</td><td class="r ${tone(c.score)}">${sg(c.score * 100, 0)}</td></tr>`).join('') + `</table>` : ''));
     h += card('Calendrier : 3 jours passés, 5 jours à venir', `<div id="tlHost"></div><div class="note">Orange = à venir, gris = passé. Gros points = impact élevé. Heures affichées dans ton fuseau.</div>` +
       (m.fng ? `<div class="sect">Fear &amp; Greed</div><div class="hero"><div class="big neu">${m.fng.value}</div><div class="sub">${esc(m.fng.label)}${m.fng.d7 != null ? ` · ${sg(m.fng.d7, 0)} en 7 j` : ''}</div><div style="flex:1;min-width:120px">${Charts.spark(m.fng.spark, '#c98500', 200, 40)}</div></div>` + fngTable(m.fng.stats) : ''));
@@ -109,12 +110,12 @@ const Analysis = (() => {
       m.upcoming.map(e => {
         const ex = e.exp || {}, t = e.typical, open = S.openEv === e.id;
         return `<tr class="${e.impact === 3 ? 'hl' : ''}" data-ev="${e.id}" style="cursor:pointer"><td>${when(e.t)}<div class="muted small">dans ${cdown(e.t - now)}</div></td><td>${impDots(e.impact)} ${esc(e.label)}<div class="muted small">${esc(e.title)} · ${esc(e.country)}</div></td>` +
-          `<td class="r">${esc(e.forecast || '-')}</td><td class="r">${esc(e.previous || '-')}</td><td>${esc(ex.text || '-')}</td><td>${t && t.abs60 != null ? `±${n1(t.abs60)} % en 1 h <span class="muted small">(n=${t.n})</span>` : '<span class="muted small">pas encore mesuré</span>'}</td></tr>` +
-          (open ? `<tr><td></td><td colspan="5"><div class="msg">${esc(ex.scen_up || '')}</div><div class="msg">${esc(ex.scen_dn || '')}</div><div class="muted small">Scénarios types (a priori). Le chiffre publié n'est pas connu à l'avance : le terminal lit ensuite la vraie réaction des taux et du dollar.</div></td></tr>` : '');
+          `<td class="r">${prose(e.forecast || '-')}</td><td class="r">${prose(e.previous || '-')}</td><td>${prose(ex.text || '-')}</td><td>${t && t.abs60 != null ? `±${n1(t.abs60)} % en 1 h <span class="muted small">(n=${t.n})</span>` : '<span class="muted small">pas encore mesuré</span>'}</td></tr>` +
+          (open ? `<tr><td></td><td colspan="5"><div class="msg">${prose(ex.scen_up || '')}</div><div class="msg">${prose(ex.scen_dn || '')}</div><div class="muted small">Scénarios types (a priori). Le chiffre publié n'est pas connu à l'avance : le terminal lit ensuite la vraie réaction des taux et du dollar.</div></td></tr>` : '');
       }).join('') + `</table><div class="note">Clique une ligne pour voir les scénarios.</div>` : '<div class="muted">Aucune annonce majeure à venir (ou calendrier indisponible).</div>', 'wide');
     // passees
     h += card('Annonces passées : ce que le marché en a fait', m.past.length ? `<table class="t"><tr><th>Quand</th><th>Annonce</th><th class="r">Consensus</th><th class="r">BTC 15 min</th><th class="r">BTC 1 h</th><th class="r">Taux 10 ans</th><th class="r">Dollar</th><th>Surprise lue</th></tr>` +
-      m.past.map(e => { const r = e.reaction || {}, b = r.btc || {}, c = r.cross || {}; return `<tr><td>${when(e.t)}</td><td>${impDots(e.impact)} ${esc(e.label)}</td><td class="r">${esc(e.forecast || '-')}</td><td class="r">${rcell(b.r15)}</td><td class="r">${rcell(b.r60)}</td><td class="r">${rcell(c.US10Y, 1, ' pb')}</td><td class="r">${rcell(c.DXY)}</td><td>${r.impulseLabel ? esc(r.impulseLabel) : '<span class="muted small">en cours de mesure</span>'}</td></tr>`; }).join('') + `</table>` +
+      m.past.map(e => { const r = e.reaction || {}, b = r.btc || {}, c = r.cross || {}; return `<tr><td>${when(e.t)}</td><td>${impDots(e.impact)} ${esc(e.label)}</td><td class="r">${prose(e.forecast || '-')}</td><td class="r">${rcell(b.r15)}</td><td class="r">${rcell(b.r60)}</td><td class="r">${rcell(c.US10Y, 1, ' pb')}</td><td class="r">${rcell(c.DXY)}</td><td>${r.impulseLabel ? prose(r.impulseLabel) : '<span class="muted small">en cours de mesure</span>'}</td></tr>`; }).join('') + `</table>` +
       `<div class="note">Le flux gratuit ne fournit pas le chiffre publié : la « surprise » est lue dans la réaction du marché (restrictive si les taux et le dollar montent dans les 15 min, accommodante s'ils baissent). Les mesures sont archivées et s'accumulent avec le temps.</div>` : '<div class="muted">Pas encore d\'annonce passée mesurée.</div>', 'wide');
     // actifs de reference
     const tr = Object.entries(m.trends || {});
@@ -136,7 +137,7 @@ const Analysis = (() => {
     if (!d || !d.ready) { el.innerHTML = `<div class="muted">Données de dominance indisponibles${d && d.errors && Object.keys(d.errors).length ? ' : ' + esc(Object.values(d.errors).join(' ; ')) : ''}.</div>`; return; }
     const sym = an.symbol.replace('USDT', '');
     let h = '';
-    if (d.regime) h += `<div class="msg ${d.regime.tone === 'muted' ? '' : d.regime.tone}"><b>${esc(d.regime.name)}</b> — ${esc(d.regime.text)}</div>`;
+    if (d.regime) h += `<div class="msg ${d.regime.tone === 'muted' ? '' : d.regime.tone}"><b>${esc(d.regime.name)}</b> — ${prose(d.regime.text)}</div>`;
     h += `<div class="ag">`;
     if (d.cg) h += card('Dominance du Bitcoin', `<div class="hero"><div class="big neu">${n1(d.cg.btc_d, 1)} %</div><div class="sub">24 h ${d.cg.d24 != null ? sg(d.cg.d24, 2, ' pt') : 'en cours de mesure'} · 7 j ${d.cg.d7 != null ? sg(d.cg.d7, 2, ' pt') : 'en cours de mesure'}<br>ETH ${d.cg.eth_d != null ? n1(d.cg.eth_d, 1) + ' %' : 'n/d'} · capitalisation ${n1(d.cg.total / 1e12)} T$ (${sg(d.cg.chg24, 1, ' %')} 24 h)</div></div>` +
       `<div id="cgHist" style="margin-top:8px"></div><div class="note">Source ${esc(d.cg.src)}. L'historique se construit tant que le terminal tourne${d.cg.histSince ? ' (depuis le ' + new Date(d.cg.histSince).toLocaleDateString('fr-FR') + ')' : ''}.</div>`);
@@ -159,13 +160,13 @@ const Analysis = (() => {
         `<tr><td class="muted">Hasard (tous les jours)</td><td class="r muted"></td><td class="r muted">${p0(d.stats.base1)}</td><td class="r muted">${p0(d.stats.base3)}</td></tr></table>` +
         `<div class="note">Lecture : « alts ↑ le lendemain » = le panier alts/BTC finit plus haut dans 24 h. Vert / rouge = l'intervalle de confiance à 90 % est entièrement au-dessus / en dessous du hasard. Les fenêtres de 5 jours se chevauchent : le nombre de cas réellement indépendants est environ 3 fois plus petit que « Jours ».</div>`, 'wide') + `</div>`;
     }
-    if (d.lines && d.lines.length) h += `<div style="margin-top:10px">${d.lines.map(l => `<div class="msg">${esc(l)}</div>`).join('')}</div>`;
+    if (d.lines && d.lines.length) h += `<div style="margin-top:10px">${d.lines.map(l => `<div class="msg">${prose(l)}</div>`).join('')}</div>`;
     el.className = ''; el.innerHTML = h;
     const day = t => new Date(t).toLocaleDateString('fr-FR', {day: 'numeric', month: 'short'});
     const hr = t => new Date(t).toLocaleString('fr-FR', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'});
     if (d.cg && $('#cgHist')) $('#cgHist').innerHTML = d.cg.spark && d.cg.spark.length > 3 ? '' : '<div class="muted small">Historique en construction (une mesure toutes les 5 minutes).</div>';
-    if (d.cg && d.cg.spark && d.cg.spark.length > 3) Charts.line($('#cgHist'), {series: [{name: 'Dominance BTC', color: '#3987e5', pts: d.cg.spark, area: true}], height: 130, yFmt: v => v.toFixed(2) + ' %', xFmt: hr, xTicks: 3});
-    if (rel['Panier alts/BTC'] && $('#relHost')) Charts.line($('#relHost'), {series: [{name: 'Panier alts/BTC', color: '#3987e5', pts: rel['Panier alts/BTC'].spark, area: true}], height: 150, yFmt: v => v.toFixed(1), xFmt: day, ref: {y: 100, label: 'départ'}, xTicks: 4});
+    if (d.cg && d.cg.spark && d.cg.spark.length > 3) Charts.line($('#cgHist'), {series: [{name: 'Dominance BTC', color: '#3987e5', pts: d.cg.spark, area: true}], height: 130, yFmt: v => v.toFixed(2).replace('.', ',') + ' %', xFmt: hr, xTicks: 3});
+    if (rel['Panier alts/BTC'] && $('#relHost')) Charts.line($('#relHost'), {series: [{name: 'Panier alts/BTC', color: '#3987e5', pts: rel['Panier alts/BTC'].spark, area: true}], height: 150, yFmt: v => v.toFixed(1).replace('.', ','), xFmt: day, ref: {y: 100, label: 'départ'}, xTicks: 4});
   }
 
   // ---------- Plan de trade ----------

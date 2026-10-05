@@ -131,22 +131,20 @@ def now_reading(od, min_hist: int = 365) -> dict:
     return out
 
 
-def run(od, label: str, start_ms: int, end_ms: int, split_ms: int, horizons=HORIZONS, lag: int = 1, min_hist: int = 365, shifts: int = 30, progress=None) -> dict:
-    t0 = time.time()
-    say = progress or (lambda *_: None)
-    say("construction des indicateurs…")
-    grid, series, price = ind.build(od, start_ms - 800 * DAY, end_ms)
+def evaluate(series: dict, price: list, catalog: dict, grid: list, lo: int, sp: int, horizons=HORIZONS, lag: int = 1, min_hist: int = 365, shifts: int = 30, say=None):
+    """Coeur de la mesure, valable pour n'importe quel pas regulier (jour, heure) : (lignes, temoin, seuil, indice du dernier prix connu).
+    `lo` = premiere observation evaluee, `sp` = debut du test ; les horizons et le decalage sont en nombre de pas."""
+    say = say or (lambda *_: None)
     n = len(grid)
-    lo = next((i for i, t in enumerate(grid) if t >= start_ms), 0)
-    sp = next((i for i, t in enumerate(grid) if t >= split_ms), n)
     last_price = max((i for i, v in enumerate(price) if v is not None), default=n - 1)
     ranks = {k: expanding_rank(v, min_hist) for k, v in series.items()}
     fwd = {h: forward_returns(price, h, lag) for h in horizons}
     say("temoin au hasard…")
-    null = placebo_null(ranks, fwd[14] if 14 in fwd else fwd[horizons[len(horizons) // 2]], lo, sp if sp > lo else n, shifts=shifts)
+    mid = horizons[len(horizons) // 2]
+    null = placebo_null(ranks, fwd[mid], lo, sp if sp > lo else n, shifts=shifts)
     thr = max(2.5, null["p99"] or 3.0)
     rows = []
-    for k, (grp, title, expect, hyp, unit) in ind.CATALOG.items():
+    for k, (grp, title, expect, hyp, unit) in catalog.items():
         if k not in ranks:
             continue
         r, row = ranks[k], {"key": k, "group": grp, "title": title, "expect": expect, "hypothesis": hyp, "unit": unit, "h": {}}
@@ -155,7 +153,6 @@ def run(od, label: str, start_ms: int, end_ms: int, split_ms: int, horizons=HORI
             hi_is = max(lo, sp - h - lag - 1)                  # aucune fenetre d'apprentissage ne deborde sur le test
             row["h"][str(h)] = {"all": _stat(r, fwd[h], lo, n, lags), "is": _stat(r, fwd[h], lo, hi_is, lags), "oos": _stat(r, fwd[h], sp, n, lags),
                                 "buckets": _buckets(r, fwd[h], lo, n)}
-        # lecture du jour : derniere valeur connue de l'indicateur
         j = max((i for i, v in enumerate(series[k]) if v is not None and r[i] is not None), default=None)
         row["now"] = {"date": grid[j], "value": series[k][j], "rank": r[j]} if j is not None else None
         best = None
@@ -173,11 +170,23 @@ def run(od, label: str, start_ms: int, end_ms: int, split_ms: int, horizons=HORI
                 row["level"] = "informatif"
             elif abs(a["t"]) >= 2.0 and abs(b["t"]) >= 1.0:
                 row["level"] = "indice"
-        main = row["h"][str(row["bestH"] or horizons[1])]["all"]
+        main = row["h"][str(row["bestH"] or mid)]["all"]
         row["expectOk"] = bool(main and expect and (main["spread"] > 0) == (expect > 0))
         rows.append(row)
     order = {"informatif": 0, "indice": 1, "rien": 2}
     rows.sort(key=lambda r: (order[r["level"]], -max((abs(r["h"][str(h)]["is"]["t"]) for h in horizons if r["h"][str(h)]["is"]), default=0)))
+    return rows, null, thr, last_price
+
+
+def run(od, label: str, start_ms: int, end_ms: int, split_ms: int, horizons=HORIZONS, lag: int = 1, min_hist: int = 365, shifts: int = 30, progress=None) -> dict:
+    t0 = time.time()
+    say = progress or (lambda *_: None)
+    say("construction des indicateurs…")
+    grid, series, price = ind.build(od, start_ms - 800 * DAY, end_ms)
+    n = len(grid)
+    lo = next((i for i, t in enumerate(grid) if t >= start_ms), 0)
+    sp = next((i for i, t in enumerate(grid) if t >= split_ms), n)
+    rows, null, thr, last_price = evaluate(series, price, ind.CATALOG, grid, lo, sp, horizons, lag, min_hist, shifts, say)
     rep = {"kind": "indicators", "label": label, "computedAt": int(time.time() * 1000), "period": {"start": start_ms, "end": grid[last_price] + DAY, "split": split_ms},
            "horizons": list(horizons), "lag": lag, "minHist": min_hist, "null": null, "threshold": thr, "rows": rows,
            "counts": {"indicators": len(rows), "tests": len(rows) * len(horizons), "informative": sum(1 for r in rows if r["level"] == "informatif"), "hints": sum(1 for r in rows if r["level"] == "indice")},
