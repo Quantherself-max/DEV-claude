@@ -10,7 +10,7 @@ const Backtest = (() => {
   const dateFr = ms => new Date(ms).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit', year: 'numeric'});
   let LT = null, list = null, label = null, kind = 'backtest', rep = null, loading = false, error = null, sortKey = null, showAll = false;
 
-  const repKind = r => ({'vwap-strategy': 'strategy', 'avwap-swing': 'avwap', indicators: 'indicators'})[r.kind] || 'backtest';
+  const repKind = r => ({'vwap-strategy': 'strategy', 'avwap-swing': 'avwap', indicators: 'indicators', rotation: 'rotation', squeeze: 'squeeze'})[r.kind] || 'backtest';
 
   async function show() {
     if (loading) return;
@@ -40,6 +40,8 @@ const Backtest = (() => {
     root.addEventListener('click', e => {
       const th = e.target.closest('th[data-sort]');
       if (th) { sortKey = sortKey === th.dataset.sort ? null : th.dataset.sort; render(); }
+      const rt = e.target.closest('[data-rott]');
+      if (rt) { rotT = rt.dataset.rott; render(); }
       const ih = e.target.closest('[data-indh]');
       if (ih) { indH = +ih.dataset.indh; render(); }
       const all = e.target.closest('[data-showall]');
@@ -345,6 +347,7 @@ const Backtest = (() => {
   let indH = 14;
   function indFmt(r, v) {
     if (v == null) return '-';
+    if (r.unit === 'pts') return (v >= 0 ? '+' : '−') + num(Math.abs(v) * 100, 1) + ' pt';
     if (r.unit && r.unit.includes('%')) return (v >= 0 ? '+' : '−') + num(Math.abs(v) * 100, Math.abs(v) < 0.01 ? 2 : 1) + ' %';
     return num(v, Math.abs(v) >= 100 ? 0 : 2);
   }
@@ -357,14 +360,16 @@ const Backtest = (() => {
       <div class="kpis">${kp('Informatifs', c.informative, 'au-dessus du seuil du hasard, appris puis confirmés sur le test')}${kp('À surveiller', c.hints, 'même signe partout, mais sous le seuil')}${kp('Seuil du hasard', num(r.threshold, 1), '|t| dépassé dans 1 % des cas par un signal sans lien avec le prix')}${kp('Période test', yr(r.period.split) + '-' + yr(r.period.end - 1), 'jamais regardée pour choisir')}</div>
       <div class="muted small">Écart = rendement futur attendu en plus entre le haut et le bas de l'historique de l'indicateur (en points de rendement logarithmique, à l'horizon choisi). « t » mesure la solidité : en dessous du seuil du hasard, on ne peut pas distinguer l'effet du hasard.</div></section>`;
   }
-  function indTable(r) {
+  function indTable(r, rowsIn, title, sub) {
+    const rows0 = rowsIn || r.rows;
     const hs = r.horizons, hk = String(indH);
     const sp = (m) => !m ? '<td class="r muted">-</td>' : `<td class="r ${Math.abs(m.t) >= 2 ? (m.spread > 0 ? 'up' : 'dn') : 'muted'}" title="${m.n} jours, t = ${num(m.t, 1)}">${sgn(m.spread * 100, 1)} % <small>t ${sgn(m.t, 1)}</small></td>`;
     const bk = (b, k) => b && b[k] ? `${sgn(b[k].mean * 100, 1)}` : '-';
     const LV = {informatif: ['ok', 'informatif'], indice: ['warn', 'à surveiller'], rien: ['', 'rien de prouvé']};
     let last = null;
     const GO = ['Prix', 'En chaîne', 'Liquidité', 'Macro'], LO = {informatif: 0, indice: 1, rien: 2};
-    const sorted = r.rows.slice().sort((a, b) => (GO.indexOf(a.group) - GO.indexOf(b.group)) || (LO[a.level] - LO[b.level]));
+    const GO2 = r.kind === 'rotation' ? ['Rotation', 'Liquidité', 'Or'] : GO;
+    const sorted = rows0.slice().sort((a, b) => (GO2.indexOf(a.group) - GO2.indexOf(b.group)) || (LO[a.level] - LO[b.level]));
     const rows = sorted.map(x => {
       const d = x.h[hk] || {}, now = x.now;
       const head = x.group !== last ? `<tr class="grp"><td colspan="8">${esc(x.group)}</td></tr>` : ''; last = x.group;
@@ -377,7 +382,7 @@ const Backtest = (() => {
         <td><span class="pill ${lv[0]}">${lv[1]}</span></td></tr>`;
     }).join('');
     const btn = hs.map(h => `<button data-indh="${h}" class="seg-like ${h === indH ? 'on' : ''}">${h} jours</button>`).join(' ');
-    return `<section class="card"><h2>Les indicateurs <small>rendement du bitcoin à ${indH} jours, un jour de décalage</small></h2>
+    return `<section class="card"><h2>${title || 'Les indicateurs'} <small>${sub || 'rendement du bitcoin'} à ${indH} jours, un jour de décalage</small></h2>
       <div class="line">Horizon : ${btn}</div>
       <div class="scroll"><table class="bttab vt"><thead><tr><th>Indicateur</th><th class="r">Aujourd'hui</th><th class="r">Écart · apprentissage</th><th class="r">Écart · test</th><th class="r">Rendement : bas / milieu / haut (%)</th><th>Sens</th><th>Verdict</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="muted small">Bas / milieu / haut = rendement moyen à ${indH} jours quand l'indicateur est dans son quintile bas, central ou haut. La barre « Aujourd'hui » place la valeur actuelle dans l'historique de l'indicateur (gauche = bas).</div></section>`;
@@ -392,6 +397,67 @@ const Backtest = (() => {
       <li><b>Relancer</b> : <code>python tools/run_indicators.py</code> (quelques secondes, aucune clé).</li></ul></section>`;
   }
 
+  // ---------- rapport « rotation du capital et or » ----------
+  let rotT = 'BTC';
+  function rotVerdict(r) {
+    const v = r.verdict, tone = v.informative ? 'ok' : v.hints ? 'warn' : 'bad';
+    const c90 = (r.gold.corr || {})['90'], semi = (r.gold.semi || {}).all;
+    const kp = (t, big, sub) => `<div class="kpi"><small>${t}</small><b>${big}</b><span>${sub}</span></div>`;
+    return `<section class="card btv ${tone}"><div class="bthead"><h2>Où est l'argent ? <small>${esc(r.label)} · ${dateFr(r.period.start)} → ${dateFr(r.period.end)} · rotation du capital, or et bitcoin</small></h2></div>
+      <div class="btverdict">${esc(v.text)}</div>
+      <ul class="btnotes">${v.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
+      <div class="kpis">${kp('Liens prouvés', v.informative, 'sur 81 mesures, au-dessus du seuil du hasard')}${kp('À surveiller', v.hints, 'même signe partout, sous le seuil')}
+        ${kp('Corrélation bitcoin / or', c90 ? sgn(c90.mean, 2) : '-', 'moyenne, fenêtres de 90 jours')}${kp('Asymétrie or hausse / baisse', semi ? sgn(semi.asym.diff, 2) : '-', semi ? 't = ' + sgn(semi.asym.t, 1) + (Math.abs(semi.asym.t) >= 2 ? ' : significatif' : ' : non démontrée') : '')}</div></section>`;
+  }
+  function rotMap(r) {
+    const m = r.map, s = m.snapshot;
+    if (!s) return '';
+    const pt = v => v == null ? '<td class="r muted">-</td>' : `<td class="r ${v > 0.0005 ? 'up' : v < -0.0005 ? 'dn' : 'muted'}">${sgn(v * 100, 1)} pt</td>`;
+    const rows = s.rows.map(x => `<tr><td>${esc(x.label)}</td><td class="r"><b>${num(x.share * 100, 1)} %</b></td>${pt(x.d7)}${pt(x.d30)}</tr>`).join('');
+    const rl = (lab, k7, k30) => `<tr><td>${lab}</td>${rcellp(s.rel[k7])}${rcellp(s.rel[k30])}</tr>`;
+    const rcellp = v => v == null ? '<td class="r muted">-</td>' : `<td class="r ${v > 0.005 ? 'up' : v < -0.005 ? 'dn' : 'muted'}">${sgn(v * 100, 1)} %</td>`;
+    return `<section class="card"><h2>Carte du capital <small>au ${dateFr(s.date)} · panier suivi : BTC, ETH, 10 altcoins${s.stableUsd ? ' · stablecoins ' + num(s.stableUsd / 1e9, 0) + ' Md$' : ''}</small></h2>
+      <div class="muted small">${esc(m.reading.text)}</div>
+      <div class="btcharts"><div><table class="bttab"><thead><tr><th>Part du capital</th><th class="r">Aujourd'hui</th><th class="r">7 jours</th><th class="r">30 jours</th></tr></thead><tbody>${rows}</tbody></table>
+        <table class="bttab" style="margin-top:8px"><thead><tr><th>Performance relative</th><th class="r">7 jours</th><th class="r">30 jours</th></tr></thead><tbody>${rl('ETH contre BTC', 'eth7', 'eth30')}${rl('Altcoins contre BTC', 'alts7', 'alts30')}${rl('SOL contre BTC', 'sol7', 'sol30')}${rl('Or contre BTC', 'gold7', 'gold30')}</tbody></table></div>
+        <div><div class="muted small">Parts du panier (BTC + ETH + 10 altcoins), hebdomadaire</div><div id="rotChart" class="svgbox"></div></div></div>
+      <div class="muted small">Le panier n'est pas tout le marché : il mesure des <b>parts</b> et leurs variations, pas des montants. « Stablecoins » = part de l'offre de stablecoins (USDT, USDC, DAI) face au panier plus eux : c'est la poudre sèche.</div></section>`;
+  }
+  function drawRotation(r) {
+    const el = document.getElementById('rotChart');
+    if (!el || !r.map.series.length || !window.Charts) return;
+    const ser = (i, name, color) => ({name, color, pts: r.map.series.filter(p => p[i] != null).map(p => [p[0], p[i] * 100]), area: false});
+    Charts.line(el, {series: [ser(1, 'Bitcoin', '#f7931a'), ser(2, 'ETH', '#7b8cff'), ser(3, 'Altcoins', '#3ddc97'), ser(4, 'Stablecoins (part)', '#9aa0b0')], height: 200, yFmt: v => num(v, 0) + ' %', xFmt: t => new Date(t).getUTCFullYear(), xTicks: 6});
+  }
+  function rotGold(r) {
+    const g = r.gold, sm = g.semi || {};
+    const cell = m => !m ? '<td class="r muted">-</td>' : `<td class="r ${Math.abs(m.t) >= 2 ? (m.beta > 0 ? 'up' : 'dn') : 'muted'}">${sgn(m.beta, 2)} <small>t ${sgn(m.t, 1)}</small></td>`;
+    const semiRow = (lab, k) => { const x = sm[k]; return x ? `<tr><td>${lab}</td><td class="r">${x.n}</td>${cell({beta: x.up.beta, t: x.up.t})}${cell({beta: x.down.beta, t: x.down.t})}<td class="r ${Math.abs(x.asym.t) >= 2 ? 'up' : 'muted'}">${sgn(x.asym.diff, 2)} <small>t ${sgn(x.asym.t, 1)}</small></td></tr>` : ''; };
+    const co = Object.entries(g.corr || {}).filter(([, v]) => v).map(([w, v]) => `<tr><td>${w} jours</td><td class="r">${sgn(v.mean, 2)}</td><td class="r">${sgn(v.min, 2)}</td><td class="r">${sgn(v.max, 2)}</td><td class="r">${num(v.positive * 100, 0)} %</td></tr>`).join('');
+    const sh = ((g.shocks || {}).all || []).filter(x => x.same).map(x => `<tr><td>${esc(x.label)}</td><td class="r">${x.n}</td><td class="r ${rcol(x.same.mean * 10)}">${sgn(x.same.mean * 100, 2)} %</td><td class="r ${rcol(x.next.mean * 10)}">${sgn(x.next.mean * 100, 2)} % <small>t ${sgn(x.next.t, 1)}</small></td><td class="r">${sgn(x.next5.mean * 100, 2)} %</td></tr>`).join('');
+    const ll = ((g.leadLag || {}).all || []).map(x => `<tr><td>or sur les ${x.k} jour(s) précédent(s)</td><td class="r">${x.beta == null ? '-' : sgn(x.beta, 3)}</td><td class="r ${x.t != null && Math.abs(x.t) >= 2 ? 'up' : 'muted'}">${x.t == null ? '-' : sgn(x.t, 1)}</td></tr>`).join('');
+    return `<section class="card"><h2>Bitcoin et or <small>l'asymétrie existe-t-elle ?</small></h2>
+      <div class="muted small">Or = jeton PAXG (1 jeton = 1 once, coté 24 h / 24, week-ends compris), rendements quotidiens depuis février 2020. Bêta = de combien le bitcoin bouge pour 1 de l'or.</div>
+      <div class="scroll"><table class="bttab vt"><thead><tr><th>Période</th><th class="r">Jours</th><th class="r">Bêta quand l'or monte</th><th class="r">Bêta quand l'or baisse</th><th class="r">Écart (asymétrie)</th></tr></thead><tbody>${semiRow('Tout', 'all')}${semiRow('Apprentissage', 'is')}${semiRow('Test', 'oos')}</tbody></table></div>
+      <div class="btcharts"><div><div class="muted small">Corrélation glissante</div><table class="bttab"><thead><tr><th>Fenêtre</th><th class="r">Moyenne</th><th class="r">Min</th><th class="r">Max</th><th class="r">Positive</th></tr></thead><tbody>${co}</tbody></table></div>
+        <div><div class="muted small">Jours de choc de l'or (± 1,5 %) : rendement du bitcoin</div><table class="bttab"><thead><tr><th>Choc</th><th class="r">Jours</th><th class="r">Même jour</th><th class="r">Lendemain</th><th class="r">5 jours</th></tr></thead><tbody>${sh}</tbody></table></div></div>
+      <div class="muted small">L'or d'hier explique-t-il le bitcoin d'aujourd'hui ? (régression, t ≥ 2 = signal)</div>
+      <table class="bttab"><thead><tr><th>Variable</th><th class="r">Pente</th><th class="r">t</th></tr></thead><tbody>${ll}</tbody></table></section>`;
+  }
+  function rotTargets(r) {
+    const t = r.targets.find(x => x.key === rotT) || r.targets[0];
+    const btn = r.targets.map(x => `<button data-rott="${esc(x.key)}" class="seg-like ${x.key === t.key ? 'on' : ''}">${esc(x.title)}</button>`).join(' ');
+    return `<section class="card"><h2>Que prédit la rotation ? <small>cible choisie : ${esc(t.title)}</small></h2><div class="line">Cible : ${btn}</div><div class="muted small">${esc(t.desc)} Seuil du hasard : |t| ≥ ${num(t.threshold, 1)}.</div></section>` + indTable(r, t.rows, 'Les indicateurs de rotation', t.title.toLowerCase());
+  }
+  function rotMethod(r) {
+    return `<section class="card"><h2>Méthode et limites</h2><ul class="btnotes">
+      <li><b>Données libres</b> : ${esc(r.source || '')}</li>
+      <li><b>Panier</b> : BTC, ETH, SOL et 10 altcoins présents depuis 2019 (BNB, XRP, ADA, DOGE, TRX, LINK, LTC, BCH, XLM, ATOM), capitalisation estimée quotidienne. Ce n'est pas tout le marché : les parts sont celles du panier.</li>
+      <li><b>Mesure</b> : même méthode que les indicateurs (rang percentile sur fenêtre croissante, rendement futur à 7 / 14 / 30 jours avec un jour de décalage, Newey-West, apprentissage jusqu'au ${dateFr(r.period.split)}, test après, témoin par décalage au hasard), appliquée à trois cibles : le bitcoin, les altcoins contre le bitcoin, l'or contre le bitcoin.</li>
+      <li><b>Limites</b> : moins de 7 ans de données (depuis juin 2019), donc peu de cycles et un seuil du hasard élevé ; PAXG suit l'or de près mais pas exactement (écart de l'ordre de 1 à 3 % avec les prix mensuels). La situation géopolitique n'est pas mesurable directement : on la voit à travers le pétrole, la volatilité et le dollar (page « indicateurs »).</li>
+      <li><b>Relancer</b> : <code>python tools/run_rotation.py</code> (quelques secondes, aucune clé).</li></ul></section>`;
+  }
+
   function render() {
     const root = $('#btBox');
     if (!root) return;
@@ -399,10 +465,11 @@ const Backtest = (() => {
     if (loading && !rep) { root.innerHTML = '<section class="card"><div class="muted">Chargement du rapport…</div></section>'; return; }
     if (!list || !list.length) { root.innerHTML = '<section class="card"><h2>Backtest</h2><div class="muted">Aucun rapport trouvé. Lance <code>python tools/run_study.py BTCUSDT</code> après avoir téléchargé l\'historique (<code>python tools/fetch_history.py BTCUSDT</code>).</div></section>'; return; }
     if (!rep) return;
-    const kname = k => k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : k === 'indicators' ? 'indicateurs (en chaîne, macro, liquidité)' : 'idées du terminal';
+    const kname = k => k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : k === 'indicators' ? 'indicateurs (en chaîne, macro, liquidité)' : k === 'rotation' ? 'où va l\'argent (rotation, or)' : k === 'squeeze' ? 'delta, CVD et squeezes' : 'idées du terminal';
     const sel = `<div class="btbar"><label>Rapport <select id="btSel">${list.map(x => `<option value="${esc(x.kind)}|${esc(x.label)}" ${x.label === label && x.kind === kind ? 'selected' : ''}>${esc(x.label)} · ${kname(x.kind)}${x.own ? ' (calculé sur tes données)' : ' (livré avec le terminal)'}</option>`).join('')}</select></label>
       <span class="muted small">Calculé le ${dateFr(rep.computedAt)} en ${Math.round(rep.seconds / 60)} min</span></div>`;
     if (rep.kind === 'vwap-strategy') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + stratHedge(rep) + stratMethod(rep) + '</div>'; return; }
+    if (rep.kind === 'rotation') { root.innerHTML = sel + '<div class="btgrid">' + rotVerdict(rep) + rotMap(rep) + rotGold(rep) + rotTargets(rep) + rotMethod(rep) + '</div>'; drawRotation(rep); return; }
     if (rep.kind === 'indicators') { root.innerHTML = sel + '<div class="btgrid">' + indVerdict(rep) + indTable(rep) + indMethod(rep) + '</div>'; return; }
     if (rep.kind === 'avwap-swing') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + reactionCard(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + swingMethod(rep) + '</div>'; return; }
     root.innerHTML = sel + '<div class="btgrid">' + verdictCard(rep) + trendCard(rep) + equityCard(rep) + variantsCard(rep) + eventsCard(rep) + touchCard(rep) + regimeCard(rep) + costsCard(rep) + methodCard(rep) + '</div>';

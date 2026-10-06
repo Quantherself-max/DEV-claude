@@ -339,11 +339,17 @@ class ExternalHub:
 
         def work():
             try:
-                from engine import indstudy                      # import tardif : le hub reste leger tant qu'on n'a pas besoin des indicateurs
+                from engine import indstudy, rotation            # import tardif : le hub reste leger tant qu'on n'a pas besoin des indicateurs
                 status = self.p.opendata_refresh(self.opendata)
-                reading = indstudy.now_reading(self.opendata) if "btc" in self.opendata.available() else {}
+                have = self.opendata.available()
+                reading = indstudy.now_reading(self.opendata) if "btc" in have else {}
+                try:
+                    money = rotation.snapshot(self.opendata) if "btc" in have and "paxg" in have else None
+                except Exception as e:                          # un fichier de capitalisation abime ne doit pas masquer les autres indicateurs
+                    money = None
+                    self.errors["opendata_rotation"] = f"{type(e).__name__}: {str(e)[:100]}"
                 with self.lock:
-                    self.indicators = {"readings": reading, "status": status, "t": self.now_ms()}
+                    self.indicators = {"readings": reading, "rotation": money, "status": status, "t": self.now_ms()}
                 bad = [f"{k}: {v}" for k, v in status.items() if v.startswith("indisponible")]
                 if bad and not reading:
                     raise DataError("jeux libres indisponibles : " + "; ".join(bad[:3]))

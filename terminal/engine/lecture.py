@@ -159,6 +159,22 @@ def indicator_chips(d: dict):
     return out
 
 
+def money_block(d: dict):
+    """Ou est l'argent : parts du panier (BTC, ETH, alts, stablecoins) et variations, performance relative, or (PAXG). Lecture seule : aucun lien prouve avec le prix futur."""
+    snap = ((d.get("indicators") or {}).get("rotation"))
+    if not snap:
+        return None
+    from . import rotation
+    g = snap["gold"]
+    rep = d.get("rotationReport") or {}
+    semi = ((rep.get("gold") or {}).get("semi") or {}).get("all")
+    c90 = ((rep.get("gold") or {}).get("corr") or {}).get("90")
+    note = ("Lien avec le bitcoin : simultané, pas prédictif" + (f" (corrélation moyenne {fr(c90['mean'], 2, True)} sur 90 jours" + (f", asymétrie {'démontrée' if abs(semi['asym']['t']) >= 2 else 'non démontrée'}" if semi else "") + ")" if c90 else ""))
+    age = (d.get("now_ms", 0) - snap["date"]) / DAY
+    return {"date": snap["date"], "ageDays": age, "rows": snap["rows"], "rel": snap["rel"], "reading": rotation.reading(snap)["text"], "stableUsd": snap.get("stableUsd"),
+            "gold": {"price": g["price"], "d30": g["d30"], "trend": g["trend"], "corr90": g["corr90"], "note": note}}
+
+
 def build(d: dict) -> dict:
     """Entrees : voir engine/lecture.py (en-tete) et Service.lecture."""
     chips = [c for c in (funding_chip(d), oi_chip(d), flow_chip(d), liq_chip(d)) if c]
@@ -182,5 +198,6 @@ def build(d: dict) -> dict:
     elif m.get("upcoming"):
         e = m["upcoming"][0]
         nxt = {"label": e["label"], "t": e["t"], "minutes": (e["t"] - d.get("now_ms", e["t"])) / 60000.0}
-    return {"ready": True, "t": d.get("now_ms"), "head": head, "idea": d.get("idea"), "watch": {"next": nxt, "up": up, "dn": dn}, "chips": chips,
+    money = money_block(d)
+    return {"ready": True, "t": d.get("now_ms"), "money": money, "head": head, "idea": d.get("idea"), "watch": {"next": nxt, "up": up, "dn": dn}, "chips": chips,
             "optionsOn": d.get("options") is not None, "sources": d.get("sources") or {}}

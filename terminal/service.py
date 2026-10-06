@@ -1152,7 +1152,7 @@ class Service:
              "fng": macro.get("fng"), "dom": {"btc_d": ((an["dom"].get("cg") or {}).get("btc_d")), "regime": (an["dom"].get("regime") or {}).get("name")},
              "trend": self._trend_brief(symbol), "idea": self._idea_brief(symbol), "perps": ((dv.get("perps") or {}).get(symbol) or {}).get("rows"),
              "options": (dv.get("options") or {}).get(ocoin), "optionsCoin": ocoin, "dvol": (dv.get("dvol") or {}).get(ocoin),
-             "futures": ((dv.get("futures") or {}).get(ocoin) or {}).get("rows"), "indicators": snap.get("indicators"), "indicatorLevels": levels, "sources": an.get("sources")}
+             "futures": ((dv.get("futures") or {}).get(ocoin) or {}).get("rows"), "indicators": snap.get("indicators"), "indicatorLevels": levels, "rotationReport": reports_mod.load(self.report_dirs, "BTC", "rotation"), "sources": an.get("sources")}
         out = lecture_engine.build(d)
         out["symbol"] = symbol
         return out

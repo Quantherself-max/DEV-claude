@@ -29,7 +29,14 @@ FILES = {
     "brent": "datasets/oil-prices/main/data/brent-daily.csv",
     "natgas": "datasets/natural-gas/main/data/daily.csv",
     "fx": "datasets/exchange-rates/main/data/daily.csv",
+    # or tokenise (1 PAXG = 1 once d'or, cote 24 h / 24) : prix quotidien de l'or depuis 2020, week-ends compris
+    "paxg": "coinmetrics/data/master/csv/paxg.csv",
+    "xaut": "coinmetrics/data/master/csv/xaut.csv",
+    # capitalisations estimees (CapMrktEstUSD, comparables entre actifs depuis juin 2019) : de quoi suivre ou va l'argent
+    "eth": "coinmetrics/data/master/csv/eth.csv",
+    **{a: f"coinmetrics/data/master/csv/{a}.csv" for a in ("bnb", "xrp", "ada", "doge", "trx", "link", "ltc", "bch", "xlm", "atom", "sol")},
 }
+ALT_BASKET = ("bnb", "xrp", "ada", "doge", "trx", "link", "ltc", "bch", "xlm", "atom")      # alts presentes depuis juin 2019 (panier constant, sans ETH ni SOL)
 # exposants de l'indice dollar (DXY) : EUR 0,576, JPY 0,136, GBP 0,119, CAD 0,091, SEK 0,042, CHF 0,036 ; les cours du jeu de donnees sont en monnaie locale pour 1 USD,
 # donc tous les exposants sont positifs (EURUSD^-0,576 = (EUR pour 1 USD)^0,576)
 DXY_WEIGHTS = {"Euro": 0.576, "Japan": 0.136, "United Kingdom": 0.119, "Canada": 0.091, "Sweden": 0.042, "Switzerland": 0.036}
