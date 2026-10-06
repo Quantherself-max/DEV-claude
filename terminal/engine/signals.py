@@ -404,6 +404,14 @@ def score_idea(idea: dict, c: dict, o: dict | None = None) -> dict:
     else:
         comps.append({"key": "flow", "label": "Flux d'ordres", "pts": 4.0 + 4.0 * _clip(sgn * fs), "max": 8,
                       "note": "; ".join(t for s, t in fnotes if s * sgn > 0.15) or "ne soutient ni n'empêche"})
+    # levier : shorts / longs qui s'accumulent = carburant de squeeze CONTRE l'idee (lecture seule : non mesure comme predictif, il n'entre pas dans le score)
+    sq = ((c.get("squeeze") or {}).get("state") or {}).get("code")
+    if (sq == "short_fuel" and sgn < 0) or (sq == "long_fuel" and sgn > 0):
+        word = ("des shorts s'accumulent (intérêt ouvert en hausse, flux vendeur, prix qui ne baisse pas) : un squeeze haussier peut balayer une vente" if sgn < 0 else
+                "des longs s'accumulent (intérêt ouvert en hausse, flux acheteur, prix qui ne monte pas) : un squeeze baissier peut balayer un achat")
+        warn.append(word + " (lecture du levier, non démontrée par le backtest)")
+    elif (sq == "squeeze_up" and sgn < 0) or (sq == "squeeze_down" and sgn > 0):
+        warn.append("squeeze en cours dans le sens contraire (positions fermées de force, intérêt ouvert en chute) : attendre la fin du mouvement avant d'entrer")
     # 5) tendance de fond (7) : moyennes 50 j / 200 j si disponibles (c'est ce que mesure le backtest), sinon position face aux VWAP
     tr = trend_score(c["price"], c.get("vwap") or {})
     rg = c.get("regime")

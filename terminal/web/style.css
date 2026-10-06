@@ -206,6 +206,7 @@ body.sbmin #sidebar a{justify-content:center;margin:2px 6px}
 .pbody .heat{z-index:0;pointer-events:none}.pbody .chart{z-index:1}.pbody .ov{z-index:2;pointer-events:none}
 .pbody .tip{position:absolute;z-index:6;pointer-events:none;background:#0b0e11ee;border:1px solid #3a4258;border-radius:6px;padding:6px 9px;font-size:12px;max-width:260px;box-shadow:0 6px 20px #000a}
 .pbody .tip[hidden]{display:none}
+.pbody .cdwn{position:absolute;z-index:5;right:0;height:17px;line-height:17px;text-align:center;font:600 11px/17px -apple-system,Segoe UI,Roboto,sans-serif;color:#fff;border-radius:2px;pointer-events:none;font-variant-numeric:tabular-nums}.pbody .cdwn[hidden]{display:none}
 .k-main .heat,.k-vp .heat{display:none}
 #side{height:100%;overflow:auto}
 #analysis{padding-top:4px}

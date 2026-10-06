@@ -1,9 +1,10 @@
-# Liq Terminal (V9)
+# Liq Terminal (V10)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Où est l'argent, l'or, et les squeezes** (V10) : carte du capital (bitcoin, ETH, altcoins, stablecoins, or) et rotation, asymétrie bitcoin / or, **delta, divergences flux / prix / volume et short / long squeezes** (lecture en direct à la Velo dans la Lecture, mesure sur 12 ans), décompte de bougie sous le prix comme sur TradingView (voir « V10 » plus bas).
 - **Un écran de lecture épuré et de nouvelles données** (V9) : onglet **Lecture** (l'essentiel en une page, chaque ligne avec son niveau de preuve), dérivés multi-bourses (options, volatilité implicite, base, financement, Open Interest), données en chaîne et macro libres, et un **laboratoire d'indicateurs** qui mesure ce que vaut chaque indicateur (voir « V9 » plus bas).
 - **Les VWAP ancrés sur un mouvement d'au moins 5 %** (V8, onglet **Stratégie** et rapport « VWAP ancrés sur un mouvement » dans la page **Backtest**) : VWAP ancré sur le sommet de la baisse (résistance) et sur le creux (support), réaction du prix mesurée sur 13 ans de BTC (voir « V8 » plus bas).
 - **Des idées de trade rares, envoyées sur Telegram** (V5) : achat ou vente sur une zone où plusieurs niveaux importants (VWAP, VWAP ancrés, profils de volume, de l'heure à l'année) et des poches de liquidités se superposent, avec entrée, stop, deux objectifs, probabilités et une explication complète sans abréviation. Cinq idées par semaine au maximum, réglable (voir « V5 » plus bas).
@@ -102,6 +103,27 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V10 : où est l'argent, l'or, et les squeezes
+
+### Où est l'argent (carte du capital et rotation)
+- **Carte du capital** (carte « Où est l'argent » dans **Lecture**) : parts du bitcoin, de l'ETH, d'un panier de 10 altcoins (BNB, XRP, ADA, DOGE, TRX, LINK, LTC, BCH, XLM, ATOM) et des stablecoins (USDT + USDC + DAI, la « poudre sèche »), variations à 7 et 30 jours en points, performance relative face au bitcoin (ETH, altcoins, SOL, or) et une phrase de lecture. Données libres Coin Metrics (capitalisations estimées comparables depuis juin 2019). Le panier n'est pas tout le marché : il mesure des **parts**, pas des montants.
+- **Or** : jeton **PAXG** (1 jeton = 1 once d'or, coté 24 h / 24, week-ends compris) depuis février 2020 : prix, variation à 30 jours, position face à sa moyenne 200 jours, corrélation avec le bitcoin sur 90 jours.
+- **Ce que la mesure dit** (page **Backtest → Rapport → où va l'argent**, 9 indicateurs de rotation × 3 cibles × 3 horizons = 81 mesures, apprentissage jusqu'en 2022, test depuis 2023) : **aucun lien ne dépasse le seuil du hasard** : savoir où va le capital ne dit pas, de façon prouvée, où ira le prix du bitcoin, ni si les altcoins feront mieux, ni si l'or battra le bitcoin. Seul indice (sous le seuil) : or contre bitcoin sur 30 jours → altcoins contre bitcoin.
+- **Bitcoin et or : l'asymétrie n'est pas démontrée.** Quand l'or monte, le bitcoin bouge de +0,48 pour 1 de l'or ; quand l'or baisse, de +0,64 (l'écart de −0,16 n'est pas significatif, t = −0,6). La corrélation moyenne sur 90 jours est de +0,15 (de −0,38 à +0,51) : le lien existe, il est faible et change de signe. Les jours de choc de l'or (± 1,5 %), le bitcoin suit **le même jour** (+1,2 % / −1,6 %) mais pas le lendemain : le lien est simultané, pas prédictif. La situation géopolitique n'est pas mesurable en direct : on la voit à travers l'or, le pétrole, la volatilité et le dollar (rapport « indicateurs »).
+- **Relancer** : `python tools/run_rotation.py` (télécharge les jeux libres, quelques secondes, aucune clé).
+
+### Delta, CVD, volume et squeezes
+- **Lecture en direct** (carte **Flux et squeeze** dans **Lecture**, et pastille en haut du Desk) : trois mini-graphiques alignés sur 72 heures (prix, intérêt ouvert, CVD) avec leur étiquette, comme sur Velo (« baisse lente », « levier en hausse », « vendeurs agressifs »), et la configuration du moment : **des shorts s'accumulent** (intérêt ouvert en hausse, flux vendeur, prix qui ne baisse pas assez : un rebond les forcerait à racheter), **des longs s'accumulent** (le miroir), **squeeze en cours** (le prix s'envole ou s'effondre pendant que l'intérêt ouvert chute), divergence prix / flux, « effort sans résultat » (beaucoup de volume, peu de mouvement). Delta réel (volume acheteur agressif de Binance) ; les écarts sont mesurés en écarts-types des 30 derniers jours.
+- **Dans les idées de trade** : si les shorts s'accumulent et que l'idée est une vente (ou l'inverse pour les longs), un avertissement est ajouté. **Jamais dans le score** : rien ici n'est prouvé.
+- **La mesure** (page **Backtest → Rapport → delta, CVD et squeezes**) : variables horaires sans regard sur le futur (déséquilibre du flux, prix contre flux, delta récent contre CVD de fond, volume anormal, effort sans résultat, et avec l'intérêt ouvert : carburants de short et de long squeeze, squeeze en cours, financement), **deux cibles** : le rendement à 6, 24 et 72 h et l'**ampleur** du mouvement suivant (un squeeze est un mouvement plus grand que d'habitude), référence « prix seul », tableau d'événements (décile haut / bas, part de gros mouvements dans chaque sens), témoin au hasard, apprentissage / test.
+- **Résultat livré (BTC, 2014-2026, delta ESTIMÉ, test sur 4,8 ans)** : aucune variable de flux ne prédit le **sens** du prix (0 sur 27 mesures). Le **volume anormal** prédit l'**ampleur** du mouvement suivant, et fait mieux que le mouvement des 24 dernières heures à lui seul : c'est le seul lien solide, il dit « ça va bouger », pas « dans quel sens ». Les carburants de squeeze **ne sont pas mesurables avec ce jeu de données** (pas d'intérêt ouvert avant décembre 2021 et pas d'historique libre accessible d'ici).
+- **Pour mesurer les squeezes avec le vrai delta, l'intérêt ouvert et le financement (≥ 4 ans, depuis décembre 2021)** : `python tools/fetch_history.py BTCUSDT --since 2021-12 --metrics` puis `python tools/run_squeeze_study.py BTCUSDT` (idem `SOLUSDT`). Le rapport écrit dans `data_local/reports/` remplace celui livré. **Non vérifié contre les vrais serveurs depuis l'environnement de développement** (aucun accès à Binance Vision) : les formats sont écrits d'après la documentation publique et testés sur des fichiers imités ; une erreur lisible s'affiche si un format diffère.
+
+### Décompte de bougie et affichage
+- **Décompte sous le prix** sur chacun des trois graphiques (échelle de droite) : temps restant avant la clôture de la bougie en cours, `mm:ss` sous une heure, `h:mm:ss` au-dessus, de la même couleur que l'étiquette du prix (vert / rouge selon la bougie), comme sur TradingView.
+- **Étiquettes qui ne se recouvrent plus** : zones, plus hauts / plus bas et noms de niveaux se décalent les uns derrière les autres au lieu de se superposer.
+- La ligne de prix prend la couleur de la bougie (comme sur TradingView) ; le lexique explique le delta, le CVD, l'intérêt ouvert et les squeezes.
 
 ## Ce qui est nouveau en V9 : plus de données, moins de bruit
 
@@ -382,7 +404,8 @@ engine/             calculs : profils de volume (auto et choisis), séries VWAP 
                     backtest.py (génération des idées, exécution 1 min, frais, métriques, témoins), study.py (rapport complet), history.py (archives Binance) ;
                     V7 : vwapstrat.py (signaux de ta stratégie, 48 sorties, simulation 5 min), hedge.py (corrélation et portefeuille de couverture), stratstudy.py (protocole, variantes, verdict) ;
                     V8 : swingavwap.py (zigzag confirmé, VWAP ancrés sur sommet / creux, contacts), swingstudy.py (réaction du prix et trades) ;
-                    V9 : indicators.py (25 indicateurs journaliers), indstudy.py (mesure avec témoin), derivstudy.py (mesure des dérivés enregistrés), lecture.py (écran de lecture)
+                    V9 : indicators.py (25 indicateurs journaliers), indstudy.py (mesure avec témoin), derivstudy.py (mesure des dérivés enregistrés), lecture.py (écran de lecture) ;
+                    V10 : rotation.py et rotationstudy.py (carte du capital, rotation, or), goldbtc.py (asymétrie bitcoin / or), squeeze.py (delta, divergences, squeezes), squeezestudy.py (mesure)
 data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase) ; social.py (posts X, facultatif) ; V9 : derivs.py (options, DVOL, base, financement multi-bourses), opendata.py (jeux libres GitHub)
 alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées)
 service.py          relie les données et les moteurs, fabrique l'état JSON
@@ -390,10 +413,10 @@ server.py           serveur local : API, réglages, sécurité
 web/                interface : index.html + style.css ; app.js (Desk, état, alertes), panels.js (les trois graphiques),
                     overview.js (vue d'ensemble), signals.js (idées de trade), analysis.js et charts.js (analyse, graphiques SVG) ;
                     TradingView Lightweight Charts (vendor/)
-tools/              run_indicators.py, run_derivs_study.py (V9), fetch_history.py (historique 1 min Binance), run_study.py (rapport de backtest des idées du terminal), run_strategy.py (rapport de ta stratégie VWAP / profil de volume) et run_avwap_swing.py (VWAP ancrés sur un mouvement de 5 % ou plus)
-reports/            rapports livrés (BTC) : backtest_BTC.json (idées du terminal), strategy_BTC.json (ta stratégie) et avwap_BTC.json (VWAP ancrés sur un mouvement) et indicators_BTC.json (indicateurs en chaîne et macro) ; les tiens vont dans data_local/reports/
+tools/              run_rotation.py, run_squeeze_study.py (V10), run_indicators.py, run_derivs_study.py (V9), fetch_history.py (historique 1 min Binance), run_study.py (rapport de backtest des idées du terminal), run_strategy.py (rapport de ta stratégie VWAP / profil de volume) et run_avwap_swing.py (VWAP ancrés sur un mouvement de 5 % ou plus)
+reports/            rapports livrés (BTC) : backtest_BTC.json (idées du terminal), strategy_BTC.json (ta stratégie) et avwap_BTC.json (VWAP ancrés sur un mouvement) indicators_BTC.json (indicateurs en chaîne et macro), rotation_BTC.json (où va l'argent, or) et squeeze_BTC.json (delta, CVD, squeezes) ; les tiens vont dans data_local/reports/
 serveur/            installation sur un serveur 24 h/24 (script et guide)
-tests/              tests automatiques (plus de deux cent cinquante)
+tests/              tests automatiques (plus de trois cent soixante-dix)
 ```
 
 ## Limites connues

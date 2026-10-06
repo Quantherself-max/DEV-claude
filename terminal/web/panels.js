@@ -10,11 +10,12 @@ class Panel {
     host.classList.add('panel', 'k-' + kind);
     host.innerHTML = `<div class="phead"><span class="ptitle">${T}</span><span class="ptools">${Panel.tools(kind)}</span>` +
       `<button class="pmax" title="Agrandir / revenir à la mise en page">⤢</button></div>` +
-      `<div class="pbody"><canvas class="heat"></canvas><div class="chart"></div><canvas class="ov"></canvas><div class="tip" hidden></div></div>`;
+      `<div class="pbody"><canvas class="heat"></canvas><div class="chart"></div><canvas class="ov"></canvas><div class="cdwn" hidden title="Temps restant avant la clôture de la bougie en cours"></div><div class="tip" hidden></div></div>`;
     this.body = host.querySelector('.pbody');
     this.heatCv = host.querySelector('.heat'); this.hctx = this.heatCv.getContext('2d');
     this.ov = host.querySelector('.ov'); this.ctx = this.ov.getContext('2d');
     this.tipEl = host.querySelector('.tip');
+    this.cd = host.querySelector('.cdwn'); this.cdKey = '';
     this.lines = []; this.layers = {}; this.sig = ''; this.n = 0; this.lastBar = 0; this.key = null; this.stamp = '';
     this.chart = LightweightCharts.createChart(host.querySelector('.chart'), {
       autoSize: true,
@@ -25,7 +26,7 @@ class Panel {
       crosshair: {mode: LightweightCharts.CrosshairMode.Normal},
     });
     this.series = this.chart.addCandlestickSeries({upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
-      wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineColor: '#787b86',
+      wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineColor: '',
       autoscaleInfoProvider: o => this.autoscale(o)});
     this.chart.subscribeClick(p => this.onClick(p));
     this.body.addEventListener('mousemove', ev => this.onMove(ev));
@@ -218,6 +219,21 @@ class Panel {
       ts.timeToCoordinate(d.candles[d.candles.length - 1][0]) | 0, r ? r.from.toFixed(1) + ':' + r.to.toFixed(1) : '',
       this.body.clientWidth, this.body.clientHeight, st.version, (LT.livePrice(d) / d.price).toFixed(4)].join();
     if (s !== this.sig) { this.sig = s; this.draw(); }
+    this.countdown();
+  }
+  // compte a rebours de la bougie en cours, sous l'etiquette du prix (comme TradingView) : hh:mm:ss, ou mm:ss sous une heure
+  countdown() {
+    const st = LT.st, lb = st.lastBarObj, el = this.cd, per = LT.TF_SEC[st.tf];
+    const y = lb && per ? this.series.priceToCoordinate(lb.close) : null;
+    if (y == null || !this.visible()) { if (!el.hidden) el.hidden = true; return; }
+    const now = LT.serverNow() / 1000, left = Math.max(0, Math.ceil(Math.floor(now / per) * per + per - now));       // les bougies sont alignees sur l'epoque UTC
+    const two = n => String(n).padStart(2, '0');
+    const txt = left >= 3600 ? `${Math.floor(left / 3600)}:${two(Math.floor(left % 3600 / 60))}:${two(left % 60)}` : `${two(Math.floor(left / 60))}:${two(left % 60)}`;
+    const w = this.chart.priceScale('right').width(), top = Math.round(y + 11), bg = lb.close >= lb.open ? '#26a69a' : '#ef5350';
+    const key = txt + '|' + w + '|' + top + '|' + bg;
+    if (key === this.cdKey) return;
+    this.cdKey = key;
+    el.textContent = txt; el.style.width = w + 'px'; el.style.top = top + 'px'; el.style.background = bg; el.hidden = false;
   }
   draw() {
     const dpr = window.devicePixelRatio || 1, w = this.body.clientWidth, h = this.body.clientHeight;
@@ -226,15 +242,31 @@ class Panel {
     }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0); this.hctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.ctx.clearRect(0, 0, w, h); this.hctx.clearRect(0, 0, w, h);
+    this._occ = [];
     const L = this.layout(); if (!L) return;
+    this._L = L;
     if (this.kind === 'liq') { this.drawHeat(L, w, h); this.drawLiq(L, w, h); }
     else if (this.kind === 'vp') { this.applySeries(); this.drawVP(L, w, h); }
     else this.drawMain(L, w, h);
+  }
+  // evite qu'une etiquette en recouvre une autre (zones, plus hauts / bas, noms de niveaux) : decale vers la droite, derriere celle qui gene
+  place(x, y, w, h, limit) {
+    const occ = this._occ || (this._occ = []);
+    let x0 = x;
+    for (let k = 0; k < 6; k++) {
+      const hit = occ.find(r => x0 < r.x1 && x0 + w > r.x0 && y - h / 2 < r.y1 && y + h / 2 > r.y0);
+      if (!hit) break;
+      x0 = hit.x1 + 6;
+    }
+    if (limit != null && x0 + w > limit) x0 = x;                           // plus de place a droite : on garde la position d'origine
+    occ.push({x0, x1: x0 + w, y0: y - h / 2, y1: y + h / 2});
+    return x0;
   }
   tag(x, y, text, color, bg, bold) {
     const ctx = this.ctx;
     ctx.font = (bold ? '700 ' : '500 ') + '11px sans-serif';
     const tw = ctx.measureText(text).width + 12, th = 17;
+    x = this.place(x, y, tw, th, this._L ? this._L.plotW - 6 : null);
     ctx.fillStyle = bg; ctx.beginPath(); (ctx.roundRect ? ctx.roundRect(x, y - th / 2, tw, th, 8) : ctx.rect(x, y - th / 2, tw, th)); ctx.fill();
     ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(text, x + 6, y + 0.5);
     return tw;
@@ -319,7 +351,6 @@ class Panel {
       if (st.mode === 'ess') zl.push({y: y + hh / 2, z});
     });
     this.drawPools(L, h);
-    this.drawPricePools(L, h);
     this.drawPlan(L, h);
     const lv = byId(d.levels);
     if (st.mode === 'ess') LT.placeLabels(zl, 17, 12, h - 30).forEach(it => {
@@ -328,10 +359,12 @@ class Panel {
       const txt = `${ar} ${fmtP(z.mid)}  ${'●'.repeat(Math.min(5, z.score))}${reach}`;
       ctx.font = '600 11px sans-serif';
       const tw = ctx.measureText(txt).width + 18;
-      ctx.fillStyle = 'rgba(11,14,17,.9)'; ctx.fillRect(10, it.ly - 9, tw, 18);
-      ctx.fillStyle = col; ctx.fillRect(10, it.ly - 9, 3, 18);
-      ctx.fillStyle = '#e1e3ea'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(txt, 19, it.ly + 0.5);
+      const zx = this.place(10, it.ly, tw, 18, plotW - 6);
+      ctx.fillStyle = 'rgba(11,14,17,.9)'; ctx.fillRect(zx, it.ly - 9, tw, 18);
+      ctx.fillStyle = col; ctx.fillRect(zx, it.ly - 9, 3, 18);
+      ctx.fillStyle = '#e1e3ea'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(txt, zx + 9, it.ly + 0.5);
     });
+    this.drawPricePools(L, h);                                              // apres les zones : celles-ci gardent la place, les plus hauts / bas se decalent
     const names = new Map();
     if (st.mode === 'all') d.levels.filter(l => l.kind !== 'liq' && l.inWindow).forEach(l => names.set(l.id, l));
     if (selZ) (byId(d.zones)[selZ]?.members || []).forEach(i => lv[i] && lv[i].kind !== 'liq' && names.set(i, lv[i]));
@@ -342,7 +375,7 @@ class Panel {
       const c = LT.levelColor(it.l);
       if (Math.abs(it.ly - it.y) > 2) { ctx.strokeStyle = 'rgba(180,184,196,.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, it.y); ctx.lineTo(10, it.ly); ctx.stroke(); }
       ctx.font = '500 11px sans-serif';
-      const txt = it.l.name + '  ' + fmtP(it.l.price), tw = ctx.measureText(txt).width + 22, xx = st.mode === 'ess' ? 190 : 10;
+      const txt = it.l.name + '  ' + fmtP(it.l.price), tw = ctx.measureText(txt).width + 22, xx = this.place(st.mode === 'ess' ? 190 : 10, it.ly, tw, 16, plotW - 6);
       ctx.fillStyle = 'rgba(11,14,17,.88)'; ctx.fillRect(xx, it.ly - 8, tw, 16);
       ctx.fillStyle = c; ctx.fillRect(xx, it.ly - 8, 3, 16);
       ctx.fillStyle = '#d1d4dc'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(txt, xx + 9, it.ly + 0.5);

@@ -465,7 +465,10 @@ function renderContext(d) {
   el.innerHTML = h;
   $('#ctxHint').textContent = d.source === 'simulated' ? 'données simulées' : 'Binance';
   const rg = $('#regime');
-  rg.hidden = !c.regime; if (c.regime) { rg.textContent = c.regime.label; rg.title = 'Régime prix / Open Interest sur 4 h'; }
+  const sq = c.squeeze && c.squeeze.state && c.squeeze.state.code !== 'none' ? c.squeeze.state : null;
+  rg.hidden = !c.regime && !sq;
+  if (sq) { rg.textContent = sq.label; rg.title = sq.text; }
+  else if (c.regime) { rg.textContent = c.regime.label; rg.title = 'Régime prix / Open Interest sur 4 h'; }
 }
 function statTable(rows, base, side) {
   return `<table class="st"><tr><th></th><th>rebond</th><th style="width:42%"></th><th class="n">n</th></tr>` + rows.map(([name, v, cls]) => {
@@ -585,6 +588,7 @@ function pushBars(d) {
 }
 function apply(d) {
   st.data = d;
+  if (d.now) st.clockOff = d.now - Date.now();
   pushBars(d); header(d); panels.forEach(p => p.rebuildLines());
   renderLadder(d); renderPools(d); renderPricePools(d); renderPools2(d); renderDetail(d); renderContext(d); renderStats(d);
   st.version++;
@@ -962,7 +966,7 @@ function openSymbol(sym, page) {
   loadPrefs();
   let cfg;
   try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
-  window.LT = {st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
+  window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
     shownPools, levelColor, livePrice, placeLabels, usdFmt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
   Overview.init(window.LT);
   Signals.init(window.LT);

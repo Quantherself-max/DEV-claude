@@ -220,6 +220,18 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(sum(c["max"] for c in good["comps"]), 100)
         self.assertTrue(any("contre la tendance" in w for w in bad["warn"]))
 
+    def test_squeeze_fuel_against_the_idea_warns_without_changing_the_score(self):
+        base = sg.score_idea(self.idea(), self.ctx())
+        idea = self.idea()
+        side = idea["side"]
+        against = "long_fuel" if side == "long" else "short_fuel"
+        r = sg.score_idea(self.idea(), self.ctx(squeeze={"state": {"code": against}}))
+        self.assertEqual(r["score"], base["score"])                     # lecture seule : jamais dans le score
+        self.assertTrue(any("squeeze" in w for w in r["warn"]))
+        ok = "short_fuel" if side == "long" else "long_fuel"
+        r2 = sg.score_idea(self.idea(), self.ctx(squeeze={"state": {"code": ok}}))
+        self.assertFalse(any("squeeze" in w for w in r2["warn"]))
+
     def test_major_announcement_soon_holds_the_idea(self):
         risk = {"minutes": 90, "label": "Inflation (CPI)", "level": "danger"}
         r = sg.score_idea(self.idea(), self.ctx(macro={"score": 10, "label": "neutre", "risk": risk}))

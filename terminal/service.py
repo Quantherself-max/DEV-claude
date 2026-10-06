@@ -263,13 +263,17 @@ class Market:
         if len(m5) < 12 * 120:
             return None
         hb = fine.resample(fine.from_candles(m5, M5), H1)
-        n = len(hb)
-        while n and hb.t[n - 1] + H1 > now:                                    # l'heure en cours n'est pas finie
-            n -= 1
-        if n < 120:
+        lo_i, hi_i = (1 if len(hb) else 0), len(hb)                           # la premiere heure est entamee : ignoree
+        while hi_i > lo_i and hb.t[hi_i - 1] + H1 > now:                      # l'heure en cours n'est pas finie
+            hi_i -= 1
+        if hi_i - lo_i < 120:
             return None
-        t0 = int(hb.t[0])
-        c, v, d = list(hb.c)[:n], list(hb.v)[:n], list(hb.d)[:n]
+        t0 = int(hb.t[lo_i])
+        n = (int(hb.t[hi_i - 1]) - t0) // H1 + 1
+        c, v, d = [None] * n, [None] * n, [None] * n                          # grille horaire reguliere : un trou reste un trou (None), il ne decale pas les fenetres
+        for i in range(lo_i, hi_i):
+            k = (int(hb.t[i]) - t0) // H1
+            c[k], v[k], d[k] = hb.c[i], hb.v[i], hb.d[i]
         oi = None
         if s.oi_t:
             oi = [None] * n
@@ -287,13 +291,13 @@ class Market:
         tail = slice(max(0, n - hours), n)
         cvd, run = [], 0.0
         for x in d[tail]:
-            run += x
+            run += x or 0.0
             cvd.append(run)
         oi_t = squeeze_engine.ffill(oi)[tail] if oi else None
-        return {"state": st, "captions": cap, "hasOi": snap["hasOi"], "t": int(hb.t[n - 1]) + H1,
+        return {"state": st, "captions": cap, "hasOi": snap["hasOi"], "t": t0 + n * H1,
                 "values": {"ret24": snap["ret24"], "imb24": snap["imb24"], "imb72": snap["imb72"], "oi24": snap.get("oi24"), "oi72": snap.get("oi72")},
                 "z": {k: snap.get(k) for k in ("zr24", "zi24", "zo24", "zv24", "zr6", "zo6")},
-                "spark": {"t": [int(x) for x in hb.t[tail]], "price": [round(x, 6) for x in c[tail]], "oi": [None if x is None else round(x, 3) for x in oi_t] if oi_t else None,
+                "spark": {"t": [t0 + k * H1 for k in range(n)][tail], "price": [None if x is None else round(x, 6) for x in c[tail]], "oi": [None if x is None else round(x, 3) for x in oi_t] if oi_t else None,
                           "cvd": [round(x, 3) for x in cvd]},
                 "realDelta": any(k.tb > 0 for k in m5[-24:])}
 
@@ -1138,7 +1142,8 @@ class Service:
                "pools": list(state["liquidity"]["pools"]) + pprices, "candles": cs, "sweeps": events, "opts": opts}
         raw, rejects = signals_engine.build_ideas(inp)
         ctx = {"price": state["price"], "vwap": vw, "flow": synth_engine.flow_score(state["context"]), "macro": an["macro"],
-               "synth": an["synth"], "dom": an["dom"], "is_alt": symbol != "BTCUSDT", "now": now, "regime": regime, "evidence": evidence}
+               "synth": an["synth"], "dom": an["dom"], "is_alt": symbol != "BTCUSDT", "now": now, "regime": regime, "evidence": evidence,
+               "squeeze": state["context"].get("squeeze")}
         zprob = {z["id"]: z.get("prob") for z in state["zones"]}
         ideas = []
         for idea in raw:
