@@ -25,6 +25,7 @@ from engine import synth as synth_engine
 from engine import trend as trend_engine
 from engine import vpx, vwapx
 from engine import lecture as lecture_engine
+from engine import squeeze as squeeze_engine
 from engine import swingavwap, vwapstrat
 from engine.confluence import Level, find_zones
 from engine.liquidity import LiqEngine
@@ -245,6 +246,57 @@ class Market:
                 hi = mid
         return m5[lo - 1].c if lo > 0 else None
 
+    def squeeze_view(self, hours: int = 72) -> dict | None:
+        """Delta, CVD, interet ouvert et prix heure par heure sur 29 jours (engine/squeeze.py) : configuration du moment (shorts / longs qui s'accumulent, squeeze en cours,
+        divergences) et trois mini-series (prix, OI, CVD) comme sur Velo. Delta reel (volume acheteur agressif) quand la source le fournit."""
+        s, now = self.store, self.source.now_ms()
+        key = (s.m5[-1].t if s.m5 else 0, s.oi_t[-1] if s.oi_t else 0, hours)
+        hit = getattr(self, "_sq_cache", None)
+        if hit and hit[0] == key:
+            return hit[1]
+        out = self._squeeze_view(s, now, hours)
+        self._sq_cache = (key, out)
+        return out
+
+    def _squeeze_view(self, s, now, hours):
+        m5 = [k for k in s.m5[-int(29 * DAY / M5) - 12:] if k.v is not None]
+        if len(m5) < 12 * 120:
+            return None
+        hb = fine.resample(fine.from_candles(m5, M5), H1)
+        n = len(hb)
+        while n and hb.t[n - 1] + H1 > now:                                    # l'heure en cours n'est pas finie
+            n -= 1
+        if n < 120:
+            return None
+        t0 = int(hb.t[0])
+        c, v, d = list(hb.c)[:n], list(hb.v)[:n], list(hb.d)[:n]
+        oi = None
+        if s.oi_t:
+            oi = [None] * n
+            for t, x in zip(s.oi_t, s.oi_v):
+                k = (t - t0) // H1
+                if 0 <= k < n:
+                    oi[k] = x
+            if not any(x is not None for x in oi):
+                oi = None
+        snap = squeeze_engine.snapshot(c, v, d, oi)
+        if snap is None:
+            return None
+        st = squeeze_engine.classify(snap)
+        cap = squeeze_engine.captions(snap)
+        tail = slice(max(0, n - hours), n)
+        cvd, run = [], 0.0
+        for x in d[tail]:
+            run += x
+            cvd.append(run)
+        oi_t = squeeze_engine.ffill(oi)[tail] if oi else None
+        return {"state": st, "captions": cap, "hasOi": snap["hasOi"], "t": int(hb.t[n - 1]) + H1,
+                "values": {"ret24": snap["ret24"], "imb24": snap["imb24"], "imb72": snap["imb72"], "oi24": snap.get("oi24"), "oi72": snap.get("oi72")},
+                "z": {k: snap.get(k) for k in ("zr24", "zi24", "zo24", "zv24", "zr6", "zo6")},
+                "spark": {"t": [int(x) for x in hb.t[tail]], "price": [round(x, 6) for x in c[tail]], "oi": [None if x is None else round(x, 3) for x in oi_t] if oi_t else None,
+                          "cvd": [round(x, 3) for x in cvd]},
+                "realDelta": any(k.tb > 0 for k in m5[-24:])}
+
     def context(self) -> dict:
         s, now, price = self.store, self.source.now_ms(), self.price()
         oi_now = s.oi_v[-1] if s.oi_v else None
@@ -322,6 +374,12 @@ class Market:
         if tl + ts > 0:
             ctx["liq"] = {"long": tl / (tl + ts) * 100.0, "short": ts / (tl + ts) * 100.0,
                           "taker": self.liq.taker_steps / max(1, self.liq.steps) * 100.0}
+        try:                                   # delta, CVD, interet ouvert : shorts / longs qui s'accumulent, squeezes, divergences
+            sv = self.squeeze_view()
+            if sv:
+                ctx["squeeze"] = sv
+        except Exception as e:
+            ctx["errors"]["squeeze"] = f"{type(e).__name__}: {str(e)[:100]}"
         return ctx
 
     # ---------- probabilites ----------
@@ -1152,7 +1210,8 @@ class Service:
              "fng": macro.get("fng"), "dom": {"btc_d": ((an["dom"].get("cg") or {}).get("btc_d")), "regime": (an["dom"].get("regime") or {}).get("name")},
              "trend": self._trend_brief(symbol), "idea": self._idea_brief(symbol), "perps": ((dv.get("perps") or {}).get(symbol) or {}).get("rows"),
              "options": (dv.get("options") or {}).get(ocoin), "optionsCoin": ocoin, "dvol": (dv.get("dvol") or {}).get(ocoin),
-             "futures": ((dv.get("futures") or {}).get(ocoin) or {}).get("rows"), "indicators": snap.get("indicators"), "indicatorLevels": levels, "rotationReport": reports_mod.load(self.report_dirs, "BTC", "rotation"), "sources": an.get("sources")}
+             "futures": ((dv.get("futures") or {}).get(ocoin) or {}).get("rows"), "indicators": snap.get("indicators"), "indicatorLevels": levels, "rotationReport": reports_mod.load(self.report_dirs, "BTC", "rotation"),
+             "squeezeReport": reports_mod.load(self.report_dirs, base, "squeeze") or reports_mod.load(self.report_dirs, "BTC", "squeeze"), "sources": an.get("sources")}
         out = lecture_engine.build(d)
         out["symbol"] = symbol
         return out

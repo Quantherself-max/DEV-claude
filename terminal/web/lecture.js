@@ -54,6 +54,22 @@ const Lecture = (() => {
       <div class="muted small" style="margin-top:6px">Panier : BTC, ETH, 10 altcoins. Aucun de ces indicateurs ne prédit le prix de façon prouvée (page Backtest → « où va l'argent »).</div></section>`;
   }
 
+  function squeezeHtml(q) {
+    if (!q) return '';
+    const ev = EV[q.evidence] || EV.contexte, v = q.values || {}, sp = q.spark || {}, cp = q.captions || {};
+    const row = (name, cap, vals, color) => !vals || vals.filter(x => x != null).length < 4 ? '' :
+      `<div class="sqrow"><div class="sqcap"><b>${name}</b><span>${esc(cap || '')}</span></div>${Charts.spark(vals.map(x => x == null ? NaN : x).filter(x => !isNaN(x)), color, 320, 38)}</div>`;
+    const cvdUp = sp.cvd && sp.cvd.length > 1 && sp.cvd[sp.cvd.length - 1] >= sp.cvd[0];
+    const tone = q.tone || (q.bias > 0 ? 'up' : q.bias < 0 ? 'dn' : '');
+    const vals = [v.ret24 != null ? 'prix ' + sg(v.ret24 * 100, 2, ' %') + ' en 24 h' : null, v.oi24 != null ? 'OI ' + sg(v.oi24 * 100, 1, ' %') + ' en 24 h' : null, v.imb24 != null ? 'acheteurs agressifs ' + n1(50 * (1 + v.imb24), 0) + ' % du volume' : null].filter(Boolean).join(' · ');
+    return `<section class="card"><h2>Flux et squeeze <small>${sp.price ? sp.price.length : 72} h · ${q.realDelta ? 'delta réel' : 'delta estimé'}${q.hasOi ? '' : ' · sans intérêt ouvert'}</small></h2>
+      <div class="lchip ${tone}"><div class="lhd"><span class="lt">Configuration du moment</span><span class="pill ${ev[0]}" title="${esc(ev[1])}">${q.evidence === 'indice' ? 'indice' : q.evidence === 'informatif' ? 'informatif' : 'contexte'}</span></div>
+        <div class="lv">${esc(q.label)}</div><div class="ln">${esc(q.text)}</div></div>
+      ${row('Prix', cp.price, sp.price, '#9fb4ff')}${row('Intérêt ouvert', cp.oi, sp.oi, '#f5b83d')}${row('CVD (flux cumulé)', cp.flow, sp.cvd, cvdUp ? '#3ddc97' : '#ff6b6b')}
+      <div class="muted small" style="margin-top:4px">${esc(vals)}</div>${q.evidenceNote ? `<div class="muted small" style="margin-top:3px">${esc(q.evidenceNote)}</div>` : ''}
+      <div class="muted small" style="margin-top:3px">Preuve : page Backtest → « delta, CVD et squeezes ».</div></section>`;
+  }
+
   function render() {
     if (!root) return;
     if (!last) { root.innerHTML = '<section class="card"><div class="muted">Chargement…</div></section>'; return; }
@@ -69,7 +85,7 @@ const Lecture = (() => {
     const lvls = (w.up.length || w.dn.length) ? `<div class="lrow"><span class="lt">Niveaux proches</span>${w.up.slice().reverse().map(l => '<div class="small">' + lv(l, true) + '</div>').join('')}${w.dn.map(l => '<div class="small">' + lv(l, false) + '</div>').join('')}</div>` : '';
     const groups = {};
     last.chips.forEach(c => (groups[c.group] = groups[c.group] || []).push(c));
-    const sections = Object.entries(groups).map(([g, cs]) => `<section class="card"><h2>${esc(g)}</h2>${cs.map(chipHtml).join('')}</section>`).join('');
+    const sections = Object.entries(groups).map(([g, cs]) => `<section class="card"><h2>${esc(g)}</h2>${cs.map(chipHtml).join('')}</section>` + (g === 'Positionnement' ? squeezeHtml(last.squeeze) : '')).join('');
     const money = moneyHtml(last.money);
     root.innerHTML = `<section class="card"><h2>${esc(h.symbol.replace('USDT', ''))} <small>${px(h.price)} · ${sg(h.change24, 2, ' %')} en 24 h</small></h2>${trendHtml}${biasHtml}
         <div class="lrow"><span class="lt">Idée de trade</span>${ideaHtml(last.idea)}</div>${nxt}${lvls}</section>${sections}${money}

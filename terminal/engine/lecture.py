@@ -175,6 +175,49 @@ def money_block(d: dict):
             "gold": {"price": g["price"], "d30": g["d30"], "trend": g["trend"], "corr90": g["corr90"], "note": note}}
 
 
+SQ_EVIDENCE = {"short_fuel": ("RET", "sfuel24", "le prix monte ensuite"), "long_fuel": ("RET", "lfuel24", "le prix baisse ensuite"), "squeeze_up": ("RET", "squp6", "le prix retombe ensuite"),
+               "squeeze_down": ("RET", "sqdn6", "le prix rebondit ensuite"), "div_price_up": ("RET", "divp24", "le prix monte ensuite"), "div_price_down": ("RET", "divp24", "le prix baisse ensuite"),
+               "effort": ("AMP", "effort24", "le mouvement suivant est plus ample (sens inconnu)")}
+SQ_AMP = {"short_fuel": "fuel24", "long_fuel": "fuel24", "squeeze_up": "sq6", "squeeze_down": "sq6", "div_price_up": "a_divp24", "div_price_down": "a_divp24"}
+
+
+def _sq_row(rep, tkey, key):
+    t = next((x for x in (rep or {}).get("targets", []) if x["key"] == tkey), None)
+    return next((r for r in (t or {}).get("rows", []) if r["key"] == key), None)
+
+
+def squeeze_block(d: dict):
+    """Delta, CVD, interet ouvert : configuration du moment (shorts / longs qui s'accumulent, squeeze en cours, divergences) avec le niveau de preuve mesure par le rapport « squeeze »."""
+    sv = (d.get("ctx") or {}).get("squeeze")
+    if not sv:
+        return None
+    st = sv["state"]
+    rep = d.get("squeezeReport")
+    ev, note = "contexte", ""
+    ent = SQ_EVIDENCE.get(st["code"])
+    if ent and rep:
+        tkey, key, meaning = ent
+        row = _sq_row(rep, tkey, key)
+        amp = _sq_row(rep, "AMP", SQ_AMP.get(st["code"], ""))
+        years = (rep["period"]["end"] - rep["period"]["split"]) / (365.25 * DAY)
+        if row is None:
+            note = "Pas encore mesuré : il faut l'historique réel de l'intérêt ouvert (outil en bas de la page Backtest, rapport « delta, CVD et squeezes »)."
+        else:
+            ev = row["level"] if row["level"] in ("indice", "informatif") else "contexte"
+            phr = {"informatif": f"lien mesuré et confirmé sur {fr(years, 1)} ans de test", "indice": "indice : même signe à l'apprentissage et au test, sous le seuil du hasard", "rien": "aucun lien prouvé"}[row["level"]]
+            note = f"Sens ({meaning}) : {phr}."
+            if amp and amp["level"] in ("indice", "informatif"):
+                ev = "indice" if ev == "contexte" else ev
+                note += " Ampleur : le mouvement suivant est plus grand que d'habitude (" + ("confirmé" if amp["level"] == "informatif" else "indice") + ")."
+            if not rep.get("hasOi") and tkey == "RET":
+                note += " (delta estimé, sans intérêt ouvert)"
+    elif ent:
+        note = "Pas de rapport de mesure."
+    sp = sv["spark"]
+    return {"code": st["code"], "label": st["label"], "text": st["text"], "tone": st["tone"], "bias": st["bias"], "evidence": ev, "evidenceNote": note, "captions": sv["captions"], "hasOi": sv["hasOi"],
+            "realDelta": sv.get("realDelta"), "t": sv["t"], "values": sv["values"], "spark": sp}
+
+
 def build(d: dict) -> dict:
     """Entrees : voir engine/lecture.py (en-tete) et Service.lecture."""
     chips = [c for c in (funding_chip(d), oi_chip(d), flow_chip(d), liq_chip(d)) if c]
@@ -199,5 +242,5 @@ def build(d: dict) -> dict:
         e = m["upcoming"][0]
         nxt = {"label": e["label"], "t": e["t"], "minutes": (e["t"] - d.get("now_ms", e["t"])) / 60000.0}
     money = money_block(d)
-    return {"ready": True, "t": d.get("now_ms"), "money": money, "head": head, "idea": d.get("idea"), "watch": {"next": nxt, "up": up, "dn": dn}, "chips": chips,
+    return {"ready": True, "t": d.get("now_ms"), "money": money, "squeeze": squeeze_block(d), "head": head, "idea": d.get("idea"), "watch": {"next": nxt, "up": up, "dn": dn}, "chips": chips,
             "optionsOn": d.get("options") is not None, "sources": d.get("sources") or {}}

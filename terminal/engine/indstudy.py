@@ -131,14 +131,15 @@ def now_reading(od, min_hist: int = 365) -> dict:
     return out
 
 
-def evaluate(series: dict, price: list, catalog: dict, grid: list, lo: int, sp: int, horizons=HORIZONS, lag: int = 1, min_hist: int = 365, shifts: int = 30, say=None):
+def evaluate(series: dict, price: list, catalog: dict, grid: list, lo: int, sp: int, horizons=HORIZONS, lag: int = 1, min_hist: int = 365, shifts: int = 30, say=None, fwd: dict | None = None):
     """Coeur de la mesure, valable pour n'importe quel pas regulier (jour, heure) : (lignes, temoin, seuil, indice du dernier prix connu).
-    `lo` = premiere observation evaluee, `sp` = debut du test ; les horizons et le decalage sont en nombre de pas."""
+    `lo` = premiere observation evaluee, `sp` = debut du test ; les horizons et le decalage sont en nombre de pas.
+    `fwd` ({horizon: valeurs futures par pas}) remplace le rendement calcule sur `price` (ex. amplitude du mouvement, serie sous-echantillonnee)."""
     say = say or (lambda *_: None)
     n = len(grid)
     last_price = max((i for i, v in enumerate(price) if v is not None), default=n - 1)
     ranks = {k: expanding_rank(v, min_hist) for k, v in series.items()}
-    fwd = {h: forward_returns(price, h, lag) for h in horizons}
+    fwd = fwd or {h: forward_returns(price, h, lag) for h in horizons}
     say("temoin au hasard…")
     mid = horizons[len(horizons) // 2]
     null = placebo_null(ranks, fwd[mid], lo, sp if sp > lo else n, shifts=shifts)

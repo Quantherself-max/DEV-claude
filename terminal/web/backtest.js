@@ -42,6 +42,8 @@ const Backtest = (() => {
       if (th) { sortKey = sortKey === th.dataset.sort ? null : th.dataset.sort; render(); }
       const rt = e.target.closest('[data-rott]');
       if (rt) { rotT = rt.dataset.rott; render(); }
+      const sqb = e.target.closest('[data-sqt]');
+      if (sqb) { sqT = sqb.dataset.sqt; render(); }
       const ih = e.target.closest('[data-indh]');
       if (ih) { indH = +ih.dataset.indh; render(); }
       const all = e.target.closest('[data-showall]');
@@ -345,6 +347,7 @@ const Backtest = (() => {
 
   // ---------- rapport « indicateurs » ----------
   let indH = 14;
+  let sqT = 'RET';
   function indFmt(r, v) {
     if (v == null) return '-';
     if (r.unit === 'pts') return (v >= 0 ? '+' : '−') + num(Math.abs(v) * 100, 1) + ' pt';
@@ -360,15 +363,20 @@ const Backtest = (() => {
       <div class="kpis">${kp('Informatifs', c.informative, 'au-dessus du seuil du hasard, appris puis confirmés sur le test')}${kp('À surveiller', c.hints, 'même signe partout, mais sous le seuil')}${kp('Seuil du hasard', num(r.threshold, 1), '|t| dépassé dans 1 % des cas par un signal sans lien avec le prix')}${kp('Période test', yr(r.period.split) + '-' + yr(r.period.end - 1), 'jamais regardée pour choisir')}</div>
       <div class="muted small">Écart = rendement futur attendu en plus entre le haut et le bas de l'historique de l'indicateur (en points de rendement logarithmique, à l'horizon choisi). « t » mesure la solidité : en dessous du seuil du hasard, on ne peut pas distinguer l'effet du hasard.</div></section>`;
   }
-  function indTable(r, rowsIn, title, sub) {
+  function hlab(r, h) {
+    const hours = (r.stepHours || 24) * h;
+    return hours < 48 ? hours + ' h' : (hours / 24) + ' jours';
+  }
+  function indTable(r, rowsIn, title, sub, opts = {}) {
     const rows0 = rowsIn || r.rows;
-    const hs = r.horizons, hk = String(indH);
-    const sp = (m) => !m ? '<td class="r muted">-</td>' : `<td class="r ${Math.abs(m.t) >= 2 ? (m.spread > 0 ? 'up' : 'dn') : 'muted'}" title="${m.n} jours, t = ${num(m.t, 1)}">${sgn(m.spread * 100, 1)} % <small>t ${sgn(m.t, 1)}</small></td>`;
-    const bk = (b, k) => b && b[k] ? `${sgn(b[k].mean * 100, 1)}` : '-';
+    const hs = r.horizons, hk = String(hs.includes(indH) ? indH : hs[Math.floor(hs.length / 2)]);
+    const hl = hlab(r, +hk), amp = !!opts.amp, unitSp = r.stepHours ? 'observations' : 'jours';
+    const sp = (m) => !m ? '<td class="r muted">-</td>' : `<td class="r ${Math.abs(m.t) >= 2 ? (m.spread > 0 ? 'up' : 'dn') : 'muted'}" title="${m.n} ${unitSp}, t = ${num(m.t, 1)}">${amp ? sgn(m.spread, 2) + ' σ' : sgn(m.spread * 100, 1) + ' %'} <small>t ${sgn(m.t, 1)}</small></td>`;
+    const bk = (b, k) => b && b[k] ? (amp ? num(b[k].mean, 2) : `${sgn(b[k].mean * 100, 1)}`) : '-';
     const LV = {informatif: ['ok', 'informatif'], indice: ['warn', 'à surveiller'], rien: ['', 'rien de prouvé']};
     let last = null;
     const GO = ['Prix', 'En chaîne', 'Liquidité', 'Macro'], LO = {informatif: 0, indice: 1, rien: 2};
-    const GO2 = r.kind === 'rotation' ? ['Rotation', 'Liquidité', 'Or'] : GO;
+    const GO2 = r.kind === 'rotation' ? ['Rotation', 'Liquidité', 'Or'] : r.kind === 'squeeze' ? ['Référence', 'Flux (delta, CVD)', 'Divergences', 'Levier (intérêt ouvert)', 'Squeeze'] : GO;
     const sorted = rows0.slice().sort((a, b) => (GO2.indexOf(a.group) - GO2.indexOf(b.group)) || (LO[a.level] - LO[b.level]));
     const rows = sorted.map(x => {
       const d = x.h[hk] || {}, now = x.now;
@@ -379,13 +387,14 @@ const Backtest = (() => {
         <td class="r">${now ? indFmt(x, now.value) : '-'}<div>${rk}</div></td>${sp(d.is)}${sp(d.oos)}
         <td class="r small">${bk(d.buckets, 'bottom')} / ${bk(d.buckets, 'mid')} / ${bk(d.buckets, 'top')}</td>
         <td>${x.expect ? (x.expectOk ? '<span class="muted small">sens attendu ✓</span>' : '<span class="muted small">sens inverse de l\'attendu</span>') : '<span class="muted small">sens libre</span>'}</td>
-        <td><span class="pill ${lv[0]}">${lv[1]}</span></td></tr>`;
+        <td><span class="pill ${lv[0]}" ${x.bestH ? `title="jugé sur son meilleur horizon : ${hlab(r, x.bestH)}"` : ''}>${lv[1]}</span></td></tr>`;
     }).join('');
-    const btn = hs.map(h => `<button data-indh="${h}" class="seg-like ${h === indH ? 'on' : ''}">${h} jours</button>`).join(' ');
-    return `<section class="card"><h2>${title || 'Les indicateurs'} <small>${sub || 'rendement du bitcoin'} à ${indH} jours, un jour de décalage</small></h2>
+    const btn = hs.map(h => `<button data-indh="${h}" class="seg-like ${String(h) === hk ? 'on' : ''}">${hlab(r, h)}</button>`).join(' ');
+    const lagTxt = r.stepHours ? 'une heure de décalage' : 'un jour de décalage';
+    return `<section class="card"><h2>${title || 'Les indicateurs'} <small>${sub || 'rendement du bitcoin'} à ${hl}, ${lagTxt}</small></h2>
       <div class="line">Horizon : ${btn}</div>
-      <div class="scroll"><table class="bttab vt"><thead><tr><th>Indicateur</th><th class="r">Aujourd'hui</th><th class="r">Écart · apprentissage</th><th class="r">Écart · test</th><th class="r">Rendement : bas / milieu / haut (%)</th><th>Sens</th><th>Verdict</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <div class="muted small">Bas / milieu / haut = rendement moyen à ${indH} jours quand l'indicateur est dans son quintile bas, central ou haut. La barre « Aujourd'hui » place la valeur actuelle dans l'historique de l'indicateur (gauche = bas).</div></section>`;
+      <div class="scroll"><table class="bttab vt"><thead><tr><th>${opts.varLabel || 'Indicateur'}</th><th class="r">${opts.nowLabel || "Aujourd'hui"}</th><th class="r">Écart · apprentissage</th><th class="r">Écart · test</th><th class="r">${amp ? 'Ampleur (σ) : bas / milieu / haut' : 'Rendement : bas / milieu / haut (%)'}</th><th>Sens</th><th>Verdict</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="muted small">Bas / milieu / haut = ${amp ? 'ampleur moyenne du mouvement (en écarts-types habituels, 0,8 ≈ normal)' : 'rendement moyen à ' + hl} quand la variable est dans son quintile bas, central ou haut. La barre place la valeur ${opts.nowLabel ? 'de la dernière heure mesurée' : 'actuelle'} dans l'historique de la variable (gauche = bas).</div></section>`;
   }
   function indMethod(r) {
     return `<section class="card"><h2>Méthode et limites</h2><ul class="btnotes">
@@ -458,6 +467,43 @@ const Backtest = (() => {
       <li><b>Relancer</b> : <code>python tools/run_rotation.py</code> (quelques secondes, aucune clé).</li></ul></section>`;
   }
 
+  // ---------- rapport « delta, CVD et squeezes » ----------
+  function sqVerdict(r) {
+    const v = r.verdict, tone = v.informative ? 'ok' : v.hints ? 'warn' : 'bad';
+    const real = (r.source || '').startsWith('réel');
+    const kp = (t, big, sub) => `<div class="kpi"><small>${t}</small><b>${big}</b><span>${sub}</span></div>`;
+    const nT = r.targets.reduce((a, t) => a + t.counts.tests, 0);
+    return `<section class="card btv ${tone}"><div class="bthead"><h2>Delta, CVD, volume et squeezes <small>${esc(r.label)} · ${dateFr(r.period.start)} → ${dateFr(r.period.end)} · ${nT} mesures</small></h2></div>
+      <div class="btverdict">${esc(v.text)}</div>
+      <ul class="btnotes">${v.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
+      <div class="kpis">${kp('Liens prouvés', v.informative, 'au-dessus du seuil du hasard, appris puis confirmés sur le test')}${kp('À surveiller', v.hints, 'même signe partout, sous le seuil')}
+        ${kp('Delta', real ? 'réel' : 'estimé', real ? 'volume acheteur agressif de la bourse' : 'déduit de la position de la clôture dans la bougie')}${kp('Intérêt ouvert', r.hasOi ? 'réel' : 'absent', r.hasOi ? 'carburants de squeeze mesurés' : 'squeezes non mesurables ici')}</div></section>`;
+  }
+  function sqEvents(r) {
+    const base = r.baseline || {};
+    const cell = (x) => !x ? '<td class="r muted" colspan="3">trop peu de cas</td>' : `<td class="r ${x.mean > 0.0005 ? 'up' : x.mean < -0.0005 ? 'dn' : 'muted'}" title="${x.n} observations">${sgn(x.mean * 100, 2)} %<div class="muted small">${num(x.up * 100, 0)} % de hausses</div></td><td class="r">${x.bigUp == null ? '-' : num(x.bigUp * 100, 0) + ' %'}</td><td class="r">${x.bigDn == null ? '-' : num(x.bigDn * 100, 0) + ' %'}</td>`;
+    const rows = (r.events || []).map(e => `<tr><td>${esc(e.title)}</td><td>${e.side === 'haut' ? 'décile haut' : 'décile bas'}</td>${cell(e.is)}${cell(e.oos)}</tr>`).join('');
+    const baseRow = base.is && base.oos ? `<tr class="grp"><td colspan="2">Toutes les observations (taux de base)</td>${cell(base.is)}${cell(base.oos)}</tr>` : '';
+    return `<section class="card"><h2>Quand la configuration se présente <small>ce qui se passe dans les 24 heures suivantes</small></h2>
+      <div class="muted small">Décile haut / bas = les 10 % d'heures où la variable est la plus haute / la plus basse de son historique passé. « Gros mouvement » = le prix va d'au moins 1,5 écart-type habituel dans ce sens (plus haut ou plus bas atteint dans les 24 h). Compare toujours avec le taux de base.</div>
+      <div class="scroll"><table class="bttab vt"><thead><tr><th>Variable</th><th>Cas</th><th class="r">Rendement 24 h · apprentissage</th><th class="r">Gros mouvement ↑</th><th class="r">Gros mouvement ↓</th><th class="r">Rendement 24 h · test</th><th class="r">Gros mouvement ↑</th><th class="r">Gros mouvement ↓</th></tr></thead><tbody>${baseRow}${rows}</tbody></table></div></section>`;
+  }
+  function sqTargets(r) {
+    const t = r.targets.find(x => x.key === sqT) || r.targets[0];
+    const btn = r.targets.map(x => `<button data-sqt="${esc(x.key)}" class="seg-like ${x.key === t.key ? 'on' : ''}">${esc(x.title)}</button>`).join(' ');
+    return `<section class="card"><h2>Que prédisent le flux et le levier ? <small>cible choisie : ${esc(t.title)}</small></h2><div class="line">Cible : ${btn}</div><div class="muted small">${esc(t.desc)} Seuil du hasard : |t| ≥ ${num(t.threshold, 1)}.</div></section>`
+      + indTable(r, t.rows, 'Les variables de flux et de levier', t.title.toLowerCase(), {amp: t.key === 'AMP', varLabel: 'Variable', nowLabel: 'Dernière heure'});
+  }
+  function sqMethod(r) {
+    const real = (r.source || '').startsWith('réel');
+    return `<section class="card"><h2>Méthode et limites</h2><ul class="btnotes">
+      <li><b>Données</b> : ${esc(r.source || '')}</li>
+      <li><b>Variables</b> : déséquilibre du flux (delta / volume), écart entre le prix et le flux (le prix fait-il mieux que ce que le CVD explique ?), delta récent contre CVD de fond, volume anormal et « effort sans résultat ». Avec l'intérêt ouvert : « carburant » de short squeeze (OI en hausse, flux vendeur, prix qui ne baisse pas) et de long squeeze (miroir), squeeze en cours (le prix s'envole pendant que l'OI chute) et financement. Toutes en écarts-types des 30 derniers jours, sans regarder le futur.</li>
+      <li><b>Mesure</b> : une observation toutes les 6 heures, rendement futur à 6, 24 et 72 h après une heure de décalage, Newey-West, apprentissage jusqu'au ${dateFr(r.period.split)} puis test, témoin par décalage au hasard. Deuxième cible : l'ampleur du mouvement (un squeeze est un mouvement plus grand que d'habitude, dont le sens se lit après).</li>
+      <li><b>Limites</b> : ${real ? 'les archives publiques de Binance (perpétuel USDT-M) ne remontent qu\'à décembre 2021 pour l\'intérêt ouvert' : 'le delta est une estimation (le vrai volume acheteur agressif n\'existe pas pour cette période) et il n\'y a pas d\'intérêt ouvert : les carburants de squeeze ne sont pas mesurés ici'} ; un seul actif ; peu de squeezes marqués (une centaine d\'épisodes), donc un seuil du hasard élevé. « Rien de prouvé » ne veut pas dire « rien » : l\'effet peut exister sans être assez fort pour être distingué du hasard.</li>
+      <li><b>Mesurer avec le vrai delta, l'OI et le financement (≥ 4 ans, Binance)</b> : <code>python tools/fetch_history.py BTCUSDT --since 2021-12 --metrics</code> puis <code>python tools/run_squeeze_study.py BTCUSDT</code> (idem <code>SOLUSDT</code>). Le rapport remplace celui-ci dans la liste.</li></ul></section>`;
+  }
+
   function render() {
     const root = $('#btBox');
     if (!root) return;
@@ -467,9 +513,10 @@ const Backtest = (() => {
     if (!rep) return;
     const kname = k => k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : k === 'indicators' ? 'indicateurs (en chaîne, macro, liquidité)' : k === 'rotation' ? 'où va l\'argent (rotation, or)' : k === 'squeeze' ? 'delta, CVD et squeezes' : 'idées du terminal';
     const sel = `<div class="btbar"><label>Rapport <select id="btSel">${list.map(x => `<option value="${esc(x.kind)}|${esc(x.label)}" ${x.label === label && x.kind === kind ? 'selected' : ''}>${esc(x.label)} · ${kname(x.kind)}${x.own ? ' (calculé sur tes données)' : ' (livré avec le terminal)'}</option>`).join('')}</select></label>
-      <span class="muted small">Calculé le ${dateFr(rep.computedAt)} en ${Math.round(rep.seconds / 60)} min</span></div>`;
+      <span class="muted small">Calculé le ${dateFr(rep.computedAt)} en ${rep.seconds < 90 ? rep.seconds + ' s' : Math.round(rep.seconds / 60) + ' min'}</span></div>`;
     if (rep.kind === 'vwap-strategy') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + stratHedge(rep) + stratMethod(rep) + '</div>'; return; }
     if (rep.kind === 'rotation') { root.innerHTML = sel + '<div class="btgrid">' + rotVerdict(rep) + rotMap(rep) + rotGold(rep) + rotTargets(rep) + rotMethod(rep) + '</div>'; drawRotation(rep); return; }
+    if (rep.kind === 'squeeze') { root.innerHTML = sel + '<div class="btgrid">' + sqVerdict(rep) + sqEvents(rep) + sqTargets(rep) + sqMethod(rep) + '</div>'; return; }
     if (rep.kind === 'indicators') { root.innerHTML = sel + '<div class="btgrid">' + indVerdict(rep) + indTable(rep) + indMethod(rep) + '</div>'; return; }
     if (rep.kind === 'avwap-swing') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + reactionCard(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + swingMethod(rep) + '</div>'; return; }
     root.innerHTML = sel + '<div class="btgrid">' + verdictCard(rep) + trendCard(rep) + equityCard(rep) + variantsCard(rep) + eventsCard(rep) + touchCard(rep) + regimeCard(rep) + costsCard(rep) + methodCard(rep) + '</div>';

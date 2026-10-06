@@ -22,6 +22,16 @@ def vision_url(symbol: str, market: str, y: int, m: int, d: int | None = None, i
     return f"{VISION}/{base}/{kind}/klines/{symbol}/{interval}/{symbol}-{interval}-{stamp}.zip"
 
 
+def vision_metrics_url(symbol: str, y: int, m: int, d: int) -> str:
+    """Interet ouvert, ratios long / short et ratio taker du perpetuel USDT-M, toutes les 5 minutes, un fichier par jour (depuis decembre 2021)."""
+    return f"{VISION}/futures/um/daily/metrics/{symbol}/{symbol}-metrics-{y:04d}-{m:02d}-{d:02d}.zip"
+
+
+def vision_funding_url(symbol: str, y: int, m: int) -> str:
+    """Taux de financement reels (un par periode de 8 h), un fichier par mois."""
+    return f"{VISION}/futures/um/monthly/fundingRate/{symbol}/{symbol}-fundingRate-{y:04d}-{m:02d}.zip"
+
+
 def months(start_ms: int, end_ms: int):
     """[(annee, mois)] de start a end inclus."""
     a, b = datetime.fromtimestamp(start_ms / 1000, timezone.utc), datetime.fromtimestamp(end_ms / 1000, timezone.utc)
@@ -94,3 +104,96 @@ def build_folder(bars: fine.Bars, folder, meta: dict | None = None) -> dict:
 def load_csv(paths, start_ms: int = 0, end_ms: int = 2 ** 62) -> fine.Bars:
     """CSV « timestamp(s),open,high,low,close,volume » (format Bitstamp) : delta estime."""
     return fine.load_bitstamp(paths, start_ms, end_ms)
+
+
+# ---------------------------------------------------------------- interet ouvert et financement (V10)
+def parse_time(x):
+    """Horodatage en ms depuis un entier (ms ou microsecondes) ou un texte « 2022-01-01 00:05:00 » (UTC) ; None si illisible."""
+    try:
+        v = int(float(x))
+        return v // 1000 if v > 10 ** 14 else v
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(datetime.strptime(str(x).strip()[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def _num(x):
+    try:
+        v = float(x)
+        return v if v == v and abs(v) != float("inf") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_metrics(rows):
+    """Lignes de metrics Binance -> [(t_ms, oi_contrats, oi_dollars, ratio_taker)]. Les colonnes sont reperees par leur nom dans l'en-tete (create_time, sum_open_interest,
+    sum_open_interest_value, sum_taker_long_short_vol_ratio) ; sans en-tete, ordre documente : temps, symbole, OI, OI en dollars, ..., ratio taker en derniere colonne."""
+    col = {"t": 0, "oi": 2, "usd": 3, "tk": 7}
+    out = []
+    for i, r in enumerate(rows):
+        if not r:
+            continue
+        if i == 0 and not str(r[0]).strip()[:1].isdigit():
+            names = [str(x).strip().lower() for x in r]
+            for key, nm in (("t", "create_time"), ("oi", "sum_open_interest"), ("usd", "sum_open_interest_value"), ("tk", "sum_taker_long_short_vol_ratio")):
+                if nm in names:
+                    col[key] = names.index(nm)
+            continue
+        if len(r) <= max(col["oi"], col["usd"]):
+            continue
+        t, oi, usd = parse_time(r[col["t"]]), _num(r[col["oi"]]), _num(r[col["usd"]])
+        tk = _num(r[col["tk"]]) if len(r) > col["tk"] else None
+        if t is None or oi is None or oi <= 0:
+            continue
+        out.append((t, oi, usd, tk))
+    return out
+
+
+def parse_funding(rows):
+    """Lignes de fundingRate -> [(t_ms, taux)] : colonne 0 = heure du calcul, derniere colonne = taux de la periode."""
+    out = []
+    for i, r in enumerate(rows):
+        if len(r) < 2:
+            continue
+        if i == 0 and not str(r[0]).strip()[:1].isdigit():
+            continue
+        t, x = parse_time(r[0]), _num(r[-1])
+        if t is not None and x is not None:
+            out.append((t, x))
+    return out
+
+
+def hourly(pairs, which: int = 1):
+    """[(t_ms, a, b, ...)] a 5 minutes -> [(heure_ms, valeur)] : derniere valeur connue de chaque heure (champ `which`), triee, sans doublon."""
+    last = {}
+    for r in sorted(pairs, key=lambda x: x[0]):
+        v = r[which]
+        if v is not None:
+            last[r[0] - r[0] % 3_600_000] = v
+    return sorted(last.items())
+
+
+def save_pairs(path, pairs, header: str):
+    from pathlib import Path
+    p = Path(path)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(header + "\n" + "\n".join(f"{t},{v!r}" for t, v in pairs) + "\n", encoding="utf-8")
+    tmp.replace(p)
+
+
+def load_pairs(path):
+    from pathlib import Path
+    p = Path(path)
+    if not p.exists():
+        return []
+    out = []
+    for line in p.read_text(encoding="utf-8").splitlines()[1:]:
+        a, _, b = line.partition(",")
+        try:
+            out.append((int(a), float(b)))
+        except ValueError:
+            continue
+    return out
