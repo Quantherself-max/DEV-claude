@@ -35,6 +35,10 @@ class FakeGitHub:
         self.commits = {}           # sha -> (date, message, fichiers ou None si la branche n'a pas le terminal)
         self.extra = {}             # sha -> entrees supplementaires dans l'archive
         self.codeload_auth = []
+        self.contents_calls = 0
+        self.api_calls = 0
+        self.private = True
+        self.limited = False
         fake = self
 
         class H(BaseHTTPRequestHandler):
@@ -57,7 +61,10 @@ class FakeGitHub:
                     fake.codeload_auth.append(self.headers.get("Authorization"))
                     sha = u.path.split("/")[-1].replace(".zip", "")
                     return self._send(200, zip_of(sha, fake.commits[sha][2], fake.extra.get(sha)), "application/zip")
-                if self.headers.get("Authorization") != f"Bearer {TOKEN}":
+                fake.api_calls += 1
+                if fake.limited:
+                    return self._send(403, b'{"message":"API rate limit exceeded"}', headers={"X-RateLimit-Remaining": "0"})
+                if fake.private and self.headers.get("Authorization") != f"Bearer {TOKEN}":
                     return self._send(404, b'{"message":"Not Found"}')
                 parts = u.path.split("/")
                 if u.path == "/repos/o/r/branches":
@@ -70,7 +77,9 @@ class FakeGitHub:
                     d, m, _ = fake.commits[sha]
                     return self._send(200, json.dumps({"sha": sha, "commit": {"committer": {"date": d}, "message": m + "\n\ndetail"}}).encode())
                 if u.path == "/repos/o/r/contents/terminal/run.py":
-                    sha = fake.branches.get((q.get("ref") or [""])[0])
+                    ref = (q.get("ref") or [""])[0]
+                    sha = fake.branches.get(ref, ref if ref in fake.commits else None)
+                    fake.contents_calls += 1
                     ok = sha and fake.commits[sha][2] is not None
                     return self._send(200 if ok else 404, b"{}")
                 if u.path.startswith("/repos/o/r/zipball/"):
@@ -127,6 +136,18 @@ class UpdaterTests(unittest.TestCase):
         self.gh.publish("vide", "c" * 40, "2026-10-07T10:00:00Z", "autre projet sans terminal", None)
         self.assertEqual(self.up().latest()["branch"], "claude/x")         # la branche la plus recente n'a pas le terminal : ignoree
         self.assertEqual(self.up(branch="main").latest()["sha"], "a" * 40)
+
+    def test_public_repo_needs_no_token_and_known_commits_are_not_asked_again(self):
+        self.gh.private = False
+        u = self.up(token="")
+        self.assertEqual(u.check()["latest"]["branch"], "claude/x")
+        first = self.gh.api_calls
+        self.assertEqual(u.check()["latest"]["branch"], "claude/x")
+        self.assertEqual(self.gh.api_calls - first, 1)                                                 # une seule requete (liste des branches) : le reste est en memoire
+        self.gh.limited = True
+        with self.assertRaises(UpdateError) as e:
+            u.check()
+        self.assertIn("60 par heure", str(e.exception))
 
     def test_private_repo_without_token_is_explained(self):
         with self.assertRaises(UpdateError) as e:

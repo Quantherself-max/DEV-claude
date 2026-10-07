@@ -4,7 +4,7 @@ Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
-- **Mise à jour automatique** (V11) : une nouvelle version publiée sur GitHub est vérifiée, sauvegardée et installée toute seule ; le terminal redémarre dans la même fenêtre et la page se recharge. Un jeton GitHub en lecture seule suffit (Réglages → 6, voir « V11 » plus bas).
+- **Mise à jour automatique** (V11) : une nouvelle version publiée sur GitHub est vérifiée, sauvegardée et installée toute seule ; le terminal redémarre dans la même fenêtre et la page se recharge. Rien à configurer : le dépôt est public (Réglages → 6 pour suivre l'état, voir « V11 » plus bas).
 - **Où est l'argent, l'or, et les squeezes** (V10) : carte du capital (bitcoin, ETH, altcoins, stablecoins, or) et rotation, asymétrie bitcoin / or, **delta, divergences flux / prix / volume et short / long squeezes** (lecture en direct à la Velo dans la Lecture, mesure sur 12 ans), décompte de bougie sous le prix comme sur TradingView (voir « V10 » plus bas).
 - **Un écran de lecture épuré et de nouvelles données** (V9) : onglet **Lecture** (l'essentiel en une page, chaque ligne avec son niveau de preuve), dérivés multi-bourses (options, volatilité implicite, base, financement, Open Interest), données en chaîne et macro libres, et un **laboratoire d'indicateurs** qui mesure ce que vaut chaque indicateur (voir « V9 » plus bas).
 - **Les VWAP ancrés sur un mouvement d'au moins 5 %** (V8, onglet **Stratégie** et rapport « VWAP ancrés sur un mouvement » dans la page **Backtest**) : VWAP ancré sur le sommet de la baisse (résistance) et sur le creux (support), réaction du prix mesurée sur 13 ans de BTC (voir « V8 » plus bas).
@@ -108,9 +108,9 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 ## Ce qui est nouveau en V11 : le terminal se met à jour tout seul
 
 ### À faire une seule fois
-1. **Installe cette version à la main**, une dernière fois (ZIP habituel, en gardant ton dossier `data_local` et ton fichier `.env`), puis lance-la comme d'habitude.
-2. **Crée un jeton GitHub en lecture seule** (le dépôt est privé) : GitHub → photo de profil → **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**. « Repository access » : **Only select repositories** → `DEV-claude` ; « Permissions » → **Contents : Read-only** ; durée au choix (un an, par exemple) ; **Generate token**.
-3. Dans le terminal : **Réglages → 6. Mises à jour automatiques** → colle le jeton → **Enregistrer**. Tu peux cliquer **Vérifier maintenant** pour voir la dernière version publiée.
+- **Installe cette version à la main**, une dernière fois (ZIP habituel, en gardant ton dossier `data_local` et ton fichier `.env`), puis lance-la comme d'habitude. C'est tout : le dépôt est public, **aucun jeton n'est nécessaire**.
+- Pour voir où en est le terminal : **Réglages → 6. Mises à jour automatiques** → **Vérifier maintenant**.
+- Jeton GitHub **facultatif**, seulement si le dépôt redevient privé un jour : GitHub → **Settings** → **Developer settings** → **Fine-grained tokens** → **Generate new token**, dépôt `DEV-claude`, **Contents : Read-only** ; à coller dans le Réglage 6. Sans jeton, GitHub accepte 60 requêtes par heure : le terminal en utilise une à deux par vérification (les versions déjà vues sont gardées en mémoire).
 
 ### Ensuite, plus rien à faire
 - Toutes les 30 minutes, le terminal regarde la dernière version publiée (« auto » = la branche du dépôt la plus récemment mise à jour qui contient le terminal : chaque session de travail publie sur sa propre branche).
@@ -120,7 +120,7 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - Le lanceur (`.bat` / `.command`) en cours d'utilisation n'est pas remplacé pendant que le terminal tourne : s'il change, la nouvelle copie attend dans `.update/lanceurs/` (le Réglage 6 le signale).
 - Tu préfères garder la main : décoche « Installer automatiquement » ; le terminal te dit alors qu'une version est disponible et tu cliques **Installer maintenant**.
 - Lancé avec `python run.py --no-supervisor`, ou depuis un dossier git (utilise alors `git pull`), le terminal ne se met pas à jour tout seul.
-- **Vérifié ici** : installation, relance, rechargement de la page et retour automatique à l'ancienne version, contre un faux serveur GitHub. **Pas encore vérifié** contre le vrai GitHub depuis ton PC : si ça bloque, le Réglage 6 affiche l'erreur en clair (jeton refusé, dépôt introuvable…).
+- **Vérifié** : contre le vrai GitHub (dépôt public, sans jeton) : vérification, téléchargement, contrôles, remplacement d'un fichier modifié, sauvegarde ; et, contre un faux serveur GitHub, la relance complète, le rechargement de la page et le retour automatique à l'ancienne version. Si ça bloque sur ton PC, le Réglage 6 affiche l'erreur en clair.
 
 ## Ce qui est nouveau en V10 : où est l'argent, l'or, et les squeezes
 

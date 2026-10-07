@@ -243,8 +243,8 @@
         <div id="updInfo" class="muted small">-</div>
         <label class="field chk"><input id="updAuto" type="checkbox"> Installer automatiquement les nouvelles versions (le terminal redémarre tout seul, la page se recharge)</label>
         <ol class="howto">
-          <li>Le dépôt est privé : crée un jeton GitHub en <b>lecture seule</b> : GitHub → photo de profil → <b>Settings</b> → <b>Developer settings</b> → <b>Personal access tokens</b> → <b>Fine-grained tokens</b> → <b>Generate new token</b> ; « Repository access » : <b>Only select repositories</b> → <code>DEV-claude</code> ; « Permissions » → <b>Contents : Read-only</b> ; puis <b>Generate token</b>.</li>
-          <li>Colle-le ici : <input id="updToken" type="password" placeholder="github_pat_..." autocomplete="off" spellcheck="false"></li>
+          <li>Le dépôt est <b>public</b> : rien à configurer, le terminal vérifie et installe tout seul. Le jeton GitHub est <b>facultatif</b> : il ne sert que si le dépôt redevient privé (GitHub → <b>Settings</b> → <b>Developer settings</b> → <b>Fine-grained tokens</b>, dépôt <code>DEV-claude</code>, <b>Contents : Read-only</b>).
+            <input id="updToken" type="password" placeholder="facultatif : github_pat_..." autocomplete="off" spellcheck="false"></li>
           <li><button id="updCheck">Vérifier maintenant</button> <button id="updApply">Installer maintenant</button> <span id="updRes" class="muted"></span></li>
         </ol>
         <label class="field">Branche suivie <input id="updBranch" placeholder="auto" autocomplete="off" spellcheck="false"></label>

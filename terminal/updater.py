@@ -9,7 +9,8 @@ Principe :
      sauvegarde en place et relance l'ancienne version.
 Ne sont JAMAIS touches : data_local/ (tes donnees, journaux, rapports), .env (tes reglages et jetons), .update/ (sauvegarde). Les lanceurs (.bat / .command) en cours
 d'utilisation ne sont pas remplaces pendant que le terminal tourne (Windows lit le .bat au fil de l'eau) : la nouvelle copie attend dans .update/lanceurs/.
-Depot prive : il faut un jeton GitHub en LECTURE SEULE (Reglages -> Mises a jour), garde dans .env. Bibliotheque standard uniquement."""
+Depot public : aucun jeton necessaire (60 requetes par heure, les commits deja vus sont gardes en memoire) ; s'il redevient prive : jeton GitHub en LECTURE SEULE
+(Reglages -> Mises a jour), garde dans .env. Bibliotheque standard uniquement."""
 import json
 import os
 import py_compile
@@ -114,6 +115,8 @@ class Updater:
             e.close()
             if loc:
                 return self._req(loc, auth=False, raw=raw)
+            if e.code in (403, 429) and e.headers.get("X-RateLimit-Remaining") == "0":
+                raise UpdateError("GitHub limite les vérifications sans jeton (60 par heure) : nouvel essai à la prochaine vérification") from e
             if e.code in (401, 403):
                 raise UpdateError("GitHub refuse l'accès : jeton absent, expiré ou sans droit de lecture sur le dépôt (Réglages → Mises à jour)") from e
             if e.code == 404:
@@ -130,17 +133,49 @@ class Updater:
         except ValueError as e:
             raise UpdateError("réponse GitHub illisible") from e
 
+    # un commit ne change jamais : sa date, son message et la presence du terminal sont gardes sur disque (sans jeton, GitHub n'accepte que 60 requetes par heure)
+    def _cache(self) -> dict:
+        try:
+            return json.loads((self.dir / "commits.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def _cache_put(self, sha: str, **kw) -> None:
+        c = self._cache()
+        c[sha] = {**c.get(sha, {}), **kw}
+        if len(c) > 300:
+            c = dict(list(c.items())[-200:])
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            (self.dir / "commits.json").write_text(json.dumps(c), encoding="utf-8")
+        except OSError:
+            pass
+
     def _commit(self, sha_or_ref: str) -> dict:
+        hit = self._cache().get(sha_or_ref)
+        if hit and hit.get("date"):
+            return {"sha": sha_or_ref, "date": hit["date"], "message": hit.get("message", "")}
         c = self._req(f"/repos/{self.repo}/commits/{urllib.parse.quote(sha_or_ref, safe='')}")
         cm = c.get("commit") or {}
-        return {"sha": c.get("sha"), "date": (cm.get("committer") or {}).get("date"), "message": (cm.get("message") or "").split("\n")[0][:200]}
+        out = {"sha": c.get("sha"), "date": (cm.get("committer") or {}).get("date"), "message": (cm.get("message") or "").split("\n")[0][:200]}
+        if out["sha"] and out["date"]:
+            self._cache_put(out["sha"], date=out["date"], message=out["message"])
+        return out
 
-    def _has_terminal(self, ref: str) -> bool:
+    def _has_terminal(self, ref: str, sha: str | None = None) -> bool:
+        hit = self._cache().get(sha) if sha else None
+        if hit and "terminal" in hit:
+            return hit["terminal"]
         try:
-            self._req(f"/repos/{self.repo}/contents/{self.subdir + '/' if self.subdir else ''}run.py?ref={urllib.parse.quote(ref, safe='')}")
-            return True
-        except UpdateError:
-            return False
+            self._req(f"/repos/{self.repo}/contents/{self.subdir + '/' if self.subdir else ''}run.py?ref={urllib.parse.quote(sha or ref, safe='')}")
+            ok = True
+        except UpdateError as e:
+            if "limite" in str(e) or "injoignable" in str(e):
+                raise
+            ok = False
+        if sha:
+            self._cache_put(sha, terminal=ok)
+        return ok
 
     def latest(self) -> dict:
         """Dernier commit de la branche suivie : {sha, date, message, branch}. En mode « auto » : la branche la plus recemment mise a jour qui contient le terminal."""
@@ -156,7 +191,7 @@ class Updater:
                 cands.append({**c, "branch": b.get("name")})
         cands.sort(key=lambda c: c.get("date") or "", reverse=True)
         for c in cands:
-            if self._has_terminal(c["branch"]):
+            if self._has_terminal(c["branch"], c.get("sha")):
                 return c
         raise UpdateError("aucune branche du dépôt ne contient le terminal")
 

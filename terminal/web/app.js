@@ -898,7 +898,7 @@ async function openSettings() {
     $('#xToken').value = ''; $('#xToken').placeholder = x.tokenHint ? `jeton enregistré (${x.tokenHint}) : laisse vide pour le garder` : 'Bearer token X (API officielle)'; $('#xRes').textContent = '';
     $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sMaxSym').value = s.signalMaxPerSymbol; $('#sLev').value = s.signalLeverage; $('#sTrend').checked = s.signalTrendGate !== false;
     const u = s.update || {}; $('#updAuto').checked = u.auto !== false; $('#updBranch').value = u.branch || 'auto'; $('#updRes').textContent = '';
-    $('#updToken').value = ''; $('#updToken').placeholder = u.tokenHint ? `jeton enregistré (${u.tokenHint}) : laisse vide pour le garder` : 'github_pat_...';
+    $('#updToken').value = ''; $('#updToken').placeholder = u.tokenHint ? `jeton enregistré (${u.tokenHint}) : laisse vide pour le garder` : 'facultatif : github_pat_...';
     renderUpdate(await api('/api/update'));
   } catch (e) { $('#saveRes').textContent = 'Erreur : ' + e.message; }
 }
@@ -908,8 +908,8 @@ function renderUpdate(u) {
   if (!u) return;
   const i = u.installed || {}, l = u.latest;
   const when = t => t ? new Date(typeof t === 'number' ? t * 1000 : t).toLocaleString('fr-FR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}) : '';
-  $('#updState').textContent = !u.configured ? 'jeton manquant' : u.error ? 'erreur' : u.state || '';
-  $('#updState').className = !u.configured || u.error ? 'dn' : u.newer ? 'amb' : 'up';
+  $('#updState').textContent = u.error ? 'erreur' : u.state || '';
+  $('#updState').className = u.error ? 'dn' : u.newer ? 'amb' : u.lastCheck ? 'up' : 'muted';
   const lines = [`Version installée : <b>${i.sha ? sha7(i.sha) : 'inconnue (installée à la main)'}</b>${i.message ? ' · ' + esc(i.message) : ''}${i.installedAt ? ' · le ' + when(i.installedAt) : ''}`];
   if (l) lines.push(`Dernière version publiée : <b>${sha7(l.sha)}</b> (${esc(l.branch || '')}) · ${esc(l.message || '')} · ${when(l.date)}`);
   if (u.lastCheck) lines.push(`Dernière vérification : ${when(u.lastCheck)} · état : ${esc(u.state || '')}`);
