@@ -38,7 +38,7 @@ def sigs(*ideas, sym="BTCUSDT"):
 class DeskTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.cfg = Config(source="binance", data_dir=self.tmp.name, signal_min_score=65.0, signal_max_week=3)
+        self.cfg = Config(source="binance", data_dir=self.tmp.name, signal_min_score=65.0, signal_max_week=3, signal_direction="both")
         self.n = FakeNotifier()
         self.logs = []
         self.desk = TradeDesk(self.cfg, self.n, log=self.logs.append)
@@ -128,11 +128,22 @@ class DeskTests(unittest.TestCase):
         out = self.desk.consider(sigs(a, b), MON)
         self.assertEqual([t["symbol"] for t in out], ["SOLUSDT"])
 
-    def test_one_idea_per_symbol_every_twelve_hours_even_on_the_other_side(self):
+    def test_one_idea_per_symbol_every_twelve_hours_and_no_flip_while_the_first_is_open(self):
         self.desk.consider(sigs(idea(side="long", key="l")), MON)
         short = idea(side="short", entry=110.0, stop=112.0, tp1=106.0, tp2=102.0, key="s")
         self.assertEqual(self.desk.consider(sigs(short), MON + H), [])
-        self.assertEqual(len(self.desk.consider(sigs(short), MON + 13 * H)), 1)
+        self.assertEqual(self.desk.consider(sigs(short), MON + 13 * H), [])                 # l'achat est encore ouvert : pas de vente qui le contredit
+        self.assertIn("contredit", self.desk.waiting["why"])
+        self.desk.trades[-1].update(status="closed", result="stop", closedAt=MON + 14 * H)
+        weak = idea(side="short", entry=110.0, stop=112.0, tp1=106.0, tp2=102.0, key="s2", score=70.0)
+        self.assertEqual(self.desk.consider(sigs(weak), MON + 15 * H), [])                  # changer de sens exige 10 points de plus
+        self.assertIn("change de sens", self.desk.waiting["why"])
+        out = self.desk.consider(sigs(short), MON + 16 * H)
+        self.assertEqual(len(out), 1)
+        self.assertTrue(self.n.sent[-1].startswith("⚠️ CHANGEMENT DE SENS sur BTCUSDT"))
+        self.assertIn("REMPLACE", self.n.sent[-1])
+        self.assertIn("stop touché", self.n.sent[-1])
+        self.assertEqual(out[0]["flipFrom"]["side"], "long")
         both = sigs(idea(sym="SOLUSDT", side="long", entry=50.0, stop=49.0, tp1=52.0, tp2=54.0, key="a"),
                     idea(sym="SOLUSDT", side="short", entry=60.0, stop=61.0, tp1=57.0, tp2=55.0, key="b", score=70.0))
         out = self.desk.consider(both, MON + 20 * H)
@@ -250,3 +261,62 @@ class DeskTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LongOnlyTests(unittest.TestCase):
+    """Tu ne trades qu'a l'achat : les configurations de vente deviennent des alertes de prudence, hors quota, suivies pour l'historique."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg = Config(source="binance", data_dir=self.tmp.name, signal_min_score=65.0, signal_max_week=3)
+        self.assertEqual(self.cfg.signal_direction, "long")                      # reglage par defaut
+        self.n = FakeNotifier()
+        self.desk = TradeDesk(self.cfg, self.n)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def short(self, **kw):
+        return idea(**{"side": "short", "entry": 110.0, "stop": 112.0, "tp1": 106.0, "tp2": 102.0, "key": "s", **kw})
+
+    def test_sell_setup_becomes_an_alert_outside_the_quota(self):
+        self.desk.consider(sigs(idea(side="long", key="l")), MON)
+        out = self.desk.consider(sigs(self.short()), MON + H)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["mode"], "alerte")
+        msg = self.n.sent[-1]
+        self.assertTrue(msg.startswith("🛡 Alerte pour tes longs · BTCUSDT"))
+        self.assertIn("ce n'est pas une idée de vente", msg)
+        self.assertIn("repasse au-dessus de 112,00", msg)
+        self.assertIn("Ton idée d'achat du", msg)
+        self.assertEqual(self.desk.week(MON + H)["sent"], 1)                     # l'alerte ne compte pas dans les 5 idees de la semaine
+        self.assertEqual(self.desk.consider(sigs(self.short(key="s3", entry=111.0)), MON + 5 * H), [])     # une alerte par paire et par 24 h
+        self.assertEqual(len(self.desk.consider(sigs(self.short(key="s4", entry=111.0)), MON + 26 * H)), 1)
+        self.assertEqual(self.desk.stats()["ideas"], 1)
+        self.assertEqual(self.desk.stats()["alerts"]["n"], 2)
+
+    def test_long_ideas_are_unchanged_and_low_score_alerts_are_skipped(self):
+        self.assertEqual(self.desk.consider(sigs(self.short(score=50.0)), MON), [])
+        out = self.desk.consider(sigs(idea(side="long")), MON + H)
+        self.assertEqual(out[0]["side"], "long")
+        self.assertNotIn("mode", out[0])
+
+    def test_alert_outcome_is_tracked_silently(self):
+        tr = self.desk.consider(sigs(self.short(etype="marché")), MON)[0]
+        before = len(self.n.sent)
+        self.desk.track("BTCUSDT", [(MON + M5, 110.5, 105.5, 106.0)], MON + 2 * M5)
+        self.assertEqual(len(self.n.sent), before)                              # pas de message de suivi pour une alerte
+        h = self.desk.history(MON + 3 * M5)
+        row = next(r for r in h["trades"] if r["id"] == tr["id"])
+        self.assertTrue(row["verdict"])                                         # le prix a baisse jusqu'au premier objectif : l'alerte avait raison
+        self.assertIsNone(row["r"])
+        self.assertEqual(h["stats"]["alerts"]["right"], 1)
+
+    def test_history_rows_have_results(self):
+        tr = self.desk.consider(sigs(idea(side="long", etype="marché")), MON)[0]
+        self.desk.track("BTCUSDT", [(MON + M5, 101.0, 97.5, 98.0)], MON + 2 * M5)
+        row = self.desk.history(MON + 3 * M5)["trades"][0]
+        self.assertEqual(row["id"], tr["id"])
+        self.assertEqual(row["r"], -1.0)
+        self.assertEqual(row["resultText"], "stop touché")
+        self.assertIn("Idée de trade", row["text"])

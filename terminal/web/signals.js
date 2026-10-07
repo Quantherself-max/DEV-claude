@@ -63,6 +63,11 @@ const Signals = (() => {
     [/^le contexte macro/, 'macro contraire']];
   const shortGate = g => { const m = GATE_SHORT.find(([re]) => re.test(g)); return m ? m[1] : g.length > 42 ? g.slice(0, 40) + '…' : g; };
 
+  function dirNote(i) {                                            // tu ne trades que dans un sens : l'autre sens n'est qu'une alerte de prudence
+    const d = (last && last.direction) || 'both';
+    if (d === 'both' || i.side === d) return '';
+    return ` <span class="pill warn" title="Réglages → 4 : sens de tes trades">${d === 'long' ? 'alerte pour tes longs, pas une idée' : 'alerte pour tes shorts, pas une idée'}</span>`;
+  }
   function card(i, sg, trade) {
     const buy = i.side === 'long', col = buy ? 'up' : 'dn', d = i.desc;
     const status = trade ? (trade.status === 'closed' ? RESULT[trade.result] : STATUS[trade.status]) : null;
@@ -76,7 +81,7 @@ const Signals = (() => {
     const best = sg.ideas.find(x => x.eligible);
     const shown = LT.st.planOn && (LT.st.planKey === i.key || (LT.st.planKey == null && best && best.key === i.key));
     return `<div class="idea ${col}">
-      <div class="ihead"><b class="side ${col}">${buy ? 'ACHAT' : 'VENTE'}</b><span class="muted small">${esc(KIND[i.kind] || i.kind)}</span>
+      <div class="ihead"><b class="side ${col}">${buy ? 'ACHAT' : 'VENTE'}</b><span class="muted small">${esc(KIND[i.kind] || i.kind)}</span>${dirNote(i)}
         <span class="score ${tone(i.score)}" title="Qualité de l'idée sur 100">${i.score.toFixed(0)}<small>/100</small></span></div>
       <div class="irow">${state}${tpill}<span class="muted small">${esc(i.grade)} · niveaux : qualité ${String(i.st.S.toFixed(1)).replace('.', ',')}</span></div>
       <table class="plan">
@@ -126,12 +131,14 @@ const Signals = (() => {
 
   function journal(desk) {
     const s = desk.stats;
-    const head = `<div class="muted small">Depuis le premier lancement : <b>${s.ideas}</b> idées envoyées, <b>${s.executed}</b> exécutées · stop <b>${s.stop}</b> · objectif 1 puis retour <b>${s.tp1_be}</b> · objectif 2 <b>${s.tp2}</b> · en cours <b>${s.open}</b>${s.executed ? ` · résultat cumulé ≈ <b class="${s.r >= 0 ? 'up' : 'dn'}">${LT.num(s.r, 1)}</b> fois le risque (si la moitié est prise à l'objectif 1)` : ''}.</div>`;
+    const head = `<div class="muted small">Depuis le premier lancement : <b>${s.ideas}</b> idées envoyées, <b>${s.executed}</b> exécutées · stop <b>${s.stop}</b> · objectif 1 puis retour <b>${s.tp1_be}</b> · objectif 2 <b>${s.tp2}</b> · en cours <b>${s.open}</b>${s.executed ? ` · résultat cumulé ≈ <b class="${s.r >= 0 ? 'up' : 'dn'}">${LT.num(s.r, 1)}</b> fois le risque (si la moitié est prise à l'objectif 1)` : ''}. <a href="#/history">Historique complet →</a></div>`;
     if (!desk.trades.length) return head + '<div class="muted small">Aucune idée envoyée pour l\'instant. Le journal est le test le plus honnête : il garde ce qui s\'est réellement passé après chaque idée.</div>';
-    return head + `<ul class="jr">${desk.trades.map(t => {
+    return head + `<ul class="jr">${desk.trades.slice(0, 12).map(t => {
       const st = t.status === 'closed' ? RESULT[t.result] || [t.result, 'muted'] : STATUS[t.status] || [t.status, 'muted'];
-      return `<li><b class="${t.side === 'long' ? 'up' : 'dn'}">${t.side === 'long' ? 'ACHAT' : 'VENTE'}</b> ${esc(t.symbol)} · ${px(t.entry)} → ${px(t.tp1)} / stop ${px(t.stop)}
-        <span class="pill ${st[1]}">${esc(st[0])}</span><div class="muted small">${timeFr(t.created)} · qualité ${Math.round(t.score)}/100 · idée ${t.n} de la semaine${t.sent ? '' : ' · envoi Telegram non confirmé'}</div></li>`;
+      const alert = t.mode === 'alerte';
+      const tag = alert ? `<b class="amb">ALERTE</b> <span class="muted small">(configuration de ${t.side === 'short' ? 'vente' : 'achat'})</span>` : `<b class="${t.side === 'long' ? 'up' : 'dn'}">${t.side === 'long' ? 'ACHAT' : 'VENTE'}</b>`;
+      return `<li>${tag} ${esc(t.symbol)} · ${px(t.entry)} → ${px(t.tp1)} / stop ${px(t.stop)}
+        <span class="pill ${st[1]}">${esc(st[0])}</span><div class="muted small">${timeFr(t.created)} · qualité ${Math.round(t.score)}/100 · ${alert ? 'hors quota' : 'idée ' + t.n + ' de la semaine'}${t.flipFrom ? ' · changement de sens' : ''}${t.sent ? '' : ' · envoi Telegram non confirmé'}</div></li>`;
     }).join('')}</ul>`;
   }
 

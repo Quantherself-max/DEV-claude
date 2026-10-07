@@ -33,6 +33,10 @@ const Lecture = (() => {
     if (!i) return '<div class="muted small">Idées indisponibles.</div>';
     if (!i.side) return '<div class="muted small">Aucune idée retenue pour l\'instant. Le terminal n\'en envoie que lorsque plusieurs niveaux se superposent, dans le sens de la tendance de fond.</div>';
     const cls = i.side === 'long' ? 'up' : 'dn';
+    if (i.direction && i.direction !== 'both' && i.side !== i.direction) {
+      return `<div class="lidea"><b class="amb">ALERTE pour tes ${i.direction === 'long' ? 'longs' : 'shorts'}</b> <span class="muted small">configuration de ${i.side === 'long' ? 'achat' : 'vente'}, qualité ${Math.round(i.score)}/100 : ce n'est pas une idée pour toi, c'est un signal de prudence</span>
+        <div class="small">fausse si le prix repasse ${i.side === 'short' ? 'au-dessus de' : 'sous'} ${px(i.stop)} · peut aller chercher ${px(i.tp1)}</div></div>`;
+    }
     const why = (i.gates || []).concat(i.hold || [])[0];
     const status = i.eligible ? '' : i.align != null && i.align <= 0 ? ' · contre la tendance de fond : non retenue' : i.score < i.minScore ? ' · sous le seuil (' + i.minScore + ')' : ' · pas encore envoyée';
     return `<div class="lidea"><b class="${cls}">${i.side === 'long' ? 'ACHAT' : 'VENTE'}</b> <span class="muted small">qualité ${Math.round(i.score)}/100${status}${why ? ' · ' + esc(why) : ''}</span>

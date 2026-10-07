@@ -482,7 +482,12 @@ class ServerTests(unittest.TestCase):
         code, body, _ = self.get("/api/signals?symbol=BTCUSDT")
         self.assertEqual(code, 200)
         r = json.loads(body)
-        self.assertEqual(set(r), {"symbols", "desk", "on"})
+        self.assertEqual(set(r), {"symbols", "desk", "on", "direction"})
+        self.assertEqual(r["direction"], "long")                                       # par defaut : achat seulement
+        code, body, _ = self.get("/api/history")
+        self.assertEqual(code, 200)
+        h = json.loads(body)
+        self.assertTrue({"trades", "stats", "week", "readings", "direction", "since"} <= set(h))
         self.assertEqual(set(r["desk"]), {"week", "waiting", "stats", "trades"})
         self.assertEqual(r["desk"]["week"]["cap"], 5)
         sg = r["symbols"]["BTCUSDT"]

@@ -434,7 +434,7 @@ const Backtest = (() => {
   }
   function drawRotation(r) {
     const el = document.getElementById('rotChart');
-    if (!el || !r.map.series.length || !window.Charts) return;
+    if (!el || !r.map.series.length || typeof Charts === 'undefined') return;
     const ser = (i, name, color) => ({name, color, pts: r.map.series.filter(p => p[i] != null).map(p => [p[0], p[i] * 100]), area: false});
     Charts.line(el, {series: [ser(1, 'Bitcoin', '#f7931a'), ser(2, 'ETH', '#7b8cff'), ser(3, 'Altcoins', '#3ddc97'), ser(4, 'Stablecoins (part)', '#9aa0b0')], height: 200, yFmt: v => num(v, 0) + ' %', xFmt: t => new Date(t).getUTCFullYear(), xTicks: 6});
   }

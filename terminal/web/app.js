@@ -666,7 +666,7 @@ $('#stats').addEventListener('click', e => {
 });
 
 // ---------- workspace : pages, menu lateral, mise en page ----------
-const PAGES = {desk: 'Desk', overview: 'Overview', backtest: 'Backtest', analysis: 'Analyse'};
+const PAGES = {desk: 'Desk', overview: 'Overview', history: 'Historique', backtest: 'Backtest', analysis: 'Analyse'};
 const SUBS = {synth: 'Biais & probabilités', macro: 'Macro & annonces', dom: 'Dominance BTC / alts', plan: 'Plan de trade', lex: 'Lexique du graphique'};
 function navigate(page, sub) {
   if (!PAGES[page]) page = 'desk';
@@ -679,6 +679,7 @@ function navigate(page, sub) {
   if (page === 'desk') setTimeout(() => { syncRange(); refreshAll(); }, 60);
   if (page === 'overview') pollOverview();
   if (page === 'backtest') Backtest.show();
+  if (page === 'history') History.show();
   try { localStorage.setItem('liqPage', page + (page === 'analysis' ? '/' + st.sub : '')); } catch (e) { /* rien */ }
 }
 function routeFromHash() {
@@ -897,7 +898,7 @@ async function openSettings() {
     $('#aMacro').checked = s.alertMacro !== false;
     const x = s.x || {}; $('#xOn').checked = x.on !== false; $('#xAccounts').value = (x.accounts || []).join(', '); $('#xPosts').value = String(x.posts || 10);
     $('#xToken').value = ''; $('#xToken').placeholder = x.tokenHint ? `jeton enregistré (${x.tokenHint}) : laisse vide pour le garder` : 'Bearer token X (API officielle)'; $('#xRes').textContent = '';
-    $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sMaxSym').value = s.signalMaxPerSymbol; $('#sLev').value = s.signalLeverage; $('#sTrend').checked = s.signalTrendGate !== false;
+    $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sMaxSym').value = s.signalMaxPerSymbol; $('#sLev').value = s.signalLeverage; $('#sTrend').checked = s.signalTrendGate !== false; $('#sDir').value = s.signalDirection || 'long';
     const ch = s.chat || {}; $('#chatKey').value = ''; $('#chatKey').placeholder = ch.keyHint ? `clé enregistrée (${ch.keyHint}) : laisse vide pour la garder` : 'sk-ant-...';
     $('#chatWeb').checked = ch.web !== false; $('#chatTg').checked = ch.telegram !== false; $('#chatBudget').value = ch.budget != null ? ch.budget : 20; $('#chatInstallRes').textContent = '';
     try { const cs = await api('/api/chat'); $('#chatModel').innerHTML = cs.models.map(m => `<option value="${m.id}"${m.id === (ch.model || cs.model) ? ' selected' : ''}>${esc(m.name)} (${m.in} $ / ${m.out} $ par million de jetons)</option>`).join('');
@@ -1036,7 +1037,7 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
   const body = {source: src, symbols: $('#symbols').value.split(/[\s,;]+/).filter(Boolean), telegramChatId: $('#tgChat').value.trim(),
     alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMode: $('#aMode').value, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, historyYears: +$('#histYears').value,
     xOn: $('#xOn').checked, xAccounts: $('#xAccounts').value, xPosts: +$('#xPosts').value,
-    signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalMaxPerSymbol: +$('#sMaxSym').value, signalLeverage: +$('#sLev').value, signalTrendGate: $('#sTrend').checked};
+    signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalMaxPerSymbol: +$('#sMaxSym').value, signalLeverage: +$('#sLev').value, signalTrendGate: $('#sTrend').checked, signalDirection: $('#sDir').value};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();
   if ($('#xToken').value.trim()) body.xToken = $('#xToken').value.trim();
   if ($('#chatModel').value) body.chatModel = $('#chatModel').value;
@@ -1080,6 +1081,7 @@ function openSymbol(sym, page) {
   Overview.init(window.LT);
   Signals.init(window.LT);
   Backtest.init(window.LT);
+  History.init(window.LT);
   Strategy.init(window.LT);
   Lecture.init(window.LT);
   createPanels();

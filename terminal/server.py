@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 from alerts.assistant import MODELS as CHAT_MODELS, Assistant, TelegramChat, install_sdk
 from alerts.notifier import ConsoleNotifier, TelegramNotifier
+from alerts import readings as readings_mod
 from alerts.rules import AlertEngine
 from alerts.trades import OPEN, TradeDesk
 from config import ROOT, load_config, write_env
@@ -91,6 +92,7 @@ class App:
         self.feed = feed
         self.price_cache = {}
         self.assistant = Assistant(cfg, lambda: self.service, cfg.data_dir)
+        self.readings = readings_mod.ReadingLog(cfg)
         if old:
             old.stop()
         if feed and self.running:
@@ -181,6 +183,19 @@ class App:
                 macro = None
         self.alerts.run_cycle(states, macro)
         self.trade_cycle(service, list(states))
+        self.reading_cycle(service, list(states))
+
+    def reading_cycle(self, service, symbols):
+        """Une lecture par jour et par paire (historique des analyses), puis le prix 24 h / 3 j / 7 j apres les lectures passees."""
+        try:
+            now = self.source.now_ms()
+            for s in symbols:
+                if self.readings.due(s, now):
+                    self.readings.record(s, now, readings_mod.snapshot(service.lecture(s)))
+            self.readings.evaluate(lambda sym, t: service.markets[sym]._price_at(t) if sym in service.markets else None, now)
+            service.errors.pop("lectures", None)
+        except Exception as e:
+            service.errors["lectures"] = f"{type(e).__name__}: {e}"
 
     def trade_cycle(self, service, symbols):
         """Idees de trade : suit les idees ouvertes sur les bougies 5 min, puis envoie les nouvelles (quota hebdomadaire)."""
@@ -291,7 +306,7 @@ class App:
                 "alertMinScore": c.alert_min_score, "alertTf": c.alert_tf, "alertCooldownHours": c.alert_cooldown_hours,
                 "alertMode": c.alert_mode, "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "alertZones": c.alert_zones, "historyYears": c.history_years,
                 "signalOn": c.signal_on, "signalMinScore": c.signal_min_score, "signalMaxWeek": c.signal_max_week, "signalMaxPerSymbol": c.signal_max_per_symbol,
-                "signalLeverage": c.signal_leverage, "signalTrendGate": c.signal_trend_gate,
+                "signalLeverage": c.signal_leverage, "signalTrendGate": c.signal_trend_gate, "signalDirection": c.signal_direction,
                 "x": {"on": c.x_on, "configured": bool(c.x_token and c.x_accounts), "tokenHint": ("..." + c.x_token[-4:]) if c.x_token else "",
                       "accounts": list(c.x_accounts), "posts": c.x_posts},
                 "chat": {"configured": bool(c.chat_key), "keyHint": ("..." + c.chat_key[-4:]) if c.chat_key else "", "model": c.chat_model, "web": c.chat_web,
@@ -343,6 +358,8 @@ class App:
             upd["TERMINAL_SIGNAL_MAX_PER_SYMBOL"] = str(max(1, min(10, int(body["signalMaxPerSymbol"]))))
         if body.get("signalLeverage") is not None:
             upd["TERMINAL_SIGNAL_LEVERAGE"] = str(max(1, min(125, float(body["signalLeverage"]))))
+        if body.get("signalDirection") in ("long", "short", "both"):
+            upd["TERMINAL_SIGNAL_DIRECTION"] = body["signalDirection"]
         if body.get("signalTrendGate") is not None:
             upd["TERMINAL_SIGNAL_TREND_GATE"] = "1" if body["signalTrendGate"] else "0"
         if body.get("xToken"):
@@ -459,7 +476,7 @@ def make_handler(app: App):
                         if sy not in app.service.markets:
                             raise KeyError(f"symbole inconnu : {sy}")
                     return self._json({"symbols": {sy: app.service.signals(sy) for sy in syms}, "desk": app.desk.public(app.source.now_ms()),
-                                       "on": app.cfg.signal_on})
+                                       "on": app.cfg.signal_on, "direction": app.cfg.signal_direction})
                 if u.path == "/api/backtest":
                     lab = (q.get("label") or [""])[0]
                     if not lab:
@@ -512,6 +529,9 @@ def make_handler(app: App):
                     return self._json(app.settings())
                 if u.path == "/api/update":
                     return self._json(app.update_status())
+                if u.path == "/api/history":
+                    return self._json({**app.desk.history(app.source.now_ms()), "readings": app.readings.public(), "direction": app.cfg.signal_direction,
+                                       "since": int(app.started * 1000), "source": app.cfg.source, "symbols": list(app.cfg.symbols)})
                 if u.path == "/api/chat":
                     t = app.tgchat
                     return self._json({**app.assistant.status(), "history": app.assistant.history(),

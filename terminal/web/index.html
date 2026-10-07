@@ -16,6 +16,7 @@
     <a href="#/desk" data-nav="desk"><i>▥</i><span>Desk</span></a>
     <a href="#/overview" data-nav="overview"><i>▦</i><span>Overview</span></a>
     <a href="#/signals" data-nav="signals"><i>◎</i><span>Idées de trade</span></a>
+    <a href="#/history" data-nav="history" title="Toutes les idées et alertes envoyées avec leur résultat, et la lecture du terminal jour après jour"><i>⧗</i><span>Historique</span></a>
     <a href="#/backtest" data-nav="backtest"><i>⌁</i><span>Backtest</span></a>
     <div class="sgroup">ANALYSE</div>
     <a href="#/analysis/synth" data-nav="analysis" data-sub="synth" data-expert hidden><i>◆</i><span>Biais &amp; probabilités</span></a>
@@ -157,6 +158,10 @@
   <div id="overview" class="ovwrap"><div class="muted">Chargement…</div></div>
 </section>
 
+<section class="page" data-page="history" hidden>
+  <div id="histBox" class="btwrap"></div>
+</section>
+
 <section class="page" data-page="backtest" hidden>
   <div id="btBox" class="btwrap"><div class="muted">Chargement…</div></div>
 </section>
@@ -232,6 +237,7 @@
           <label class="field">Idées par semaine au maximum <input id="sMax" type="number" min="1" max="10" step="1"></label>
           <label class="field">… dont au maximum pour une même paire <input id="sMaxSym" type="number" min="1" max="10" step="1"></label>
           <label class="field">Ton levier habituel (calcul de liquidation) <input id="sLev" type="number" min="1" max="125" step="1"></label>
+          <label class="field">Sens de mes trades <select id="sDir"><option value="long">Achat seulement (je suis toujours long)</option><option value="both">Achats et ventes</option><option value="short">Vente seulement</option></select></label>
           <label class="field chk"><input id="sTrend" type="checkbox"> Ne garder que les idées dans le sens de la tendance de fond (recommandé : c'est le seul filtre validé par le backtest)</label>
         </div>
         <p class="muted small">Seules les configurations rares où plusieurs niveaux importants se superposent sont envoyées, avec stop, objectifs et explication complète. 65 est un bon point de départ ; baisse le seuil si tu reçois trop peu d'idées, monte-le pour être plus sélectif.</p>
@@ -286,6 +292,7 @@
 <script src="overview.js"></script>
 <script src="signals.js"></script>
 <script src="backtest.js"></script>
+<script src="history.js"></script>
 <script src="strategy.js"></script>
 <script src="lecture.js"></script>
 <script src="panels.js"></script>

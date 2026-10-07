@@ -1193,7 +1193,7 @@ class Service:
         best = sg["ideas"][0]
         return {"n": sum(1 for i in sg["ideas"] if i["eligible"]), "side": best["side"], "score": best["score"], "entry": best["entry"],
                 "stop": best["stop"], "tp1": best["tp1"], "eligible": best["eligible"], "hold": best["hold"][:1], "gates": [str(g) for g in (best.get("gates") or [])][:2],
-                "align": best.get("align"), "minScore": sg["minScore"]}
+                "align": best.get("align"), "minScore": sg["minScore"], "direction": getattr(self.cfg, "signal_direction", "both")}
 
     def lecture(self, symbol: str) -> dict:
         """L'essentiel du marche pour cette paire en une page (engine/lecture.py) : tendance, idee, ce qui arrive, positionnement, derives, macro, liquidite."""

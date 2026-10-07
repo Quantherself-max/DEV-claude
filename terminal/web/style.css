@@ -299,3 +299,6 @@ ul.mine{margin:4px 0 0;padding-left:18px;font-size:12.5px;color:#c6c9d2}ul.mine 
 .chatlog .sep{align-self:center;color:var(--mut);font-size:11px}
 .chatform{display:flex;gap:6px;align-items:flex-end;margin-top:6px}
 .chatform textarea{flex:1;resize:vertical;min-height:40px;background:#0f131c;border:1px solid #2a3142;border-radius:8px;color:#e6e8ee;padding:7px 9px;font:inherit;font-size:13px}
+
+/* historique */
+.histmsg{white-space:pre-wrap;font:12px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;background:#0f131c;border:1px solid #232a38;border-radius:6px;padding:8px 10px;max-width:520px;max-height:360px;overflow:auto;margin:6px 0 0}

@@ -1,9 +1,10 @@
-# Liq Terminal (V12)
+# Liq Terminal (V13)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Historique et sens de tes trades** (V13) : page **Historique** (chaque idée et alerte envoyée avec son résultat, la lecture du terminal jour après jour et ce que le prix a fait ensuite), mode **achat seulement** par défaut et règle contre les changements de sens (voir « V13 » plus bas).
 - **Discuter avec Claude** (V12) : pose tes questions sur Telegram (au même bot) ou dans l'onglet **Discussion** (« pourquoi le BTC a perdu 2 % ? ») ; Claude répond avec toutes les données du terminal à cet instant et l'actualité du web (voir « V12 » plus bas).
 - **Mise à jour automatique** (V11) : une nouvelle version publiée sur GitHub est vérifiée, sauvegardée et installée toute seule ; le terminal redémarre dans la même fenêtre et la page se recharge. Rien à configurer : le dépôt est public (Réglages → 6 pour suivre l'état, voir « V11 » plus bas).
 - **Où est l'argent, l'or, et les squeezes** (V10) : carte du capital (bitcoin, ETH, altcoins, stablecoins, or) et rotation, asymétrie bitcoin / or, **delta, divergences flux / prix / volume et short / long squeezes** (lecture en direct à la Velo dans la Lecture, mesure sur 12 ans), décompte de bougie sous le prix comme sur TradingView (voir « V10 » plus bas).
@@ -105,6 +106,29 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V13 : l'historique, et plus de va-et-vient
+
+### Page « Historique » (menu de gauche)
+- **Chaque idée et chaque alerte envoyées**, avec la date (heure de Paris), la paire, le sens, la qualité, l'entrée, le stop, les objectifs, le **résultat** (ordre en attente, en position, objectif 1 puis sortie à l'équilibre, objectif 2, stop, expirée…) en fois le risque (R), et le message complet tel qu'il est parti sur Telegram.
+- En haut : idées envoyées, part des idées gagnantes, résultat total en R, justesse des alertes, et la **courbe du résultat cumulé**.
+- **La lecture du terminal jour après jour** : une fois par jour et par paire, ce que le terminal pensait (tendance de fond, squeeze, climat macro, idée du moment), puis ce que le prix a fait **24 heures, 3 jours et 7 jours après**. La tendance de fond (le seul élément validé par le backtest) est notée : ✓ si le prix est allé dans son sens.
+
+### Sens de tes trades (Réglages → 4)
+- **Achat seulement** (par défaut, puisque tu es toujours long) : une configuration de **vente** n'est plus envoyée comme une idée de vente. Elle arrive comme **« 🛡 Alerte pour tes longs »** : où elle serait fausse, jusqu'où le prix peut aller, que faire si tu es long (alléger, remonter le stop, attendre avant de renforcer), et le rappel de ton idée d'achat encore ouverte avec son stop. Hors quota (les 5 idées par semaine restent des achats), une par paire et par 24 heures au plus. Son résultat est suivi : l'historique dit si elle avait raison.
+- **Achats et ventes** ou **vente seulement** restent possibles.
+
+### Plus de va-et-vient
+- Une idée dans l'autre sens qu'une idée de moins de 72 heures sur la même paire **n'est pas envoyée tant que la précédente est ouverte**. Une fois la précédente terminée, elle exige **10 points de qualité en plus**, et son message commence par **« ⚠️ CHANGEMENT DE SENS »** : la date et le résultat de l'idée précédente, et le fait qu'elle la **remplace** (elle ne s'y ajoute pas).
+- Une idée sur BTC et une alerte sur SOL ne se contredisent pas : ce sont deux paires différentes, chacune avec sa propre tendance.
+
+### Le terminal analyse-t-il quand il est éteint ?
+- **Non.** Tout tourne sur ton ordinateur, **seulement quand le terminal est ouvert** : récupération des données, calculs, idées, alertes, lecture quotidienne, mises à jour. Éteint, rien n'est calculé ni envoyé.
+- Au redémarrage, il recharge l'historique des prix et **vérifie ce qui est arrivé aux idées ouvertes pendant son absence** (stop, objectifs, jusqu'à 29 jours en arrière) : les résultats de l'historique restent justes. En revanche, il **ne fabrique pas d'idées pour le passé** et une journée éteinte n'a pas de lecture.
+- Pour qu'il tourne 24 h / 24 sans ton ordinateur : dossier `serveur/` (installation sur un petit serveur loué, quelques euros par mois).
+
+### Correction
+- Le graphique des parts du capital (page Backtest → « où va l'argent ») ne s'affichait pas : corrigé.
 
 ## Ce qui est nouveau en V12 : discuter avec Claude, comme sur Telegram
 
@@ -448,7 +472,7 @@ engine/             calculs : profils de volume (auto et choisis), séries VWAP 
                     V12 : explain.py (mouvements récents et faits qui les accompagnent) ;
                     V10 : rotation.py et rotationstudy.py (carte du capital, rotation, or), goldbtc.py (asymétrie bitcoin / or), squeeze.py (delta, divergences, squeezes), squeezestudy.py (mesure)
 data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase) ; social.py (posts X, facultatif) ; V9 : derivs.py (options, DVOL, base, financement multi-bourses), opendata.py (jeux libres GitHub)
-alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées) ; assistant.py (discussion avec Claude, V12)
+alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées) ; assistant.py (discussion avec Claude, V12) ; readings.py (lecture quotidienne et ce que le prix a fait ensuite, V13)
 service.py          relie les données et les moteurs, fabrique l'état JSON
 server.py           serveur local : API, réglages, sécurité
 web/                interface : index.html + style.css ; app.js (Desk, état, alertes), panels.js (les trois graphiques),
@@ -457,7 +481,7 @@ web/                interface : index.html + style.css ; app.js (Desk, état, al
 tools/              run_rotation.py, run_squeeze_study.py (V10), run_indicators.py, run_derivs_study.py (V9), fetch_history.py (historique 1 min Binance), run_study.py (rapport de backtest des idées du terminal), run_strategy.py (rapport de ta stratégie VWAP / profil de volume) et run_avwap_swing.py (VWAP ancrés sur un mouvement de 5 % ou plus)
 reports/            rapports livrés (BTC) : backtest_BTC.json (idées du terminal), strategy_BTC.json (ta stratégie) et avwap_BTC.json (VWAP ancrés sur un mouvement) indicators_BTC.json (indicateurs en chaîne et macro), rotation_BTC.json (où va l'argent, or) et squeeze_BTC.json (delta, CVD, squeezes) ; les tiens vont dans data_local/reports/
 serveur/            installation sur un serveur 24 h/24 (script et guide)
-tests/              tests automatiques (près de quatre cents)
+tests/              tests automatiques (plus de quatre cents)
 ```
 
 ## Limites connues
