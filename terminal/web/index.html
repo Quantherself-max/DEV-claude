@@ -238,6 +238,18 @@
         </div>
         <p class="muted small">Indicatif seulement : <b>n'entre jamais dans le score</b> et n'influence aucune idée. Lecture automatique par mots-clés des posts récents (48 h) qui parlent de la paire. La lecture se paie à l'API de X (environ 0,005 $ par post lu selon les tarifs publiés, à vérifier sur ton compte développeur) ; elle n'a lieu qu'au moment d'envoyer une idée ou quand tu cliques sur « Voir l'avis », puis elle est gardée 30 minutes. Le jeton reste dans ton fichier <code>.env</code>.</p>
       </section>
+      <section>
+        <h4><span class="step">6</span> Mises à jour automatiques <small id="updState"></small></h4>
+        <div id="updInfo" class="muted small">-</div>
+        <label class="field chk"><input id="updAuto" type="checkbox"> Installer automatiquement les nouvelles versions (le terminal redémarre tout seul, la page se recharge)</label>
+        <ol class="howto">
+          <li>Le dépôt est privé : crée un jeton GitHub en <b>lecture seule</b> : GitHub → photo de profil → <b>Settings</b> → <b>Developer settings</b> → <b>Personal access tokens</b> → <b>Fine-grained tokens</b> → <b>Generate new token</b> ; « Repository access » : <b>Only select repositories</b> → <code>DEV-claude</code> ; « Permissions » → <b>Contents : Read-only</b> ; puis <b>Generate token</b>.</li>
+          <li>Colle-le ici : <input id="updToken" type="password" placeholder="github_pat_..." autocomplete="off" spellcheck="false"></li>
+          <li><button id="updCheck">Vérifier maintenant</button> <button id="updApply">Installer maintenant</button> <span id="updRes" class="muted"></span></li>
+        </ol>
+        <label class="field">Branche suivie <input id="updBranch" placeholder="auto" autocomplete="off" spellcheck="false"></label>
+        <p class="muted small">« auto » = la branche du dépôt la plus récemment mise à jour qui contient le terminal (chaque nouvelle session de travail publie sur sa propre branche). Avant d'installer, le terminal vérifie que la nouvelle version est complète et démarre, et sauvegarde l'actuelle ; si elle plante au démarrage, l'ancienne revient toute seule. Tes données (<code>data_local</code>) et tes réglages (<code>.env</code>) ne sont jamais touchés. Vérification toutes les 30 minutes. Le jeton reste dans ton fichier <code>.env</code>.</p>
+      </section>
     </div>
     <div class="mfoot"><span id="saveRes" class="muted"></span><button id="cancelSettings">Annuler</button><button id="saveSettings" class="primary">Enregistrer</button></div>
   </div>

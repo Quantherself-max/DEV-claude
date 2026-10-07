@@ -73,6 +73,13 @@ class Config:
     x_posts: int = 10                     # posts lus par compte (5 a 20)
     x_max_age_h: float = 48.0
     x_api_base: str = "https://api.x.com"
+    # mise a jour automatique (V11) : nouvelle version publiee sur GitHub -> installee et terminal relance, sans fermer la fenetre
+    update_auto: bool = True
+    update_repo: str = "Quantherself-max/DEV-claude"
+    update_branch: str = "auto"           # « auto » = la branche la plus recemment mise a jour qui contient le terminal
+    update_token: str = ""                # jeton GitHub en LECTURE SEULE (depot prive)
+    update_minutes: int = 30
+    update_api: str = "https://api.github.com"
     telegram_token: str = ""
     telegram_chat_id: str = ""
     telegram_api_base: str = "https://api.telegram.org"
@@ -126,6 +133,12 @@ def load_config(env_path: Path | None = None) -> Config:
     c.x_api_base = g("TERMINAL_X_API_BASE", c.x_api_base).rstrip("/")
     c.stats_horizon = int(g("TERMINAL_STATS_HORIZON", c.stats_horizon))
     c.stats_k = float(g("TERMINAL_STATS_K", c.stats_k))
+    c.update_auto = g("TERMINAL_UPDATE_AUTO", "1").lower() not in ("0", "false", "non", "no")
+    c.update_repo = g("TERMINAL_UPDATE_REPO", c.update_repo).strip().strip("/") or "Quantherself-max/DEV-claude"
+    c.update_branch = g("TERMINAL_UPDATE_BRANCH", c.update_branch).strip() or "auto"
+    c.update_token = g("TERMINAL_GITHUB_TOKEN", "").strip()
+    c.update_minutes = max(10, min(1440, int(float(g("TERMINAL_UPDATE_MINUTES", c.update_minutes)))))
+    c.update_api = g("TERMINAL_UPDATE_API", c.update_api).rstrip("/")
     c.telegram_token = g("TELEGRAM_BOT_TOKEN", "")
     c.telegram_chat_id = g("TELEGRAM_CHAT_ID", "")
     c.telegram_api_base = g("TELEGRAM_API_BASE", c.telegram_api_base)

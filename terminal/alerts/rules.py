@@ -2,6 +2,7 @@
 une alerte "nouvelle" une fois par cooldown, puis une alerte "approche" quand le prix s'en rapproche.
 Au demarrage on enregistre l'existant et on envoie UN resume (pas une rafale)."""
 import json
+import os
 import time
 from pathlib import Path
 
@@ -280,5 +281,8 @@ class AlertEngine:
                     names = " + ".join(member_label(m) for m in sorted(zone_members(st, z), key=lambda m: m["price"]))
                     lines.append(f"{arrow} {sym} {fmt_price(z['mid'])} ({sigeng.fmt_pct(z['distPct'], 2, sign=True)}) · {names}")
             text = "✅ Terminal demarre\n" + ("\n".join(lines) if lines else "Aucune confluence active pour l'instant.")
-        ok, detail = self.notifier.send(text)
+        if os.environ.get("LIQ_RESTART"):                         # relance apres une mise a jour : Telegram reste reserve aux idees de trade
+            ok, detail = False, "relance automatique (mise à jour) : message non envoyé"
+        else:
+            ok, detail = self.notifier.send(text)
         self._log({"t": self.now(), "symbol": "*", "kind": "startup", "text": text, "sent": ok, "detail": detail})

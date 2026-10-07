@@ -1,9 +1,10 @@
-# Liq Terminal (V10)
+# Liq Terminal (V11)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Mise à jour automatique** (V11) : une nouvelle version publiée sur GitHub est vérifiée, sauvegardée et installée toute seule ; le terminal redémarre dans la même fenêtre et la page se recharge. Un jeton GitHub en lecture seule suffit (Réglages → 6, voir « V11 » plus bas).
 - **Où est l'argent, l'or, et les squeezes** (V10) : carte du capital (bitcoin, ETH, altcoins, stablecoins, or) et rotation, asymétrie bitcoin / or, **delta, divergences flux / prix / volume et short / long squeezes** (lecture en direct à la Velo dans la Lecture, mesure sur 12 ans), décompte de bougie sous le prix comme sur TradingView (voir « V10 » plus bas).
 - **Un écran de lecture épuré et de nouvelles données** (V9) : onglet **Lecture** (l'essentiel en une page, chaque ligne avec son niveau de preuve), dérivés multi-bourses (options, volatilité implicite, base, financement, Open Interest), données en chaîne et macro libres, et un **laboratoire d'indicateurs** qui mesure ce que vaut chaque indicateur (voir « V9 » plus bas).
 - **Les VWAP ancrés sur un mouvement d'au moins 5 %** (V8, onglet **Stratégie** et rapport « VWAP ancrés sur un mouvement » dans la page **Backtest**) : VWAP ancré sur le sommet de la baisse (résistance) et sur le creux (support), réaction du prix mesurée sur 13 ans de BTC (voir « V8 » plus bas).
@@ -103,6 +104,23 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V11 : le terminal se met à jour tout seul
+
+### À faire une seule fois
+1. **Installe cette version à la main**, une dernière fois (ZIP habituel, en gardant ton dossier `data_local` et ton fichier `.env`), puis lance-la comme d'habitude.
+2. **Crée un jeton GitHub en lecture seule** (le dépôt est privé) : GitHub → photo de profil → **Settings** → **Developer settings** → **Personal access tokens** → **Fine-grained tokens** → **Generate new token**. « Repository access » : **Only select repositories** → `DEV-claude` ; « Permissions » → **Contents : Read-only** ; durée au choix (un an, par exemple) ; **Generate token**.
+3. Dans le terminal : **Réglages → 6. Mises à jour automatiques** → colle le jeton → **Enregistrer**. Tu peux cliquer **Vérifier maintenant** pour voir la dernière version publiée.
+
+### Ensuite, plus rien à faire
+- Toutes les 30 minutes, le terminal regarde la dernière version publiée (« auto » = la branche du dépôt la plus récemment mise à jour qui contient le terminal : chaque session de travail publie sur sa propre branche).
+- S'il y en a une nouvelle : il la télécharge, **vérifie** qu'elle est complète, que tout le code se compile et que les modules principaux se chargent, **sauvegarde** la version actuelle (`.update/backup`), remplace les fichiers, puis **redémarre tout seul dans la même fenêtre**. La page du navigateur se recharge et un message indique la version installée.
+- Si la nouvelle version s'arrête en erreur au démarrage, **l'ancienne revient automatiquement** et le terminal repart avec elle.
+- **Jamais touchés** : `data_local/` (données, journaux, tes rapports) et `.env` (réglages, jetons). Pas de message Telegram à chaque relance (Telegram reste réservé aux idées de trade).
+- Le lanceur (`.bat` / `.command`) en cours d'utilisation n'est pas remplacé pendant que le terminal tourne : s'il change, la nouvelle copie attend dans `.update/lanceurs/` (le Réglage 6 le signale).
+- Tu préfères garder la main : décoche « Installer automatiquement » ; le terminal te dit alors qu'une version est disponible et tu cliques **Installer maintenant**.
+- Lancé avec `python run.py --no-supervisor`, ou depuis un dossier git (utilise alors `git pull`), le terminal ne se met pas à jour tout seul.
+- **Vérifié ici** : installation, relance, rechargement de la page et retour automatique à l'ancienne version, contre un faux serveur GitHub. **Pas encore vérifié** contre le vrai GitHub depuis ton PC : si ça bloque, le Réglage 6 affiche l'erreur en clair (jeton refusé, dépôt introuvable…).
 
 ## Ce qui est nouveau en V10 : où est l'argent, l'or, et les squeezes
 
@@ -393,7 +411,8 @@ Les probabilités et le biais statistique sont recalculés toutes les 6 heures, 
 ## Structure
 
 ```
-run.py              point d'entrée
+run.py              point d'entrée (relance le terminal après une mise à jour)
+updater.py          mise à jour automatique depuis GitHub : vérification, contrôles, sauvegarde, remplacement, retour arrière (V11)
 Lancer-Terminal-*   lanceurs à double-cliquer
 config.py           configuration (.env) et écriture des réglages
 engine/             calculs : profils de volume (auto et choisis), séries VWAP / AVWAP, périodes, POC nus, poches de
@@ -416,7 +435,7 @@ web/                interface : index.html + style.css ; app.js (Desk, état, al
 tools/              run_rotation.py, run_squeeze_study.py (V10), run_indicators.py, run_derivs_study.py (V9), fetch_history.py (historique 1 min Binance), run_study.py (rapport de backtest des idées du terminal), run_strategy.py (rapport de ta stratégie VWAP / profil de volume) et run_avwap_swing.py (VWAP ancrés sur un mouvement de 5 % ou plus)
 reports/            rapports livrés (BTC) : backtest_BTC.json (idées du terminal), strategy_BTC.json (ta stratégie) et avwap_BTC.json (VWAP ancrés sur un mouvement) indicators_BTC.json (indicateurs en chaîne et macro), rotation_BTC.json (où va l'argent, or) et squeeze_BTC.json (delta, CVD, squeezes) ; les tiens vont dans data_local/reports/
 serveur/            installation sur un serveur 24 h/24 (script et guide)
-tests/              tests automatiques (plus de trois cent soixante-dix)
+tests/              tests automatiques (plus de trois cent quatre-vingts)
 ```
 
 ## Limites connues

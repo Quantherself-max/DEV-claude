@@ -22,6 +22,7 @@ from data.live import LiveFeed
 from data.social import Influencers, clean_handles
 from data.simulated import SimulatedSource
 from service import TFS, Service
+from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
 
@@ -58,8 +59,15 @@ def build_parts(cfg, make_source=default_source, make_feed=default_feed, make_hu
 
 class App:
     def __init__(self, cfg, env_path: Path | None = None, make_source=default_source, make_feed=default_feed,
-                 make_hub=default_hub):
+                 make_hub=default_hub, make_updater=None, updates: bool = False):
         self.env_path = env_path or ROOT / ".env"
+        self.make_updater = make_updater or (lambda c: Updater(ROOT, c.update_repo, c.update_branch, c.update_token, api=c.update_api))
+        self.updates_on = updates                      # True : lance par run.py, qui sait relancer le terminal apres une mise a jour
+        self.httpd = None
+        self.restart_requested = False
+        self.boot = secrets.token_hex(4)               # change a chaque demarrage : la page du navigateur se recharge toute seule
+        self.upd_lock = threading.Lock()
+        self.upd = {"state": "pas encore vérifié", "latest": None, "newer": False, "lastCheck": None, "error": None, "result": None}
         self.make_source, self.make_feed, self.make_hub = make_source, make_feed, make_hub
         self.running = False
         self.feed = None
@@ -178,6 +186,81 @@ class App:
             self.wake.clear()
             self.wake.wait(max(1.0, self.cfg.refresh_seconds - (time.time() - t0)))
 
+    # --- mise a jour automatique (updater.py) ---
+    def start_updates(self):
+        """Verification periodique des nouvelles versions (premiere verification 90 s apres le demarrage)."""
+        self.updates_on = True
+        t = threading.Timer(45.0, self._mark_healthy)
+        t.daemon = True
+        t.start()
+        threading.Thread(target=self.update_loop, daemon=True).start()
+
+    def _mark_healthy(self):
+        try:
+            self.make_updater(self.cfg).mark_healthy()
+        except OSError:
+            pass
+
+    def update_loop(self):
+        if self.stop.wait(90):
+            return
+        while not self.stop.is_set() and not self.restart_requested:
+            self.update_check()
+            self.stop.wait(self.cfg.update_minutes * 60)
+
+    def update_status(self) -> dict:
+        c = self.cfg
+        u = self.make_updater(c)
+        st = u.state()
+        just = None
+        if st.get("installedAt") and st.get("previous") and st["installedAt"] >= self.started - 900:
+            just = {"sha": st.get("sha"), "message": st.get("message"), "at": st.get("installedAt")}
+        lan = u.dir / "lanceurs"
+        return {"configured": bool(c.update_token), "auto": c.update_auto, "repo": c.update_repo, "branch": c.update_branch, "minutes": c.update_minutes,
+                "tokenHint": ("..." + c.update_token[-4:]) if c.update_token else "", "installed": u.installed(), "git": u.is_git(), "supervised": self.updates_on,
+                "boot": self.boot, "justUpdated": just, "rolledBack": st.get("rolledBack"), "launchers": sorted(p.name for p in lan.iterdir()) if lan.is_dir() else [],
+                **{k: self.upd[k] for k in ("state", "latest", "newer", "lastCheck", "error", "result")}}
+
+    def update_check(self, install: bool | None = None) -> dict:
+        """Verifie la derniere version ; l'installe si `install` (ou, par defaut, si la mise a jour automatique est active), puis relance le terminal."""
+        if not self.upd_lock.acquire(blocking=False):
+            return {**self.update_status(), "busy": True}
+        try:
+            u = self.make_updater(self.cfg)
+            self.upd.update(state="vérification…", error=None)
+            try:
+                r = u.check()
+                unknown = not r["installed"].get("sha")
+                self.upd.update(latest=r["latest"], newer=r["newer"], lastCheck=time.time(),
+                                state=("version installée inconnue : à comparer" if unknown else "mise à jour disponible") if r["newer"] else "à jour")
+                if r["newer"] and (self.cfg.update_auto if install is None else install):
+                    self.upd["state"] = "installation…"
+                    res = u.apply(r["latest"])
+                    self.upd.update(result=res, newer=False, state="installée : redémarrage…" if res["restart"] else "à jour")
+                    if res["restart"]:
+                        self.request_restart()
+            except UpdateError as e:
+                self.upd.update(state="erreur", error=str(e), lastCheck=time.time())
+            except Exception as e:
+                self.upd.update(state="erreur", error=f"{type(e).__name__}: {str(e)[:200]}", lastCheck=time.time())
+        finally:
+            self.upd_lock.release()
+        return self.update_status()
+
+    def request_restart(self, delay: float = 2.0) -> bool:
+        """Arrete proprement le serveur pour que run.py le relance avec la nouvelle version. Sans run.py (lancement manuel), la version s'applique au prochain demarrage."""
+        if not self.updates_on:
+            self.upd["state"] = "installée : relance le terminal pour l'utiliser"
+            return False
+        self.restart_requested = True
+
+        def go():
+            time.sleep(delay)                          # laisse partir la reponse en cours
+            if self.httpd:
+                self.httpd.shutdown()
+        threading.Thread(target=go, daemon=True).start()
+        return True
+
     # --- reglages ---
     def settings(self):
         c = self.cfg
@@ -190,7 +273,9 @@ class App:
                 "signalOn": c.signal_on, "signalMinScore": c.signal_min_score, "signalMaxWeek": c.signal_max_week, "signalMaxPerSymbol": c.signal_max_per_symbol,
                 "signalLeverage": c.signal_leverage, "signalTrendGate": c.signal_trend_gate,
                 "x": {"on": c.x_on, "configured": bool(c.x_token and c.x_accounts), "tokenHint": ("..." + c.x_token[-4:]) if c.x_token else "",
-                      "accounts": list(c.x_accounts), "posts": c.x_posts}}
+                      "accounts": list(c.x_accounts), "posts": c.x_posts},
+                "update": {"auto": c.update_auto, "branch": c.update_branch, "repo": c.update_repo, "configured": bool(c.update_token),
+                           "tokenHint": ("..." + c.update_token[-4:]) if c.update_token else ""}}
 
     def save_settings(self, body: dict):
         upd = {}
@@ -251,6 +336,20 @@ class App:
             upd["TERMINAL_X_POSTS"] = str(max(5, min(20, int(body["xPosts"]))))
         if body.get("xOn") is not None:
             upd["TERMINAL_X_ON"] = "1" if body["xOn"] else "0"
+        if body.get("updateToken"):
+            tok = str(body["updateToken"]).strip()
+            if len(tok) > 255 or not re.fullmatch(r"[A-Za-z0-9_]+", tok):
+                raise ValueError("jeton GitHub invalide (une seule chaîne de lettres, chiffres et _ : github_pat_… ou ghp_…)")
+            upd["TERMINAL_GITHUB_TOKEN"] = tok
+        if body.get("updateClearToken"):
+            upd["TERMINAL_GITHUB_TOKEN"] = ""
+        if body.get("updateAuto") is not None:
+            upd["TERMINAL_UPDATE_AUTO"] = "1" if body["updateAuto"] else "0"
+        if body.get("updateBranch") is not None:
+            br = str(body["updateBranch"]).strip() or "auto"
+            if not re.fullmatch(r"[A-Za-z0-9._/-]{1,120}", br) or ".." in br:
+                raise ValueError("nom de branche invalide")
+            upd["TERMINAL_UPDATE_BRANCH"] = br
         write_env(self.env_path, upd)
         cfg = load_config(self.env_path)
         cfg.port, cfg.host, cfg.data_dir = self.cfg.port, self.cfg.host, self.cfg.data_dir
@@ -270,6 +369,7 @@ def make_handler(app: App):
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Terminal-Boot", app.boot)
             if len(body) > 4000 and "gzip" in self.headers.get("Accept-Encoding", ""):
                 body = gzip.compress(body, 3)
                 self.send_header("Content-Encoding", "gzip")
@@ -373,6 +473,8 @@ def make_handler(app: App):
                     return self._json(app.live_price((q.get("symbol") or [app.cfg.symbols[0]])[0].upper()))
                 if u.path == "/api/settings":
                     return self._json(app.settings())
+                if u.path == "/api/update":
+                    return self._json(app.update_status())
                 if u.path == "/api/alerts":
                     return self._json({"telegram": app.cfg.telegram_on, "log": app.alerts.log[-20:][::-1],
                                        "errors": app.service.errors})
@@ -398,6 +500,10 @@ def make_handler(app: App):
                 path = urlparse(self.path).path
                 if path == "/api/settings":
                     return self._json(app.save_settings(body))
+                if path == "/api/update/check":
+                    return self._json(app.update_check(install=False))
+                if path == "/api/update/apply":
+                    return self._json(app.update_check(install=True))
                 if path == "/api/vps":
                     return self._json({**app.service.set_vp(body.get("specs"), body.get("anchors", app.service.vp_state["anchors"])), "ok": True})
                 if path == "/api/test/binance":

@@ -598,8 +598,14 @@ async function poll() {
   clearTimeout(timer);
   timer = setTimeout(poll, 2000);
   let d;
-  try { d = await (await fetch(`/api/state?symbol=${st.symbol}&tf=${st.tf}`)).json(); }
-  catch (e) { $('#status').textContent = 'terminal injoignable : la fenêtre du programme est-elle fermée ?'; $('#status').className = 'bad'; return; }
+  try {
+    const r = await fetch(`/api/state?symbol=${st.symbol}&tf=${st.tf}`);
+    const boot = r.headers.get('X-Terminal-Boot');                 // le terminal a redemarre (mise a jour installee) : on recharge la page
+    if (boot && st.boot && boot !== st.boot) { location.reload(); return; }
+    if (boot) st.boot = boot;
+    d = await r.json();
+  }
+  catch (e) { $('#status').textContent = 'terminal injoignable : redémarrage en cours, ou la fenêtre du programme est fermée'; $('#status').className = 'bad'; return; }
   try {
     if (d.ready) apply(d);
     else {
@@ -891,7 +897,52 @@ async function openSettings() {
     const x = s.x || {}; $('#xOn').checked = x.on !== false; $('#xAccounts').value = (x.accounts || []).join(', '); $('#xPosts').value = String(x.posts || 10);
     $('#xToken').value = ''; $('#xToken').placeholder = x.tokenHint ? `jeton enregistré (${x.tokenHint}) : laisse vide pour le garder` : 'Bearer token X (API officielle)'; $('#xRes').textContent = '';
     $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sMaxSym').value = s.signalMaxPerSymbol; $('#sLev').value = s.signalLeverage; $('#sTrend').checked = s.signalTrendGate !== false;
+    const u = s.update || {}; $('#updAuto').checked = u.auto !== false; $('#updBranch').value = u.branch || 'auto'; $('#updRes').textContent = '';
+    $('#updToken').value = ''; $('#updToken').placeholder = u.tokenHint ? `jeton enregistré (${u.tokenHint}) : laisse vide pour le garder` : 'github_pat_...';
+    renderUpdate(await api('/api/update'));
   } catch (e) { $('#saveRes').textContent = 'Erreur : ' + e.message; }
+}
+// ---------- mise a jour automatique ----------
+const sha7 = s => s ? String(s).slice(0, 7) : '?';
+function renderUpdate(u) {
+  if (!u) return;
+  const i = u.installed || {}, l = u.latest;
+  const when = t => t ? new Date(typeof t === 'number' ? t * 1000 : t).toLocaleString('fr-FR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}) : '';
+  $('#updState').textContent = !u.configured ? 'jeton manquant' : u.error ? 'erreur' : u.state || '';
+  $('#updState').className = !u.configured || u.error ? 'dn' : u.newer ? 'amb' : 'up';
+  const lines = [`Version installée : <b>${i.sha ? sha7(i.sha) : 'inconnue (installée à la main)'}</b>${i.message ? ' · ' + esc(i.message) : ''}${i.installedAt ? ' · le ' + when(i.installedAt) : ''}`];
+  if (l) lines.push(`Dernière version publiée : <b>${sha7(l.sha)}</b> (${esc(l.branch || '')}) · ${esc(l.message || '')} · ${when(l.date)}`);
+  if (u.lastCheck) lines.push(`Dernière vérification : ${when(u.lastCheck)} · état : ${esc(u.state || '')}`);
+  if (u.error) lines.push(`<span class="dn">${esc(u.error)}</span>`);
+  if (u.git) lines.push('Dossier géré par git : mets-le à jour avec « git pull » (la mise à jour automatique ne le touche pas).');
+  if (!u.supervised) lines.push('Lancé sans la relance automatique : la nouvelle version s\'appliquera au prochain démarrage.');
+  if (u.rolledBack) lines.push(`<span class="dn">La version ${sha7(u.rolledBack.sha)} s'est arrêtée en erreur au démarrage : l'ancienne a été remise en place.</span>`);
+  if (u.launchers && u.launchers.length) lines.push('Nouveau lanceur disponible dans le dossier .update/lanceurs (à copier à la main, terminal fermé) : ' + u.launchers.map(esc).join(', '));
+  $('#updInfo').innerHTML = lines.join('<br>');
+}
+$('#updCheck').onclick = () => busy($('#updCheck'), $('#updRes'), async () => {
+  const u = await api('/api/update/check', {}); renderUpdate(u);
+  $('#updRes').className = u.error ? 'dn' : 'up';
+  $('#updRes').textContent = u.error ? '✗ ' + u.error : u.newer ? 'Nouvelle version disponible.' : '✓ Le terminal est à jour.';
+});
+$('#updApply').onclick = () => busy($('#updApply'), $('#updRes'), async () => {
+  const u = await api('/api/update/apply', {}); renderUpdate(u);
+  const res = u.result || {};
+  $('#updRes').className = u.error ? 'dn' : 'up';
+  $('#updRes').textContent = u.error ? '✗ ' + u.error : res.restart ? `✓ Installée (${(res.changed || []).length} fichiers) : redémarrage, la page va se recharger…` : '✓ Rien à installer : le terminal est à jour.';
+});
+async function updateNotice() {                                     // apres une mise a jour : un message, une seule fois par version
+  try {
+    const u = await api('/api/update'), j = u.justUpdated;
+    let seen = ''; try { seen = localStorage.getItem('liqSeenUpdate') || ''; } catch (e) { /* stockage indisponible */ }
+    if (j && j.sha && j.sha !== seen) {
+      toast(`Terminal mis à jour (${sha7(j.sha)}) : ${j.message || 'nouvelle version'}`);
+      try { localStorage.setItem('liqSeenUpdate', j.sha); } catch (e) { /* stockage indisponible */ }
+    } else if (u.rolledBack && u.rolledBack.sha !== seen) {
+      toast(`La nouvelle version (${sha7(u.rolledBack.sha)}) n'a pas démarré : l'ancienne a été remise en place.`);
+      try { localStorage.setItem('liqSeenUpdate', u.rolledBack.sha); } catch (e) { /* stockage indisponible */ }
+    }
+  } catch (e) { /* ancien serveur */ }
 }
 const closeSettings = () => { M.hidden = true; };
 $('#aMode').onchange = () => { $('#aExtra').hidden = $('#aMode').value !== 'all'; };
@@ -935,6 +986,8 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
     signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalMaxPerSymbol: +$('#sMaxSym').value, signalLeverage: +$('#sLev').value, signalTrendGate: $('#sTrend').checked};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();
   if ($('#xToken').value.trim()) body.xToken = $('#xToken').value.trim();
+  body.updateAuto = $('#updAuto').checked; body.updateBranch = $('#updBranch').value.trim() || 'auto';
+  if ($('#updToken').value.trim()) body.updateToken = $('#updToken').value.trim();
   await api('/api/settings', body);
   buildControls(await api('/api/config'));
   const reloaded = before !== st.cfg.source + '|' + st.cfg.symbols.join(',') + '|' + (st.cfg.historyYears || 0);
@@ -981,7 +1034,7 @@ function openSymbol(sym, page) {
   try { const t = localStorage.getItem('liqTab'); showPane((['lecture', 'signals', 'levels', 'mine'].includes(t) || (st.expert && EXPERT_TABS.includes(t))) ? t : 'lecture'); } catch (err) { showPane('lecture'); }
   $('#navSettings').onclick = e => { e.preventDefault(); openSettings(); };
   routeFromHash();
-  poll(); pollAnalysis(); pollSignals(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop);
+  poll(); pollAnalysis(); pollSignals(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop); setTimeout(updateNotice, 2500);
   setInterval(() => {
     livePoll(); liveBadge(); cbRender(); riskChip();
     const lb = $('#liveBadge'), sb = $('#sbLive'); sb.hidden = lb.hidden; sb.textContent = lb.textContent; sb.className = lb.className;
