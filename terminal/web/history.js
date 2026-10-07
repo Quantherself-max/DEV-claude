@@ -64,7 +64,7 @@ const History = (() => {
     const seg = [['all', 'Tout'], ['ideas', 'Idées'], ['alerts', 'Alertes']].map(([k, l]) => `<button data-hf="${k}" class="seg-like ${filt === k ? 'on' : ''}">${l}</button>`).join(' ');
     const body = rows.map(t => {
       const what = t.mode === 'alerte' ? `<b class="amb">Alerte</b> <span class="muted small">(configuration de ${t.side === 'short' ? 'vente' : 'achat'})</span>` : `<b class="${t.side === 'long' ? 'up' : 'dn'}">${SIDE[t.side]}</b>`;
-      const flip = t.flipFrom ? `<div class="small amb">changement de sens : remplace l'${t.flipFrom.side === 'long' ? 'achat' : 'idée de vente'} du ${when(t.flipFrom.created)}</div>` : '';
+      const flip = t.flipFrom ? `<div class="small amb">changement de sens : remplace l'${t.flipFrom.side === 'long' ? 'achat' : 'idée de vente'}${t.flipFrom.symbol ? ' ' + esc(t.flipFrom.symbol.replace('USDT', '')) : ''} du ${when(t.flipFrom.created)}</div>` : '';
       return `<tr><td>${when(t.created)}</td><td><b>${esc(t.symbol.replace('USDT', ''))}</b></td><td>${what}${flip}</td><td class="r">${num(t.score, 0)}</td>
         <td class="r small">${px(t.entry)}<div class="muted">stop ${px(t.stop)}</div></td><td class="r small">${px(t.tp1)}${t.tp2 ? `<div class="muted">${px(t.tp2)}</div>` : ''}</td>
         <td>${badge(t)}${t.closedAt ? `<div class="muted small">${when(t.closedAt)}</div>` : ''}</td>
@@ -93,18 +93,19 @@ const History = (() => {
   }
   function info(d) {
     const dir = d.direction === 'long' ? 'Achat seulement : les configurations de vente arrivent comme « alertes pour tes longs », hors quota.' :
-      d.direction === 'short' ? 'Vente seulement : les configurations d\'achat arrivent comme « alertes pour tes shorts », hors quota.' : 'Achats et ventes.';
+      d.direction === 'short' ? 'Vente seulement : les configurations d\'achat arrivent comme « alertes pour tes shorts », hors quota.' : 'Achats et ventes (réglage recommandé).';
     return `<section class="card"><h2>Comment ça marche</h2><ul class="btnotes">
       <li><b>Le terminal n'analyse que lorsqu'il tourne</b> (allumé depuis le ${when(d.since)}). Éteint, il ne calcule rien et n'envoie rien ; au redémarrage, il recharge l'historique des prix et vérifie ce qui est arrivé aux idées ouvertes pendant son absence (stop, objectifs), mais il ne fabrique pas d'idées pour le passé. Pour qu'il tourne 24 h / 24 sans ton ordinateur : dossier <code>serveur/</code> (un petit serveur loué, quelques euros par mois).</li>
       <li><b>Sens de tes trades</b> : ${dir} (Réglages → 4).</li>
-      <li><b>Pas de va-et-vient</b> : une idée dans l'autre sens qu'une idée de moins de 72 heures sur la même paire n'est envoyée que si la précédente est terminée, avec 10 points de qualité en plus, et le message commence par « CHANGEMENT DE SENS » en disant qu'elle remplace la précédente. Une idée achat sur BTC et une alerte sur SOL ne se contredisent pas : ce sont deux paires différentes.</li></ul></section>`;
+      <li><b>Jamais deux biais opposés à moins de 24 heures</b>, toutes paires confondues (BTC et SOL bougent ensemble) : tant qu'une idée est en cours ou qu'elle a moins de 24 heures, aucune idée dans l'autre sens n'est envoyée, ni sur BTC ni sur SOL. Le « biais du terminal » en haut de cette page dit lequel est en vigueur et jusqu'à quand.</li>
+      <li><b>Changement de sens</b> : entre 24 et 72 heures après une idée, une idée dans l'autre sens n'est envoyée que si la précédente est terminée, avec 10 points de qualité en plus, et le message commence par « CHANGEMENT DE SENS » en disant qu'elle remplace la précédente.</li></ul></section>`;
   }
   function render() {
     const root = document.getElementById('histBox');
     if (!root) return;
     if (err) { root.innerHTML = `<section class="card"><div class="dn">Historique indisponible : ${esc(err)}</div></section>`; return; }
     if (!data) { root.innerHTML = '<section class="card"><div class="muted">Chargement…</div></section>'; return; }
-    root.innerHTML = `<div class="btgrid"><section class="card"><h2>Historique du terminal <small>${data.source === 'simulated' ? 'données simulées' : 'Binance'}</small></h2>${kpis(data)}</section>`
+    root.innerHTML = `<div class="btgrid"><section class="card"><h2>Historique du terminal <small>${data.source === 'simulated' ? 'données simulées' : 'Binance'}</small></h2><div class="biasline">${LT.biasHtml(data.bias)}</div>${kpis(data)}</section>`
       + curve(data) + trades(data) + readings(data) + info(data) + '</div>';
     if (document.getElementById('histCurve')) drawCurve(data);
   }

@@ -465,6 +465,7 @@ class ServerTests(unittest.TestCase):
 
     def test_overview_endpoint(self):
         code, body, _ = self.get("/api/overview")
+        self.assertIn("bias", json.loads(body))                                          # biais du terminal (None tant qu'aucune idee)
         self.assertEqual(code, 200)
         o = json.loads(body)
         for k in ("symbols", "macro", "dom", "fng", "alerts", "feed", "errors"):
@@ -483,12 +484,12 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(code, 200)
         r = json.loads(body)
         self.assertEqual(set(r), {"symbols", "desk", "on", "direction"})
-        self.assertEqual(r["direction"], "long")                                       # par defaut : achat seulement
+        self.assertEqual(r["direction"], "both")                                       # par defaut : achats et ventes (V13.1)
         code, body, _ = self.get("/api/history")
         self.assertEqual(code, 200)
         h = json.loads(body)
-        self.assertTrue({"trades", "stats", "week", "readings", "direction", "since"} <= set(h))
-        self.assertEqual(set(r["desk"]), {"week", "waiting", "stats", "trades"})
+        self.assertTrue({"trades", "stats", "week", "readings", "direction", "since", "bias"} <= set(h))
+        self.assertEqual(set(r["desk"]), {"week", "waiting", "stats", "trades", "bias"})
         self.assertEqual(r["desk"]["week"]["cap"], 5)
         sg = r["symbols"]["BTCUSDT"]
         self.assertTrue(sg["ready"])

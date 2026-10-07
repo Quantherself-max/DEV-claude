@@ -469,6 +469,7 @@ def make_handler(app: App):
                     o["errors"] = app.service.errors
                     d = app.desk.public(app.source.now_ms())
                     o["week"], o["tradeStats"], o["openTrades"] = d["week"], d["stats"], [t for t in d["trades"] if t["status"] in ("pending", "active", "tp1")]
+                    o["bias"] = d["bias"]
                     return self._json(o)
                 if u.path == "/api/signals":
                     syms = [(q.get("symbol") or [""])[0].upper()] if (q.get("symbol") or [""])[0] else list(app.service.markets)
@@ -490,7 +491,7 @@ def make_handler(app: App):
                     return self._json(rep)
                 if u.path == "/api/lecture":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
-                    return self._json(app.service.lecture(sym))
+                    return self._json({**app.service.lecture(sym), "deskBias": app.desk.bias(app.source.now_ms())})
                 if u.path == "/api/strategy":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.service.strategy(sym))

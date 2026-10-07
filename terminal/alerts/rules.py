@@ -271,7 +271,8 @@ class AlertEngine:
             cfg = self.cfg
             d = getattr(cfg, "signal_direction", "both")
             sens = (" Sens : achat seulement ; une configuration de vente t'arrive comme « alerte pour tes longs » (hors quota)." if d == "long" else
-                    " Sens : vente seulement ; une configuration d'achat t'arrive comme « alerte pour tes shorts » (hors quota)." if d == "short" else "")
+                    " Sens : vente seulement ; une configuration d'achat t'arrive comme « alerte pour tes shorts » (hors quota)." if d == "short" else
+                    " Jamais deux idées de sens opposé à moins de 24 h, toutes paires confondues.")
             text = ("✅ Terminal démarré. Tu ne recevras que les idées de trade "
                     f"({cfg.signal_max_week} par semaine au maximum, qualité minimale {cfg.signal_min_score:.0f}/100) "
                     f"sur : {', '.join(cfg.symbols)}." + sens

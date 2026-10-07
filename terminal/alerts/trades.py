@@ -6,8 +6,9 @@ stop) et journal. Les idees viennent de Service.signals(). Une idee n'est envoye
   - aucune annonce majeure n'est imminente (verrou calcule dans le score).
 Sens de tes trades (V13, reglage « signal_direction ») : en « long » (achat seulement), une configuration de VENTE n'est pas envoyee comme une idee mais comme
 une « alerte pour tes longs » (hors quota, une par paire et par 24 h au plus) ; son resultat est suivi comme celui d'une idee pour savoir si elle avait raison.
-Changement de sens : une idee dans l'autre sens qu'une idee de moins de 72 h sur la meme paire n'est envoyee que si la precedente est terminee, avec 10 points
-de qualite en plus et un paragraphe qui dit clairement qu'elle REMPLACE la precedente.
+Pas de biais contraires (V13.1), toutes paires confondues (BTC et SOL bougent ensemble) : aucune idee dans l'autre sens tant qu'une idee est en cours ou
+qu'elle a moins de 24 h. Entre 24 h et 72 h, une idee dans l'autre sens exige que la precedente soit terminee, 10 points de qualite en plus, et le message
+commence par « CHANGEMENT DE SENS » en disant clairement qu'elle REMPLACE la precedente.
 Le journal est le test le plus honnete : il enregistre ce qui s'est PASSE apres chaque idee envoyee."""
 import json
 import threading
@@ -18,9 +19,11 @@ from engine import signals as sg
 from engine.explain import paris
 
 SIDE_WORD = {"long": "achat", "short": "vente"}
+THE_SIDE = {"long": "l'achat", "short": "la vente"}
 OPEN = ("pending", "active", "tp1")
 MAX_HOLD_H = 7 * 24
 COOLDOWN_H = 12
+LOCK_H = 24                  # aucune idee dans l'autre sens pendant 24 h (et tant que la precedente est en cours), toutes paires confondues
 FLIP_H = 72                  # fenetre de « changement de sens »
 FLIP_EXTRA = 10.0            # points de qualite en plus pour changer de sens
 ALERT_EVERY_H = 24           # une alerte de prudence par paire et par 24 h au plus
@@ -129,25 +132,48 @@ class TradeDesk:
                 continue
             if self._duplicate(sym, idea, now_ms):
                 continue
-            prev = self._flip(sym, idea, now_ms)
-            if prev is not None:
-                if prev["status"] in OPEN:
-                    self.waiting = {"why": f"{sym} {SIDE_WORD[idea['side']]} contredit l'idée {SIDE_WORD[prev['side']]} du {paris(prev['created'])}, encore ouverte : pas de changement de sens tant qu'elle n'est pas terminée"}
-                    continue
-                if score < need + FLIP_EXTRA:
-                    self.waiting = {"why": f"{sym} {SIDE_WORD[idea['side']]} change de sens par rapport à l'idée du {paris(prev['created'])} : exige {need + FLIP_EXTRA:.0f}/100, elle a {score:.0f}/100"}
-                    continue
+            block = self._contradicts(idea, now_ms)
+            if block is not None:
+                what = f"{sym} {SIDE_WORD[idea['side']]} contredirait {THE_SIDE[block['side']]} {block['symbol']} du {paris(block['created'])}"
+                if block["status"] in OPEN:
+                    self.waiting = {"why": f"{what}, encore en cours : pas d'idée dans l'autre sens tant qu'elle n'est pas terminée"}
+                else:
+                    self.waiting = {"why": f"{what} : pas d'idée dans l'autre sens moins de {LOCK_H} h après une idée (pas avant le {paris(block['created'] + LOCK_H * 3_600_000)})"}
+                continue
+            prev = self._flip(idea, now_ms)
+            if prev is not None and score < need + FLIP_EXTRA:
+                self.waiting = {"why": f"{sym} {SIDE_WORD[idea['side']]} change de sens par rapport à {THE_SIDE[prev['side']]} {prev['symbol']} du {paris(prev['created'])} : exige {need + FLIP_EXTRA:.0f}/100, elle a {score:.0f}/100"}
+                continue
             created.append(self._create(sym, idea, now_ms, sent + 1, flip=prev))
         for score, sym, idea in against:
             if score >= cfg.signal_min_score and self._alert_ok(sym, idea, now_ms):
                 created.append(self._create_alert(sym, idea, now_ms))
         return created
 
-    def _flip(self, sym, idea, now_ms):
-        """Derniere idee (pas une alerte) sur ce symbole dans l'autre sens, de moins de 72 h ; None s'il n'y en a pas."""
-        prev = [t for t in self.trades if t["symbol"] == sym and not is_alert(t) and now_ms - t["created"] < FLIP_H * 3_600_000]
+    def _contradicts(self, idea, now_ms):
+        """Idee dans l'autre sens, sur n'importe quelle paire, encore en cours ou de moins de 24 h (la plus recente) ; None s'il n'y en a pas."""
+        live = [t for t in self.trades if not is_alert(t) and t["side"] != idea["side"]
+                and (t["status"] in OPEN or now_ms - t["created"] < LOCK_H * 3_600_000)]
+        return max(live, key=lambda t: t["created"], default=None)
+
+    def _flip(self, idea, now_ms):
+        """Derniere idee (pas une alerte, toutes paires confondues) de moins de 72 h si elle va dans l'autre sens ; None sinon."""
+        prev = [t for t in self.trades if not is_alert(t) and now_ms - t["created"] < FLIP_H * 3_600_000]
         last = max(prev, key=lambda t: t["created"], default=None)
         return last if last is not None and last["side"] != idea["side"] else None
+
+    def bias(self, now_ms):
+        """Sens actuel du terminal, toutes paires confondues : celui des idees en cours ou de moins de 24 h. None s'il n'y en a pas
+        (la prochaine idee peut aller dans les deux sens ; entre 24 h et 72 h, l'autre sens exige 10 points de plus)."""
+        live = [t for t in self.trades if not is_alert(t) and (t["status"] in OPEN or now_ms - t["created"] < LOCK_H * 3_600_000)]
+        if not live:
+            return None
+        last = max(live, key=lambda t: t["created"])
+        same = [t for t in live if t["side"] == last["side"]]
+        return {"side": last["side"], "symbol": last["symbol"], "created": last["created"], "entry": last["entry"], "status": last["status"],
+                "until": max(t["created"] for t in same) + LOCK_H * 3_600_000,
+                "open": [{"symbol": t["symbol"], "created": t["created"], "status": t["status"]} for t in same if t["status"] in OPEN],
+                "mixed": any(t["side"] != last["side"] for t in live)}
 
     def _alert_ok(self, sym, idea, now_ms):
         for t in self.trades:
@@ -184,9 +210,9 @@ class TradeDesk:
         tr = self._record(sym, idea, now_ms, n)
         if flip is not None:
             res = RESULT_WORD.get(flip.get("result"), flip.get("result"))
-            text = (f"⚠️ CHANGEMENT DE SENS sur {sym}\nLe {paris(flip['created'])} je t'ai envoyé un{'' if flip['side'] == 'long' else 'e'} {SIDE_WORD[flip['side']]} à {sg.fmt_price(flip['entry'])} "
+            text = (f"⚠️ CHANGEMENT DE SENS sur {sym}\nLe {paris(flip['created'])} je t'ai envoyé un{'' if flip['side'] == 'long' else 'e'} {SIDE_WORD[flip['side']]} sur {flip['symbol']} à {sg.fmt_price(flip['entry'])} "
                     f"({res}). Cette idée va dans l'autre sens : elle REMPLACE la précédente, elle ne s'y ajoute pas.\n\n") + text
-            tr["flipFrom"] = {"id": flip["id"], "side": flip["side"], "created": flip["created"], "result": flip.get("result")}
+            tr["flipFrom"] = {"id": flip["id"], "symbol": flip["symbol"], "side": flip["side"], "created": flip["created"], "result": flip.get("result")}
         tr["text"] = text
         tr["sent"] = self._send(tr, text, "trade")
         self.trades.append(tr)
@@ -350,7 +376,7 @@ class TradeDesk:
     def public(self, now_ms: int):
         keys = ("id", "symbol", "side", "kind", "created", "score", "entry", "entryType", "stop", "tp1", "tp2", "rr1", "rr2", "validUntil",
                 "status", "result", "filledAt", "closedAt", "n", "title", "sent", "x", "mode", "flipFrom")
-        return {"week": self.week(now_ms), "waiting": self.waiting, "stats": self.stats(),
+        return {"week": self.week(now_ms), "waiting": self.waiting, "stats": self.stats(), "bias": self.bias(now_ms),
                 "trades": [{k: t.get(k) for k in keys} for t in self.trades[-40:][::-1]]}
 
     def history(self, now_ms: int) -> dict:
@@ -364,4 +390,4 @@ class TradeDesk:
             row["resultText"] = RESULT_WORD.get(t.get("result"), t.get("result")) if t.get("status") == "closed" else {"pending": "ordre en attente", "active": "en position",
                                                                                                                         "tp1": "objectif 1 atteint, reste en cours"}.get(t["status"], t["status"])
             out.append(row)
-        return {"trades": out, "stats": self.stats(), "week": self.week(now_ms)}
+        return {"trades": out, "stats": self.stats(), "week": self.week(now_ms), "bias": self.bias(now_ms)}

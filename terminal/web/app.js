@@ -26,6 +26,16 @@ function ciBar(s, b) {                                  // echelle 20 % -> 80 %
     `<i style="left:${x(s.lo)}%;width:${Math.max(1, x(s.hi) - x(s.lo))}%"></i>` +
     (b && b.n ? `<u style="left:${x(b.p)}%"></u>` : '') + `<b style="left:${x(s.p)}%"></b></div>`;
 }
+// Biais du terminal (V13.1) : une idée en cours ou de moins de 24 h fixe le sens, toutes paires confondues (BTC et SOL bougent ensemble).
+const PARIS_DT = new Intl.DateTimeFormat('fr-FR', {timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
+const parisAt = ms => PARIS_DT.format(new Date(ms)).replace(',', '');
+function biasHtml(b) {
+  if (!b) return '<span class="lt">Biais du terminal</span> <b class="muted">AUCUN</b> <span class="muted small">pas d\'idée en cours ni de moins de 24 h : la prochaine peut être un achat ou une vente</span>';
+  const buy = b.side === 'long', sym = s => s.replace('USDT', '');
+  const open = b.open.length ? `tant que ${b.open.length > 1 ? 'les idées' : 'l\'idée'} ${b.open.map(o => sym(o.symbol)).join(' et ')} ${b.open.length > 1 ? 'sont' : 'est'} en cours, et ` : '';
+  return `<span class="lt">Biais du terminal</span> <b class="${buy ? 'up' : 'dn'}">${buy ? 'ACHAT' : 'VENTE'}</b> <span class="muted small">depuis l'idée ${sym(b.symbol)} du ${parisAt(b.created)} · aucune idée ${buy ? 'de vente' : 'd\'achat'}, sur aucune paire, ${open}pas avant le ${parisAt(b.until)}</span>`;
+}
+const againstBias = (b, side) => !!b && !!side && b.side !== side;
 const usdFmt = v => v >= 1e9 ? (v / 1e9).toFixed(2).replace('.', ',') + ' Md$' : v >= 1e6 ? (v / 1e6).toFixed(1).replace('.', ',') + ' M$' : Math.round(v / 1e3) + ' k$';
 const ageFmt = ms => { const h = ms / 3.6e6; return h < 1 ? Math.round(ms / 6e4) + ' min' : h < 48 ? Math.round(h) + ' h' : Math.round(h / 24) + ' j'; };
 const timeFr = ms => new Date(ms).toLocaleString('fr-FR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
@@ -898,7 +908,7 @@ async function openSettings() {
     $('#aMacro').checked = s.alertMacro !== false;
     const x = s.x || {}; $('#xOn').checked = x.on !== false; $('#xAccounts').value = (x.accounts || []).join(', '); $('#xPosts').value = String(x.posts || 10);
     $('#xToken').value = ''; $('#xToken').placeholder = x.tokenHint ? `jeton enregistré (${x.tokenHint}) : laisse vide pour le garder` : 'Bearer token X (API officielle)'; $('#xRes').textContent = '';
-    $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sMaxSym').value = s.signalMaxPerSymbol; $('#sLev').value = s.signalLeverage; $('#sTrend').checked = s.signalTrendGate !== false; $('#sDir').value = s.signalDirection || 'long';
+    $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sMaxSym').value = s.signalMaxPerSymbol; $('#sLev').value = s.signalLeverage; $('#sTrend').checked = s.signalTrendGate !== false; $('#sDir').value = s.signalDirection || 'both';
     const ch = s.chat || {}; $('#chatKey').value = ''; $('#chatKey').placeholder = ch.keyHint ? `clé enregistrée (${ch.keyHint}) : laisse vide pour la garder` : 'sk-ant-...';
     $('#chatWeb').checked = ch.web !== false; $('#chatTg').checked = ch.telegram !== false; $('#chatBudget').value = ch.budget != null ? ch.budget : 20; $('#chatInstallRes').textContent = '';
     try { const cs = await api('/api/chat'); $('#chatModel').innerHTML = cs.models.map(m => `<option value="${m.id}"${m.id === (ch.model || cs.model) ? ' selected' : ''}>${esc(m.name)} (${m.in} $ / ${m.out} $ par million de jetons)</option>`).join('');
@@ -1077,7 +1087,7 @@ function openSymbol(sym, page) {
   let cfg;
   try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
   window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
-    shownPools, levelColor, livePrice, placeLabels, usdFmt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
+    shownPools, levelColor, livePrice, placeLabels, usdFmt, biasHtml, againstBias, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
   Overview.init(window.LT);
   Signals.init(window.LT);
   Backtest.init(window.LT);

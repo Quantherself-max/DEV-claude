@@ -1,10 +1,10 @@
-# Liq Terminal (V13)
+# Liq Terminal (V13.1)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
-- **Historique et sens de tes trades** (V13) : page **Historique** (chaque idée et alerte envoyée avec son résultat, la lecture du terminal jour après jour et ce que le prix a fait ensuite), mode **achat seulement** par défaut et règle contre les changements de sens (voir « V13 » plus bas).
+- **Historique et sens de tes trades** (V13) : page **Historique** (chaque idée et alerte envoyée avec son résultat, la lecture du terminal jour après jour et ce que le prix a fait ensuite), **jamais deux biais opposés à moins de 24 heures**, toutes paires confondues, et le **biais du terminal** affiché partout (voir « V13.1 » et « V13 » plus bas).
 - **Discuter avec Claude** (V12) : pose tes questions sur Telegram (au même bot) ou dans l'onglet **Discussion** (« pourquoi le BTC a perdu 2 % ? ») ; Claude répond avec toutes les données du terminal à cet instant et l'actualité du web (voir « V12 » plus bas).
 - **Mise à jour automatique** (V11) : une nouvelle version publiée sur GitHub est vérifiée, sauvegardée et installée toute seule ; le terminal redémarre dans la même fenêtre et la page se recharge. Rien à configurer : le dépôt est public (Réglages → 6 pour suivre l'état, voir « V11 » plus bas).
 - **Où est l'argent, l'or, et les squeezes** (V10) : carte du capital (bitcoin, ETH, altcoins, stablecoins, or) et rotation, asymétrie bitcoin / or, **delta, divergences flux / prix / volume et short / long squeezes** (lecture en direct à la Velo dans la Lecture, mesure sur 12 ans), décompte de bougie sous le prix comme sur TradingView (voir « V10 » plus bas).
@@ -107,6 +107,13 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V13.1 : un seul biais à la fois
+
+- **Retour aux achats et aux ventes par défaut.** Le mode « achat seulement » de la V13 n'est plus le réglage par défaut (il reste disponible dans Réglages → 4). Si la V13 l'avait écrit dans ton `.env` en enregistrant les réglages, le terminal le remet **une seule fois** sur « achats et ventes » au démarrage ; si tu le choisis de nouveau ensuite, ton choix est respecté.
+- **Jamais deux biais opposés à moins de 24 heures, toutes paires confondues.** BTC et SOL bougent ensemble : une vente SOL juste après un achat BTC, c'est la même contradiction qu'une vente BTC. Tant qu'une idée est **en cours** (ordre en attente, en position, objectif 1 atteint) ou qu'elle a **moins de 24 heures**, aucune idée dans l'autre sens n'est envoyée, sur aucune paire. Dans le même sens, rien ne change (un achat BTC puis un achat SOL, c'est cohérent).
+- **Entre 24 et 72 heures**, une idée dans l'autre sens n'est possible que si la précédente est terminée, avec **10 points de qualité en plus**, et son message commence par **« ⚠️ CHANGEMENT DE SENS »** : la paire, la date et le résultat de l'idée précédente, et le fait qu'elle la **remplace**.
+- **Le biais du terminal est affiché** (onglet Idées, Lecture, Vue d'ensemble, Historique) : « ACHAT depuis l'idée BTC du 07/10 14:00 · aucune idée de vente, sur aucune paire, tant que l'idée BTC est en cours, et pas avant le 08/10 14:00 », ou « AUCUN » quand la prochaine idée peut aller dans les deux sens. Une configuration qui le contredit reste visible, marquée **« bloquée »** : tu sais qu'elle existe, mais ce n'est pas une idée à prendre.
+
 ## Ce qui est nouveau en V13 : l'historique, et plus de va-et-vient
 
 ### Page « Historique » (menu de gauche)
@@ -115,12 +122,12 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **La lecture du terminal jour après jour** : une fois par jour et par paire, ce que le terminal pensait (tendance de fond, squeeze, climat macro, idée du moment), puis ce que le prix a fait **24 heures, 3 jours et 7 jours après**. La tendance de fond (le seul élément validé par le backtest) est notée : ✓ si le prix est allé dans son sens.
 
 ### Sens de tes trades (Réglages → 4)
-- **Achat seulement** (par défaut, puisque tu es toujours long) : une configuration de **vente** n'est plus envoyée comme une idée de vente. Elle arrive comme **« 🛡 Alerte pour tes longs »** : où elle serait fausse, jusqu'où le prix peut aller, que faire si tu es long (alléger, remonter le stop, attendre avant de renforcer), et le rappel de ton idée d'achat encore ouverte avec son stop. Hors quota (les 5 idées par semaine restent des achats), une par paire et par 24 heures au plus. Son résultat est suivi : l'historique dit si elle avait raison.
-- **Achats et ventes** ou **vente seulement** restent possibles.
+- **Achats et ventes** : réglage par défaut depuis la V13.1 (voir plus haut).
+- **Achat seulement** : une configuration de **vente** n'est plus envoyée comme une idée de vente. Elle arrive comme **« 🛡 Alerte pour tes longs »** : où elle serait fausse, jusqu'où le prix peut aller, que faire si tu es long (alléger, remonter le stop, attendre avant de renforcer), et le rappel de ton idée d'achat encore ouverte avec son stop. Hors quota (les 5 idées par semaine restent des achats), une par paire et par 24 heures au plus. Son résultat est suivi : l'historique dit si elle avait raison.
+- **Vente seulement** : le miroir.
 
 ### Plus de va-et-vient
-- Une idée dans l'autre sens qu'une idée de moins de 72 heures sur la même paire **n'est pas envoyée tant que la précédente est ouverte**. Une fois la précédente terminée, elle exige **10 points de qualité en plus**, et son message commence par **« ⚠️ CHANGEMENT DE SENS »** : la date et le résultat de l'idée précédente, et le fait qu'elle la **remplace** (elle ne s'y ajoute pas).
-- Une idée sur BTC et une alerte sur SOL ne se contredisent pas : ce sont deux paires différentes, chacune avec sa propre tendance.
+- Règle renforcée en V13.1 (voir plus haut) : elle vaut désormais **toutes paires confondues**, avec un blocage strict de 24 heures. Les alertes de prudence du mode « achat seulement » ne sont pas des idées : elles ne sont pas bloquées.
 
 ### Le terminal analyse-t-il quand il est éteint ?
 - **Non.** Tout tourne sur ton ordinateur, **seulement quand le terminal est ouvert** : récupération des données, calculs, idées, alertes, lecture quotidienne, mises à jour. Éteint, rien n'est calculé ni envoyé.

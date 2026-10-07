@@ -37,8 +37,8 @@ const Lecture = (() => {
       return `<div class="lidea"><b class="amb">ALERTE pour tes ${i.direction === 'long' ? 'longs' : 'shorts'}</b> <span class="muted small">configuration de ${i.side === 'long' ? 'achat' : 'vente'}, qualité ${Math.round(i.score)}/100 : ce n'est pas une idée pour toi, c'est un signal de prudence</span>
         <div class="small">fausse si le prix repasse ${i.side === 'short' ? 'au-dessus de' : 'sous'} ${px(i.stop)} · peut aller chercher ${px(i.tp1)}</div></div>`;
     }
-    const why = (i.gates || []).concat(i.hold || [])[0];
-    const status = i.eligible ? '' : i.align != null && i.align <= 0 ? ' · contre la tendance de fond : non retenue' : i.score < i.minScore ? ' · sous le seuil (' + i.minScore + ')' : ' · pas encore envoyée';
+    const why = (i.gates || []).concat(i.hold || [])[0], b = last && last.deskBias;
+    const status = LT.againstBias(b, i.side) ? ` · bloquée : contredirait ${b.side === 'long' ? 'l\'achat' : 'la vente'} ${esc(b.symbol.replace('USDT', ''))} du ${LT.parisAt(b.created)} (pas de biais contraire sous 24 h)` : i.eligible ? '' : i.align != null && i.align <= 0 ? ' · contre la tendance de fond : non retenue' : i.score < i.minScore ? ' · sous le seuil (' + i.minScore + ')' : ' · pas encore envoyée';
     return `<div class="lidea"><b class="${cls}">${i.side === 'long' ? 'ACHAT' : 'VENTE'}</b> <span class="muted small">qualité ${Math.round(i.score)}/100${status}${why ? ' · ' + esc(why) : ''}</span>
       <div class="small">entrée ${px(i.entry)} · stop ${px(i.stop)} · objectif ${px(i.tp1)}</div></div>`;
   }
@@ -92,7 +92,7 @@ const Lecture = (() => {
     const sections = Object.entries(groups).map(([g, cs]) => `<section class="card"><h2>${esc(g)}</h2>${cs.map(chipHtml).join('')}</section>` + (g === 'Positionnement' ? squeezeHtml(last.squeeze) : '')).join('');
     const money = moneyHtml(last.money);
     root.innerHTML = `<section class="card"><h2>${esc(h.symbol.replace('USDT', ''))} <small>${px(h.price)} · ${sg(h.change24, 2, ' %')} en 24 h</small></h2>${trendHtml}${biasHtml}
-        <div class="lrow"><span class="lt">Idée de trade</span>${ideaHtml(last.idea)}</div>${nxt}${lvls}</section>${sections}${money}
+        <div class="lrow">${LT.biasHtml(last.deskBias)}</div><div class="lrow"><span class="lt">Idée de trade</span>${ideaHtml(last.idea)}</div>${nxt}${lvls}</section>${sections}${money}
       <section class="card"><div class="muted small"><b>Preuve</b> : « validé » = mesuré par le backtest du terminal ; « indice » = même signe sur l'apprentissage et le test, sans dépasser le seuil du hasard ; « contexte » = lecture seule, aucun avantage démontré (le détail est dans la page Backtest, rapport « indicateurs »). Rien de tout cela n'entre dans le score des idées sauf la tendance de fond.${last.optionsOn ? '' : ' Options, volatilité implicite et base : indisponibles (Deribit injoignable ou mode simulé).'}</div></section>`;
   }
   return {init, show, render};

@@ -65,7 +65,7 @@ class Config:
     signal_leverage: float = 10.0         # levier utilise pour les calculs de liquidation affiches
     signal_valid_hours: int = 48          # duree de validite d'un ordre limite
     derivs_on: bool = True                # derives multi-bourses (Deribit, Bybit, OKX, Hyperliquid) et jeux libres en chaine : lecture seule, aucune cle
-    signal_direction: str = "long"        # long = tu ne trades qu'a l'achat : les configurations de vente deviennent des « alertes pour tes longs » | both | short
+    signal_direction: str = "both"        # both = achats et ventes (jamais deux biais opposes a moins de 24 h) | long = achat seulement : les ventes deviennent des « alertes pour tes longs » | short
     signal_trend_gate: bool = True        # n'envoyer que les idees dans le sens de la tendance de fond (moyennes 50 j / 200 j) : seul filtre valide par le backtest
     # avis d'influenceurs sur X (facultatif, indicatif, hors score) : jeton X (API officielle) + comptes a suivre
     x_on: bool = True
@@ -130,7 +130,7 @@ def load_config(env_path: Path | None = None) -> Config:
     c.signal_min_struct = max(4.0, min(20.0, float(g("TERMINAL_SIGNAL_MIN_STRUCT", c.signal_min_struct))))
     c.signal_leverage = max(1.0, min(125.0, float(g("TERMINAL_SIGNAL_LEVERAGE", c.signal_leverage))))
     c.signal_valid_hours = max(4, min(168, int(float(g("TERMINAL_SIGNAL_VALID_HOURS", c.signal_valid_hours)))))
-    c.signal_direction = {"long": "long", "short": "short", "both": "both"}.get(g("TERMINAL_SIGNAL_DIRECTION", c.signal_direction).strip().lower(), "long")
+    c.signal_direction = {"long": "long", "short": "short", "both": "both"}.get(g("TERMINAL_SIGNAL_DIRECTION", c.signal_direction).strip().lower(), "both")
     c.signal_trend_gate = g("TERMINAL_SIGNAL_TREND_GATE", "1").lower() not in ("0", "false", "non", "no")
     c.derivs_on = g("TERMINAL_DERIVS", "1").lower() not in ("0", "false", "non", "no")
     c.x_on = g("TERMINAL_X_ON", "1").lower() not in ("0", "false", "non", "no")
@@ -179,3 +179,21 @@ def write_env(path: Path, updates: dict) -> None:
         os.chmod(path, 0o600)            # le token Telegram n'est lisible que par toi
     except OSError:
         pass
+
+
+def migrate_env(path: Path, data_dir) -> bool:
+    """Migration unique (V13.1) : la V13 mettait « achat seulement » par defaut et l'ecrivait dans .env a chaque enregistrement des reglages.
+    Retour a « achats et ventes » une seule fois ; un choix fait ensuite (reglages ou .env) est respecte. True si .env a change."""
+    mark = Path(data_dir) / ".migrated-direction"
+    if mark.exists():
+        return False
+    changed = False
+    try:
+        if path.exists() and _load_env_file(path).get("TERMINAL_SIGNAL_DIRECTION", "").strip().lower() == "long":
+            write_env(path, {"TERMINAL_SIGNAL_DIRECTION": "both"})
+            changed = True
+        mark.parent.mkdir(parents=True, exist_ok=True)
+        mark.write_text("V13.1 : TERMINAL_SIGNAL_DIRECTION remis a both une seule fois\n", encoding="utf-8")
+    except OSError:
+        pass
+    return changed

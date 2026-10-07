@@ -73,7 +73,9 @@ const Signals = (() => {
     const status = trade ? (trade.status === 'closed' ? RESULT[trade.result] : STATUS[trade.status]) : null;
     const sent = trade ? `<span class="pill ${status ? status[1] : ''}">${esc(status ? status[0] : '')}</span>` : '';
     const gate = (i.gates || [])[0];
-    const state = trade ? sent : gate ? `<span class="pill warn" title="${esc(i.gates.join(' · '))}">Filtre : ${esc(shortGate(gate))}</span>` : i.hold.length ? `<span class="pill warn" title="${esc(i.hold.join(' · '))}">En attente : annonce</span>`
+    const d0 = (last && last.direction) || 'both', bias = last && last.desk && last.desk.bias;
+    const blocked = !trade && (d0 === 'both' || i.side === d0) && LT.againstBias(bias, i.side);
+    const state = trade ? sent : blocked ? `<span class="pill warn" title="Pas d'idée dans l'autre sens tant qu'une idée est en cours ou a moins de 24 h, toutes paires confondues">Bloquée : contredirait ${bias.side === 'long' ? 'l\'achat' : 'la vente'} ${esc(bias.symbol.replace('USDT', ''))} du ${LT.parisAt(bias.created)}</span>` : gate ? `<span class="pill warn" title="${esc(i.gates.join(' · '))}">Filtre : ${esc(shortGate(gate))}</span>` : i.hold.length ? `<span class="pill warn" title="${esc(i.hold.join(' · '))}">En attente : annonce</span>`
       : i.eligible ? '<span class="pill up">Au-dessus du seuil</span>' : `<span class="pill muted">Sous le seuil (${sg.minScore})</span>`;
     const al = i.align, tpill = al == null ? '' : al > 0 ? '<span class="pill up" title="Le cours est du même côté des moyennes de 50 et 200 jours que l\'idée : c\'est la seule catégorie qui a rapporté dans le backtest">Dans le sens de la tendance</span>'
       : al < 0 ? '<span class="pill dn" title="Idée à contre-courant : la catégorie qui a perdu dans le backtest">À contre-courant</span>' : '<span class="pill warn" title="Cours entre les moyennes de 50 et 200 jours : aucun avantage mesuré">Tendance indécise</span>';
@@ -155,6 +157,7 @@ const Signals = (() => {
     const elig = sg.ideas.filter(i => i.eligible).length;
     let html = `<section class="card"><h2>Cette semaine <small>lundi 00 h UTC → dimanche</small></h2>
       <div class="week"><span class="dots">${dots}</span><b>${w.sent}/${w.cap}</b> idées envoyées · seuil de qualité <b>${sg.minScore}/100</b> (la dernière place exige ${sg.minScore + 8})</div>
+      <div class="biasline">${LT.biasHtml(desk.bias)}</div>
       ${desk.waiting && desk.waiting.why ? `<div class="muted small">${esc(desk.waiting.why)}</div>` : ''}
       <div class="muted small">Idées d'achat ou de vente fondées sur trois piliers : les <b>liquidités</b> (poches d'ordres d'arrêt), les <b>VWAP et VWAP ancrés</b> (de l'heure à l'année) et le <b>contexte macro</b>. Rien n'est envoyé sous le seuil ni sans liquidité ou avec une macro nettement contraire : mieux vaut aucune idée qu'une idée moyenne.</div></section>`;
     html += `<section class="card"><h2>Idées du moment <small>${esc(sym)}</small></h2>${trendBox(sg)}${ideas.length

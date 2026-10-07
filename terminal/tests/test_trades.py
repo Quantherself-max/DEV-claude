@@ -128,26 +128,53 @@ class DeskTests(unittest.TestCase):
         out = self.desk.consider(sigs(a, b), MON)
         self.assertEqual([t["symbol"] for t in out], ["SOLUSDT"])
 
-    def test_one_idea_per_symbol_every_twelve_hours_and_no_flip_while_the_first_is_open(self):
+    def test_one_idea_per_symbol_every_twelve_hours_and_no_opposite_bias_within_24_hours(self):
+        self.assertEqual(Config().signal_direction, "both")                                 # par defaut : achats et ventes
+        self.assertIsNone(self.desk.bias(MON))
         self.desk.consider(sigs(idea(side="long", key="l")), MON)
         short = idea(side="short", entry=110.0, stop=112.0, tp1=106.0, tp2=102.0, key="s")
         self.assertEqual(self.desk.consider(sigs(short), MON + H), [])
         self.assertEqual(self.desk.consider(sigs(short), MON + 13 * H), [])                 # l'achat est encore ouvert : pas de vente qui le contredit
-        self.assertIn("contredit", self.desk.waiting["why"])
+        self.assertIn("contredirait l'achat BTCUSDT", self.desk.waiting["why"])
+        self.assertIn("encore en cours", self.desk.waiting["why"])
         self.desk.trades[-1].update(status="closed", result="stop", closedAt=MON + 14 * H)
+        self.assertEqual(self.desk.consider(sigs(short), MON + 20 * H), [])                 # terminee, mais moins de 24 h : toujours pas de vente
+        self.assertIn("moins de 24 h", self.desk.waiting["why"])
+        b = self.desk.bias(MON + 20 * H)
+        self.assertEqual((b["side"], b["symbol"], b["until"], b["open"]), ("long", "BTCUSDT", MON + 24 * H, []))
+        self.assertIsNone(self.desk.bias(MON + 25 * H))                                     # plus de 24 h et terminee : plus de biais impose
         weak = idea(side="short", entry=110.0, stop=112.0, tp1=106.0, tp2=102.0, key="s2", score=70.0)
-        self.assertEqual(self.desk.consider(sigs(weak), MON + 15 * H), [])                  # changer de sens exige 10 points de plus
+        self.assertEqual(self.desk.consider(sigs(weak), MON + 25 * H), [])                  # entre 24 h et 72 h, changer de sens exige 10 points de plus
         self.assertIn("change de sens", self.desk.waiting["why"])
-        out = self.desk.consider(sigs(short), MON + 16 * H)
+        out = self.desk.consider(sigs(short), MON + 26 * H)
         self.assertEqual(len(out), 1)
         self.assertTrue(self.n.sent[-1].startswith("⚠️ CHANGEMENT DE SENS sur BTCUSDT"))
+        self.assertIn("un achat sur BTCUSDT", self.n.sent[-1])
         self.assertIn("REMPLACE", self.n.sent[-1])
         self.assertIn("stop touché", self.n.sent[-1])
-        self.assertEqual(out[0]["flipFrom"]["side"], "long")
-        both = sigs(idea(sym="SOLUSDT", side="long", entry=50.0, stop=49.0, tp1=52.0, tp2=54.0, key="a"),
-                    idea(sym="SOLUSDT", side="short", entry=60.0, stop=61.0, tp1=57.0, tp2=55.0, key="b", score=70.0))
-        out = self.desk.consider(both, MON + 20 * H)
-        self.assertEqual([t["side"] for t in out], ["long"])                       # un seul : le meilleur score d'abord
+        self.assertEqual((out[0]["flipFrom"]["side"], out[0]["flipFrom"]["symbol"]), ("long", "BTCUSDT"))
+        self.assertEqual(self.desk.bias(MON + 27 * H)["side"], "short")
+
+    def test_no_opposite_bias_across_pairs(self):
+        self.desk.consider(sigs(idea(sym="BTCUSDT", side="long", key="l")), MON)
+        sol_short = idea(sym="SOLUSDT", side="short", entry=60.0, stop=61.0, tp1=57.0, tp2=55.0, key="ss", score=90.0)
+        self.assertEqual(self.desk.consider(sigs(sol_short), MON + H), [])                 # BTC et SOL bougent ensemble : pas de vente SOL contre l'achat BTC
+        self.assertIn("SOLUSDT vente contredirait l'achat BTCUSDT", self.desk.waiting["why"])
+        out = self.desk.consider(sigs(idea(sym="SOLUSDT", side="long", entry=50.0, stop=49.0, tp1=52.0, tp2=54.0, key="sl")), MON + 2 * H)
+        self.assertEqual([(t["symbol"], t["side"]) for t in out], [("SOLUSDT", "long")])  # meme sens sur l'autre paire : permis
+        b = self.desk.bias(MON + 3 * H)
+        self.assertEqual((b["side"], b["symbol"], b["until"]), ("long", "SOLUSDT", MON + 26 * H))
+        self.assertEqual({o["symbol"] for o in b["open"]}, {"BTCUSDT", "SOLUSDT"})
+        self.assertFalse(b["mixed"])
+        self.assertEqual(self.desk.public(MON + 3 * H)["bias"]["side"], "long")
+        self.assertEqual(self.desk.history(MON + 3 * H)["bias"]["side"], "long")
+
+    def test_one_cycle_never_sends_two_opposite_ideas(self):
+        both = sigs(idea(sym="SOLUSDT", side="long", entry=50.0, stop=49.0, tp1=52.0, tp2=54.0, key="a", score=75.0),
+                    idea(sym="BTCUSDT", side="short", entry=110.0, stop=112.0, tp1=106.0, tp2=102.0, key="b", score=85.0))
+        out = self.desk.consider(both, MON)
+        self.assertEqual([(t["symbol"], t["side"]) for t in out], [("BTCUSDT", "short")])  # la meilleure passe, l'autre sens attend
+        self.assertIn("SOLUSDT achat contredirait la vente BTCUSDT", self.desk.waiting["why"])
 
     # ---------- doublons ----------
     def test_cooldown_duplicates_and_open_limit(self):
@@ -259,8 +286,6 @@ class DeskTests(unittest.TestCase):
         self.assertEqual(len(TradeDesk(self.cfg, FakeNotifier()).trades), 0)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class LongOnlyTests(unittest.TestCase):
@@ -268,8 +293,7 @@ class LongOnlyTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.cfg = Config(source="binance", data_dir=self.tmp.name, signal_min_score=65.0, signal_max_week=3)
-        self.assertEqual(self.cfg.signal_direction, "long")                      # reglage par defaut
+        self.cfg = Config(source="binance", data_dir=self.tmp.name, signal_min_score=65.0, signal_max_week=3, signal_direction="long")
         self.n = FakeNotifier()
         self.desk = TradeDesk(self.cfg, self.n)
 
@@ -320,3 +344,7 @@ class LongOnlyTests(unittest.TestCase):
         self.assertEqual(row["r"], -1.0)
         self.assertEqual(row["resultText"], "stop touché")
         self.assertIn("Idée de trade", row["text"])
+
+
+if __name__ == "__main__":
+    unittest.main()

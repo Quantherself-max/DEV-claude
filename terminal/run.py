@@ -89,9 +89,11 @@ def main() -> int:
     if os.environ.get("LIQ_NO_BROWSER"):
         a.no_browser = True
     from alerts.notifier import TelegramNotifier
-    from config import load_config
+    from config import ROOT, load_config, migrate_env
     from server import App, serve
     cfg = load_config()
+    if migrate_env(ROOT / ".env", cfg.data_dir):
+        cfg = load_config()                                         # V13.1 : retour une seule fois a « achats et ventes »
     if a.source:
         cfg.source = a.source
     if a.port:

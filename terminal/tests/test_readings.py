@@ -88,10 +88,36 @@ class HistoryApiTests(unittest.TestCase):
             self.assertEqual(len(app.readings.public()["rows"]), 1)                   # une seule par jour
             out = {**app.desk.history(NOW), "readings": app.readings.public(), "direction": app.cfg.signal_direction}
             json.dumps(out)
-            self.assertEqual(out["direction"], "long")
-            settings = app.save_settings({"signalDirection": "both"})
-            self.assertEqual(settings["signalDirection"], "both")
-            self.assertEqual(app.desk.cfg.signal_direction, "both")
+            self.assertEqual(out["direction"], "both")
+            settings = app.save_settings({"signalDirection": "long"})
+            self.assertEqual(settings["signalDirection"], "long")
+            self.assertEqual(app.desk.cfg.signal_direction, "long")
+
+
+
+class DirectionMigrationTests(unittest.TestCase):
+    """V13.1 : « achat seulement » ecrit dans .env par la V13 repasse une seule fois a « achats et ventes » ; un choix fait ensuite est respecte."""
+
+    def test_long_from_v13_goes_back_to_both_once(self):
+        from config import load_config, migrate_env, write_env
+        with tempfile.TemporaryDirectory() as tmp:
+            env, data = Path(tmp) / ".env", Path(tmp) / "data"
+            env.write_text("# mon reglage\nTELEGRAM_CHAT_ID=42\nTERMINAL_SIGNAL_DIRECTION=long\n", encoding="utf-8")
+            self.assertTrue(migrate_env(env, data))
+            self.assertEqual(load_config(env).signal_direction, "both")
+            self.assertIn("TELEGRAM_CHAT_ID=42", env.read_text(encoding="utf-8"))           # le reste du fichier est garde
+            write_env(env, {"TERMINAL_SIGNAL_DIRECTION": "long"})                        # choix refait ensuite : respecte
+            self.assertFalse(migrate_env(env, data))
+            self.assertEqual(load_config(env).signal_direction, "long")
+
+    def test_nothing_to_do(self):
+        from config import migrate_env
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / ".env"
+            self.assertFalse(migrate_env(env, Path(tmp) / "d"))                          # pas de .env
+            env.write_text("TERMINAL_SIGNAL_DIRECTION=short\n", encoding="utf-8")
+            self.assertFalse(migrate_env(env, Path(tmp) / "d2"))                         # vente seulement : on ne touche pas
+            self.assertIn("=short", env.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

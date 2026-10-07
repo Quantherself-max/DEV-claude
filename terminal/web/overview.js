@@ -16,7 +16,9 @@ const Overview = (() => {
     if (!i) return '';
     if (!i.n && !i.side) return '<div class="sect">Idée de trade</div><div class="muted small">Aucune configuration ne passe les filtres pour l\'instant.</div>';
     const buy = i.side === 'long', cls = buy ? 'up' : 'dn';
-    const state = i.eligible ? `<span class="tag ok">au-dessus du seuil</span>` : i.hold && i.hold.length ? `<span class="tag warn">en attente : annonce</span>` : `<span class="tag warn">sous le seuil (${i.minScore})</span>`;
+    const b = last && last.bias, d0 = i.direction || 'both';
+    const state = (d0 === 'both' || i.side === d0) && LT.againstBias(b, i.side) ? `<span class="tag warn">bloquée : contredirait ${b.side === 'long' ? 'l\'achat' : 'la vente'} ${esc(b.symbol.replace('USDT', ''))} du ${LT.parisAt(b.created)}</span>`
+      : i.eligible ? `<span class="tag ok">au-dessus du seuil</span>` : i.hold && i.hold.length ? `<span class="tag warn">en attente : annonce</span>` : `<span class="tag warn">sous le seuil (${i.minScore})</span>`;
     return `<div class="sect">Idée de trade</div><div class="hero" style="gap:10px"><div class="big ${cls}" style="font-size:18px">${buy ? 'ACHAT' : 'VENTE'}</div><div class="muted small">qualité <b>${Math.round(i.score)}/100</b> ${state}<br>entrée ${fmtP(i.entry)} · stop ${fmtP(i.stop)} · objectif ${fmtP(i.tp1)}</div></div>`;
   }
 
@@ -65,7 +67,8 @@ const Overview = (() => {
       const w = o.week, st = o.tradeStats || {};
       top += card('Idées de trade', `<div class="hero"><div class="big neu" style="font-size:24px">${w.sent}/${w.cap}</div><div class="muted small">envoyées cette semaine</div></div>` +
         ((o.openTrades || []).length ? o.openTrades.map(t => `<div class="muted small"><b class="${t.side === 'long' ? 'up' : 'dn'}">${t.side === 'long' ? 'ACHAT' : 'VENTE'}</b> ${esc(t.symbol)} ${fmtP(t.entry)} · ${t.status === 'pending' ? 'ordre en attente' : t.status === 'tp1' ? 'objectif 1 atteint' : 'position ouverte'}</div>`).join('') : '<div class="muted small">Aucune idée ouverte.</div>') +
-        (st.ideas ? `<div class="muted small" style="margin-top:4px">Total : ${st.ideas} idées · stop ${st.stop} · objectif 2 ${st.tp2}</div>` : ''));
+        (st.ideas ? `<div class="muted small" style="margin-top:4px">Total : ${st.ideas} idées · stop ${st.stop} · objectif 2 ${st.tp2}</div>` : '') +
+        `<div class="biasline">${LT.biasHtml(o.bias)}</div>`);
     }
     top += card('Santé', `<div class="muted small">Flux prix : ${feed && feed.trades && feed.trades.connected ? '<span class="up">connecté</span>' : '<span class="dn">hors ligne</span>'}<br>Flux liquidations : ${feed && feed.liqs && feed.liqs.connected ? '<span class="up">connecté</span>' : '<span class="dn">hors ligne</span>'}<br>Sources externes : ${srcErr.length ? '<span class="dn">' + srcErr.length + ' en erreur</span>' : '<span class="up">OK</span>'}${errs.length ? '<br><span class="dn">' + errs.length + ' erreur(s) serveur</span>' : ''}</div>`);
     top += '</div>';
