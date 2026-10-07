@@ -69,6 +69,7 @@
         <button data-tab="signals">Idées</button>
         <button data-tab="levels">Niveaux</button>
         <button data-tab="mine">Stratégie</button>
+        <button data-tab="chat" title="Pose tes questions à Claude, qui répond avec toutes les données du terminal">Discussion</button>
         <button data-tab="context" data-expert hidden>Contexte</button>
         <button data-tab="stats" data-expert hidden>Stats</button>
         <button data-tab="liquidity" data-expert hidden>Liquidité</button>
@@ -78,6 +79,14 @@
       </nav>
       <div class="pane" data-pane="lecture">
         <div id="lectureBox" class="sigbox"><section class="card"><div class="muted">Chargement…</div></section></div>
+      </div>
+      <div class="pane" data-pane="chat" hidden>
+        <section class="card chatcard"><h2>Discussion avec Claude <small id="chatInfo"></small></h2>
+          <div id="chatLog" class="chatlog"><div class="muted small">Chargement…</div></div>
+          <form id="chatForm" class="chatform"><textarea id="chatQ" rows="2" placeholder="Ex. : pourquoi le BTC a perdu 2 % cet après-midi ?" maxlength="4000"></textarea>
+            <button id="chatSend" class="primary" type="submit">Envoyer</button></form>
+          <div class="line"><button id="chatReset" class="seg-like" type="button">Nouvelle conversation</button><span id="chatRes" class="muted small"></span></div>
+        </section>
       </div>
       <div class="pane" data-pane="levels" hidden>
         <section class="card">
@@ -249,6 +258,22 @@
         </ol>
         <label class="field">Branche suivie <input id="updBranch" placeholder="auto" autocomplete="off" spellcheck="false"></label>
         <p class="muted small">« auto » = la branche du dépôt la plus récemment mise à jour qui contient le terminal (chaque nouvelle session de travail publie sur sa propre branche). Avant d'installer, le terminal vérifie que la nouvelle version est complète et démarre, et sauvegarde l'actuelle ; si elle plante au démarrage, l'ancienne revient toute seule. Tes données (<code>data_local</code>) et tes réglages (<code>.env</code>) ne sont jamais touchés. Vérification toutes les 30 minutes. Le jeton reste dans ton fichier <code>.env</code>.</p>
+      </section>
+      <section>
+        <h4><span class="step">7</span> Discussion avec Claude <small id="chatState"></small></h4>
+        <p class="muted small">Pose tes questions sur Telegram (au même bot que les idées) ou dans l'onglet <b>Discussion</b> : « pourquoi le BTC a perdu 2 % ? », « les shorts s'accumulent sur SOL ? ». Claude répond avec toutes les données du terminal à cet instant (mouvements et liquidations, intérêt ouvert, flux, financement, options, macro, autres marchés) et cherche l'actualité sur le web si besoin. Seuls <b>tes</b> messages (ton chat id) reçoivent une réponse.</p>
+        <ol class="howto">
+          <li>Crée une clé API sur <b>console.anthropic.com</b> → <b>API Keys</b> → <b>Create Key</b>, et ajoute du crédit (<b>Billing</b>) : c'est payant à l'usage et séparé de l'abonnement Claude (environ 5 à 15 centimes par question avec Claude Opus 5.5, moins avec Sonnet ou Haiku).</li>
+          <li>Colle-la ici : <input id="chatKey" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false"></li>
+          <li><button id="chatInstall" type="button">Installer le module Claude</button> <span id="chatInstallRes" class="muted"></span></li>
+        </ol>
+        <div class="grid2">
+          <label class="field">Modèle <select id="chatModel"></select></label>
+          <label class="field">Budget maximum par mois (en dollars, 0 = sans limite) <input id="chatBudget" type="number" min="0" max="1000" step="1"></label>
+          <label class="field chk"><input id="chatWeb" type="checkbox"> Chercher l'actualité sur le web quand c'est utile (environ 1 centime par recherche)</label>
+          <label class="field chk"><input id="chatTg" type="checkbox"> Répondre à mes messages sur Telegram</label>
+        </div>
+        <p class="muted small">La clé reste dans ton fichier <code>.env</code>. Les données du terminal ne partent vers Claude qu'au moment où tu poses une question.</p>
       </section>
     </div>
     <div class="mfoot"><span id="saveRes" class="muted"></span><button id="cancelSettings">Annuler</button><button id="saveSettings" class="primary">Enregistrer</button></div>

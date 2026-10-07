@@ -80,6 +80,12 @@ class Config:
     update_token: str = ""                # jeton GitHub en LECTURE SEULE (depot prive)
     update_minutes: int = 30
     update_api: str = "https://api.github.com"
+    # discussion avec Claude (V12) : questions sur Telegram ou dans l'onglet Discussion ; cle API Anthropic payante a l'usage
+    chat_key: str = ""
+    chat_model: str = "claude-opus-5-5"
+    chat_web: bool = True                 # recherche d'actualites sur le web quand les donnees du terminal ne suffisent pas
+    chat_telegram: bool = True            # repondre aux messages envoyes au bot Telegram (seulement depuis ton chat id)
+    chat_budget: float = 20.0             # plafond de depense mensuelle en dollars (0 = sans plafond)
     telegram_token: str = ""
     telegram_chat_id: str = ""
     telegram_api_base: str = "https://api.telegram.org"
@@ -139,6 +145,11 @@ def load_config(env_path: Path | None = None) -> Config:
     c.update_token = g("TERMINAL_GITHUB_TOKEN", "").strip()
     c.update_minutes = max(10, min(1440, int(float(g("TERMINAL_UPDATE_MINUTES", c.update_minutes)))))
     c.update_api = g("TERMINAL_UPDATE_API", c.update_api).rstrip("/")
+    c.chat_key = g("TERMINAL_ANTHROPIC_API_KEY", "").strip()
+    c.chat_model = g("TERMINAL_CHAT_MODEL", c.chat_model).strip() or "claude-opus-5-5"
+    c.chat_web = g("TERMINAL_CHAT_WEB", "1").lower() not in ("0", "false", "non", "no")
+    c.chat_telegram = g("TERMINAL_CHAT_TELEGRAM", "1").lower() not in ("0", "false", "non", "no")
+    c.chat_budget = max(0.0, min(1000.0, float(g("TERMINAL_CHAT_BUDGET", c.chat_budget))))
     c.telegram_token = g("TELEGRAM_BOT_TOKEN", "")
     c.telegram_chat_id = g("TELEGRAM_CHAT_ID", "")
     c.telegram_api_base = g("TELEGRAM_API_BASE", c.telegram_api_base)

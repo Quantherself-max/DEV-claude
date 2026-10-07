@@ -640,6 +640,7 @@ function showPane(name) {
   document.querySelectorAll('#side .pane').forEach(p => p.hidden = p.dataset.pane !== name);
   document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === name));
   try { localStorage.setItem('liqTab', name); } catch (err) { /* stockage indisponible */ }
+  if (name === 'chat') loadChat();
   if (name === 'liquidity') { pollLiqs(); renderLqReal(); }
   if (name === 'vp') pollVP();
   if (name === 'signals') { pollSignals(); if (st.sig) Signals.render(st.sig); }
@@ -897,11 +898,63 @@ async function openSettings() {
     const x = s.x || {}; $('#xOn').checked = x.on !== false; $('#xAccounts').value = (x.accounts || []).join(', '); $('#xPosts').value = String(x.posts || 10);
     $('#xToken').value = ''; $('#xToken').placeholder = x.tokenHint ? `jeton enregistré (${x.tokenHint}) : laisse vide pour le garder` : 'Bearer token X (API officielle)'; $('#xRes').textContent = '';
     $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sMaxSym').value = s.signalMaxPerSymbol; $('#sLev').value = s.signalLeverage; $('#sTrend').checked = s.signalTrendGate !== false;
+    const ch = s.chat || {}; $('#chatKey').value = ''; $('#chatKey').placeholder = ch.keyHint ? `clé enregistrée (${ch.keyHint}) : laisse vide pour la garder` : 'sk-ant-...';
+    $('#chatWeb').checked = ch.web !== false; $('#chatTg').checked = ch.telegram !== false; $('#chatBudget').value = ch.budget != null ? ch.budget : 20; $('#chatInstallRes').textContent = '';
+    try { const cs = await api('/api/chat'); $('#chatModel').innerHTML = cs.models.map(m => `<option value="${m.id}"${m.id === (ch.model || cs.model) ? ' selected' : ''}>${esc(m.name)} (${m.in} $ / ${m.out} $ par million de jetons)</option>`).join('');
+      $('#chatState').textContent = !cs.configured ? 'clé manquante' : !cs.sdk ? 'module à installer' : `prêt · ${num(cs.spent, 2)} $ ce mois-ci`; $('#chatState').className = cs.configured && cs.sdk ? 'up' : 'amb';
+      $('#chatInstall').hidden = cs.sdk; } catch (e) { /* ancien serveur */ }
     const u = s.update || {}; $('#updAuto').checked = u.auto !== false; $('#updBranch').value = u.branch || 'auto'; $('#updRes').textContent = '';
     $('#updToken').value = ''; $('#updToken').placeholder = u.tokenHint ? `jeton enregistré (${u.tokenHint}) : laisse vide pour le garder` : 'facultatif : github_pat_...';
     renderUpdate(await api('/api/update'));
   } catch (e) { $('#saveRes').textContent = 'Erreur : ' + e.message; }
 }
+// ---------- discussion avec Claude ----------
+let chatTimer = null, chatPending = null;
+function chatHtml(c) {
+  const hist = c.history || [];
+  const t = ms => new Date(ms).toLocaleString('fr-FR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
+  let h = hist.map(m => m.role === 'system' ? `<div class="sep">— ${esc(m.text)} —</div>` :
+    `<div class="msg ${m.role}${m.ok === false ? ' bad' : ''}">${esc(m.text)}<small>${t(m.t)}${m.src === 'telegram' ? ' · Telegram' : ''}${m.usd ? ' · ' + num(m.usd, 3) + ' $' : ''}</small></div>`).join('');
+  if (chatPending) h += `<div class="msg user">${esc(chatPending)}</div><div class="msg assistant"><span class="muted">Claude lit les données du terminal et réfléchit… (10 à 60 secondes)</span></div>`;
+  if (!h) h = `<div class="muted small">${c.configured && c.sdk ? 'Pose ta première question : « pourquoi le BTC a perdu 2 % cet après-midi ? », « les shorts s\'accumulent sur SOL ? », « qu\'est-ce qui arrive cette semaine en macro ? »' :
+    'Pour discuter avec Claude : <a href="#" data-open-settings>Réglages → 7. Discussion avec Claude</a> (clé API Anthropic, puis « Installer le module Claude »).'}</div>`;
+  return h;
+}
+async function loadChat() {
+  clearTimeout(chatTimer);
+  if (st.tab !== 'chat' || st.page !== 'desk') return;
+  try {
+    const c = await api('/api/chat');
+    const log = $('#chatLog'), atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    log.innerHTML = chatHtml(c);
+    if (atEnd || chatPending) log.scrollTop = log.scrollHeight;
+    $('#chatInfo').textContent = `${c.modelName} · ${num(c.spent, 2)} $ ce mois-ci${c.budget ? ' sur ' + num(c.budget, 0) + ' $' : ''}${c.telegramListening ? ' · Telegram actif' : c.telegramConfigured && c.configured ? ' · Telegram inactif' : ''}`;
+  } catch (e) { $('#chatLog').innerHTML = `<div class="dn small">Discussion indisponible : ${esc(e.message)}</div>`; }
+  chatTimer = setTimeout(loadChat, 15000);
+}
+$('#chatForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const q = $('#chatQ').value.trim();
+  if (!q || chatPending) return;
+  chatPending = q; $('#chatQ').value = ''; $('#chatSend').disabled = true; $('#chatRes').textContent = '';
+  await loadChat();
+  try {
+    const r = await api('/api/chat', {question: q});
+    $('#chatRes').className = r.ok ? 'muted small' : 'dn small';
+    $('#chatRes').textContent = r.ok ? `répondu en ${num(r.seconds, 0)} s · ${num(r.usd, 3)} $` : r.answer;
+  } catch (err) { $('#chatRes').className = 'dn small'; $('#chatRes').textContent = 'Erreur : ' + err.message; }
+  chatPending = null; $('#chatSend').disabled = false;
+  loadChat();
+});
+$('#chatQ').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#chatForm').requestSubmit(); } });
+$('#chatReset').onclick = async () => { try { await api('/api/chat/reset', {}); } catch (e) { /* rien */ } loadChat(); };
+$('#chatInstall').onclick = () => busy($('#chatInstall'), $('#chatInstallRes'), async () => {
+  $('#chatInstallRes').textContent = 'installation (jusqu\'à une minute)…';
+  const r = await api('/api/chat/install', {});
+  $('#chatInstallRes').className = r.ok ? 'up' : 'dn';
+  $('#chatInstallRes').textContent = (r.ok ? '✓ ' : '✗ ') + r.detail;
+  $('#chatInstall').hidden = !!r.sdk;
+});
 // ---------- mise a jour automatique ----------
 const sha7 = s => s ? String(s).slice(0, 7) : '?';
 function renderUpdate(u) {
@@ -986,6 +1039,9 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
     signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalMaxPerSymbol: +$('#sMaxSym').value, signalLeverage: +$('#sLev').value, signalTrendGate: $('#sTrend').checked};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();
   if ($('#xToken').value.trim()) body.xToken = $('#xToken').value.trim();
+  if ($('#chatModel').value) body.chatModel = $('#chatModel').value;
+  body.chatWeb = $('#chatWeb').checked; body.chatTelegram = $('#chatTg').checked; body.chatBudget = +$('#chatBudget').value || 0;
+  if ($('#chatKey').value.trim()) body.chatKey = $('#chatKey').value.trim();
   body.updateAuto = $('#updAuto').checked; body.updateBranch = $('#updBranch').value.trim() || 'auto';
   if ($('#updToken').value.trim()) body.updateToken = $('#updToken').value.trim();
   await api('/api/settings', body);
@@ -1031,7 +1087,7 @@ function openSymbol(sym, page) {
   Analysis.init(window.LT);
   renderLqLegend(); applySidebar(); applyLayout();
   applyExpert();
-  try { const t = localStorage.getItem('liqTab'); showPane((['lecture', 'signals', 'levels', 'mine'].includes(t) || (st.expert && EXPERT_TABS.includes(t))) ? t : 'lecture'); } catch (err) { showPane('lecture'); }
+  try { const t = localStorage.getItem('liqTab'); showPane((['lecture', 'signals', 'levels', 'mine', 'chat'].includes(t) || (st.expert && EXPERT_TABS.includes(t))) ? t : 'lecture'); } catch (err) { showPane('lecture'); }
   $('#navSettings').onclick = e => { e.preventDefault(); openSettings(); };
   routeFromHash();
   poll(); pollAnalysis(); pollSignals(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop); setTimeout(updateNotice, 2500);

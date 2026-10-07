@@ -1,9 +1,10 @@
-# Liq Terminal (V11)
+# Liq Terminal (V12)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Discuter avec Claude** (V12) : pose tes questions sur Telegram (au même bot) ou dans l'onglet **Discussion** (« pourquoi le BTC a perdu 2 % ? ») ; Claude répond avec toutes les données du terminal à cet instant et l'actualité du web (voir « V12 » plus bas).
 - **Mise à jour automatique** (V11) : une nouvelle version publiée sur GitHub est vérifiée, sauvegardée et installée toute seule ; le terminal redémarre dans la même fenêtre et la page se recharge. Rien à configurer : le dépôt est public (Réglages → 6 pour suivre l'état, voir « V11 » plus bas).
 - **Où est l'argent, l'or, et les squeezes** (V10) : carte du capital (bitcoin, ETH, altcoins, stablecoins, or) et rotation, asymétrie bitcoin / or, **delta, divergences flux / prix / volume et short / long squeezes** (lecture en direct à la Velo dans la Lecture, mesure sur 12 ans), décompte de bougie sous le prix comme sur TradingView (voir « V10 » plus bas).
 - **Un écran de lecture épuré et de nouvelles données** (V9) : onglet **Lecture** (l'essentiel en une page, chaque ligne avec son niveau de preuve), dérivés multi-bourses (options, volatilité implicite, base, financement, Open Interest), données en chaîne et macro libres, et un **laboratoire d'indicateurs** qui mesure ce que vaut chaque indicateur (voir « V9 » plus bas).
@@ -104,6 +105,26 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V12 : discuter avec Claude, comme sur Telegram
+
+### Ce que ça fait
+- Tu écris au **bot Telegram** (le même que pour les idées de trade) ou dans l'onglet **Discussion** du terminal : « pourquoi le BTC a perdu 2 % cet après-midi ? », « les shorts s'accumulent sur SOL ? », « qu'est-ce qui arrive cette semaine en macro ? ».
+- Le terminal rassemble **tout ce qu'il sait à cet instant** : prix et variations (1 h, 4 h, 24 h, 7 jours), tendance de fond, niveaux proches, idée en cours, financement, intérêt ouvert, flux d'ordres, liquidations réelles, configuration de squeeze, options, macro (annonces passées et à venir, climat), dollar, taux, actions, or, volatilité, peur et avidité, où est l'argent.
+- Il repère les **mouvements marquants des dernières 24 heures** (plus forte baisse, plus forte hausse) et ce qui s'est passé **pendant** chacun : intérêt ouvert, part d'acheteurs agressifs, volume par rapport à la normale, liquidations longs / shorts, mouvement des autres marchés sur la même fenêtre, annonces macro proches. Heures en heure de Paris.
+- **Claude** (Claude Opus 5.5 par défaut) répond en français, d'abord en quelques phrases puis le détail, en séparant ce qui est mesuré de ce qui est une hypothèse, et cherche l'actualité sur le web quand les données ne suffisent pas (sources citées). Il garde le fil des 6 derniers échanges ; `/reset` repart de zéro.
+- Telegram : **seuls tes messages** (ton chat id) reçoivent une réponse ; commandes `/aide`, `/reset`, `/cout`.
+
+### À faire une seule fois
+1. Crée une **clé API** sur **console.anthropic.com** → **API Keys** → **Create Key**, et ajoute du crédit (**Billing**). C'est payant à l'usage et séparé de l'abonnement Claude : environ 5 à 15 centimes par question avec Claude Opus 5.5 (moins avec Claude Sonnet 5.5 ou Claude Haiku 4.5), plus environ 1 centime par recherche web.
+2. Dans le terminal : **Réglages → 7. Discussion avec Claude** → colle la clé → **Installer le module Claude** (le module officiel `anthropic`, installé une fois avec `pip`) → **Enregistrer**.
+3. Pose ta question dans l'onglet **Discussion** ou envoie-la à ton bot Telegram.
+
+### Garde-fous
+- **Budget mensuel** (20 $ par défaut, réglable ; 0 = sans limite) : au-delà, le terminal ne pose plus de question à Claude jusqu'au mois suivant. La dépense du mois s'affiche dans l'onglet et avec `/cout`.
+- La clé reste dans `.env`. Les données du terminal ne partent vers l'API de Claude qu'au moment d'une question.
+- Les réponses sont des lectures du marché, pas des conseils ; seule la tendance de fond est validée par le backtest, et Claude a pour consigne de le rappeler plutôt que de présenter un indicateur comme prédictif.
+- **Vérifié** : la forme des requêtes avec le module officiel `anthropic` (1.11) contre un faux serveur (modèle, recherche web, reprise d'une réponse mise en pause, repli en cas de refus, erreurs : clé refusée, crédit épuisé, surcharge), et le contexte construit sur les données simulées. **Pas vérifié ici** : une vraie réponse de Claude (aucune clé dans l'environnement de développement) et l'écoute Telegram contre les vrais serveurs.
 
 ## Ce qui est nouveau en V11 : le terminal se met à jour tout seul
 
@@ -424,9 +445,10 @@ engine/             calculs : profils de volume (auto et choisis), séries VWAP 
                     V7 : vwapstrat.py (signaux de ta stratégie, 48 sorties, simulation 5 min), hedge.py (corrélation et portefeuille de couverture), stratstudy.py (protocole, variantes, verdict) ;
                     V8 : swingavwap.py (zigzag confirmé, VWAP ancrés sur sommet / creux, contacts), swingstudy.py (réaction du prix et trades) ;
                     V9 : indicators.py (25 indicateurs journaliers), indstudy.py (mesure avec témoin), derivstudy.py (mesure des dérivés enregistrés), lecture.py (écran de lecture) ;
+                    V12 : explain.py (mouvements récents et faits qui les accompagnent) ;
                     V10 : rotation.py et rotationstudy.py (carte du capital, rotation, or), goldbtc.py (asymétrie bitcoin / or), squeeze.py (delta, divergences, squeezes), squeezestudy.py (mesure)
 data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase) ; social.py (posts X, facultatif) ; V9 : derivs.py (options, DVOL, base, financement multi-bourses), opendata.py (jeux libres GitHub)
-alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées)
+alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées) ; assistant.py (discussion avec Claude, V12)
 service.py          relie les données et les moteurs, fabrique l'état JSON
 server.py           serveur local : API, réglages, sécurité
 web/                interface : index.html + style.css ; app.js (Desk, état, alertes), panels.js (les trois graphiques),
@@ -435,7 +457,7 @@ web/                interface : index.html + style.css ; app.js (Desk, état, al
 tools/              run_rotation.py, run_squeeze_study.py (V10), run_indicators.py, run_derivs_study.py (V9), fetch_history.py (historique 1 min Binance), run_study.py (rapport de backtest des idées du terminal), run_strategy.py (rapport de ta stratégie VWAP / profil de volume) et run_avwap_swing.py (VWAP ancrés sur un mouvement de 5 % ou plus)
 reports/            rapports livrés (BTC) : backtest_BTC.json (idées du terminal), strategy_BTC.json (ta stratégie) et avwap_BTC.json (VWAP ancrés sur un mouvement) indicators_BTC.json (indicateurs en chaîne et macro), rotation_BTC.json (où va l'argent, or) et squeeze_BTC.json (delta, CVD, squeezes) ; les tiens vont dans data_local/reports/
 serveur/            installation sur un serveur 24 h/24 (script et guide)
-tests/              tests automatiques (plus de trois cent quatre-vingts)
+tests/              tests automatiques (près de quatre cents)
 ```
 
 ## Limites connues

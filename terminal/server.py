@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from alerts.assistant import MODELS as CHAT_MODELS, Assistant, TelegramChat, install_sdk
 from alerts.notifier import ConsoleNotifier, TelegramNotifier
 from alerts.rules import AlertEngine
 from alerts.trades import OPEN, TradeDesk
@@ -68,6 +69,7 @@ class App:
         self.boot = secrets.token_hex(4)               # change a chaque demarrage : la page du navigateur se recharge toute seule
         self.upd_lock = threading.Lock()
         self.upd = {"state": "pas encore vérifié", "latest": None, "newer": False, "lastCheck": None, "error": None, "result": None}
+        self.tgchat = None
         self.make_source, self.make_feed, self.make_hub = make_source, make_feed, make_hub
         self.running = False
         self.feed = None
@@ -88,22 +90,38 @@ class App:
         self.desk = TradeDesk(cfg, notifier, log=alerts._log, opinions=self.social.opinions)
         self.feed = feed
         self.price_cache = {}
+        self.assistant = Assistant(cfg, lambda: self.service, cfg.data_dir)
         if old:
             old.stop()
         if feed and self.running:
             feed.start()
+        self._chat_restart()
+
+    def _chat_restart(self):
+        """(Re)lance l'ecoute des messages Telegram pour la discussion avec Claude, si elle est activee et configuree."""
+        old = getattr(self, "tgchat", None)
+        if old:
+            old.close()
+        self.tgchat = None
+        c = self.cfg
+        if self.running and c.chat_telegram and c.telegram_on and c.chat_key:
+            self.tgchat = TelegramChat(c, self.assistant, c.data_dir)
+            self.tgchat.start()
 
     def start_background(self):
         """Demarre les flux temps reel (apres la creation : les tests n'ouvrent aucune connexion)."""
         self.running = True
         if self.feed:
             self.feed.start()
+        self._chat_restart()
 
     def shutdown(self):
         self.stop.set()
         self.wake.set()
         if self.feed:
             self.feed.stop()
+        if self.tgchat:
+            self.tgchat.close()
 
     def live_price(self, sym: str) -> dict:
         """Dernier prix (cache 0,5 s) : secours quand le flux WebSocket du navigateur ne passe pas."""
@@ -146,6 +164,8 @@ class App:
                 for m in self.service.markets.values():
                     m.cfg = cfg
                 self.service._sig_cache.clear()
+                self.assistant.cfg = cfg
+                self._chat_restart()
 
     def alert_cycle(self, service):
         if service is not self.service:          # ancien service (apres un changement de reglages)
@@ -274,6 +294,8 @@ class App:
                 "signalLeverage": c.signal_leverage, "signalTrendGate": c.signal_trend_gate,
                 "x": {"on": c.x_on, "configured": bool(c.x_token and c.x_accounts), "tokenHint": ("..." + c.x_token[-4:]) if c.x_token else "",
                       "accounts": list(c.x_accounts), "posts": c.x_posts},
+                "chat": {"configured": bool(c.chat_key), "keyHint": ("..." + c.chat_key[-4:]) if c.chat_key else "", "model": c.chat_model, "web": c.chat_web,
+                         "telegram": c.chat_telegram, "budget": c.chat_budget},
                 "update": {"auto": c.update_auto, "branch": c.update_branch, "repo": c.update_repo, "configured": bool(c.update_token),
                            "tokenHint": ("..." + c.update_token[-4:]) if c.update_token else ""}}
 
@@ -336,6 +358,21 @@ class App:
             upd["TERMINAL_X_POSTS"] = str(max(5, min(20, int(body["xPosts"]))))
         if body.get("xOn") is not None:
             upd["TERMINAL_X_ON"] = "1" if body["xOn"] else "0"
+        if body.get("chatKey"):
+            key = str(body["chatKey"]).strip()
+            if not re.fullmatch(r"[A-Za-z0-9_\-]{20,300}", key):
+                raise ValueError("clé API Claude invalide (une seule chaîne, du type sk-ant-...)")
+            upd["TERMINAL_ANTHROPIC_API_KEY"] = key
+        if body.get("chatClearKey"):
+            upd["TERMINAL_ANTHROPIC_API_KEY"] = ""
+        if body.get("chatModel") in CHAT_MODELS:
+            upd["TERMINAL_CHAT_MODEL"] = body["chatModel"]
+        if body.get("chatWeb") is not None:
+            upd["TERMINAL_CHAT_WEB"] = "1" if body["chatWeb"] else "0"
+        if body.get("chatTelegram") is not None:
+            upd["TERMINAL_CHAT_TELEGRAM"] = "1" if body["chatTelegram"] else "0"
+        if body.get("chatBudget") is not None:
+            upd["TERMINAL_CHAT_BUDGET"] = str(max(0.0, min(1000.0, float(body["chatBudget"]))))
         if body.get("updateToken"):
             tok = str(body["updateToken"]).strip()
             if len(tok) > 255 or not re.fullmatch(r"[A-Za-z0-9_]+", tok):
@@ -475,6 +512,10 @@ def make_handler(app: App):
                     return self._json(app.settings())
                 if u.path == "/api/update":
                     return self._json(app.update_status())
+                if u.path == "/api/chat":
+                    t = app.tgchat
+                    return self._json({**app.assistant.status(), "history": app.assistant.history(),
+                                       "telegramListening": bool(t), "telegramError": t.last_error if t else None})
                 if u.path == "/api/alerts":
                     return self._json({"telegram": app.cfg.telegram_on, "log": app.alerts.log[-20:][::-1],
                                        "errors": app.service.errors})
@@ -500,6 +541,16 @@ def make_handler(app: App):
                 path = urlparse(self.path).path
                 if path == "/api/settings":
                     return self._json(app.save_settings(body))
+                if path == "/api/chat":
+                    return self._json(app.assistant.ask(str(body.get("question") or ""), src="web"))
+                if path == "/api/chat/reset":
+                    app.assistant.reset()
+                    return self._json({"ok": True})
+                if path == "/api/chat/install":
+                    ok, msg = install_sdk()
+                    if ok:
+                        app._chat_restart()
+                    return self._json({"ok": ok, "detail": msg, **app.assistant.status()})
                 if path == "/api/update/check":
                     return self._json(app.update_check(install=False))
                 if path == "/api/update/apply":
