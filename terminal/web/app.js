@@ -97,8 +97,18 @@ const shownPools = (d, all) => {
   const ps = d.liquidity.pools.map((p, i) => ({p, i}));
   if (st.mode !== 'ess' || all) return ps;
   const cnt = {long: 0, short: 0};
-  return ps.filter(x => x.p.rel >= 0.5 || x.p.magnet).sort((a, b) => b.p.rel - a.p.rel).filter(x => cnt[x.p.side]++ < 2);
+  return ps.slice().sort((a, b) => impOf(b.p) - impOf(a.p)).filter(x => cnt[x.p.side]++ < 2);
 };
+// Importance d'une poche (V14) : taille + confluences autour + fraicheur, sur 100 ; rang de son cote (reference 1 h, la meme quelle que soit l'unite de temps).
+const impOf = p => (p && p.imp && p.imp.score) || 0;
+const sideWord = p => p.side === 'long' ? 'en dessous' : 'au-dessus';
+const rankTag = p => p.rank ? `<b class="${p.rank === 1 ? 'amb' : ''}" title="Rang d'importance parmi les poches ${sideWord(p)} du prix (fenêtre 1 h)">N°${p.rank}</b> · ` : '';
+const ageTxt = p => { const h = p.imp && p.imp.ageH; return h == null ? (p.born ? 'formée il y a ' + ageFmt(Date.now() - p.born) : 'plus ancienne que l\'historique') : 'formée il y a ' + ageFmt(h * 3.6e6); };
+function impBar(p, c) {
+  const i = p.imp; if (!i) return `<div class="bar"><i style="width:${p.score || 0}%;background:${c}"></i></div>`;
+  return `<div class="bar stack" title="taille ${num(i.parts.size, 0)}/50 · confluences ${num(i.parts.conf, 0)}/30 · fraîcheur ${num(i.parts.age, 0)}/20"><i style="width:${i.parts.size}%;background:${c}"></i><i style="width:${i.parts.conf}%;background:${AMB}"></i><i style="width:${i.parts.age}%;background:#9fb4ff"></i></div>`;
+}
+const impLine = p => p.imp ? `importance <b>${p.imp.score}</b>/100 · ${p.imp.nConf ? p.imp.nConf + ' confluence' + (p.imp.nConf > 1 ? 's' : '') : 'aucune confluence'} · ${ageTxt(p)}` : ageTxt(p);
 // Etiquettes sans chevauchement : on les repousse verticalement (ecart mini `gap`), puis on les ramene dans le cadre.
 function placeLabels(items, gap, top, bottom) {
   items.sort((p, q) => p.y - q.y);
@@ -306,7 +316,7 @@ function zoneRow(z, d) {
   const sel = st.sel && st.sel.type === 'zone' && st.sel.id === z.id ? ' sel' : '';
   const ess = (d.ladder.essential || []).includes(z.id);
   return `<div class="row${z.score < 3 ? ' weak' : ''}${st.mode === 'ess' && !ess ? ' weak' : ''}${sel}" data-zone="${z.id}">${ar}<span class="nm" title="${esc(names.join(' + '))}">${ess ? '<b class="amb" title="Zone essentielle (tracée sur le graphique)">★</b> ' : ''}${esc(names.join(' + '))}</span>` +
-    `<span class="pv">${fmtP(z.mid)}</span><span class="sub"><span data-zd="${z.id}">${zoneDist(z, d, livePrice(d))}</span><span class="dots">${dots}</span>${z.hasMagnet ? ' · poche AIMANT' : ''}` +
+    `<span class="pv">${fmtP(z.mid)}</span><span class="sub"><span data-zd="${z.id}">${zoneDist(z, d, livePrice(d))}</span><span class="dots">${dots}</span>${z.hasMagnet ? ' · plus grosse poche' : ''}` +
     probLine(z) + '</span></div>';
 }
 function renderLadder(d) {
@@ -327,10 +337,11 @@ function renderPools(d) {
     const i = pools.indexOf(p), dist = (p.price / livePrice(d) - 1) * 100, c = p.side === 'long' ? UP : DN;
     const sel = st.sel && st.sel.type === 'pool' && st.sel.id === i ? ' sel' : '';
     h += `<div class="row${sel}" data-pool="${i}"><span class="ar" style="color:${c}">${p.side === 'long' ? '▼' : '▲'}</span>` +
-      `<span class="nm">${p.magnet ? '<b>AIMANT</b> · ' : ''}${p.side === 'long' ? 'longs' : 'shorts'}</span><span class="pv">${fmtP(p.price)}</span>` +
-      `<span class="sub"><span data-pd="${i}">${fmtPct(dist)}</span> · score ${p.score}${p.reach ? ' · <span class="pr">' + pr(p.reach['24']) + '</span> d\'y aller en 24 h' : ''}<div class="bar"><i style="width:${p.score}%;background:${c}"></i></div></span></div>`;
+      `<span class="nm">${rankTag(p)}${p.side === 'long' ? 'longs' : 'shorts'} · ${usdFmt(p.size * p.price)}</span><span class="pv">${fmtP(p.price)}</span>` +
+      `<span class="sub"><span data-pd="${i}">${fmtPct(dist)}</span> · ${impLine(p)}${p.reach ? ' · <span class="pr">' + pr(p.reach['24']) + '</span> d\'y aller en 24 h' : ''}${impBar(p, c)}</span></div>`;
   });
   if (!pools.length) h = '<div class="muted">Aucune poche assez forte dans la fenêtre.</div>';
+  else h += '<div class="muted" style="font-size:11px;margin-top:4px">Barre : <span style="color:' + UP + '">taille</span> · <span class="amb">confluences</span> · <span style="color:#9fb4ff">fraîcheur</span>. N°1 = la plus importante de son côté (même rang en 15 min, 1 h ou 4 h). Clique une poche pour le détail.</div>';
   const tot = q.sumLong + q.sumShort, up = tot ? q.sumShort / tot * 100 : 50;
   h += `<div class="imb"><i style="width:${up}%;background:${DN}"></i><i style="width:${100 - up}%;background:${UP}"></i></div>` +
     `<div class="muted" style="font-size:11px">au-dessus ${up.toFixed(0)} % · en dessous ${(100 - up).toFixed(0)} % · ${q.total} poches détectées → ${pools.length} retenues</div>`;
@@ -339,19 +350,21 @@ function renderPools(d) {
 function renderPricePools(d) {
   const el = $('#pricePools'); if (!el) return;
   const ps = (d.liquidity.pricePools || []).slice().sort((a, b) => b.price - a.price), px = livePrice(d);
+  const all = d.liquidity.pricePools || [];
   el.innerHTML = ps.length ? ps.map(p => {
-    const c = p.side === 'long' ? UP : DN, dist = (p.price / px - 1) * 100;
-    return `<div class="row"><span class="ar" style="color:${c}">${p.side === 'long' ? '▼' : '▲'}</span><span class="nm">${esc(p.src)}</span><span class="pv">${fmtP(p.price)}</span>` +
-      `<span class="sub">${fmtPct(dist)} · ${p.side === 'long' ? 'ordres d\'arrêt des acheteurs sous ce niveau' : 'ordres d\'arrêt des vendeurs au-dessus'} · force ${p.score}<div class="bar"><i style="width:${p.score}%;background:${c}"></i></div></span></div>`;
+    const c = p.side === 'long' ? UP : DN, dist = (p.price / px - 1) * 100, k = all.indexOf(p);
+    const sel = st.sel && st.sel.type === 'ppool' && st.sel.id === k ? ' sel' : '';
+    return `<div class="row${sel}" data-ppool="${k}"><span class="ar" style="color:${c}">${p.side === 'long' ? '▼' : '▲'}</span><span class="nm">${rankTag(p)}${esc(p.src)}</span><span class="pv">${fmtP(p.price)}</span>` +
+      `<span class="sub">${fmtPct(dist)} · ${impLine(p)}${impBar(p, c)}</span></div>`;
   }).join('') : '<div class="muted">Aucun plus haut / plus bas notable dans la fenêtre.</div>';
 }
 function renderPools2(d) {
   const el = $('#pools2'); if (!el) return;
-  const ps = d.liquidity.pools.map((p, i) => ({p, i})).sort((a, b) => b.p.size * b.p.price - a.p.size * a.p.price);
+  const ps = d.liquidity.pools.map((p, i) => ({p, i})).sort((a, b) => impOf(b.p) - impOf(a.p) || b.p.size * b.p.price - a.p.size * a.p.price);
   el.innerHTML = ps.length ? ps.map(({p, i}) => {
     const c = p.side === 'long' ? UP : DN, sel = st.sel && st.sel.type === 'pool' && st.sel.id === i ? ' sel' : '';
-    return `<div class="row${sel}" data-pool="${i}"><span class="ar" style="color:${c}">${p.side === 'long' ? '▼' : '▲'}</span><span class="nm">${p.magnet ? '<b>AIMANT</b> · ' : ''}${p.side === 'long' ? 'longs' : 'shorts'} · ${usdFmt(p.size * p.price)}</span><span class="pv">${fmtP(p.price)}</span>` +
-      `<span class="sub"><span data-pd="${i}">${fmtPct((p.price / livePrice(d) - 1) * 100)}</span> · ${p.born ? 'âge ' + ageFmt(Date.now() - p.born) : 'ancienne'}${p.reach ? ' · <span class="pr">' + pr(p.reach['24']) + '</span> d\'y aller en 24 h' : ''}<div class="bar"><i style="width:${p.score}%;background:${c}"></i></div></span></div>`;
+    return `<div class="row${sel}" data-pool="${i}"><span class="ar" style="color:${c}">${p.side === 'long' ? '▼' : '▲'}</span><span class="nm">${rankTag(p)}${p.side === 'long' ? 'longs' : 'shorts'} · ${usdFmt(p.size * p.price)}</span><span class="pv">${fmtP(p.price)}</span>` +
+      `<span class="sub"><span data-pd="${i}">${fmtPct((p.price / livePrice(d) - 1) * 100)}</span> · ${impLine(p)}${p.reach ? ' · <span class="pr">' + pr(p.reach['24']) + '</span> d\'y aller en 24 h' : ''}${impBar(p, c)}</span></div>`;
   }).join('') : '<div class="muted">Aucune poche assez forte dans la fenêtre.</div>';
 }
 function renderLqLegend() {
@@ -390,6 +403,18 @@ function defNote() {
   return `<div class="note">Rebond = dans les ${H} h après le contact, le prix s'éloigne de ${k} ATR (1h) du bon côté avant de casser de ${k} ATR. ` +
     `Mesuré sur l'historique de ${esc(st.symbol || '')}. « Hasard » = niveaux tirés au sort : s'il fait pareil, le niveau n'apporte rien.</div>`;
 }
+// Detail de l'importance (V14) : decomposition, fraicheur, confluences et ce que la mesure sur l'historique en dit.
+function impDetail(p, kind) {
+  const i = p.imp; if (!i) return `<div class="note">${ageTxt(p)}</div>`;
+  const c = p.side === 'long' ? UP : DN, part = (t, v, mx, col, sub) => `<div class="improw"><span>${t}</span><div class="bar"><i style="width:${Math.round(v / mx * 100)}%;background:${col}"></i></div><b>${num(v, 0)}/${mx}</b><small class="muted">${sub}</small></div>`;
+  const conf = (i.conf || []).map(x => `<li>${esc(x.what)} <span class="muted">(${esc(x.name)})</span> · ${fmtP(x.price)} <span class="muted">+${num(x.w, 0)}</span></li>`).join('');
+  return `<div class="sect">Importance <b>${i.score}/100</b> · ${esc(i.grade)}${p.rank ? ` · <b class="${p.rank === 1 ? 'amb' : ''}">N°${p.rank}</b> ${sideWord(p)} du prix` : ' · hors de la fenêtre 1 h (pas de rang)'}</div>` +
+    part('Taille', i.parts.size, 50, c, kind === 'liq' ? 'montant face à la plus grosse poche de la fenêtre 1 h' : 'force du niveau') +
+    part('Confluences', i.parts.conf, 30, AMB, i.nConf ? i.nConf + ' niveau' + (i.nConf > 1 ? 'x' : '') + ' d\'autres sources à moins de 0,3 ATR 1 h' : 'aucun niveau d\'une autre source autour') +
+    part('Fraîcheur', i.parts.age, 20, '#9fb4ff', ageTxt(p) + (i.maturity ? ' (' + esc(i.maturity) + ')' : '')) +
+    (conf ? `<ul class="impconf">${conf}</ul>` : '') +
+    `<div class="note"><b>Ce que dit la mesure</b> (BTC 2014-2026, 26 552 premiers contacts de plus hauts / plus bas, page Backtest → rapport « poches ») : au premier contact, une poche se retourne un peu plus souvent qu'un niveau au hasard (+2,8 points contre +0,6), surtout si elle a <b>moins de 24 h</b> ; après 10 jours, plus d'effet mesurable. Les confluences n'ajoutent presque rien au retournement, mais <b>plus il y en a, moins le prix va jusqu'à la poche</b> (il s'arrête avant). Aucune poche n'attire le prix plus que sa distance ne le prévoit.${kind === 'liq' ? ' Les poches estimées par l\'intérêt ouvert (29 jours d\'historique) ne sont pas testables : mêmes règles par prudence.' : ''}</div>`;
+}
 function renderDetail(d) {
   const el = $('#detail'), s = st.sel;
   if (!s) { el.className = 'muted'; el.textContent = 'Rien de sélectionné.'; return; }
@@ -401,10 +426,10 @@ function renderDetail(d) {
     const ar = {above: '▲', below: '▼', in: '◆'}[z.side];
     const rows = z.members.map(i => lv[i]).filter(Boolean).sort((a, b) => a.price - b.price).map(m => {
       const f = m.famStat;
-      return `<tr title="${esc(explain(m.name))}"><td><span class="chip" style="background:${levelColor(m)}"></span>${esc(m.name)}${m.pool && m.pool.magnet ? ' <b>AIMANT</b>' : ''}</td>` +
+      return `<tr title="${esc(explain(m.name))}"><td><span class="chip" style="background:${levelColor(m)}"></span>${esc(m.name)}${m.pool && m.pool.rank ? ' <b>N°' + m.pool.rank + '</b>' : ''}</td>` +
         `<td class="muted small">${f && f.n ? 'rebond ' + pr(f.p) + ' (n=' + f.n + ')' : ''}</td><td>${fmtP(m.price)}</td></tr>`;
     }).join('');
-    const where = {above: 'Zone au-dessus du prix (résistance) : règle « aimant » → plutôt attirée vers le haut.', below: 'Zone sous le prix (support) : règle « aimant » → plutôt attirée vers le bas.', in: 'Le prix est dans la zone.'}[z.side];
+    const where = {above: 'Zone au-dessus du prix (résistance).', below: 'Zone sous le prix (support).', in: 'Le prix est dans la zone.'}[z.side];
     const p = z.prob;
     const bucket = p ? (p.bucket === '3+' ? '3 sources ou plus' : p.bucket + ' sources') : '';
     el.innerHTML = `<div><b>${ar} Confluence ${fmtP(z.mid)}</b> <span class="muted">${z.side === 'in' ? '' : fmtPct(z.distPct) + ' · ' + num(z.distAtr, 1) + ' ATR · '}score ${z.score}</span></div>` +
@@ -412,18 +437,23 @@ function renderDetail(d) {
       (p ? (z.side !== 'in' ? reachBlock(p.reach, `atteigne la zone (${num(p.distAtrH1, 1)} ATR 1h)`) : '') +
         `<div class="sect">Si le prix touche la zone</div>` + statLine(p.bounce, p.base, `Zones à ${bucket} (${p.side === 'support' ? 'support' : p.side === 'resistance' ? 'résistance' : 'tous'})`) + defNote()
         : '<div class="note">Probabilités : calcul de l\'historique en cours…</div>') +
-      `<div class="note">${where} Hypothèse non validée.${z.hasMagnet ? ' Contient une poche de liquidation AIMANT.' : ''}</div>`;
+      `<div class="note">${where} Hypothèse non validée.${z.hasMagnet ? ' Contient la plus grosse poche de liquidation de ce côté.' : ''}</div>`;
   } else if (s.type === 'pool') {
     const p = d.liquidity.pools[s.id]; if (!p) { el.textContent = 'Poche disparue.'; return; }
     const dist = (p.price / d.price - 1) * 100, sw = d.sweeps && d.sweeps.stats;
     el.innerHTML = `<div><b>${p.side === 'long' ? '▼ Liquidations de longs' : '▲ Liquidations de shorts'} ${fmtP(p.price)}</b> ` +
       `<span class="muted">${fmtPct(dist)} · ${num(Math.abs(p.price - d.price) / d.atr, 1)} ATR</span></div>` +
-      `<div class="note">Fourchette ${fmtP(p.lo)} – ${fmtP(p.hi)} · taille relative ${p.score}/100${p.magnet ? ' · <b>AIMANT</b> (la plus forte de ce côté)' : ''}</div>` +
-      `<div class="note">${p.size ? 'Taille estimée ≈ <b>' + usdFmt(p.size * p.price) + '</b> de positions · ' : ''}${p.born ? 'formée il y a <b>' + ageFmt(Date.now() - p.born) + '</b>' : 'formée il y a plus longtemps que l\'historique disponible'}</div>` +
-      `<div class="bar"><i style="width:${p.score}%;background:${p.side === 'long' ? UP : DN}"></i></div>` +
+      `<div class="note">Fourchette ${fmtP(p.lo)} – ${fmtP(p.hi)} · ${p.size ? 'taille estimée ≈ <b>' + usdFmt(p.size * p.price) + '</b> de positions' : ''}${p.magnet ? ' · la plus grosse de ce côté dans cette vue' : ''}</div>` +
+      impDetail(p, 'liq') +
       reachBlock(p.reach, 'atteigne la poche') +
       `<div class="sect">Après un balayage (journal des 30 derniers jours)</div>` + statLine(sw, base, 'Poches balayées') +
       `<div class="note">Estimation à partir de l'Open Interest : chaque hausse d'OI = nouvelles positions, réparties longs/shorts selon le <b>vrai volume acheteur agressif</b> (taker buy) de la bougie, puis par levier (100x 10 %, 50x 20 %, 25x 30 %, 10x 40 %) ; prix de liquidation = formule isolée + marge 0,4 %. Un niveau disparaît quand le prix le touche ; quand l'OI baisse, tout est réduit d'autant. <b>Proxy, pas de vraies liquidations.</b></div>`;
+  } else if (s.type === 'ppool') {
+    const p = (d.liquidity.pricePools || [])[s.id]; if (!p) { el.textContent = 'Poche disparue.'; return; }
+    el.innerHTML = `<div><b>${p.side === 'long' ? '▼ Ordres d\'arrêt des acheteurs' : '▲ Ordres d\'arrêt des vendeurs'} · ${esc(p.src)} ${fmtP(p.price)}</b> ` +
+      `<span class="muted">${fmtPct((p.price / d.price - 1) * 100)} · ${num(Math.abs(p.price - d.price) / d.atr, 1)} ATR</span></div>` +
+      `<div class="note">${p.side === 'long' ? 'Sous ce creux, les acheteurs ont placé leurs stops' : 'Au-dessus de ce sommet, les vendeurs ont placé leurs stops'} : tout le monde voit ce niveau. Force ${p.score}/100 (mois > semaine > jour > creux ou sommet sur 1 h ; deux extrêmes au même prix comptent plus).</div>` +
+      impDetail(p, 'stops') + (p.reach ? reachBlock(p.reach, 'atteigne ce niveau') : '');
   } else {
     const l = lv[s.id]; if (!l) { el.textContent = 'Niveau disparu.'; return; }
     const side = l.price < d.price ? 'support' : 'résistance';
@@ -541,9 +571,10 @@ function select(sel) {
   }
 }
 document.addEventListener('click', e => {
-  const z = e.target.closest('[data-zone]'), p = e.target.closest('[data-pool]');
+  const z = e.target.closest('[data-zone]'), p = e.target.closest('[data-pool]'), q = e.target.closest('[data-ppool]');
   if (z) select({type: 'zone', id: z.dataset.zone});
   else if (p) select({type: 'pool', id: +p.dataset.pool});
+  else if (q) select({type: 'ppool', id: +q.dataset.ppool});
 });
 
 // ---------- donnees ----------
@@ -597,6 +628,7 @@ function pushBars(d) {
   if (reset) setTimeout(() => { panels.forEach(p => p.visible() && p.resetView()); }, 150);
 }
 function apply(d) {
+  if (d.liquidity && d.liquidity.extraPools && d.liquidity.extraPools.length) d.liquidity.pools = d.liquidity.pools.concat(d.liquidity.extraPools);   // N°1 et N°2 hors de la liste (affichage seul)
   st.data = d;
   if (d.now) st.clockOff = d.now - Date.now();
   pushBars(d); header(d); panels.forEach(p => p.rebuildLines());
@@ -1087,7 +1119,7 @@ function openSymbol(sym, page) {
   let cfg;
   try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
   window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
-    shownPools, levelColor, livePrice, placeLabels, usdFmt, biasHtml, againstBias, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
+    shownPools, impOf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, againstBias, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
   Overview.init(window.LT);
   Signals.init(window.LT);
   Backtest.init(window.LT);

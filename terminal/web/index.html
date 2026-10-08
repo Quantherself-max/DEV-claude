@@ -122,7 +122,7 @@
       </div>
       <div class="pane" data-pane="liquidity" hidden>
         <section class="card"><h2>Comment lire la carte</h2><div id="lqLegend"></div></section>
-        <section class="card"><h2>Poches actuelles <small>triées par taille</small></h2><div id="pools2"></div></section>
+        <section class="card"><h2>Poches actuelles <small>triées par importance (taille + confluences + fraîcheur)</small></h2><div id="pools2"></div></section>
         <section class="card" id="detailCard2"><h2>Détail</h2><div id="detail2" class="muted">Clique une poche.</div></section>
         <section class="card"><h2>Liquidations réelles <small id="realHint"></small></h2><div id="real" class="muted">-</div></section>
         <section class="card"><h2>Poches balayées <small>journal</small></h2><div id="sweeps" class="muted">-</div></section>
@@ -227,7 +227,7 @@
           <label class="field chk"><input id="aSweep" type="checkbox"> Alerte quand une grosse poche est balayée</label>
           <label class="field chk"><input id="aMacro" type="checkbox"> Alerte avant une annonce majeure (CPI, Fed...) et bilan de la réaction</label>
         </div>
-        <p class="muted small">Par défaut, tu ne reçois que les idées de trade (avec leur suivi : ordre exécuté, objectifs, stop). Les alertes de zones, de poches et d'annonces ne sont envoyées qu'en mode « Idées de trade + alertes ». Score = nombre de sources différentes dans la zone (+1 si une poche AIMANT en fait partie).</p>
+        <p class="muted small">Par défaut, tu ne reçois que les idées de trade (avec leur suivi : ordre exécuté, objectifs, stop). Les alertes de zones, de poches et d'annonces ne sont envoyées qu'en mode « Idées de trade + alertes ». Score = nombre de sources différentes dans la zone (+1 si la plus grosse poche de liquidation d'un côté en fait partie).</p>
       </section>
       <section>
         <h4><span class="step">4</span> Idées de trade</h4>

@@ -10,7 +10,7 @@ const Backtest = (() => {
   const dateFr = ms => new Date(ms).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit', year: 'numeric'});
   let LT = null, list = null, label = null, kind = 'backtest', rep = null, loading = false, error = null, sortKey = null, showAll = false;
 
-  const repKind = r => ({'vwap-strategy': 'strategy', 'avwap-swing': 'avwap', indicators: 'indicators', rotation: 'rotation', squeeze: 'squeeze'})[r.kind] || 'backtest';
+  const repKind = r => ({'vwap-strategy': 'strategy', 'avwap-swing': 'avwap', indicators: 'indicators', rotation: 'rotation', squeeze: 'squeeze', pockets: 'pockets'})[r.kind] || 'backtest';
 
   async function show() {
     if (loading) return;
@@ -467,6 +467,45 @@ const Backtest = (() => {
       <li><b>Relancer</b> : <code>python tools/run_rotation.py</code> (quelques secondes, aucune clé).</li></ul></section>`;
   }
 
+  // ---------- rapport « importance des poches » (V14) ----------
+  const VCLS = v => /^effet \+|^indice \+/.test(v) ? 'up' : /^effet −|^indice −/.test(v) ? 'dn' : 'muted';
+  function pkVerdict(r) {
+    const s = r.summary || {lines: []};
+    return `<section class="card btv warn"><div class="bthead"><h2>Poches de liquidité : taille, confluences, âge <small>${esc(r.label)} · ${esc(r.period.text)} · ${r.stats.touches} premiers contacts · ${r.stats.samples} mesures d'attraction</small></h2></div>
+      <ul class="btnotes">${s.lines.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
+      <div class="muted small">« Écart » = ce qui est arrivé moins ce que la seule position du prix (ou la seule distance) laissait attendre, en points de pourcentage. « effet » = même signe à l'apprentissage et au test, chacun au-delà de 2 erreurs-types ; « indice » = même signe partout, l'ensemble au-delà de 2 ; erreurs-types regroupées par jour.</div></section>`;
+  }
+  function pkRows(rows, dims) {
+    let last = null;
+    return rows.map(x => {
+      const dim = x.dim, head = dim !== last ? `<tr class="grp"><td colspan="7">${esc(dims[dim] || dim)}</td></tr>` : '';
+      last = dim;
+      const e = v => v == null ? '-' : sgn(v * 100, 1);
+      return head + `<tr><td>${esc(x.name)}</td><td class="r">${x.n}</td><td class="r">${pc(x.p, 1)}</td><td class="r muted">${pc(x.exp, 1)}</td><td class="r ${VCLS(x.verdict)}"><b>${e(x.ex)}</b></td>
+        <td class="r small">${e(x.is.ex)} / ${e(x.oos.ex)}</td><td class="${VCLS(x.verdict)}">${esc(x.verdict)}</td></tr>`;
+    }).join('');
+  }
+  function pkTable(r, key) {
+    const att = key === 'attraction';
+    return `<section class="card"><h2>${att ? 'Attraction : le prix va-t-il chercher la poche ?' : 'Réaction au premier contact : le prix se retourne-t-il ?'} <small>${att ? 'atteinte en 24 h, comparée à la même distance n\'importe où' : 'repart d\'une amplitude moyenne (ATR 1 h) dans l\'autre sens avant d\'en faire une de plus'}</small></h2>
+      <div class="scroll"><table class="bttab vt"><thead><tr><th>Groupe</th><th class="r">Cas</th><th class="r">${att ? 'Atteinte' : 'Retournement'}</th><th class="r">Attendu</th><th class="r">Écart</th><th class="r">Apprentissage / test</th><th>Verdict</th></tr></thead>
+      <tbody>${pkRows(r[key], r.dims || {})}</tbody></table></div></section>`;
+  }
+  function pkSweep(r) {
+    const pick = (m, d) => r.sweep.filter(x => x.dim === m && x.name.startsWith(d + '|')).map(x => ({...x, dim: m + ':' + d, name: x.name.split('|')[1]}));
+    const rows = ['all', 'confw', 'age'].flatMap(d => pick('sweep', d).concat(pick('break', d)));
+    const dims = {'sweep:all': 'Mèche à travers puis clôture revenue (balayage)', 'break:all': 'Clôture au-delà de la poche (cassure)', 'sweep:confw': 'Balayage, selon les confluences', 'break:confw': 'Cassure, selon les confluences', 'sweep:age': 'Balayage, selon l\'âge', 'break:age': 'Cassure, selon l\'âge'};
+    return `<section class="card"><h2>Balayage ou cassure <small>retournement selon la façon dont la bougie de contact se ferme</small></h2><div class="scroll"><table class="bttab vt"><thead><tr><th>Groupe</th><th class="r">Cas</th><th class="r">Retournement</th><th class="r">Attendu</th><th class="r">Écart</th><th class="r">Apprentissage / test</th><th>Verdict</th></tr></thead><tbody>${pkRows(rows, dims)}</tbody></table></div></section>`;
+  }
+  function pkMethod(r) {
+    return `<section class="card"><h2>Méthode et limites</h2><ul class="btnotes">
+      <li><b>Poches mesurées</b> : plus hauts / plus bas de la veille, de la semaine et du mois précédents, creux et sommets confirmés sur 1 h, et extrêmes presque égaux (moins de 0,15 % d'écart). Âge = depuis quand le prix n'est plus revenu à ce niveau. Confluences = niveaux d'autres sources (VWAP, ouvertures, profils de volume, POC nus, nombres ronds, plus hauts / bas d'autres périodes) à moins de 0,3 amplitude moyenne d'une bougie d'une heure, pondérées comme dans le terminal (année 10, mois 9, semaine 7, jour 4).</li>
+      <li><b>Attraction</b> : chaque jour à 00 h UTC, chaque poche intacte entre 0,5 et 8 amplitudes ; atteinte dans les 24 h comparée à la fréquence d'atteinte de la même distance sur tout l'historique. Témoin : niveaux tirés au hasard.</li>
+      <li><b>Réaction</b> : au premier contact, depuis la clôture de la bougie de contact ; « attendu » = taux d'une marche au hasard depuis la même position (correction de dépassement). Horizon ${r.horizon} h, seuil ${num(r.k, 1)} amplitude.</li>
+      <li><b>Limites</b> : un seul actif (BTC au comptant, Bitstamp) ; les poches estimées par l'intérêt ouvert ne sont pas testables (29 jours d'historique chez Binance) ; les effets mesurés sont petits (quelques points de pourcentage), utiles pour classer, pas pour trader seuls.</li>
+      <li><b>Relancer sur SOL</b> : <code>python tools/fetch_history.py SOLUSDT</code> puis <code>python tools/run_pocket_study.py SOLUSDT</code>. Le rapport s'ajoute à cette liste.</li></ul></section>`;
+  }
+
   // ---------- rapport « delta, CVD et squeezes » ----------
   function sqVerdict(r) {
     const v = r.verdict, tone = v.informative ? 'ok' : v.hints ? 'warn' : 'bad';
@@ -511,11 +550,12 @@ const Backtest = (() => {
     if (loading && !rep) { root.innerHTML = '<section class="card"><div class="muted">Chargement du rapport…</div></section>'; return; }
     if (!list || !list.length) { root.innerHTML = '<section class="card"><h2>Backtest</h2><div class="muted">Aucun rapport trouvé. Lance <code>python tools/run_study.py BTCUSDT</code> après avoir téléchargé l\'historique (<code>python tools/fetch_history.py BTCUSDT</code>).</div></section>'; return; }
     if (!rep) return;
-    const kname = k => k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : k === 'indicators' ? 'indicateurs (en chaîne, macro, liquidité)' : k === 'rotation' ? 'où va l\'argent (rotation, or)' : k === 'squeeze' ? 'delta, CVD et squeezes' : 'idées du terminal';
+    const kname = k => k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : k === 'indicators' ? 'indicateurs (en chaîne, macro, liquidité)' : k === 'rotation' ? 'où va l\'argent (rotation, or)' : k === 'squeeze' ? 'delta, CVD et squeezes' : k === 'pockets' ? 'importance des poches (confluences, âge)' : 'idées du terminal';
     const sel = `<div class="btbar"><label>Rapport <select id="btSel">${list.map(x => `<option value="${esc(x.kind)}|${esc(x.label)}" ${x.label === label && x.kind === kind ? 'selected' : ''}>${esc(x.label)} · ${kname(x.kind)}${x.own ? ' (calculé sur tes données)' : ' (livré avec le terminal)'}</option>`).join('')}</select></label>
       <span class="muted small">Calculé le ${dateFr(rep.computedAt)} en ${rep.seconds < 90 ? rep.seconds + ' s' : Math.round(rep.seconds / 60) + ' min'}</span></div>`;
     if (rep.kind === 'vwap-strategy') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + stratHedge(rep) + stratMethod(rep) + '</div>'; return; }
     if (rep.kind === 'rotation') { root.innerHTML = sel + '<div class="btgrid">' + rotVerdict(rep) + rotMap(rep) + rotGold(rep) + rotTargets(rep) + rotMethod(rep) + '</div>'; drawRotation(rep); return; }
+    if (rep.kind === 'pockets') { root.innerHTML = sel + '<div class="btgrid">' + pkVerdict(rep) + pkTable(rep, 'reaction') + pkTable(rep, 'attraction') + pkSweep(rep) + pkMethod(rep) + '</div>'; return; }
     if (rep.kind === 'squeeze') { root.innerHTML = sel + '<div class="btgrid">' + sqVerdict(rep) + sqEvents(rep) + sqTargets(rep) + sqMethod(rep) + '</div>'; return; }
     if (rep.kind === 'indicators') { root.innerHTML = sel + '<div class="btgrid">' + indVerdict(rep) + indTable(rep) + indMethod(rep) + '</div>'; return; }
     if (rep.kind === 'avwap-swing') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + reactionCard(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + swingMethod(rep) + '</div>'; return; }

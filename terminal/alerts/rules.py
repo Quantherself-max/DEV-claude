@@ -21,7 +21,7 @@ def zone_members(st: dict, z: dict):
 
 def member_label(lv: dict) -> str:
     if lv["kind"] == "liq" and lv.get("pool"):
-        return f"{lv['name']}{' AIMANT' if lv['pool']['magnet'] else ''} [{lv['pool']['score']}]"
+        return f"{lv['name']}{' (plus grosse poche)' if lv['pool']['magnet'] else ''} [{lv['pool']['score']}]"
     return lv["name"]
 
 

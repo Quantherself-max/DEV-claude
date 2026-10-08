@@ -39,6 +39,7 @@ def swing_points(b: Bars, n: int = SWING_N):
 
 class PriceLiquidity:
     def __init__(self, b1h: Bars, n: int = SWING_N):
+        self.b = b1h
         self.highs, self.lows = swing_points(b1h, n)
         self._hc = [x[0] for x in self.highs]
         self._lc = [x[0] for x in self.lows]
@@ -69,11 +70,27 @@ class PriceLiquidity:
         self._cache = (hour, out)
         return out
 
-    def pools(self, price: float, atr: float, now_ms: int, ext, max_dist_pct: float = 0.10):
+    def formed_at(self, level: float, kind: str, now_ms: int, forming=None):
+        """Derniere fois que le prix a traite a ce niveau (naissance de la poche : depuis, ses ordres d'arret s'accumulent).
+        kind 'low' : derniere bougie dont le plus bas l'atteint ; 'high' : le plus haut. `forming` : bougie 1 h en cours (t, h, l).
+        None si ce n'est pas arrive dans l'historique charge (120 jours)."""
+        eps = level * 1e-9
+        if forming is not None and (forming.l <= level + eps if kind == "low" else forming.h >= level - eps):
+            return int(forming.t)
+        b = self.b
+        j = bisect_right(b.t, now_ms - b.step) - 1
+        arr = b.l if kind == "low" else b.h
+        while j >= 0:
+            if (arr[j] <= level + eps) if kind == "low" else (arr[j] >= level - eps):
+                return int(b.t[j])
+            j -= 1
+        return None
+
+    def pools(self, price: float, atr: float, now_ms: int, ext, max_dist_pct: float = 0.10, forming=None):
         """Poches pres du prix. `ext` : [(nom, prix, 'low'|'high', score, instant_de_naissance_ms)] (extremes de periodes, recalcules
         a chaque appel : le plus bas du jour peut etre balaye 20 minutes apres sa creation).
         Renvoie des dicts compatibles avec les poches OI : side ('long' = stops sous un creux), price, lo, hi, score, src, born."""
-        cand = [(p, kind, score, name, born) for name, p, kind, score, born in ext if p]
+        cand = [(p, kind, score, name, self.formed_at(p, kind, now_ms, forming) or born) for name, p, kind, score, born in ext if p]
         cand += self._swing_candidates(now_ms)
         cand = [c for c in cand if abs(c[0] / price - 1) <= max_dist_pct]
         out = []

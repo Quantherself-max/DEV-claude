@@ -1,9 +1,10 @@
-# Liq Terminal (V13.1)
+# Liq Terminal (V14)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Poches de liquidité classées par importance** (V14) : chaque poche (estimée par l'intérêt ouvert ou visible dans le prix) affiche son **âge** (formée il y a…), un **score d'importance sur 100** (taille + confluences autour + fraîcheur) et son **rang** de son côté (N°1, N°2…), le même en 15 minutes, 1 heure ou 4 heures. Les poids viennent d'une **mesure sur 12 ans de BTC** (rapport « poches » dans la page **Backtest**, voir « V14 » plus bas).
 - **Historique et sens de tes trades** (V13) : page **Historique** (chaque idée et alerte envoyée avec son résultat, la lecture du terminal jour après jour et ce que le prix a fait ensuite), **jamais deux biais opposés à moins de 24 heures**, toutes paires confondues, et le **biais du terminal** affiché partout (voir « V13.1 » et « V13 » plus bas).
 - **Discuter avec Claude** (V12) : pose tes questions sur Telegram (au même bot) ou dans l'onglet **Discussion** (« pourquoi le BTC a perdu 2 % ? ») ; Claude répond avec toutes les données du terminal à cet instant et l'actualité du web (voir « V12 » plus bas).
 - **Mise à jour automatique** (V11) : une nouvelle version publiée sur GitHub est vérifiée, sauvegardée et installée toute seule ; le terminal redémarre dans la même fenêtre et la page se recharge. Rien à configurer : le dépôt est public (Réglages → 6 pour suivre l'état, voir « V11 » plus bas).
@@ -106,6 +107,27 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V14 : quelle poche de liquidité compte le plus
+
+### Ce que tu vois
+- **Âge de chaque poche** : « formée il y a 5 h », « 3 j »… Pour une poche estimée par l'intérêt ouvert, c'est le moment où elle a commencé à peser ; pour un plus haut / plus bas, la dernière fois que le prix a traité à ce niveau (avant, l'âge des plus hauts et plus bas de la veille, de la semaine et du mois était faux : il valait « maintenant »).
+- **Score d'importance sur 100**, en trois parts (barre tricolore dans les listes, détail au clic) :
+  - **taille** (50 points au plus) : montant estimé face à la plus grosse poche de la fenêtre d'une heure ; pour un plus haut / plus bas, sa force (mois > semaine > jour > creux ou sommet sur 1 h, deux extrêmes au même prix comptent plus) ;
+  - **confluences** (30 points au plus) : niveaux d'**autres sources** à moins de 0,3 amplitude moyenne d'une bougie d'une heure, pondérés par la période (année 10, mois 9, semaine 7, jour 4, VWAP ancré 7, POC nu 6, nombre rond 3) ; une poche estimée posée sur des ordres d'arrêt visibles (ou l'inverse) compte 10. Le détail liste chaque confluence avec son prix ;
+  - **fraîcheur** (20 points au plus) : tout pour une poche de moins de 24 heures, puis de moins en moins ; plus rien après 60 jours.
+- **Rang N°1, N°2…** de son côté (au-dessus / en dessous du prix). Le classement se fait toujours sur la **fenêtre d'une heure** : une poche garde **le même score et le même rang en 15 minutes, 1 heure ou 4 heures** (fini l'« aimant » qui changeait de côté avec l'unité de temps). Les N°1 et N°2 de chaque côté sont toujours affichées, même quand l'unité de temps n'en montre que trois.
+- Sur les graphiques : « N°1 85 857 +1,01 % · 90/100 · 13 j ». Les listes de l'onglet **Niveaux** et de **Liquidité** sont classées par importance ; les plus hauts / plus bas sont maintenant cliquables (détail, confluences, chances d'être atteints).
+- L'étiquette **AIMANT** disparaît de l'affichage : elle désignait seulement la plus grosse poche de la vue, et la mesure montre qu'aucune poche n'attire le prix (voir plus bas). Elle reste « la plus grosse poche » dans les zones de confluence.
+
+### Ce que dit la mesure (rapport « poches », page Backtest)
+BTC au comptant 2014 → octobre 2026, bougies 1 heure, uniquement avec ce qui était connu à chaque instant ; apprentissage jusqu'à fin 2021, test ensuite ; erreurs-types regroupées par jour. Poches mesurables sur 12 ans : plus hauts / plus bas de la veille, de la semaine, du mois, creux et sommets sur 1 h, extrêmes égaux (26 552 premiers contacts, 48 156 mesures d'attraction). Les poches estimées par l'intérêt ouvert ne sont **pas** testables (29 jours d'historique chez Binance) : on leur applique les mêmes règles par prudence.
+- **Pas d'aimant.** Une poche est atteinte en 24 heures **moins** souvent que la même distance n'importe où (26,8 % contre 29,3 %), et **plus elle a de confluences, moins le prix va jusqu'à elle** (−5,5 points pour les fortes) : les niveaux autour l'arrêtent avant. Conséquence pratique : une poche très entourée est un **mauvais objectif** et un **bon endroit derrière lequel cacher un stop**.
+- **Un petit retournement au contact.** Au premier contact, le prix se retourne 51,5 % du temps pour 48,7 % attendus (+2,8 points, confirmé sur l'apprentissage et le test ; témoin au hasard +0,6). C'est plus net pour les poches de **moins de 24 heures** (+3,3 à +3,6) et cela disparaît après 10 jours : d'où la **fraîcheur** dans le score, pas l'ancienneté.
+- **Les confluences n'ajoutent presque rien au retournement** (+2,9 faibles, +2,7 moyennes, +3,4 fortes, sans écart prouvé) : d'où un poids modéré (30 points).
+- **Les plus hauts / bas de la semaine et du mois ne se retournent pas plus** que ceux de la veille ou qu'un creux sur 1 h : ce sont les stops que tout le monde voit, et une fois pris, le mouvement continue aussi souvent.
+- Les effets sont **petits** (quelques points de pourcentage) : le score sert à **classer** les poches entre elles, pas à prendre un trade seul.
+- Relancer la mesure, par exemple sur SOL : `python tools/fetch_history.py SOLUSDT` puis `python tools/run_pocket_study.py SOLUSDT` (quelques secondes).
 
 ## Ce qui est nouveau en V13.1 : un seul biais à la fois
 
@@ -477,7 +499,8 @@ engine/             calculs : profils de volume (auto et choisis), séries VWAP 
                     V8 : swingavwap.py (zigzag confirmé, VWAP ancrés sur sommet / creux, contacts), swingstudy.py (réaction du prix et trades) ;
                     V9 : indicators.py (25 indicateurs journaliers), indstudy.py (mesure avec témoin), derivstudy.py (mesure des dérivés enregistrés), lecture.py (écran de lecture) ;
                     V12 : explain.py (mouvements récents et faits qui les accompagnent) ;
-                    V10 : rotation.py et rotationstudy.py (carte du capital, rotation, or), goldbtc.py (asymétrie bitcoin / or), squeeze.py (delta, divergences, squeezes), squeezestudy.py (mesure)
+                    V10 : rotation.py et rotationstudy.py (carte du capital, rotation, or), goldbtc.py (asymétrie bitcoin / or), squeeze.py (delta, divergences, squeezes), squeezestudy.py (mesure) ;
+                    V14 : pocketrank.py (importance d'une poche : taille, confluences, fraîcheur), pocketstudy.py (mesure sur l'historique)
 data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase) ; social.py (posts X, facultatif) ; V9 : derivs.py (options, DVOL, base, financement multi-bourses), opendata.py (jeux libres GitHub)
 alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées) ; assistant.py (discussion avec Claude, V12) ; readings.py (lecture quotidienne et ce que le prix a fait ensuite, V13)
 service.py          relie les données et les moteurs, fabrique l'état JSON
@@ -485,7 +508,7 @@ server.py           serveur local : API, réglages, sécurité
 web/                interface : index.html + style.css ; app.js (Desk, état, alertes), panels.js (les trois graphiques),
                     overview.js (vue d'ensemble), signals.js (idées de trade), analysis.js et charts.js (analyse, graphiques SVG) ;
                     TradingView Lightweight Charts (vendor/)
-tools/              run_rotation.py, run_squeeze_study.py (V10), run_indicators.py, run_derivs_study.py (V9), fetch_history.py (historique 1 min Binance), run_study.py (rapport de backtest des idées du terminal), run_strategy.py (rapport de ta stratégie VWAP / profil de volume) et run_avwap_swing.py (VWAP ancrés sur un mouvement de 5 % ou plus)
+tools/              run_pocket_study.py (V14), run_rotation.py, run_squeeze_study.py (V10), run_indicators.py, run_derivs_study.py (V9), fetch_history.py (historique 1 min Binance), run_study.py (rapport de backtest des idées du terminal), run_strategy.py (rapport de ta stratégie VWAP / profil de volume) et run_avwap_swing.py (VWAP ancrés sur un mouvement de 5 % ou plus)
 reports/            rapports livrés (BTC) : backtest_BTC.json (idées du terminal), strategy_BTC.json (ta stratégie) et avwap_BTC.json (VWAP ancrés sur un mouvement) indicators_BTC.json (indicateurs en chaîne et macro), rotation_BTC.json (où va l'argent, or) et squeeze_BTC.json (delta, CVD, squeezes) ; les tiens vont dans data_local/reports/
 serveur/            installation sur un serveur 24 h/24 (script et guide)
 tests/              tests automatiques (plus de quatre cents)

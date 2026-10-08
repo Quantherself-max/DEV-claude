@@ -79,10 +79,10 @@ class AlertRuleTests(unittest.TestCase):
         self.n.sent.clear()
         self.eng.run_cycle({"BTCUSDT": make_state([Z2, Z3, Z2MAG])})
         texts = "\n".join(self.n.sent)
-        self.assertEqual(len(self.n.sent), 2)                   # Z3 (3 sources) et Z2MAG (2 sources + AIMANT) ; pas Z2
+        self.assertEqual(len(self.n.sent), 2)                   # Z3 (3 sources) et Z2MAG (2 sources + plus grosse poche) ; pas Z2
         self.assertIn("86 000", texts)
         self.assertIn("87 400", texts)
-        self.assertIn("AIMANT", texts)
+        self.assertIn("plus grosse poche", texts)
         self.eng.run_cycle({"BTCUSDT": make_state([Z2, Z3, Z2MAG])})
         self.assertEqual(len(self.n.sent), 2)                   # pas de doublon
 

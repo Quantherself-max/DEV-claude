@@ -138,6 +138,15 @@ class LiqEngine:
         if not self.snaps:
             return None
         b0, b1 = band_of(lo), band_of(hi)
+        ver = (self.steps, len(self.snaps), self.snaps[-1][0], self.raw_long, self.raw_short, self.g)    # memoire valable tant que rien n'a bouge
+        if getattr(self, "_birth_ver", None) != ver:
+            self._birth_ver, self._birth = ver, {}
+        key = (b0, b1, side, share)
+        if key not in self._birth:
+            self._birth[key] = self._birth_of(b0, b1, side, share)
+        return self._birth[key]
+
+    def _birth_of(self, b0, b1, side, share):
         k = 1 if side == "long" else 2
         now_d = self._bands_now()[0 if side == "long" else 1]
         cur = sum(v for b, v in now_d.items() if b0 <= b <= b1)

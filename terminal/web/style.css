@@ -305,3 +305,8 @@ ul.mine{margin:4px 0 0;padding-left:18px;font-size:12.5px;color:#c6c9d2}ul.mine 
 
 /* V13.1 : biais du terminal (une idee en cours ou de moins de 24 h fixe le sens, toutes paires confondues) */
 .biasline{margin:6px 0 4px;font-size:12.5px;line-height:1.45}.biasline .lt{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin-right:4px}
+
+/* V14 : importance des poches (taille + confluences + fraicheur) */
+.bar.stack{display:flex}.bar.stack i{flex:none}
+.improw{display:grid;grid-template-columns:82px 1fr 40px;gap:2px 8px;align-items:center;font-size:12px;margin:4px 0}.improw .bar{margin:0}.improw b{text-align:right}.improw small{grid-column:1/-1;margin-top:-2px}
+.impconf{margin:4px 0 6px 16px;padding:0;font-size:12px;line-height:1.5}

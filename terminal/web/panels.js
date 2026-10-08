@@ -262,11 +262,24 @@ class Panel {
     occ.push({x0, x1: x0 + w, y0: y - h / 2, y1: y + h / 2});
     return x0;
   }
-  tag(x, y, text, color, bg, bold) {
+  // comme place(), mais si la ligne est pleine jusqu'au bord, essaie juste au-dessus ou en dessous (etiquettes des plus hauts / bas, V14)
+  placeXY(x, y, w, h, limit) {
+    const occ = this._occ || (this._occ = []);
+    const hits = (x0, yy) => occ.find(r => x0 < r.x1 && x0 + w > r.x0 && yy - h / 2 < r.y1 && yy + h / 2 > r.y0);
+    for (const dy of [0, h + 2, -(h + 2), 2 * (h + 2), -2 * (h + 2)]) {
+      const yy = y + dy;
+      let x0 = x;
+      for (let k = 0; k < 6 && hits(x0, yy); k++) x0 = hits(x0, yy).x1 + 6;
+      if (!hits(x0, yy) && (limit == null || x0 + w <= limit)) { occ.push({x0, x1: x0 + w, y0: yy - h / 2, y1: yy + h / 2}); return {x: x0, y: yy}; }
+    }
+    return {x: this.place(x, y, w, h, limit), y};
+  }
+  tag(x, y, text, color, bg, bold, flex) {
     const ctx = this.ctx;
     ctx.font = (bold ? '700 ' : '500 ') + '11px sans-serif';
     const tw = ctx.measureText(text).width + 12, th = 17;
-    x = this.place(x, y, tw, th, this._L ? this._L.plotW - 6 : null);
+    if (flex) ({x, y} = this.placeXY(x, y, tw, th, this._L ? this._L.plotW - 6 : null));
+    else x = this.place(x, y, tw, th, this._L ? this._L.plotW - 6 : null);
     ctx.fillStyle = bg; ctx.beginPath(); (ctx.roundRect ? ctx.roundRect(x, y - th / 2, tw, th, 8) : ctx.rect(x, y - th / 2, tw, th)); ctx.fill();
     ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(text, x + 6, y + 0.5);
     return tw;
@@ -278,7 +291,7 @@ class Panel {
     LT.shownPools(d, this.kind === 'liq').forEach(({p, i}) => {
       const r = this.poolRect(p, L); if (!r) return;
       const col = p.side === 'long' ? LT.COL_L : LT.COL_S;
-      const a = Math.min(0.9, 0.22 + 0.55 * Math.pow(p.rel, 0.8) + (p.magnet ? 0.1 : 0));
+      const top = p.rank === 1, a = Math.min(0.9, 0.22 + 0.55 * Math.pow(p.rel || 0, 0.8) + (top ? 0.1 : 0));
       const g = ctx.createLinearGradient(r.x0, 0, r.x1, 0);
       g.addColorStop(0, rgba(col, r.edge ? a * 0.55 : 0.02)); g.addColorStop(r.edge ? 0.04 : 0.55, rgba(col, a * (r.edge ? 0.9 : 0.55))); g.addColorStop(1, rgba(col, a));
       ctx.fillStyle = rgba(col, a * 0.1); ctx.fillRect(r.x0, r.yc - r.thick * 0.9, r.len, r.thick * 1.8);
@@ -286,7 +299,8 @@ class Panel {
       if (r.edge) { ctx.fillStyle = rgba(col, Math.min(1, a + 0.25)); ctx.fillRect(r.x0, r.yc - r.thick / 2, 2, r.thick); }
       if (st.sel && st.sel.type === 'pool' && st.sel.id === i) { ctx.strokeStyle = rgba(col, 1); ctx.lineWidth = 1.5; ctx.strokeRect(r.x0, r.yc - r.thick / 2 - 2, r.len, r.thick + 4); }
       const dist = (p.price / LT.livePrice(d) - 1) * 100;
-      pills.push({y: r.yc, x1: r.x1, col, magnet: p.magnet, text: (p.magnet ? 'AIMANT ' : '') + LT.fmtP(p.price) + '  ' + LT.fmtPct(dist)});
+      const age = p.imp && p.imp.ageH != null ? (p.imp.ageH < 48 ? Math.round(p.imp.ageH) + ' h' : Math.round(p.imp.ageH / 24) + ' j') : '';
+      pills.push({y: r.yc, x1: r.x1, col, magnet: top, text: (p.rank && p.rank <= 2 ? 'N°' + p.rank + ' ' : '') + LT.fmtP(p.price) + '  ' + LT.fmtPct(dist) + (p.imp ? '  ·  ' + p.imp.score + '/100' : '') + (age ? '  ·  ' + age : '')});
     });
     LT.placeLabels(pills, 19, 12, h - 30).forEach(it => {
       ctx.font = (it.magnet ? '700 ' : '500 ') + '11px sans-serif';
@@ -299,17 +313,18 @@ class Panel {
     const st = LT.st, d = st.data;
     if (!st.ppools || !d || !d.liquidity || !d.liquidity.pricePools) return;
     const ctx = this.ctx, plotW = L.plotW, price = LT.livePrice(d), items = [];
-    const near = d.liquidity.pricePools.filter(p => p.score >= 65).sort((a, b) => Math.abs(a.price - price) - Math.abs(b.price - price)).slice(0, 8);
+    const near = d.liquidity.pricePools.filter(p => p.score >= 65 || (p.rank && p.rank <= 2)).sort((a, b) => Math.abs(a.price - price) - Math.abs(b.price - price)).slice(0, 8);
     near.forEach(p => {
       const y = this.series.priceToCoordinate(p.price);
       if (y == null || y < 4 || y > h - 4) return;
       const col = p.side === 'long' ? LT.COL_L : LT.COL_S;
       ctx.strokeStyle = LT.rgba(col, 0.55); ctx.lineWidth = 1; ctx.setLineDash([2, 4]);
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotW, y); ctx.stroke(); ctx.setLineDash([]);
-      items.push({y, col, text: `${p.src} ${LT.fmtP(p.price)}`});
+      const age = p.imp && p.imp.ageH != null ? (p.imp.ageH < 48 ? Math.round(p.imp.ageH) + ' h' : Math.round(p.imp.ageH / 24) + ' j') : '';
+      items.push({y, col, text: `${p.rank && p.rank <= 2 ? 'N°' + p.rank + ' ' : ''}${p.src} ${LT.fmtP(p.price)}${p.imp ? ' · ' + p.imp.score + '/100' : ''}${age ? ' · ' + age : ''}`});
     });
     LT.placeLabels(items.map(it => ({...it})), 16, 12, h - 30).forEach(it => {
-      this.tag(8, it.ly, it.text, '#e6e8ee', LT.rgba(it.col, 0.38), false);
+      this.tag(8, it.ly, it.text, '#e6e8ee', LT.rgba(it.col, 0.38), false, true);
     });
   }
   drawPlan(L, h) {

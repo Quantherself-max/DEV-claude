@@ -16,7 +16,7 @@ from data.store import DataStore, H1, M5, DAY, OI_DAYS
 from engine.atr import INTERVAL_MS, resample, rma_atr
 from engine import bias as bias_engine
 from engine import cvd as cvd_engine
-from engine import fine, liqsweep
+from engine import fine, liqsweep, pocketrank
 from engine import dominance as dominance_engine
 from engine import macro as macro_engine
 from engine import signals as signals_engine
@@ -88,6 +88,7 @@ class Market:
         self.avwap = AnchoredVWAP(cfg.anchor_ms)
         self.naked = {"D": NakedPocs(30), "W": NakedPocs(12)}
         self.liq = LiqEngine()
+        self.rank_error = None       # derniere erreur du classement des poches (V14), affichee dans « liquidity.rankError »
         self._fed_h1 = -1
         self._fed_m5 = -1
         self.ready = False
@@ -568,7 +569,7 @@ class Market:
         if self._pl[0] != key:
             self._pl = (key, liqsweep.PriceLiquidity(fine.from_candles(h1[-24 * 120:], H1)))
         ext = liqsweep.extremes_from_trackers(self.trackers, self.source.now_ms())
-        return self._pl[1].pools(price, atr, self.source.now_ms(), ext)
+        return self._pl[1].pools(price, atr, self.source.now_ms(), ext, forming=self.store.forming_h1())
 
     def price_sweeps(self, pools):
         """Balayages recents de ces poches (bougies 15 min fermees) : meche qui perce la poche puis cloture qui la reprend."""
@@ -601,6 +602,7 @@ class Market:
         win = max(cfg.dist_atr * atr, cfg.min_dist_pct / 100.0 * price)
         liq = self.liq.pools(price, win, cfg.clust_pct, cfg.keep_pct, cfg.per_side, cfg.magnet_pct)
         levels = self.base_levels()
+        base_lv = [(lv.name, lv.group, lv.price) for lv in levels]
         step = round_step(price)
         for m in range(math.floor((price - win) / step), math.ceil((price + win) / step) + 1):
             v = m * step
@@ -622,6 +624,11 @@ class Market:
             pprices = self.price_pools(price, atr)
         except Exception:                                        # un probleme ici ne doit pas bloquer le reste de l'etat
             pprices = []
+        try:
+            self._rank_pools(liq["pools"], pprices, base_lv, price)
+            self.rank_error = None
+        except Exception as e:                                   # idem : sans classement, les poches restent affichees
+            self.rank_error = f"{type(e).__name__}: {e}"
         for i, p in enumerate(pprices):
             pr = self._prob_for("above" if p["price"] > price else "below", p["price"] - price, 1)
             p["reach"] = pr["reach"] if pr else None
@@ -688,12 +695,64 @@ class Market:
             "levels": lv_out, "zones": zones,
             "ladder": {"above": [z["id"] for z in reversed(above)], "inside": [z["id"] for z in inside],
                        "below": [z["id"] for z in below], "essential": essential},
-            "liquidity": {"pools": liq["pools"], "pricePools": pprices, "total": liq["total"], "sumLong": liq["sum_long"],
+            "liquidity": {"pools": liq["pools"], "extraPools": self._extra_pools(liq["pools"], price), "rankError": self.rank_error, "pricePools": pprices, "total": liq["total"], "sumLong": liq["sum_long"],
                           "sumShort": liq["sum_short"], "steps": self.liq.steps, "oiPoints": len(t.oi)},
             "sweeps": sweeps, "context": self.context(),
             "vp": [{k: pf[k] for k in ("id", "label", "kind", "start", "end", "poc", "vah", "val", "hvn", "bars")} for pf in vps],
             "stats": self.stats_summary(),
         }
+
+    def _rank_pools(self, pools, pprices, base_lv, price):
+        """Importance des poches (V14, engine/pocketrank.py) : taille, confluences autour, fraicheur. Calculee sur une reference FIXE
+        (fenetre et amplitude d'une bougie d'une heure) : une poche garde le meme score et le meme rang en 15 min, 1 h ou 4 h."""
+        cfg, now = self.cfg, self.source.now_ms()
+        a1 = rma_atr(self.chart_candles("1h")[-300:], 14) or price * 0.005           # exactement la fenetre de la vue 1 h
+        win1 = max(cfg.dist_atr * a1, cfg.min_dist_pct / 100.0 * price)
+        ref = self.liq.pools(price, win1, cfg.clust_pct, 0.0, 10 ** 6, cfg.magnet_pct)["pools"]   # TOUTES les poches de la fenetre 1 h
+        mx = max((p["size"] for p in ref), default=0.0)
+        tol = pocketrank.tolerance(price, a1)
+        step = round_step(price)
+        hl = ("PDHL", "PWHL", "PMHL", "PYHL")
+
+        def score(p, rel, extra, own=None):
+            near = round(p["price"] / step) * step
+            lv = [x for x in base_lv if not (own is not None and x[1] in hl and abs(x[2] - own) <= own * 1e-9)]
+            lo, hi = (p["lo"], p["hi"]) if own is None else (own, own)          # poche visible : le niveau lui-meme (sa bande depend de l'unite de temps)
+            cf = pocketrank.confluences(lo, hi, lv + extra + [(f"nombre rond {near:g}", "ROUND", near)], tol)
+            age = (now - p["born"]) / H1 if p.get("born") else None
+            imp = pocketrank.importance(rel, cf, age)
+            imp.update(ageH=age, nConf=len(cf), conf=[{"name": c["name"], "what": c["what"], "price": c["price"], "w": c["w"]} for c in cf[:6]])
+            return imp
+
+        stops = [(q["src"], "STOPS", q["price"]) for q in pprices]
+        for p in ref:
+            p["imp"] = score(p, min(1.0, p["size"] / mx) if mx else 0.0, stops)
+        pocketrank.rank(ref)
+        for p in pools:                                          # meme poche que dans la reference : meme score, meme rang
+            twin = next((r for r in ref if r["side"] == p["side"] and r["lo"] == p["lo"] and r["hi"] == p["hi"]), None)
+            if twin is None:
+                twin = next((r for r in ref if r["side"] == p["side"] and r["lo"] <= p["price"] <= r["hi"]), None)
+            if twin is None:
+                twin = next((r for r in ref if r["side"] == p["side"] and abs(r["price"] / p["price"] - 1) <= cfg.clust_pct / 100.0), None)
+            if twin is not None:
+                p["imp"], p["rank"] = twin["imp"], twin["rank"]
+            else:                                                # au-dela de la fenetre d'une heure (vue 4 h ou jour) : score sans rang
+                p["imp"], p["rank"] = score(p, min(1.0, p["size"] / mx) if mx else 1.0, stops), None
+        self._ref_pools = ref
+        liqs = [(f"poche de liquidations de {'longs' if r['side'] == 'long' else 'shorts'}", "LIQ", r["price"]) for r in ref]
+        for q in pprices:
+            q["imp"] = score(q, q.get("score", 50) / 100.0, liqs, own=q["price"])
+        pocketrank.rank(pprices)
+
+    def _extra_pools(self, shown, price):
+        """Poches N°1 et N°2 de chaque cote (reference 1 h) absentes de la liste affichee : ajoutees a l'AFFICHAGE seulement
+        (la liste « pools » sert aussi aux idees, qui restent calculees comme avant)."""
+        ids = {(p["side"], p["lo"], p["hi"]) for p in shown}
+        out = [{**r, "extra": True} for r in getattr(self, "_ref_pools", []) if (r.get("rank") or 99) <= 2 and (r["side"], r["lo"], r["hi"]) not in ids]
+        for p in out:
+            pr_ = self._prob_for("above" if p["price"] > price else "below", p["price"] - price, 1)
+            p["reach"] = pr_["reach"] if pr_ else None
+        return out
 
     # ---------- volume profiles choisis et series VWAP ----------
     def vp_profiles(self, tf: str):
