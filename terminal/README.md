@@ -1,9 +1,10 @@
-# Liq Terminal (V14)
+# Liq Terminal (V15)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Écran d'order flow** (V15) : style « nuit » (fond noir, bougies bleues et blanches, prix en bleu avec le décompte dessous), **profil de volume de la séance collé à l'échelle des prix** (part des acheteurs et des vendeurs, POC / VAH / VAL, plus haut et bas de séance, clôture de la veille), VWAP du jour à ±1 écart-type, **carnet d'ordres en direct aligné sur les prix** (taille en attente, nombre d'ordres, volume échangé à chaque prix), **gros ordres exécutés en losanges**, vitesse du ruban et latence (voir « V15 » plus bas).
 - **Poches de liquidité classées par importance** (V14) : chaque poche (estimée par l'intérêt ouvert ou visible dans le prix) affiche son **âge** (formée il y a…), un **score d'importance sur 100** (taille + confluences autour + fraîcheur) et son **rang** de son côté (N°1, N°2…), le même en 15 minutes, 1 heure ou 4 heures. Les poids viennent d'une **mesure sur 12 ans de BTC** (rapport « poches » dans la page **Backtest**, voir « V14 » plus bas).
 - **Historique et sens de tes trades** (V13) : page **Historique** (chaque idée et alerte envoyée avec son résultat, la lecture du terminal jour après jour et ce que le prix a fait ensuite), **jamais deux biais opposés à moins de 24 heures**, toutes paires confondues, et le **biais du terminal** affiché partout (voir « V13.1 » et « V13 » plus bas).
 - **Discuter avec Claude** (V12) : pose tes questions sur Telegram (au même bot) ou dans l'onglet **Discussion** (« pourquoi le BTC a perdu 2 % ? ») ; Claude répond avec toutes les données du terminal à cet instant et l'actualité du web (voir « V12 » plus bas).
@@ -107,6 +108,30 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V15 : un écran d'order flow
+
+Inspiré d'un terminal d'order flow pour les contrats à terme américains (vidéo envoyée le 9 octobre 2026) et adapté à la crypto.
+
+### Le style « nuit » (par défaut)
+- Fond noir, bougies **bleues** (hausse) et **blanches** (baisse), chiffres à chasse fixe, étiquette du prix en **bleu** avec le décompte de la bougie juste dessous.
+- Bouton **☾ nuit / ☀ classique** en haut à droite pour revenir à l'ancien style (vert / rouge). Le choix est gardé.
+
+### Sur le graphique principal (cases de la barre d'outils)
+- **Profil** : profil de volume de la **séance** (depuis 00 h UTC ; juste après minuit, il garde aussi la veille), collé à l'échelle des prix. Barre grise = volume échangé à ce prix (plus claire dans la zone de valeur, blanche au POC) ; bout **bleu** = les acheteurs agressifs ont dominé à ce prix, bout **blanc** = les vendeurs ; le **delta chiffré** (+1,2k, −850) est écrit aux trois prix où il est le plus marqué. Lignes et étiquettes : **POC, VAH, VAL, HAUT SÉANCE, BAS SÉANCE, CLÔTURE VEILLE**. Calculé sur les bougies de 5 minutes avec le vrai volume acheteur agressif de Binance.
+- **VWAP** : VWAP du jour et ses bandes à **±1 écart-type**, avec leur étiquette au bout de la ligne.
+- **Carnet** : le carnet d'ordres **en direct, aligné sur les prix du graphique** (une ligne ≈ 15 pixels, le pas s'adapte au zoom). Colonnes : **ACHAT** (taille en attente côté acheteurs, et à gauche le **nombre d'ordres** avec une barre par ordre, six au plus) · **VOL** (vendu agressivement à ce prix) · **PRIX** (la ligne du prix actuel est en bleu) · **VOL** (acheté agressivement) · **VENTE** (taille en attente côté vendeurs et nombre d'ordres). En tête : la vitesse du **ruban** (transactions par seconde). Le bouton **↺ volumes** remet à zéro le volume échangé affiché.
+- **Gros ordres** : chaque transaction au-dessus du seuil est un **losange** à son prix et à son heure, avec son montant (« 120k », « 1,2M ») ; **bleu** = acheteur agressif, **blanc** = vendeur agressif. Seuil adaptatif : 99,7e centile des 5 000 dernières transactions, et au moins 250 000 $ sur BTC, 100 000 $ sur ETH, 50 000 $ sur SOL.
+- En bas à gauche : **latence** du flux des transactions et du carnet (de l'heure de l'événement chez Binance à sa réception), transactions par seconde, seuil des gros ordres.
+- Quand le profil et le carnet sont affichés, le graphique laisse automatiquement assez de place à droite des bougies pour ne pas les cacher.
+
+### D'où viennent les données, et les limites
+- **Taille en attente** : carnet de Binance futures, synchronisé selon la règle publiée par Binance (photo de 1 000 niveaux puis flux des différences toutes les 100 ms, nouvelle photo au moindre trou).
+- **Nombre d'ordres par prix** : Binance ne publie pas le détail ordre par ordre (ce que la vidéo appelle « L3 »). Le carnet d'**OKX** sur le même perpétuel (SOL-USDT, BTC-USDT) donne, pour chaque prix, la taille **et le nombre d'ordres** : c'est lui qui alimente les barres. C'est donc le nombre d'ordres d'une autre bourse, pas celui de Binance.
+- **Transactions** : flux des transactions agrégées de Binance, déjà utilisé pour le prix. Le volume échangé par prix est compté **depuis le démarrage du terminal** (ou la dernière remise à zéro), pas depuis le début de la journée.
+- **Vitesse d'affichage** : les données arrivent toutes les 100 ms côté serveur ; l'écran se rafraîchit toutes les 0,4 seconde. La vidéo montre des contrats à terme CME via Rithmic, qui fournit le vrai ordre par ordre mais est payant et ne couvre pas la crypto.
+- **Non vérifié contre les vrais serveurs** depuis l'environnement de développement (Binance et OKX y sont inaccessibles) : la synchronisation est écrite d'après la documentation publique et testée avec de faux serveurs. La somme de contrôle d'OKX est vérifiée ; si elle ne correspond jamais, elle est désactivée au lieu de couper le flux en boucle. Tout problème s'affiche en jaune dans l'en-tête du carnet.
+- Pour couper le flux d'ordres : `TERMINAL_ORDERFLOW=0` dans `.env`. En mode « données simulées », carnet et transactions sont fabriqués pour découvrir l'écran.
 
 ## Ce qui est nouveau en V14 : quelle poche de liquidité compte le plus
 
@@ -500,8 +525,9 @@ engine/             calculs : profils de volume (auto et choisis), séries VWAP 
                     V9 : indicators.py (25 indicateurs journaliers), indstudy.py (mesure avec témoin), derivstudy.py (mesure des dérivés enregistrés), lecture.py (écran de lecture) ;
                     V12 : explain.py (mouvements récents et faits qui les accompagnent) ;
                     V10 : rotation.py et rotationstudy.py (carte du capital, rotation, or), goldbtc.py (asymétrie bitcoin / or), squeeze.py (delta, divergences, squeezes), squeezestudy.py (mesure) ;
-                    V14 : pocketrank.py (importance d'une poche : taille, confluences, fraîcheur), pocketstudy.py (mesure sur l'historique)
-data/               sources : simulée et Binance ; historique en mémoire et contexte (funding, L/S, spot, Coinbase) ; social.py (posts X, facultatif) ; V9 : derivs.py (options, DVOL, base, financement multi-bourses), opendata.py (jeux libres GitHub)
+                    V14 : pocketrank.py (importance d'une poche : taille, confluences, fraîcheur), pocketstudy.py (mesure sur l'historique) ;
+                    V15 : sessionvp.py (profil de volume de la séance avec part acheteuse)
+data/               sources : simulée et Binance ; V15 : orderflow.py (carnet Binance synchronisé, nombre d'ordres OKX, ruban, gros ordres) ; historique en mémoire et contexte (funding, L/S, spot, Coinbase) ; social.py (posts X, facultatif) ; V9 : derivs.py (options, DVOL, base, financement multi-bourses), opendata.py (jeux libres GitHub)
 alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées) ; assistant.py (discussion avec Claude, V12) ; readings.py (lecture quotidienne et ce que le prix a fait ensuite, V13)
 service.py          relie les données et les moteurs, fabrique l'état JSON
 server.py           serveur local : API, réglages, sécurité

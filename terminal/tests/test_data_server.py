@@ -479,6 +479,21 @@ class ServerTests(unittest.TestCase):
         self.assertIn("score", o["macro"])
         self.assertLessEqual(len(o["alerts"]), 6)
 
+    def test_flow_endpoint_and_session_profile(self):
+        code, body, _ = self.get("/api/flow?symbol=BTCUSDT&step=50&rows=20")
+        self.assertEqual(code, 200)
+        f = json.loads(body)
+        self.assertTrue(f["ready"] and f["simulated"])
+        self.assertEqual(len(f["rows"]), 21)
+        self.assertTrue({"tape", "latency", "big", "threshold", "book", "orders"} <= set(f))
+        code, r = self.post("/api/flow/reset", {"symbol": "BTCUSDT"})
+        self.assertEqual((code, r["ok"]), (200, True))
+        self.assertEqual(self.get("/api/flow?symbol=NOPEUSDT&step=1")[0], 404)
+        st = json.loads(self.get("/api/state?symbol=BTCUSDT&tf=5m")[1])
+        se = st["session"]
+        self.assertTrue(se["rows"] and se["val"] <= se["poc"] <= se["vah"])
+        self.assertAlmostEqual(sum(r[1] for r in se["rows"]), se["volume"], places=6)
+
     def test_signals_endpoint_and_settings(self):
         code, body, _ = self.get("/api/signals?symbol=BTCUSDT")
         self.assertEqual(code, 200)

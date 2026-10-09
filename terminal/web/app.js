@@ -73,7 +73,8 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
   liqOpts: {hours: 168, pools: true, sweeps: true, real: true, profile: true},
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
   layout: window.innerWidth >= 1500 ? '3' : window.innerWidth >= 1100 ? '2' : '1', prevLayout: null, sideOpen: true, sbCollapsed: false,
-  page: 'desk', sub: 'synth', planOn: true, planKey: null, plan: null, planSig: '', sig: null};
+  page: 'desk', sub: 'synth', planOn: true, planKey: null, plan: null, planSig: '', sig: null,
+  theme: 'nuit', mainOpts: {sess: true, vwap: true, dom: false, big: true}, flow: null};
 async function api(path, body) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
   const r = await fetch(path, opt);
@@ -142,7 +143,7 @@ const panels = [];
 const LAYOUTS = {'1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp']};
 const needs = k => LAYOUTS[st.layout].includes(k) && st.page === 'desk';
 function savePrefs() {
-  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, expert: st.expert})); } catch (e) { /* stockage indisponible */ }
+  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, expert: st.expert, theme: st.theme, mainOpts: st.mainOpts})); } catch (e) { /* stockage indisponible */ }
 }
 function loadPrefs() {
   try {
@@ -156,10 +157,13 @@ function loadPrefs() {
     if (typeof p.sb === 'boolean') st.sbCollapsed = p.sb;
     if (typeof p.plan === 'boolean') st.planOn = p.plan;
     if (typeof p.expert === 'boolean') st.expert = p.expert;
+    if (['nuit', 'classique'].includes(p.theme)) st.theme = p.theme;
+    Object.assign(st.mainOpts, p.mainOpts || {});
   } catch (e) { /* preferences illisibles : valeurs par defaut */ }
 }
 function syncAllTools() { panels.forEach(p => p.syncTools()); }
-function refreshAll() { panels.forEach(p => { p.stamp = ''; p.rebuildLines(); }); st.version++; if (needs('liq')) { pollHeat(); pollLiqs(); } if (needs('vp') || st.tab === 'vp') pollVP(); }
+const needsSeries = () => needs('vp') || st.tab === 'vp' || (needs('main') && st.mainOpts.vwap);
+function refreshAll() { panels.forEach(p => { p.stamp = ''; p.rebuildLines(); }); st.version++; if (needs('liq')) { pollHeat(); pollLiqs(); } if (needsSeries()) pollVP(); }
 function syncRange() {
   const first = panels.find(p => p.visible()); if (!first) return;
   const r = first.chart.timeScale().getVisibleLogicalRange(); if (!r) return;
@@ -660,6 +664,7 @@ async function poll() {
   } catch (e) { console.error(e); $('#status').textContent = 'erreur d\'affichage : ' + e.message; $('#status').className = 'bad'; }
 }
 function resetSymbolData() {
+  st.flow = null;
   st.sel = null; st.data = null; st.heat = null; st.liqs = null; st.an = null; st.series = null; st.vpd = null; st.key = null; st.sig = null; st.planKey = null; st.planSig = ''; st.plan = null;
 }
 function buildControls(cfg) {
@@ -758,7 +763,7 @@ async function pollLiqs() {
 }
 async function pollVP() {
   clearTimeout(vpTimer);
-  if (!(needs('vp') || st.tab === 'vp')) return;
+  if (!needsSeries()) return;
   vpTimer = setTimeout(pollVP, 20000);
   try {
     const sym = st.symbol, tf = st.tf;
@@ -768,6 +773,31 @@ async function pollVP() {
     if (V.ready && !V.profiles.find(p => p.id === st.vpFocus)) st.vpFocus = V.profiles[0] ? V.profiles[0].id : null;
     renderVPList(); st.version++;
   } catch (e) { /* rien */ }
+}
+
+// ---------- V15 : flux d'ordres (carnet aligne sur les prix, gros ordres, vitesse du ruban, latence) ----------
+let flowTimer = null;
+async function pollFlow() {
+  clearTimeout(flowTimer);
+  const o = st.mainOpts, main = panels.find(p => p.kind === 'main');
+  if (!st.cfg || !needs('main') || !(o.dom || o.big) || !main || !main.visible() || document.hidden) { flowTimer = setTimeout(pollFlow, 1500); return; }
+  flowTimer = setTimeout(pollFlow, o.dom ? 400 : 2000);
+  const g = main.flowGeom(), sym = st.symbol;
+  if (!g || !st.data) return;
+  const since = st.data.candles.length ? st.data.candles[0][0] * 1000 : 0;
+  try {
+    const f = await api(`/api/flow?symbol=${sym}&step=${g.step}&rows=${o.dom ? g.rows : 4}&center=${g.center}&since=${since}`);
+    if (sym === st.symbol) { st.flow = f; st.version++; }
+  } catch (e) { /* le serveur repondra au prochain essai */ }
+}
+const fmtQty = q => q == null || isNaN(q) ? '-' : q >= 1e6 ? (q / 1e6).toFixed(1).replace('.', ',') + 'M' : q >= 1e4 ? Math.round(q / 1e3) + 'k' : q >= 1e3 ? (q / 1e3).toFixed(1).replace('.', ',') + 'k'
+  : q >= 100 ? String(Math.round(q)) : q >= 10 ? q.toFixed(1).replace('.', ',') : q >= 1 ? q.toFixed(2).replace('.', ',') : q.toFixed(3).replace('.', ',');
+const fmtUsdShort = v => v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1).replace('.', ',') + 'M' : v >= 1e3 ? Math.round(v / 1e3) + 'k' : String(Math.round(v || 0));
+function applyTheme() {
+  document.body.classList.toggle('theme-nuit', st.theme === 'nuit');
+  const b = $('#themeBtn'); if (b) b.textContent = st.theme === 'nuit' ? '☾ nuit' : '☀ classique';
+  panels.forEach(p => p.applyTheme());
+  st.version++;
 }
 
 // ---------- gestion des volume profiles (onglet VP) ----------
@@ -1119,15 +1149,19 @@ function openSymbol(sym, page) {
   let cfg;
   try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
   window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
-    shownPools, impOf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, againstBias, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
+    shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, levelColor, livePrice, placeLabels, usdFmt, biasHtml, againstBias, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
   Overview.init(window.LT);
   Signals.init(window.LT);
   Backtest.init(window.LT);
   History.init(window.LT);
   Strategy.init(window.LT);
   Lecture.init(window.LT);
+  document.body.classList.toggle('theme-nuit', st.theme === 'nuit');
   createPanels();
   buildControls(cfg);
+  applyTheme();
+  $('#themeBtn').onclick = () => { st.theme = st.theme === 'nuit' ? 'classique' : 'nuit'; savePrefs(); applyTheme(); };
+  pollFlow();
   Analysis.init(window.LT);
   renderLqLegend(); applySidebar(); applyLayout();
   applyExpert();

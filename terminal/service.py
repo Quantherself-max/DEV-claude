@@ -16,7 +16,7 @@ from data.store import DataStore, H1, M5, DAY, OI_DAYS
 from engine.atr import INTERVAL_MS, resample, rma_atr
 from engine import bias as bias_engine
 from engine import cvd as cvd_engine
-from engine import fine, liqsweep, pocketrank
+from engine import fine, liqsweep, pocketrank, sessionvp
 from engine import dominance as dominance_engine
 from engine import macro as macro_engine
 from engine import signals as signals_engine
@@ -89,6 +89,7 @@ class Market:
         self.naked = {"D": NakedPocs(30), "W": NakedPocs(12)}
         self.liq = LiqEngine()
         self.rank_error = None       # derniere erreur du classement des poches (V14), affichee dans « liquidity.rankError »
+        self._sess = (None, None)    # profil de la seance (V15) : (cle, resultat)
         self._fed_h1 = -1
         self._fed_m5 = -1
         self.ready = False
@@ -697,7 +698,7 @@ class Market:
                        "below": [z["id"] for z in below], "essential": essential},
             "liquidity": {"pools": liq["pools"], "extraPools": self._extra_pools(liq["pools"], price), "rankError": self.rank_error, "pricePools": pprices, "total": liq["total"], "sumLong": liq["sum_long"],
                           "sumShort": liq["sum_short"], "steps": self.liq.steps, "oiPoints": len(t.oi)},
-            "sweeps": sweeps, "context": self.context(),
+            "sweeps": sweeps, "context": self.context(), "session": self.session_profile(),
             "vp": [{k: pf[k] for k in ("id", "label", "kind", "start", "end", "poc", "vah", "val", "hvn", "bars")} for pf in vps],
             "stats": self.stats_summary(),
         }
@@ -743,6 +744,33 @@ class Market:
         for q in pprices:
             q["imp"] = score(q, q.get("score", 50) / 100.0, liqs, own=q["price"])
         pocketrank.rank(pprices)
+
+    def session_profile(self):
+        """Profil de volume de la seance (00 h UTC -> maintenant) avec part acheteuse, plus haut / bas, ouverture, cloture d'hier, VWAP du
+        jour et son ecart-type (bandes ±1σ). Bougies 5 min, bougie en cours comprise. None tant qu'il n'y a pas de volume."""
+        m5 = self.store.m5
+        if not m5:
+            return None
+        now = self.source.now_ms()
+        start = now // DAY * DAY
+        last = m5[-1]
+        key = (start, len(m5), last.t, last.v, last.c)
+        if self._sess[0] == key:
+            return self._sess[1]
+        bars = [k for k in m5 if k.t >= start]
+        label = "séance du jour (depuis 00 h UTC)"
+        if len(bars) < 24:                                      # moins de 2 h de seance : on garde aussi la veille, plus lisible
+            start -= DAY
+            bars = [k for k in m5 if k.t >= start]
+            label = "depuis hier 00 h UTC (la séance du jour vient de commencer)"
+        res = sessionvp.build(bars)
+        if res is not None:
+            res["label"] = label
+            tr = self.trackers["D"]
+            vw, sd = tr.acc.vwap()
+            res.update(start=start, open=tr.acc.open, prevClose=(tr.prev or {}).get("close"), vwap=vw, sd=sd)
+        self._sess = (key, res)
+        return res
 
     def _extra_pools(self, shown, price):
         """Poches N°1 et N°2 de chaque cote (reference 1 h) absentes de la liste affichee : ajoutees a l'AFFICHAGE seulement

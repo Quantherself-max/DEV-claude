@@ -10,12 +10,12 @@ class Panel {
     host.classList.add('panel', 'k-' + kind);
     host.innerHTML = `<div class="phead"><span class="ptitle">${T}</span><span class="ptools">${Panel.tools(kind)}</span>` +
       `<button class="pmax" title="Agrandir / revenir à la mise en page">⤢</button></div>` +
-      `<div class="pbody"><canvas class="heat"></canvas><div class="chart"></div><canvas class="ov"></canvas><div class="cdwn" hidden title="Temps restant avant la clôture de la bougie en cours"></div><div class="tip" hidden></div></div>`;
+      `<div class="pbody"><canvas class="heat"></canvas><div class="chart"></div><canvas class="ov"></canvas><div class="ptag" hidden></div><div class="cdwn" hidden title="Temps restant avant la clôture de la bougie en cours"></div><div class="tip" hidden></div></div>`;
     this.body = host.querySelector('.pbody');
     this.heatCv = host.querySelector('.heat'); this.hctx = this.heatCv.getContext('2d');
     this.ov = host.querySelector('.ov'); this.ctx = this.ov.getContext('2d');
     this.tipEl = host.querySelector('.tip');
-    this.cd = host.querySelector('.cdwn'); this.cdKey = '';
+    this.cd = host.querySelector('.cdwn'); this.cdKey = ''; this.ptag = host.querySelector('.ptag');
     this.lines = []; this.layers = {}; this.sig = ''; this.n = 0; this.lastBar = 0; this.key = null; this.stamp = '';
     this.chart = LightweightCharts.createChart(host.querySelector('.chart'), {
       autoSize: true,
@@ -28,6 +28,7 @@ class Panel {
     this.series = this.chart.addCandlestickSeries({upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
       wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineColor: '',
       autoscaleInfoProvider: o => this.autoscale(o)});
+    this.applyTheme();
     this.chart.subscribeClick(p => this.onClick(p));
     this.body.addEventListener('mousemove', ev => this.onMove(ev));
     this.body.addEventListener('mouseleave', () => { this.tipEl.hidden = true; });
@@ -37,6 +38,55 @@ class Panel {
     this.syncTools();
   }
 
+  // ---------- styles (V15) : « nuit » (fond noir, bougies bleues / blanches, chiffres a chasse fixe) ou « classique » ----------
+  static TH = {
+    nuit: {bg: '#0f0f0f', text: '#8a8a8a', fontSize: 11, font: 'ui-monospace, "SF Mono", Menlo, Consolas, "Roboto Mono", monospace', grid: 'rgba(255,255,255,0.028)',
+      border: '#1d1d1d', up: '#6f9fe0', down: '#d9d9d9', ownTag: true, price: '#78adf7', priceText: '#0b0b0b', cd: '#141414', cdText: '#a0a0a0',
+      cross: '#5a5a5a', crossLabel: '#2a2a2a', vwap: '#8296c0', band: 'rgba(120,173,247,0.32)', vpGrey: [98, 98, 98], vpVA: [124, 124, 124], vpPoc: [236, 236, 236],
+      vpBuy: [120, 173, 247], vpSell: [242, 242, 242], label: '#9a9a9a', domBg: 'rgba(8,8,8,0.82)'},
+    classique: {bg: 'rgba(0,0,0,0)', text: '#b2b5be', fontSize: 12, font: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif',
+      grid: 'rgba(40,46,64,.35)', border: '#2a2e39', up: '#26a69a', down: '#ef5350', ownTag: false, price: '#4c8dff', priceText: '#ffffff', cd: null, cdText: '#ffffff',
+      cross: '#758696', crossLabel: '#4c525e', vwap: '#FFB300', band: 'rgba(255,179,0,0.4)', vpGrey: [90, 98, 120], vpVA: [112, 126, 160], vpPoc: [255, 179, 0],
+      vpBuy: [61, 220, 151], vpSell: [255, 107, 107], label: '#a8acb8', domBg: 'rgba(11,14,17,0.86)'},
+  };
+  th() { return Panel.TH[LT.st.theme] || Panel.TH.nuit; }
+  applyTheme() {
+    const t = this.th();
+    this.chart.applyOptions({layout: {background: {type: 'solid', color: t.bg}, textColor: t.text, fontFamily: t.font, fontSize: t.fontSize},
+      grid: {vertLines: {color: t.grid}, horzLines: {color: t.grid}}, rightPriceScale: {borderColor: t.border}, timeScale: {borderColor: t.border},
+      crosshair: {vertLine: {color: t.cross, labelBackgroundColor: t.crossLabel}, horzLine: {color: t.cross, labelBackgroundColor: t.crossLabel}}});
+    this.series.applyOptions({upColor: t.up, downColor: t.down, wickUpColor: t.up, wickDownColor: t.down, lastValueVisible: !t.ownTag});
+    this.host.classList.toggle('th-nuit', LT.st.theme === 'nuit');
+    for (const k in this.layers) { this.chart.removeSeries(this.layers[k].s); delete this.layers[k]; }
+    this.cdKey = ''; this.stamp = ''; this.sig = '';
+  }
+  // largeurs (pixels) du profil de la seance et du carnet, colles a droite du graphique principal
+  static DOMW = 318;
+  overlayW(plotW) {
+    const o = LT.st.mainOpts || {}, W = Math.round(Math.min(150, Math.max(70, plotW * 0.15)));
+    return {W, sess: o.sess ? W + 30 : 0, dom: o.dom ? Panel.DOMW + 12 : 0};
+  }
+  // place vide a droite des bougies (en bougies) pour que le profil et le carnet ne cachent pas les dernieres bougies
+  rightSpace() {
+    if (this.kind !== 'main') return 16;
+    const plotW = this.chart.timeScale().width() || Math.max(300, this.body.clientWidth - 70), ow = this.overlayW(plotW);
+    const f = Math.min(0.72, (ow.sess + ow.dom + 24) / plotW);
+    return Math.max(16, Math.ceil(130 * f / (1 - f)) + 4);
+  }
+  static nice(raw) {
+    if (!(raw > 0)) return 1;
+    const e = Math.pow(10, Math.floor(Math.log10(raw)));
+    for (const m of [1, 2, 2.5, 5, 10]) if (m * e >= raw * 0.999) return +(m * e).toPrecision(6);
+    return 10 * e;
+  }
+  // tranche de prix du carnet : environ 15 pixels par ligne, centree sur le milieu de l'ecran
+  flowGeom() {
+    const h = this.body.clientHeight, s = this.series;
+    const p0 = s.coordinateToPrice(h / 2), p1 = s.coordinateToPrice(h / 2 + 15), pt = s.coordinateToPrice(0), pb = s.coordinateToPrice(h);
+    if (p0 == null || p1 == null || pt == null || pb == null) return null;
+    return {step: Panel.nice(Math.abs(p0 - p1)), rows: Math.ceil(h / 15) + 6, center: (pt + pb) / 2};
+  }
+
   // ---------- barre d'outils ----------
   static tools(kind) {
     if (kind === 'main') return `<label title="Seulement les 2 zones les plus importantes de chaque côté du prix"><input type="radio" name="mode" value="ess"> Essentiel</label>` +
@@ -44,7 +94,12 @@ class Panel {
       `<label title="Tous les niveaux de la fenêtre"><input type="radio" name="mode" value="all"> Tous</label>` +
       `<label title="Poches de liquidations estimées par l'Open Interest"><input type="checkbox" data-opt="pools"> Poches</label>` +
       `<label title="Ordres d'arrêt visibles dans le prix : plus haut / plus bas de la veille, de la semaine, du mois, creux et sommets récents"><input type="checkbox" data-opt="ppools"> Plus hauts / bas</label>` +
-      `<label title="Entrée, stop et objectifs de l'idée de trade du moment"><input type="checkbox" data-opt="plan"> Plan</label>`;
+      `<label title="Entrée, stop et objectifs de l'idée de trade du moment"><input type="checkbox" data-opt="plan"> Plan</label>` +
+      `<label title="Profil de volume de la séance (depuis 00 h UTC), collé à l'échelle des prix : volume par prix, part des acheteurs (bleu) ou des vendeurs (blanc), POC / VAH / VAL"><input type="checkbox" data-mo="sess"> Profil</label>` +
+      `<label title="VWAP du jour et bandes à ±1 écart-type"><input type="checkbox" data-mo="vwap"> VWAP</label>` +
+      `<label title="Carnet d'ordres en direct aligné sur les prix : taille en attente (Binance), nombre d'ordres (OKX), volume échangé à chaque prix"><input type="checkbox" data-mo="dom"> Carnet</label>` +
+      `<label title="Gros ordres exécutés (losanges) : bleu = acheteur agressif, blanc = vendeur agressif"><input type="checkbox" data-mo="big"> Gros ordres</label>` +
+      `<button class="mini" data-flowreset title="Remettre à zéro le volume échangé affiché dans le carnet">↺ volumes</button>`;
     if (kind === 'liq') return `<span class="seg mini" data-hours><button data-h="24">24 h</button><button data-h="72">3 j</button><button data-h="168">7 j</button><button data-h="0">29 j</button></span>` +
       `<label><input type="checkbox" data-lq="pools"> Poches</label><label><input type="checkbox" data-lq="sweeps"> Balayages</label>` +
       `<label><input type="checkbox" data-lq="real"> Réel</label><label><input type="checkbox" data-lq="profile"> Profil</label>`;
@@ -61,6 +116,8 @@ class Panel {
     h.querySelectorAll('[data-opt=pools]').forEach(c => c.checked = st.pools);
     h.querySelectorAll('[data-opt=ppools]').forEach(c => c.checked = st.ppools);
     h.querySelectorAll('[data-opt=plan]').forEach(c => c.checked = st.planOn);
+    h.querySelectorAll('[data-mo]').forEach(c => c.checked = !!st.mainOpts[c.dataset.mo]);
+    h.querySelectorAll('[data-flowreset]').forEach(b => b.hidden = !st.mainOpts.dom);
     h.querySelectorAll('[data-lq]').forEach(c => c.checked = !!st.liqOpts[c.dataset.lq]);
     h.querySelectorAll('[data-vp]').forEach(c => c.checked = !!st.vpOpts[c.dataset.vp]);
     h.querySelectorAll('[data-hours] button').forEach(b => b.classList.toggle('on', +b.dataset.h === st.liqOpts.hours));
@@ -70,7 +127,14 @@ class Panel {
     if (ev.type === 'click' && t.closest('[data-hours] button')) {
       st.liqOpts.hours = +t.closest('button').dataset.h; LT.savePrefs(); LT.syncAllTools(); LT.pollHeat(); return;
     }
+    if (ev.type === 'click' && t.closest('[data-flowreset]')) {
+      LT.api('/api/flow/reset', {symbol: st.symbol}).then(() => LT.pollFlow()).catch(() => {}); return;
+    }
     if (ev.type !== 'change') return;
+    if (t.dataset.mo) {
+      st.mainOpts[t.dataset.mo] = t.checked; this.stamp = '';
+      LT.savePrefs(); LT.syncAllTools(); LT.refreshAll(); if (t.dataset.mo === 'dom' || t.dataset.mo === 'sess') this.resetView(); LT.pollFlow(); return;
+    }
     if (t.name === 'mode') { st.mode = t.value; }
     else if (t.dataset.opt === 'pools') { st.pools = t.checked; }
     else if (t.dataset.opt === 'ppools') { st.ppools = t.checked; }
@@ -103,7 +167,7 @@ class Panel {
   setBars(bars, reset) {
     if (reset) {
       this.series.setData(bars); this.n = bars.length;
-      this.chart.timeScale().setVisibleLogicalRange({from: Math.max(0, this.n - 130), to: this.n + 16});
+      this.chart.timeScale().setVisibleLogicalRange({from: Math.max(0, this.n - 130), to: this.n + this.rightSpace()});
       this.lastBar = this.n ? bars[this.n - 1].time : 0; this.stamp = '';
       for (const k in this.layers) { this.chart.removeSeries(this.layers[k].s); delete this.layers[k]; }
     } else {
@@ -111,7 +175,7 @@ class Panel {
     }
   }
   resetView() {
-    if (this.n) this.chart.timeScale().setVisibleLogicalRange({from: Math.max(0, this.n - 130), to: this.n + 16});
+    if (this.n) this.chart.timeScale().setVisibleLogicalRange({from: Math.max(0, this.n - 130), to: this.n + this.rightSpace()});
   }
   updateBar(b) {
     if (b.time < this.lastBar) return;
@@ -177,11 +241,17 @@ class Panel {
 
   // ---------- VWAP / AVWAP : series de lignes ----------
   applySeries() {
-    if (this.kind !== 'vp') return;
-    const st = LT.st, S = st.series, d = st.data, o = st.vpOpts;
+    if (this.kind !== 'vp' && this.kind !== 'main') return;
+    const st = LT.st, S = st.series, d = st.data, o = st.vpOpts, t = this.th();
     const ok = S && S.ready && d && S.symbol === d.symbol && S.tf === d.tf;
     const want = [];
-    if (ok) {
+    if (ok && this.kind === 'main') {
+      if (st.mainOpts.vwap && S.vwap.D) {
+        want.push({id: 'mV', name: 'VWAP', color: t.vwap, w: 1.5, v: S.vwap.D, mainLabel: 'VWAP'});
+        for (const [id, k, lab] of [['mU', 1, '+1σ'], ['mL', -1, '−1σ']])
+          want.push({id, name: 'VWAP ' + lab, color: t.band, w: 1, st: 2, v: S.vwap.D.map((x, i) => x == null || S.sd.D[i] == null ? null : x + k * S.sd.D[i]), mainLabel: lab});
+      }
+    } else if (ok) {
       const PER = LT.PER, bandCol = {D: '#FFB30066', W: '#4CAF5066', M: '#42A5F566', Y: '#EC407A66'};
       const NM = {D: 'VWAP J', W: 'VWAP S', M: 'VWAP M', Y: 'VWAP A'};
       for (const k of ['D', 'W', 'M', 'Y']) {
@@ -224,16 +294,20 @@ class Panel {
   // compte a rebours de la bougie en cours, sous l'etiquette du prix (comme TradingView) : hh:mm:ss, ou mm:ss sous une heure
   countdown() {
     const st = LT.st, lb = st.lastBarObj, el = this.cd, per = LT.TF_SEC[st.tf];
-    const y = lb && per ? this.series.priceToCoordinate(lb.close) : null;
-    if (y == null || !this.visible()) { if (!el.hidden) el.hidden = true; return; }
+    const y = lb && per ? this.series.priceToCoordinate(lb.close) : null, t = this.th(), tag = this.ptag;
+    if (y == null || !this.visible()) { if (!el.hidden) el.hidden = true; if (!tag.hidden) tag.hidden = true; return; }
     const now = LT.serverNow() / 1000, left = Math.max(0, Math.ceil(Math.floor(now / per) * per + per - now));       // les bougies sont alignees sur l'epoque UTC
     const two = n => String(n).padStart(2, '0');
     const txt = left >= 3600 ? `${Math.floor(left / 3600)}:${two(Math.floor(left % 3600 / 60))}:${two(left % 60)}` : `${two(Math.floor(left / 60))}:${two(left % 60)}`;
-    const w = this.chart.priceScale('right').width(), top = Math.round(y + 11), bg = lb.close >= lb.open ? '#26a69a' : '#ef5350';
-    const key = txt + '|' + w + '|' + top + '|' + bg;
+    const w = this.chart.priceScale('right').width(), top = Math.round(y + (t.ownTag ? 9 : 11)), bg = t.cd || (lb.close >= lb.open ? '#26a69a' : '#ef5350');
+    const key = [txt, w, top, bg, t.ownTag ? lb.close : ''].join('|');
     if (key === this.cdKey) return;
     this.cdKey = key;
-    el.textContent = txt; el.style.width = w + 'px'; el.style.top = top + 'px'; el.style.background = bg; el.hidden = false;
+    el.textContent = txt; el.style.width = w + 'px'; el.style.top = top + 'px'; el.style.background = bg; el.style.color = t.cdText; el.hidden = false;
+    if (t.ownTag) {                                  // style nuit : etiquette de prix bleue, decompte en dessous (comme dans la video)
+      tag.textContent = LT.fmtP(lb.close); tag.style.width = w + 'px'; tag.style.top = Math.round(y - 9) + 'px';
+      tag.style.background = t.price; tag.style.color = t.priceText; tag.hidden = false;
+    } else if (!tag.hidden) tag.hidden = true;
   }
   draw() {
     const dpr = window.devicePixelRatio || 1, w = this.body.clientWidth, h = this.body.clientHeight;
@@ -247,7 +321,7 @@ class Panel {
     this._L = L;
     if (this.kind === 'liq') { this.drawHeat(L, w, h); this.drawLiq(L, w, h); }
     else if (this.kind === 'vp') { this.applySeries(); this.drawVP(L, w, h); }
-    else this.drawMain(L, w, h);
+    else { this.applySeries(); this.drawMain(L, w, h); }
   }
   // evite qu'une etiquette en recouvre une autre (zones, plus hauts / bas, noms de niveaux) : decale vers la droite, derriere celle qui gene
   place(x, y, w, h, limit) {
@@ -278,8 +352,9 @@ class Panel {
     const ctx = this.ctx;
     ctx.font = (bold ? '700 ' : '500 ') + '11px sans-serif';
     const tw = ctx.measureText(text).width + 12, th = 17;
-    if (flex) ({x, y} = this.placeXY(x, y, tw, th, this._L ? this._L.plotW - 6 : null));
-    else x = this.place(x, y, tw, th, this._L ? this._L.plotW - 6 : null);
+    const lim = this._L ? (this.kind === 'main' && this.rightLimit ? this.rightLimit : this._L.plotW) - 6 : null;
+    if (flex) ({x, y} = this.placeXY(x, y, tw, th, lim));
+    else x = this.place(x, y, tw, th, lim);
     ctx.fillStyle = bg; ctx.beginPath(); (ctx.roundRect ? ctx.roundRect(x, y - th / 2, tw, th, 8) : ctx.rect(x, y - th / 2, tw, th)); ctx.fill();
     ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(text, x + 6, y + 0.5);
     return tw;
@@ -304,7 +379,7 @@ class Panel {
     });
     LT.placeLabels(pills, 19, 12, h - 30).forEach(it => {
       ctx.font = (it.magnet ? '700 ' : '500 ') + '11px sans-serif';
-      const x = Math.min(it.x1 + 10, plotW - ctx.measureText(it.text).width - 14);
+      const x = Math.min(it.x1 + 10, (this.kind === 'main' && this.rightLimit ? this.rightLimit : plotW) - ctx.measureText(it.text).width - 14);
       if (Math.abs(it.ly - it.y) > 2) { ctx.strokeStyle = rgba(it.col, 0.6); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(it.x1, it.y); ctx.lineTo(x, it.ly); ctx.stroke(); }
       this.tag(x, it.ly, it.text, it.magnet ? '#0b0e11' : '#fff', rgba(it.col, it.magnet ? 0.92 : 0.55), it.magnet);
     });
@@ -330,7 +405,7 @@ class Panel {
   drawPlan(L, h) {
     const p = LT.st.plan;
     if (!p || p.symbol !== LT.st.symbol) return;
-    const ctx = this.ctx, plotW = L.plotW, Y = v => this.series.priceToCoordinate(v);
+    const ctx = this.ctx, plotW = this.kind === 'main' && this.rightLimit ? Math.max(200, this.rightLimit) : L.plotW, Y = v => this.series.priceToCoordinate(v);
     const ye = Y(p.entry), ys = Y(p.stop), y1 = Y(p.tp1), y2 = p.tp2 != null ? Y(p.tp2) : null;
     if (ye == null || ys == null || y1 == null) return;
     const x0 = Math.max(40, plotW * 0.5);
@@ -352,6 +427,8 @@ class Panel {
   }
   drawMain(L, w, h) {
     const ctx = this.ctx, st = LT.st, {d, plotW} = L, byId = LT.byId, fmtP = LT.fmtP, pr = LT.pr;
+    const sessW = this.drawSession(L, h);
+    this.rightLimit = plotW - sessW - (st.mainOpts.dom ? Panel.DOMW + 12 : 0);
     const selZ = st.sel && st.sel.type === 'zone' ? st.sel.id : null;
     const zset = new Map(LT.shownZones(d).map(z => [z.id, z]));
     if (selZ && !zset.has(selZ)) { const z = byId(d.zones)[selZ]; if (z) zset.set(selZ, z); }
@@ -374,7 +451,7 @@ class Panel {
       const txt = `${ar} ${fmtP(z.mid)}  ${'●'.repeat(Math.min(5, z.score))}${reach}`;
       ctx.font = '600 11px sans-serif';
       const tw = ctx.measureText(txt).width + 18;
-      const zx = this.place(10, it.ly, tw, 18, plotW - 6);
+      const zx = this.place(10, it.ly, tw, 18, (this.rightLimit || plotW) - 6);
       ctx.fillStyle = 'rgba(11,14,17,.9)'; ctx.fillRect(zx, it.ly - 9, tw, 18);
       ctx.fillStyle = col; ctx.fillRect(zx, it.ly - 9, 3, 18);
       ctx.fillStyle = '#e1e3ea'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(txt, zx + 9, it.ly + 0.5);
@@ -390,11 +467,144 @@ class Panel {
       const c = LT.levelColor(it.l);
       if (Math.abs(it.ly - it.y) > 2) { ctx.strokeStyle = 'rgba(180,184,196,.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, it.y); ctx.lineTo(10, it.ly); ctx.stroke(); }
       ctx.font = '500 11px sans-serif';
-      const txt = it.l.name + '  ' + fmtP(it.l.price), tw = ctx.measureText(txt).width + 22, xx = this.place(st.mode === 'ess' ? 190 : 10, it.ly, tw, 16, plotW - 6);
+      const txt = it.l.name + '  ' + fmtP(it.l.price), tw = ctx.measureText(txt).width + 22, xx = this.place(st.mode === 'ess' ? 190 : 10, it.ly, tw, 16, (this.rightLimit || plotW) - 6);
       ctx.fillStyle = 'rgba(11,14,17,.88)'; ctx.fillRect(xx, it.ly - 8, tw, 16);
       ctx.fillStyle = c; ctx.fillRect(xx, it.ly - 8, 3, 16);
       ctx.fillStyle = '#d1d4dc'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(txt, xx + 9, it.ly + 0.5);
     });
+    this.drawVwapTags(L, h);
+    this.drawBig(L, h);
+    this.drawFlow(L, h, plotW - sessW);
+    this.drawFooter(L, h);
+  }
+
+  // ---- V15 : profil de la seance colle a l'echelle des prix (gris = volume, bout bleu / blanc = surplus d'acheteurs / de vendeurs) ----
+  drawSession(L, h) {
+    const st = LT.st, s = L.d.session, t = this.th(), ctx = this.ctx, rgba = LT.rgba, fmtP = LT.fmtP;
+    if (!st.mainOpts.sess || !s || !s.rows || !s.rows.length) return 0;
+    const W = this.overlayW(L.plotW).W, x1 = L.plotW - 1;
+    const mx = Math.max(...s.rows.map(r => r[1])) || 1, len = {};
+    s.rows.forEach(([lo, v, b]) => {
+      const yt = this.series.priceToCoordinate(lo + s.step), yb = this.series.priceToCoordinate(lo);
+      if (yt == null || yb == null || yb < 0 || yt > h) return;
+      const hh = Math.max(1, yb - yt - (yb - yt > 3 ? 1 : 0)), l = v / mx * W, mid = lo + s.step / 2;
+      const poc = s.poc >= lo && s.poc < lo + s.step, inVA = mid >= s.val && mid <= s.vah;
+      len[lo] = l;
+      ctx.fillStyle = rgba(poc ? t.vpPoc : inVA ? t.vpVA : t.vpGrey, poc ? 0.9 : inVA ? 0.8 : 0.55);
+      ctx.fillRect(x1 - l, yt, l, hh);
+      if (b != null && v > 0) {
+        const dl = Math.abs(2 * b - v) / mx * W;
+        if (dl >= 1) { ctx.fillStyle = rgba(2 * b >= v ? t.vpBuy : t.vpSell, 0.95); ctx.fillRect(x1 - l, yt, dl, hh); }
+      }
+    });
+    ctx.font = `500 10px ${t.font}`; ctx.textBaseline = 'middle';
+    (s.marks || []).forEach(([px, dv]) => {                       // delta des niveaux marquants, au bout de la barre
+      const y = this.series.priceToCoordinate(px); if (y == null || y < 10 || y > h - 30) return;
+      const lo = Math.floor(px / s.step + 1e-9) * s.step, k = Object.keys(len).find(x => Math.abs(+x - lo) < s.step / 2);
+      const txt = (dv > 0 ? '+' : '−') + LT.fmtQty(Math.abs(dv));
+      ctx.fillStyle = dv > 0 ? rgba(t.vpBuy, 1) : rgba(t.vpSell, 0.95); ctx.textAlign = 'right';
+      ctx.fillText(txt, x1 - (k != null ? len[k] : W) - 4, y);
+    });
+    const items = [[s.poc, 'POC', true], [s.vah, 'VAH'], [s.val, 'VAL'], [s.high, 'HAUT SÉANCE ' + fmtP(s.high)], [s.low, 'BAS SÉANCE ' + fmtP(s.low)]];
+    if (s.prevClose) items.push([s.prevClose, 'CLÔTURE VEILLE ' + fmtP(s.prevClose)]);
+    const lab = items.map(([px, text, strong]) => ({y: this.series.priceToCoordinate(px), text, strong})).filter(it => it.y != null && it.y > 8 && it.y < h - 32);
+    LT.placeLabels(lab, 13, 10, h - 32).forEach(it => {
+      ctx.strokeStyle = it.strong ? 'rgba(236,236,236,.85)' : 'rgba(150,150,150,.5)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x1 - W - 4, Math.round(it.y) + 0.5); ctx.lineTo(x1, Math.round(it.y) + 0.5); ctx.stroke();
+      ctx.textAlign = 'right';
+      if (it.text.length <= 4) { ctx.fillStyle = t.label; ctx.fillText(it.text, x1 - W - 6, it.ly); return; }    // POC, VAH, VAL : a gauche du profil
+      const tw = ctx.measureText(it.text).width + 8;                                                              // les autres : dans le profil, sur fond sombre
+      ctx.fillStyle = 'rgba(10,10,10,.78)'; ctx.fillRect(x1 - tw - 2, it.ly - 7, tw, 14);
+      ctx.fillStyle = t.label; ctx.fillText(it.text, x1 - 6, it.ly);
+    });
+    return W + 30;
+  }
+  drawVwapTags(L, h) {
+    const ctx = this.ctx, t = this.th(), fmtP = LT.fmtP;
+    for (const k in this.layers) {
+      const m = this.layers[k].meta; if (!m || !m.mainLabel) continue;
+      let v = null; for (let i = m.v.length - 1; i >= 0; i--) if (m.v[i] != null) { v = m.v[i]; break; }
+      const y = v == null ? null : this.series.priceToCoordinate(v);
+      if (y == null || y < 8 || y > h - 30) continue;
+      ctx.font = `500 10px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = m.mainLabel === 'VWAP' ? t.vwap : t.label;
+      const text = m.mainLabel === 'VWAP' ? 'VWAP ' + fmtP(v) : m.mainLabel, tw = ctx.measureText(text).width;
+      ctx.fillText(text, Math.min(L.xr + 8, (this.rightLimit || L.plotW) - tw - 6), y);
+    }
+  }
+  // ---- V15 : gros ordres executes (losanges) ----
+  drawBig(L, h) {
+    const st = LT.st, f = st.flow, t = this.th(), ctx = this.ctx, rgba = LT.rgba;
+    if (!st.mainOpts.big || !f || f.symbol !== L.d.symbol || !f.big || !f.big.length) return;
+    const thr = f.threshold || 1;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    f.big.forEach(b => {
+      const x = this.timeX(b.t / 1000, L), y = this.series.priceToCoordinate(b.price);
+      if (x == null || y == null || x < 0 || x > L.plotW || y < 4 || y > h - 28) return;
+      const r = Math.max(7, Math.min(15, 6 + 3.2 * Math.log2(1 + b.usd / thr))), col = b.side === 'buy' ? t.vpBuy : t.vpSell;
+      ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath();
+      ctx.fillStyle = 'rgba(12,12,12,0.6)'; ctx.fill();
+      ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = 1.3; ctx.stroke();
+      ctx.font = `600 ${r >= 11 ? 9 : 8}px ${t.font}`; ctx.fillStyle = rgba(col, 1);
+      ctx.fillText(LT.fmtUsdShort(b.usd), x, y + 0.5);
+    });
+  }
+  // ---- V15 : carnet d'ordres aligne sur les prix, a gauche du profil ----
+  drawFlow(L, h, xr) {
+    const st = LT.st, f = st.flow, t = this.th(), ctx = this.ctx, rgba = LT.rgba, fq = LT.fmtQty;
+    if (!st.mainOpts.dom || !f || f.symbol !== L.d.symbol) return;
+    const C = [['bidS', 78], ['sell', 46], ['px', 70], ['buy', 46], ['askS', 78]];
+    const totalW = Panel.DOMW, x0 = Math.max(4, xr - totalW - 6), X = {};
+    let x = x0; C.forEach(([k, w]) => { X[k] = [x, w]; x += w; });
+    ctx.fillStyle = t.domBg; ctx.fillRect(x0 - 4, 0, totalW + 8, h - 26);
+    const head = (k, text, col) => { if (!X[k]) return; ctx.fillStyle = col || t.label; ctx.textAlign = 'center'; ctx.fillText(text, X[k][0] + X[k][1] / 2, 9); };
+    ctx.font = `600 9.5px ${t.font}`; ctx.textBaseline = 'middle';
+    head('bidS', 'ACHAT', rgba(t.vpBuy, 1)); head('sell', 'VOL'); head('px', `RUBAN ${f.tape ? String(f.tape.perSec).replace('.', ',') : '-'}/s`); head('buy', 'VOL'); head('askS', 'VENTE');
+    const warn = !f.ready ? 'carnet en attente…' : !f.book.synced ? 'carnet Binance : synchronisation…' : !f.orders.synced ? 'nombre d\'ordres OKX indisponible' : '';
+    if (warn) { ctx.fillStyle = '#ffb300'; ctx.textAlign = 'center'; ctx.fillText(warn, x0 + totalW / 2, 21); }
+    const rows = f.rows || [];
+    if (!rows.length) return;
+    const mxS = Math.max(...rows.map(r => Math.max(r[1], r[2]))) || 1, px = LT.livePrice(L.d);
+    const txt = (k, s, align, col) => { if (!X[k]) return; const [x, w] = X[k]; ctx.fillStyle = col; ctx.textAlign = align;
+      ctx.fillText(s, align === 'right' ? x + w - 3 : align === 'left' ? x + 3 : x + w / 2, txt.y); };
+    // nombre d'ordres (OKX) au bord exterieur de la colonne : le chiffre puis une barre par ordre (6 au plus)
+    const ticks = (k, n, outer, col, y, rh) => {
+      if (!X[k] || n <= 0) return;
+      const [x, w] = X[k], m = Math.min(n, 6), bh = Math.max(4, Math.min(10, rh - 5));
+      ctx.fillStyle = col;
+      for (let i = 0; i < m; i++) ctx.fillRect(outer === 'left' ? x + 21 + i * 3 : x + w - 23 - i * 3, y - bh / 2, 2, bh);
+      ctx.font = `500 9px ${t.font}`; ctx.textAlign = outer === 'left' ? 'left' : 'right';
+      ctx.fillText(String(n), outer === 'left' ? x + 2 : x + w - 2, y);
+    };
+    rows.forEach(r => {
+      const [lo, bid, ask, bn, an, buy, sell] = r, hi = lo + f.step;
+      const yt = this.series.priceToCoordinate(hi), yb = this.series.priceToCoordinate(lo);
+      if (yt == null || yb == null) return;
+      const y = (yt + yb) / 2, rh = Math.abs(yb - yt);
+      if (y < 30 || y > h - 30) return;
+      const cur = px >= lo && px < hi;
+      if (bid > 0) { const w = bid / mxS * X.bidS[1]; ctx.fillStyle = rgba(t.vpBuy, 0.2); ctx.fillRect(X.bidS[0] + X.bidS[1] - w, yt + 1, w, Math.max(1, rh - 2)); }
+      if (ask > 0) { const w = ask / mxS * X.askS[1]; ctx.fillStyle = rgba(t.vpSell, 0.14); ctx.fillRect(X.askS[0], yt + 1, w, Math.max(1, rh - 2)); }
+      if (cur) { ctx.fillStyle = t.price; ctx.fillRect(X.px[0] + 2, yt + 1, X.px[1] - 4, Math.max(1, rh - 2)); }
+      txt.y = y; ctx.font = `500 10.5px ${t.font}`;
+      txt('px', LT.fmtP(lo), 'center', cur ? t.priceText : t.label);
+      if (bid > 0) txt('bidS', fq(bid), 'right', rgba(t.vpBuy, 1));
+      if (ask > 0) { ctx.textAlign = 'left'; txt('askS', fq(ask), 'left', rgba(t.vpSell, 0.95)); }
+      if (sell > 0) txt('sell', fq(sell), 'right', sell >= buy ? rgba(t.vpSell, 0.9) : t.label);
+      if (buy > 0) txt('buy', fq(buy), 'left', buy >= sell ? rgba(t.vpBuy, 1) : t.label);
+      ticks('bidS', bn, 'left', rgba(t.vpBuy, 0.75), y, rh);
+      ticks('askS', an, 'right', rgba(t.vpSell, 0.7), y, rh);
+    });
+  }
+  // ---- V15 : ligne d'etat en bas a gauche (latence, vitesse du ruban, seuil des gros ordres) ----
+  drawFooter(L, h) {
+    const st = LT.st, f = st.flow, t = this.th(), ctx = this.ctx;
+    if (!f || f.symbol !== L.d.symbol || !(st.mainOpts.dom || st.mainOpts.big)) return;
+    const ms = v => v == null ? '-' : Math.max(0, Math.round(v)) + ' ms';
+    const parts = [`flux ${ms(f.latency && f.latency.trades)}`, `carnet ${ms(f.latency && f.latency.book)}`,
+      `${f.tape ? String(f.tape.perSec).replace('.', ',') : '-'} transactions/s`, `gros ordre ≥ ${LT.fmtUsdShort(f.threshold || 0)} $`];
+    if (f.simulated) parts.push('données simulées');
+    ctx.font = `500 10px ${t.font}`; ctx.fillStyle = t.label; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(parts.join('  ·  '), 8, h - 36);
   }
 
   // ---- carte de chaleur (couche SOUS le graphique) ----

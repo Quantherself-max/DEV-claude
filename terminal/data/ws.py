@@ -181,6 +181,18 @@ class WSClient:
             except OSError:
                 pass
 
+    def send_text(self, text: str) -> bool:
+        """Envoie un message texte (abonnement, ping) ; False si la connexion n'est pas ouverte."""
+        s = self.sock
+        if s is None or not self.connected:
+            return False
+        try:
+            s.sendall(encode_frame(OP_TEXT, text.encode("utf-8")))
+            return True
+        except OSError as e:
+            self.last_error = f"envoi impossible : {e}"
+            return False
+
     # --- boucle de reconnexion ---
     def run_forever(self):
         wait = 1.0

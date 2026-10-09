@@ -310,3 +310,15 @@ ul.mine{margin:4px 0 0;padding-left:18px;font-size:12.5px;color:#c6c9d2}ul.mine 
 .bar.stack{display:flex}.bar.stack i{flex:none}
 .improw{display:grid;grid-template-columns:82px 1fr 40px;gap:2px 8px;align-items:center;font-size:12px;margin:4px 0}.improw .bar{margin:0}.improw b{text-align:right}.improw small{grid-column:1/-1;margin-top:-2px}
 .impconf{margin:4px 0 6px 16px;padding:0;font-size:12px;line-height:1.5}
+
+/* V15 : style « nuit » (fond noir, chiffres a chasse fixe, etiquette de prix bleue) */
+.pbody .ptag{position:absolute;z-index:5;right:0;height:18px;line-height:18px;text-align:center;font:600 11px/18px ui-monospace,"SF Mono",Menlo,Consolas,monospace;border-radius:2px;pointer-events:none;font-variant-numeric:tabular-nums}.pbody .ptag[hidden]{display:none}
+.panel.th-nuit .cdwn{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-weight:500}
+body.theme-nuit{--bg:#0b0b0b;--panel:#121212;--line:#232323;--text:#d6d6d6;--mut:#7e7e7e;--acc:#78adf7}
+body.theme-nuit .panel{background:#0f0f0f}
+body.theme-nuit .phead{background:#0f0f0f;border-bottom-color:#1d1d1d;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:11px;letter-spacing:.02em}
+body.theme-nuit #top,body.theme-nuit #deskbar{background:#0f0f0f}
+body.theme-nuit select,body.theme-nuit button{background:#161616}
+body.theme-nuit .seg button.on{background:#78adf7;border-color:#78adf7;color:#0b0b0b}
+body.theme-nuit #price{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+button.mini{padding:1px 6px;font-size:11px}button.mini[hidden]{display:none}

@@ -21,6 +21,7 @@ from config import ROOT, load_config, write_env
 from data import reports as reports_mod
 from data.binance import BinanceSource
 from data.live import LiveFeed
+from data.orderflow import OrderFlow, SimFlow
 from data.social import Influencers, clean_handles
 from data.simulated import SimulatedSource
 from service import TFS, Service
@@ -45,6 +46,25 @@ def default_feed(cfg):
     return LiveFeed(cfg.binance_ws, cfg.symbols, cfg.data_dir) if cfg.source == "binance" and cfg.live_ws else None
 
 
+def _sim_price(service, sym):
+    m = service.markets.get(sym)
+    return m.price() if m is not None and m.ready else None
+
+
+def default_flow(cfg, source, service, feed):
+    """Flux d'ordres (V15) : carnet Binance + nombre d'ordres OKX + ruban ; donnees fabriquees en mode simule ; rien sans flux temps reel."""
+    if not getattr(cfg, "orderflow_on", True):
+        return None
+    if cfg.source != "binance":
+        return SimFlow(cfg.symbols, lambda s: _sim_price(service, s))
+    if feed is None or not hasattr(source, "_get"):
+        return None
+    flow = OrderFlow(cfg.symbols, cfg.binance_ws_public, cfg.okx_ws,
+                     lambda s: source._get("/fapi/v1/depth", {"symbol": s, "limit": 1000}, retries=2, timeout=10))
+    feed.flow = flow
+    return flow
+
+
 def build_parts(cfg, make_source=default_source, make_feed=default_feed, make_hub=default_hub):
     source = make_source(cfg)
     notifier = TelegramNotifier(cfg.telegram_token, cfg.telegram_chat_id, cfg.telegram_api_base) \
@@ -56,7 +76,7 @@ def build_parts(cfg, make_source=default_source, make_feed=default_feed, make_hu
     hub = make_hub(cfg, source)
     if hub:
         service.attach_ext(hub)
-    return source, service, AlertEngine(cfg, notifier), notifier, feed
+    return source, service, AlertEngine(cfg, notifier), notifier, feed, default_flow(cfg, source, service, feed)
 
 
 class App:
@@ -83,8 +103,9 @@ class App:
         self._install(cfg)
 
     def _install(self, cfg):
-        old = self.feed
-        source, service, alerts, notifier, feed = build_parts(cfg, self.make_source, self.make_feed, self.make_hub)
+        old, old_flow = self.feed, getattr(self, "flow", None)
+        source, service, alerts, notifier, feed, flow = build_parts(cfg, self.make_source, self.make_feed, self.make_hub)
+        self.flow = flow
         service.listeners.append(self.alert_cycle)
         self.cfg, self.source, self.service, self.alerts, self.notifier = cfg, source, service, alerts, notifier
         self.social = Influencers(cfg)
@@ -95,8 +116,12 @@ class App:
         self.readings = readings_mod.ReadingLog(cfg)
         if old:
             old.stop()
+        if old_flow:
+            old_flow.stop()
         if feed and self.running:
             feed.start()
+        if flow and self.running:
+            flow.start()
         self._chat_restart()
 
     def _chat_restart(self):
@@ -115,6 +140,8 @@ class App:
         self.running = True
         if self.feed:
             self.feed.start()
+        if self.flow:
+            self.flow.start()
         self._chat_restart()
 
     def shutdown(self):
@@ -122,6 +149,8 @@ class App:
         self.wake.set()
         if self.feed:
             self.feed.stop()
+        if self.flow:
+            self.flow.stop()
         if self.tgchat:
             self.tgchat.close()
 
@@ -466,6 +495,7 @@ def make_handler(app: App):
                     o = app.service.overview()
                     o["alerts"] = [{"t": a["t"], "text": a["text"].split("\n")[0], "sent": a.get("sent")} for a in app.alerts.log[-6:][::-1]]
                     o["feed"] = app.feed.status() if app.feed else None
+                    o["flow"] = app.flow.status() if app.flow else None
                     o["errors"] = app.service.errors
                     d = app.desk.public(app.source.now_ms())
                     o["week"], o["tradeStats"], o["openTrades"] = d["week"], d["stats"], [t for t in d["trades"] if t["status"] in ("pending", "active", "tp1")]
@@ -524,6 +554,16 @@ def make_handler(app: App):
                     return self._json({"symbol": sym, "live": bool(f), "events": f.recent_liqs(sym, since) if f else [],
                                        "summary": f.liq_summary(sym) if f else None,
                                        "status": f.status() if f else None})
+                if u.path == "/api/flow":
+                    sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
+                    if sym not in app.service.markets:
+                        raise KeyError(f"symbole inconnu : {sym}")
+                    if not app.flow:
+                        return self._json({"symbol": sym, "ready": False, "off": True, "rows": [], "big": [],
+                                           "why": "flux d'ordres désactivé (TERMINAL_ORDERFLOW=0 ou flux temps réel coupé)"})
+                    f1 = lambda k, d: float((q.get(k) or [d])[0] or d)
+                    center = f1("center", 0.0) or None
+                    return self._json(app.flow.ladder(sym, f1("step", 0.0), int(f1("rows", 60)), center, int(f1("since", 0))))
                 if u.path == "/api/price":
                     return self._json(app.live_price((q.get("symbol") or [app.cfg.symbols[0]])[0].upper()))
                 if u.path == "/api/settings":
@@ -576,6 +616,11 @@ def make_handler(app: App):
                     return self._json(app.update_check(install=False))
                 if path == "/api/update/apply":
                     return self._json(app.update_check(install=True))
+                if path == "/api/flow/reset":
+                    sym = str(body.get("symbol") or app.cfg.symbols[0]).upper()
+                    if app.flow:
+                        app.flow.reset(sym)
+                    return self._json({"ok": bool(app.flow), "symbol": sym})
                 if path == "/api/vps":
                     return self._json({**app.service.set_vp(body.get("specs"), body.get("anchors", app.service.vp_state["anchors"])), "ok": True})
                 if path == "/api/test/binance":

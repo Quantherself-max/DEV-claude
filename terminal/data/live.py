@@ -24,6 +24,7 @@ class LiveFeed:
         self.clients: dict[str, WSClient] = {}
         self.ctx = ssl_context
         self.ticks = 0
+        self.flow = None                                        # V15 : flux d'ordres (data/orderflow.py), recoit chaque transaction
         self._load_liqs()
 
     # --- messages ---
@@ -33,8 +34,11 @@ class LiveFeed:
         if x.get("e") != "aggTrade":
             return
         sym = x["s"].upper()
-        self.price[sym] = (float(x["p"]), int(x["T"]), time.time())
+        now = time.time()
+        self.price[sym] = (float(x["p"]), int(x["T"]), now)
         self.ticks += 1
+        if self.flow is not None:
+            self.flow.on_trade(sym, x, now)
 
     def on_liq(self, text: str):
         m = json.loads(text)
