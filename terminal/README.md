@@ -1,4 +1,4 @@
-# Liq Terminal (V17)
+# Liq Terminal (V17.1)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
@@ -110,6 +110,13 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## V17.1 : « HTTP 404 » dans la vue TPO (ancien programme encore lancé)
+
+Ce message voulait dire que les **nouvelles pages** étaient arrivées dans le dossier, mais que le **programme** qui tournait sur le PC était encore l'ancien : il ne connaissait pas l'adresse du TPO. Pour corriger tout de suite : **ferme la fenêtre noire « Liq Terminal »** (ou Ctrl+C dedans), puis relance **Lancer-Terminal-Windows.bat** (Mac : Lancer-Terminal-Mac.command). Ensuite, plus besoin d'y penser :
+- **Redémarrage automatique** : le terminal surveille ses propres fichiers. Si une nouvelle version est copiée dans son dossier pendant qu'il tourne (ZIP extrait par-dessus, mise à jour, git pull), il redémarre tout seul environ 30 secondes plus tard, et la page se recharge. Lancé sans le lanceur, il affiche un bandeau « relance le terminal ».
+- **Bandeau rouge** en haut de la page si le programme qui tourne est plus ancien que les pages, avec ce qu'il faut faire. La vue TPO l'explique aussi dans chaque colonne au lieu de rester noire.
+- **Lanceur** : si une autre version du terminal occupe déjà le port (une ancienne fenêtre restée ouverte, ou un autre dossier), il le dit clairement au lieu d'ouvrir la page de l'ancien programme.
 
 ## Ce qui est nouveau en V17 : TPO, single prints, poor high / low, profils semaine et mois
 

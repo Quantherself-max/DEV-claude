@@ -40,6 +40,40 @@ def selftest(cfg) -> int:
     return 1 if bad else 0
 
 
+PORT_BUSY = 4                                                        # code de sortie : le port est deja pris par un autre terminal
+
+
+def port_busy(port: int, no_browser: bool) -> int:
+    """Le port est deja pris. Si c'est une AUTRE version du terminal (plus ancienne, ou lancee depuis un autre dossier), on le dit clairement :
+    sinon on ouvrirait la page d'un ancien programme (nouvelles pages, ancien moteur : vues en « HTTP 404 »)."""
+    import json
+    import urllib.request
+    from server import API_LEVEL, VERSION
+    url = f"http://127.0.0.1:{port}/"
+    try:
+        with urllib.request.urlopen(url + "api/health", timeout=4) as r:
+            info = json.loads(r.read())
+    except Exception:
+        info = None
+    other_dir = bool(info and info.get("root")) and os.path.normcase(str(info["root"])) != os.path.normcase(str(HERE))
+    print("=" * 64)
+    if info is None:
+        print(f"  Le port {port} est deja utilise par un autre programme (ou un terminal qui ne repond pas).")
+        print("  Ferme l'autre fenetre du terminal (ou change TERMINAL_PORT dans .env), puis relance ce fichier.")
+    elif (info.get("api") or 0) < API_LEVEL or other_dir:
+        print(f"  Une AUTRE version du terminal tourne deja sur le port {port}"
+              f" ({'version ' + str(info['version']) if info.get('version') else 'ancienne version'}"
+              f"{', lancee depuis un autre dossier : ' + str(info['root']) if other_dir else ''}) ; celle-ci est la version {VERSION}.")
+        print("  1. Ferme la fenetre noire « Liq Terminal » deja ouverte (ou Ctrl+C dedans).")
+        print("  2. Relance ce fichier : la page s'ouvrira sur la bonne version.")
+    else:
+        print(f"  Le terminal tourne deja : ouverture de la page {url}")
+        if not no_browser:
+            webbrowser.open(url)
+    print("=" * 64)
+    return PORT_BUSY
+
+
 def supervise(argv: list) -> int:
     """Lance le terminal dans un processus enfant et le relance quand il le demande (mise a jour installee). Si une version tout juste installee
     s'arrete en erreur, la version precedente est remise en place puis relancee."""
@@ -61,6 +95,8 @@ def supervise(argv: list) -> int:
         if code == RESTART_CODE:
             print("\n== Nouvelle version installée : redémarrage du terminal (la page du navigateur se recharge toute seule) ==\n", flush=True)
             continue
+        if code == PORT_BUSY:                                        # un autre terminal occupe deja le port : rien a remettre en place
+            return code
         u = Updater(HERE)
         if code != 0 and u.state().get("pendingVerify") and u.rollback():
             print(f"\n== La nouvelle version s'est arrêtée en erreur après {time.time() - t0:.0f} s : retour automatique à la version précédente ==\n", flush=True)
@@ -116,10 +152,7 @@ def main() -> int:
     try:
         httpd = serve(app)
     except OSError:
-        print(f"Le port {cfg.port} est deja utilise : le terminal tourne peut-etre deja. Ouvre http://127.0.0.1:{cfg.port}/")
-        if not a.no_browser:
-            webbrowser.open(f"http://127.0.0.1:{cfg.port}/")
-        return 1
+        return port_busy(cfg.port, a.no_browser)
     url = f"http://127.0.0.1:{cfg.port}/"
     print("=" * 64)
     print(f"  Terminal ouvert dans ton navigateur : {url}")
@@ -130,6 +163,7 @@ def main() -> int:
     print("=" * 64)
     app.httpd = httpd
     app.start_background()
+    app.start_code_watch()                                           # nouvelle version copiee dans le dossier : redemarrage (ou bandeau)
     threading.Thread(target=app.refresh_loop, daemon=True).start()
     if a.child:
         app.start_updates()                                          # verification des nouvelles versions (Reglages -> Mises a jour)

@@ -601,10 +601,17 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
+const NEED_API = 17;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo)
+const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
+const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
   const c = st.cfg;
   if (!c) return;
-  if (d && d.error && d.source !== 'simulated') banner('bad', `<span>Problème de données Binance : ${esc(d.error)}</span><button data-open-settings>Tester la connexion</button>`);
+  if (serverOld()) banner('bad', `<span>⚠ Le <b>programme</b> du terminal qui tourne sur ton PC est une <b>ancienne version</b> : les nouvelles pages sont arrivées, mais pas le moteur (la vue TPO, entre autres, ne peut pas marcher). ` +
+    `<b>Ferme la fenêtre noire « Liq Terminal »</b> (ou Ctrl+C dedans), puis relance <b>${LAUNCHER}</b>.</span>`);
+  else if (st.stale) banner(c.supervised ? 'warn' : 'bad', c.supervised ? '<span>Nouvelle version copiée dans le dossier du terminal : redémarrage automatique en cours…</span>'
+    : `<span>⚠ Une <b>nouvelle version</b> a été copiée dans le dossier du terminal : <b>ferme la fenêtre noire « Liq Terminal »</b> puis relance <b>${LAUNCHER}</b> pour l'utiliser.</span>`);
+  else if (d && d.error && d.source !== 'simulated') banner('bad', `<span>Problème de données Binance : ${esc(d.error)}</span><button data-open-settings>Tester la connexion</button>`);
   else if (!d && c.source === 'binance') banner('warn', '<span>Chargement de l\'historique Binance (la première fois : plusieurs minutes pour tout l\'historique depuis 2019, ensuite quelques secondes)…</span>');
   else if (c.source === 'simulated') banner('warn', '<span>⚠ Données <b>SIMULÉES</b> : les prix sont fictifs, c\'est pour découvrir le terminal.</span><button data-open-settings class="primary">Passer aux vraies données Binance</button>');
   else banner(null);
@@ -662,6 +669,7 @@ async function poll() {
     const boot = r.headers.get('X-Terminal-Boot');                 // le terminal a redemarre (mise a jour installee) : on recharge la page
     if (boot && st.boot && boot !== st.boot) { location.reload(); return; }
     if (boot) st.boot = boot;
+    st.stale = r.headers.get('X-Terminal-Stale') === '1';             // V17.1 : nouvelle version copiee, ancien programme encore lance
     d = await r.json();
   }
   catch (e) { $('#status').textContent = 'terminal injoignable : redémarrage en cours, ou la fenêtre du programme est fermée'; $('#status').className = 'bad'; return; }
@@ -1174,7 +1182,7 @@ function openSymbol(sym, page) {
   let cfg;
   try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
   window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
-    shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, againstBias, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
+    serverOld, LAUNCHER, shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, againstBias, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
   Overview.init(window.LT);
   Signals.init(window.LT);
   Backtest.init(window.LT);

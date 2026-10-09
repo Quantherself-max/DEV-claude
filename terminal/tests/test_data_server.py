@@ -498,6 +498,36 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.get("/api/mtf?symbol=BTCUSDT&tf=2m")[0], 404)
         self.assertEqual(self.get("/api/mtf?symbol=NOPEUSDT&tf=1h")[0], 404)
 
+    def test_version_and_code_watch(self):
+        from unittest import mock
+        import server as server_mod
+        code, body, h = self.get("/api/config")
+        c = json.loads(body)
+        self.assertEqual((c["api"], c["version"], c["stale"]), (server_mod.API_LEVEL, server_mod.VERSION, False))
+        self.assertIsNone(h.get("X-Terminal-Stale"))
+        hl = json.loads(self.get("/api/health")[1])
+        self.assertEqual(hl["root"], str(server_mod.ROOT))
+        app = self.app
+        app.code_sig = "a"
+        try:
+            with mock.patch.object(server_mod, "code_signature", return_value="b"):
+                self.assertEqual(app.code_check("a"), "b")                               # premiere fois : copie peut-etre en cours, on attend
+                self.assertFalse(app.code_stale)
+                with app.upd_lock:
+                    app.code_check("b")                                                  # installation par updater.py : il relance lui-meme
+                self.assertFalse(app.code_stale)
+                app.code_check("b")                                                      # meme empreinte nouvelle deux fois : nouvelle version
+                self.assertTrue(app.code_stale)
+                self.assertFalse(app.restart_requested)                                  # lance sans run.py : pas de relance, un bandeau
+            self.assertEqual(self.get("/api/config")[2].get("X-Terminal-Stale"), "1")
+            with mock.patch.object(server_mod, "code_signature", return_value="a"):
+                app.code_stale = False
+                app.code_check("a")                                                      # rien n'a change
+                self.assertFalse(app.code_stale)
+        finally:
+            app.code_stale, app.code_sig = False, None
+        self.assertTrue(len(server_mod.code_signature()) == 40)
+
     def test_tpo_endpoint_profiles_and_confluences(self):
         for kind in ("D", "4h", "1h"):
             code, body, _ = self.get(f"/api/tpo?symbol=BTCUSDT&kind={kind}&rows=30")

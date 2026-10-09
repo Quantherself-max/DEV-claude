@@ -28,23 +28,38 @@ const TPO = (() => {
     root.querySelectorAll('[data-tpo-k]').forEach(c => c.checked = !!LT.st.tpoKinds[c.dataset.tpoK]);
     cols.style.gridTemplateColumns = `repeat(${Math.max(1, ks.length)}, minmax(0, 1fr))`;
     cols.innerHTML = ks.length ? ks.map(([k, lab, br]) => `<section class="tpocol" data-k="${k}"><div class="mhead"><b>TPO ${lab}</b><span class="muted small">tranches de ${br}</span><span class="spacer"></span><span class="muted small" data-info></span></div>` +
-      `<div class="mbody"><canvas></canvas><div class="tip" hidden></div></div></section>`).join('') : '<div class="muted" style="padding:20px">Coche au moins un type de séance.</div>';
+      `<div class="mbody"><canvas></canvas><div class="tip" hidden></div><div class="tpomsg" hidden></div></div></section>`).join('') : '<div class="muted" style="padding:20px">Coche au moins un type de séance.</div>';
     cols.querySelectorAll('.tpocol').forEach(sec => {
       const cv = sec.querySelector('canvas');
       cv.addEventListener('mousemove', ev => { const r = cv.getBoundingClientRect(); hover = {k: sec.dataset.k, x: ev.clientX - r.left, y: ev.clientY - r.top}; draw(sec.dataset.k); });
       cv.addEventListener('mouseleave', () => { hover = null; sec.querySelector('.tip').hidden = true; draw(sec.dataset.k); });
     });
   }
+  function message(html) {
+    root.querySelectorAll('.tpocol').forEach(sec => { const m = sec.querySelector('.tpomsg'); m.innerHTML = html || ''; m.hidden = !html; });
+  }
   async function load() {
     const sym = LT.st.symbol;
     if (!sym || !on) return;
+    if (LT.serverOld()) {                                             // nouvelles pages, ancien programme : /api/tpo n'existe pas encore
+      message(`<b>Le programme du terminal qui tourne est une ancienne version</b> : il ne sait pas encore calculer le TPO.<br>` +
+        `Ferme la fenêtre noire « Liq Terminal » (ou Ctrl+C dedans), puis relance <b>${esc(LT.LAUNCHER)}</b>.`);
+      return;
+    }
+    message('');
     await Promise.all(kinds().map(async ([k]) => {
       const sec = root.querySelector(`.tpocol[data-k="${k}"]`); if (!sec) return;
       const rows = Math.max(12, Math.floor((sec.querySelector('.mbody').clientHeight - 40) / 12));
       try {
         const d = await LT.api(`/api/tpo?symbol=${sym}&kind=${k}&rows=${rows}`);
         if (sym === LT.st.symbol) { data[k] = d; draw(k); }
-      } catch (e) { sec.querySelector('[data-info]').textContent = 'indisponible : ' + e.message; }
+      } catch (e) {
+        sec.querySelector('[data-info]').textContent = 'indisponible : ' + e.message;
+        const m = sec.querySelector('.tpomsg');
+        m.innerHTML = /^HTTP 404$/.test(e.message) ? `Le programme du terminal ne connaît pas encore le TPO : ferme la fenêtre noire « Liq Terminal » puis relance <b>${esc(LT.LAUNCHER)}</b>.`
+          : `TPO indisponible pour le moment : ${esc(e.message)}`;
+        m.hidden = false;
+      }
     }));
   }
   // dessin d'une colonne : les seances les plus recentes a droite, pres de l'echelle des prix

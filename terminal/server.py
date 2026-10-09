@@ -2,8 +2,10 @@
 Securite : n'ecoute que sur 127.0.0.1, refuse les en-tetes Host etrangers (DNS rebinding) et exige un jeton
 de session sur toutes les requetes qui modifient quelque chose (un autre site ne peut pas le lire)."""
 import gzip
+import hashlib
 import json
 import mimetypes
+import os
 import re
 import secrets
 import threading
@@ -28,6 +30,26 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
+VERSION = "17.1"
+API_LEVEL = 17                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
+
+
+def code_signature(root: Path = ROOT) -> str:
+    """Empreinte des fichiers Python du terminal (chemin, taille, date) : elle change quand une nouvelle version est copiee dans le dossier
+    (mise a jour, ZIP extrait par-dessus, git pull) alors que l'ancien programme tourne encore."""
+    h = hashlib.sha1()
+    for d, dirs, files in os.walk(root):
+        dirs[:] = sorted(x for x in dirs if x not in CODE_SKIP and not x.startswith("."))
+        for f in sorted(files):
+            if f.endswith(".py"):
+                p = Path(d) / f
+                try:
+                    st = p.stat()
+                except OSError:
+                    continue
+                h.update(f"{p.relative_to(root).as_posix()}|{st.st_size}|{st.st_mtime_ns}\n".encode())
+    return h.hexdigest()
 
 
 def default_source(cfg):
@@ -87,6 +109,8 @@ class App:
         self.updates_on = updates                      # True : lance par run.py, qui sait relancer le terminal apres une mise a jour
         self.httpd = None
         self.restart_requested = False
+        self.code_sig = None                           # empreinte des fichiers Python au demarrage (start_code_watch)
+        self.code_stale = False                        # True : une autre version a ete copiee dans le dossier depuis le demarrage
         self.boot = secrets.token_hex(4)               # change a chaque demarrage : la page du navigateur se recharge toute seule
         self.upd_lock = threading.Lock()
         self.upd = {"state": "pas encore vérifié", "latest": None, "newer": False, "lastCheck": None, "error": None, "result": None}
@@ -311,8 +335,38 @@ class App:
             self.upd_lock.release()
         return self.update_status()
 
+    # --- fichiers remplaces pendant que le terminal tourne (V17.1) ---
+    def start_code_watch(self, every: float = 15.0):
+        """Surveille les fichiers Python : si une nouvelle version est copiee dans le dossier (ZIP extrait par-dessus, git pull...), le terminal
+        redemarre tout seul quand il est lance par run.py ; sinon la page affiche un bandeau « relance le terminal »."""
+        self.code_sig = code_signature()
+        threading.Thread(target=self._code_watch, args=(every,), daemon=True).start()
+
+    def code_check(self, prev: str | None) -> str | None:
+        """Un passage de la surveillance. Renvoie l'empreinte vue. Il faut la meme empreinte nouvelle deux fois de suite (copie terminee)."""
+        try:
+            sig = code_signature()
+        except OSError:
+            return prev
+        if sig == self.code_sig or sig != prev or self.upd_lock.locked():   # inchange, copie en cours, ou installation par updater.py
+            return sig
+        if not self.code_stale:
+            self.code_stale = True
+            print("\n== Une nouvelle version du terminal a été copiée dans le dossier"
+                  + (" : redémarrage automatique ==\n" if self.updates_on else " : ferme cette fenêtre et relance le terminal pour l'utiliser ==\n"), flush=True)
+        if self.updates_on:
+            self.request_restart()
+        return sig
+
+    def _code_watch(self, every: float):
+        prev = self.code_sig
+        while not self.stop.wait(every) and not self.restart_requested:
+            prev = self.code_check(prev)
+
     def request_restart(self, delay: float = 2.0) -> bool:
         """Arrete proprement le serveur pour que run.py le relance avec la nouvelle version. Sans run.py (lancement manuel), la version s'applique au prochain demarrage."""
+        if self.restart_requested:
+            return True
         if not self.updates_on:
             self.upd["state"] = "installée : relance le terminal pour l'utiliser"
             return False
@@ -453,6 +507,8 @@ def make_handler(app: App):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Terminal-Boot", app.boot)
+            if app.code_stale:
+                self.send_header("X-Terminal-Stale", "1")
             if len(body) > 4000 and "gzip" in self.headers.get("Accept-Encoding", ""):
                 body = gzip.compress(body, 3)
                 self.send_header("Content-Encoding", "gzip")
@@ -482,7 +538,8 @@ def make_handler(app: App):
                                        "anchor": c.anchor_date, "statsK": c.stats_k, "statsHorizon": c.stats_horizon,
                                        "historyYears": c.history_years,
                                        "csrf": app.token, "wsBase": c.binance_ws if c.source == "binance" else "",
-                                       "cbWs": c.coinbase_ws if c.source == "binance" else ""})
+                                       "cbWs": c.coinbase_ws if c.source == "binance" else "",
+                                       "version": VERSION, "api": API_LEVEL, "supervised": app.updates_on, "stale": app.code_stale})
                 if u.path == "/api/vp":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.service.get_vp(sym, (q.get("tf") or ["1h"])[0]))
@@ -588,7 +645,8 @@ def make_handler(app: App):
                     return self._json({"telegram": app.cfg.telegram_on, "log": app.alerts.log[-20:][::-1],
                                        "errors": app.service.errors})
                 if u.path == "/api/health":
-                    return self._json({"ok": True, "uptime": time.time() - app.started,
+                    return self._json({"ok": True, "uptime": time.time() - app.started, "version": VERSION, "api": API_LEVEL, "root": str(ROOT),
+                                       "stale": app.code_stale,
                                        "ready": {s: m.ready for s, m in app.service.markets.items()},
                                        "errors": app.service.errors, "lastUpdate": app.service.last_update,
                                        "feed": app.feed.status() if app.feed else None})
