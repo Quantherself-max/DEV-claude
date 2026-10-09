@@ -1,9 +1,10 @@
-# Liq Terminal (V15)
+# Liq Terminal (V16)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Plusieurs unités de temps à la fois** (V16) : bouton **⊞ Multi-unités** du Desk, 2 à 5 graphiques du même actif côte à côte (5 min, 15 min, 1 h, 4 h, 1 jour au choix pour chacun), bougie en direct, VWAP, profil de la séance, niveaux clés, **réticule synchronisé** et ligne d'**alignement** des unités (voir « V16 » plus bas).
 - **Écran d'order flow** (V15) : style « nuit » (fond noir, bougies bleues et blanches, prix en bleu avec le décompte dessous), **profil de volume de la séance collé à l'échelle des prix** (part des acheteurs et des vendeurs, POC / VAH / VAL, plus haut et bas de séance, clôture de la veille), VWAP du jour à ±1 écart-type, **carnet d'ordres en direct aligné sur les prix** (taille en attente, nombre d'ordres, volume échangé à chaque prix), **gros ordres exécutés en losanges**, vitesse du ruban et latence (voir « V15 » plus bas).
 - **Poches de liquidité classées par importance** (V14) : chaque poche (estimée par l'intérêt ouvert ou visible dans le prix) affiche son **âge** (formée il y a…), un **score d'importance sur 100** (taille + confluences autour + fraîcheur) et son **rang** de son côté (N°1, N°2…), le même en 15 minutes, 1 heure ou 4 heures. Les poids viennent d'une **mesure sur 12 ans de BTC** (rapport « poches » dans la page **Backtest**, voir « V14 » plus bas).
 - **Historique et sens de tes trades** (V13) : page **Historique** (chaque idée et alerte envoyée avec son résultat, la lecture du terminal jour après jour et ce que le prix a fait ensuite), **jamais deux biais opposés à moins de 24 heures**, toutes paires confondues, et le **biais du terminal** affiché partout (voir « V13.1 » et « V13 » plus bas).
@@ -108,6 +109,16 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V16 : analyser plusieurs unités de temps en même temps
+
+- **Bouton ⊞ Multi-unités** (barre du Desk) : une grille de **2, 3, 4 ou 5 graphiques** du même actif (boutons en haut de la grille). Chaque graphique a son **unité de temps** (menu en haut à gauche : 5 min, 15 min, 1 heure, 4 heures, 1 jour) ; par défaut 5 min, 15 min, 1 h, 4 h, puis 1 jour. Le choix est gardé.
+- **Sur chaque graphique** : les bougies (celle en cours bouge à chaque transaction, avec le décompte « clôture dans 03:12 »), la **VWAP du jour** et ses bandes à ±1 écart-type, la **VWAP de la semaine** (trait plus fin), le **profil de la séance** collé à l'échelle des prix avec POC, VAH, VAL, et les **plus hauts / plus bas de la veille, de la semaine et du mois précédents** (nommés au bord gauche).
+- **Réticule synchronisé** : en survolant un graphique, les autres placent leur réticule **au même instant** (sur la bougie de leur unité qui le contient) et **au même prix**. Pratique pour voir où se situe un creux du 5 minutes dans la bougie 1 heure ou 4 heures.
+- **En-tête de chaque graphique** : variation de la bougie en cours, position du cours face aux **moyennes 20 et 50 bougies** de cette unité et face à la **VWAP du jour** (de la semaine sur le graphique 1 jour, où la VWAP du jour n'a pas de sens). Le texte complet s'affiche au survol.
+- **Ligne d'alignement** au-dessus de la grille : combien d'unités sont au-dessus de leurs moyennes 20 et 50, de la VWAP du jour, du POC de la séance (« toutes au-dessus », « 3 sur 4 au-dessus »…), en bleu quand tout est au-dessus, en blanc quand tout est en dessous. Ce sont des **faits, pas un signal** : aucun de ces alignements n'a été validé par le backtest du terminal (le seul filtre validé reste la tendance de fond, onglet Lecture).
+- **⤢** sur un graphique : ouvre cette unité dans le graphique principal (carnet d'ordres, poches, zones, plan de trade).
+- Les bougies fermées et les VWAP sont relues toutes les 15 secondes ; la bougie en cours suit le flux en direct.
 
 ## Ce qui est nouveau en V15 : un écran d'order flow
 

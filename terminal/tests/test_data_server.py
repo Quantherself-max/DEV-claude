@@ -479,6 +479,25 @@ class ServerTests(unittest.TestCase):
         self.assertIn("score", o["macro"])
         self.assertLessEqual(len(o["alerts"]), 6)
 
+    def test_mtf_endpoint(self):
+        for tf in ("5m", "4h", "1d"):
+            code, body, _ = self.get(f"/api/mtf?symbol=BTCUSDT&tf={tf}")
+            self.assertEqual(code, 200)
+            r = json.loads(body)
+            self.assertTrue(r["ready"])
+            self.assertEqual(r["tf"], tf)
+            self.assertTrue(0 < len(r["candles"]) <= 400)
+            self.assertEqual([c[0] for c in r["candles"]], r["times"])                # VWAP alignee bougie par bougie
+            if tf == "1d":
+                self.assertIsNone(r["vwapD"])                                           # une bougie = un jour : pas de VWAP du jour
+                self.assertEqual(len(r["vwapW"]), len(r["candles"]))
+            else:
+                self.assertEqual(len(r["vwapD"]), len(r["candles"]))
+            self.assertTrue(r["session"]["rows"])
+            self.assertTrue({l["name"] for l in r["levels"]} >= {"haut veille", "bas veille"})
+        self.assertEqual(self.get("/api/mtf?symbol=BTCUSDT&tf=2m")[0], 404)
+        self.assertEqual(self.get("/api/mtf?symbol=NOPEUSDT&tf=1h")[0], 404)
+
     def test_flow_endpoint_and_session_profile(self):
         code, body, _ = self.get("/api/flow?symbol=BTCUSDT&step=50&rows=20")
         self.assertEqual(code, 200)

@@ -74,7 +74,8 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
   layout: window.innerWidth >= 1500 ? '3' : window.innerWidth >= 1100 ? '2' : '1', prevLayout: null, sideOpen: true, sbCollapsed: false,
   page: 'desk', sub: 'synth', planOn: true, planKey: null, plan: null, planSig: '', sig: null,
-  theme: 'nuit', mainOpts: {sess: true, vwap: true, dom: false, big: true}, flow: null};
+  theme: 'nuit', mainOpts: {sess: true, vwap: true, dom: false, big: true}, flow: null,
+  mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}};
 async function api(path, body) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
   const r = await fetch(path, opt);
@@ -140,10 +141,10 @@ function buildHeatImage(h) {
 }
 
 const panels = [];
-const LAYOUTS = {'1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp']};
+const LAYOUTS = {'1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: []};
 const needs = k => LAYOUTS[st.layout].includes(k) && st.page === 'desk';
 function savePrefs() {
-  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, expert: st.expert, theme: st.theme, mainOpts: st.mainOpts})); } catch (e) { /* stockage indisponible */ }
+  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf})); } catch (e) { /* stockage indisponible */ }
 }
 function loadPrefs() {
   try {
@@ -159,6 +160,7 @@ function loadPrefs() {
     if (typeof p.expert === 'boolean') st.expert = p.expert;
     if (['nuit', 'classique'].includes(p.theme)) st.theme = p.theme;
     Object.assign(st.mainOpts, p.mainOpts || {});
+    if (p.mtf && Array.isArray(p.mtf.tfs)) st.mtf = {n: Math.max(2, Math.min(5, +p.mtf.n || 4)), tfs: p.mtf.tfs.slice(0, 5)};
   } catch (e) { /* preferences illisibles : valeurs par defaut */ }
 }
 function syncAllTools() { panels.forEach(p => p.syncTools()); }
@@ -173,6 +175,8 @@ function applyLayout() {
   const want = LAYOUTS[st.layout];
   $('#desk').className = 'l' + st.layout;
   panels.forEach(p => p.host.classList.toggle('hide', !want.includes(p.kind)));
+  const g = $('#mtfGrid');                                              // V16 : grille multi-unites
+  if (g) { g.classList.toggle('hide', st.layout !== 'mtf'); if (st.layout === 'mtf' && st.page === 'desk') MTF.show(); else MTF.hide(); }
   document.querySelectorAll('#layouts button').forEach(b => b.classList.toggle('on', b.dataset.layout === st.layout));
   $('#deskwrap').classList.toggle('noside', !st.sideOpen);
   $('#sideToggle').textContent = st.sideOpen ? 'Panneau ▸' : '◂ Panneau';
@@ -188,6 +192,7 @@ function maximize(kind) {
 function createPanels() {
   const desk = $('#desk');
   ['main', 'liq', 'vp'].forEach(k => { const el = document.createElement('section'); desk.appendChild(el); panels.push(new Panel(el, k)); });
+  const g = document.createElement('section'); g.id = 'mtfGrid'; g.className = 'mtf hide'; desk.appendChild(g); MTF.init(window.LT, g);
   let sr = false, sx = false;
   panels.forEach(p => {
     p.chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
@@ -216,6 +221,7 @@ const livePrice = d => liveFresh() ? live.price : d.price;
 function onTick(price, tms, src) {
   if (!(price > 0)) return;
   live.price = price; live.t = Date.now(); live.src = src; live.dirty = true;
+  if (live.sym === st.symbol) MTF.onTick(price, tms);
   const d = st.data;
   if (!d || d.symbol !== live.sym || !st.lastBarObj) return;
   const per = TF_SEC[st.tf], bt = Math.floor(tms / 1000 / per) * per;
@@ -671,7 +677,7 @@ function buildControls(cfg) {
   st.cfg = cfg;
   if (!cfg.symbols.includes(st.symbol)) st.symbol = cfg.symbols[0];
   const sel = $('#symbol'); sel.innerHTML = cfg.symbols.map(s => `<option${s === st.symbol ? ' selected' : ''}>${s}</option>`).join('');
-  sel.onchange = () => { st.symbol = sel.value; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); pollOverview(); pollSignals(); reloadSideTab(); };
+  sel.onchange = () => { st.symbol = sel.value; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); pollOverview(); pollSignals(); reloadSideTab(); MTF.refresh(); };
   const box = $('#tfs');
   box.innerHTML = cfg.tfs.map(t => `<button data-tf="${t}" class="${t === st.tf ? 'on' : ''}">${t}</button>`).join('');
   box.onclick = e => { const b = e.target.closest('button'); if (!b) return; st.tf = b.dataset.tf; st.sel = null; st.data = null; st.series = null; st.vpd = null;
@@ -724,6 +730,7 @@ function navigate(page, sub) {
   $('#crumb').textContent = page === 'analysis' ? SUBS[st.sub] : PAGES[page];
   if (page === 'analysis') Analysis.show(st.sub);
   if (page === 'desk') setTimeout(() => { syncRange(); refreshAll(); }, 60);
+  if (page === 'desk' && st.layout === 'mtf') MTF.show(); else MTF.hide();
   if (page === 'overview') pollOverview();
   if (page === 'backtest') Backtest.show();
   if (page === 'history') History.show();
@@ -793,10 +800,20 @@ async function pollFlow() {
 const fmtQty = q => q == null || isNaN(q) ? '-' : q >= 1e6 ? (q / 1e6).toFixed(1).replace('.', ',') + 'M' : q >= 1e4 ? Math.round(q / 1e3) + 'k' : q >= 1e3 ? (q / 1e3).toFixed(1).replace('.', ',') + 'k'
   : q >= 100 ? String(Math.round(q)) : q >= 10 ? q.toFixed(1).replace('.', ',') : q >= 1 ? q.toFixed(2).replace('.', ',') : q.toFixed(3).replace('.', ',');
 const fmtUsdShort = v => v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1).replace('.', ',') + 'M' : v >= 1e3 ? Math.round(v / 1e3) + 'k' : String(Math.round(v || 0));
+// ouvre une unite de la grille multi-unites dans le graphique principal (carnet, poches, zones…)
+function openTf(tf) {
+  if (!TF_SEC[tf]) return;
+  if (tf !== st.tf) {
+    st.tf = tf; st.sel = null; st.data = null; st.series = null; st.vpd = null; st.flow = null;
+    document.querySelectorAll('#tfs button').forEach(x => x.classList.toggle('on', x.dataset.tf === tf)); poll();
+  }
+  st.layout = '1'; applyLayout();
+}
 function applyTheme() {
   document.body.classList.toggle('theme-nuit', st.theme === 'nuit');
   const b = $('#themeBtn'); if (b) b.textContent = st.theme === 'nuit' ? '☾ nuit' : '☀ classique';
   panels.forEach(p => p.applyTheme());
+  MTF.applyTheme();
   st.version++;
 }
 
@@ -1140,7 +1157,7 @@ async function pollOverview() {
 }
 function openSymbol(sym, page) {
   if (st.cfg && st.cfg.symbols.includes(sym) && sym !== st.symbol) {
-    st.symbol = sym; $('#symbol').value = sym; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); reloadSideTab();
+    st.symbol = sym; $('#symbol').value = sym; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); reloadSideTab(); MTF.refresh();
   }
   location.hash = page === 'analysis' ? '#/analysis/synth' : '#/desk';
 }
@@ -1149,7 +1166,7 @@ function openSymbol(sym, page) {
   let cfg;
   try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
   window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
-    shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, levelColor, livePrice, placeLabels, usdFmt, biasHtml, againstBias, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
+    shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, againstBias, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
   Overview.init(window.LT);
   Signals.init(window.LT);
   Backtest.init(window.LT);

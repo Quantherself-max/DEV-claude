@@ -961,6 +961,32 @@ class Service:
         with self.lock:
             return m.vwap_series(tf)
 
+    KEY_LEVELS = {"PDH": "haut veille", "PDL": "bas veille", "PWH": "haut semaine dern.", "PWL": "bas semaine dern.",
+                  "PMH": "haut mois dernier", "PML": "bas mois dernier"}
+
+    def get_mtf(self, symbol: str, tf: str) -> dict:
+        """Graphique leger pour la grille multi-unites (V16) : bougies de l'unite, VWAP du jour et de la semaine (+ ecart-type du jour),
+        profil de la seance et niveaux cles independants de l'unite (plus hauts / bas de la veille, de la semaine, du mois precedents)."""
+        m = self.markets.get(symbol)
+        if m is None:
+            raise KeyError(f"symbole inconnu : {symbol}")
+        if tf not in TFS:
+            raise KeyError(f"timeframe inconnu : {tf}")
+        if not m.ready:
+            return {"symbol": symbol, "tf": tf, "ready": False}
+        with self.lock:
+            cs = m.chart_candles(tf)[-400:]
+            ser = m.vwap_series(tf)
+            sess = m.session_profile()
+            levels = [{"name": self.KEY_LEVELS[l.name], "price": l.price} for l in m.base_levels() if l.name in self.KEY_LEVELS and l.price]
+            price = m.price()
+            atr = rma_atr(cs[-300:], 14)
+        out = {"symbol": symbol, "tf": tf, "ready": True, "price": price, "atr": atr, "now": self.source.now_ms(),
+               "candles": [[k.t // 1000, k.o, k.h, k.l, k.c, k.v] for k in cs], "session": sess, "levels": levels}
+        if ser.get("ready"):
+            out.update(times=ser["times"], vwapD=ser["vwap"].get("D"), sdD=ser["sd"].get("D"), vwapW=ser["vwap"].get("W"))
+        return out
+
     def schedule_external(self, wait: bool = False) -> None:
         if not self.ext or self._ext_running:
             return
