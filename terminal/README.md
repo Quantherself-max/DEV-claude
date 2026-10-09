@@ -1,9 +1,10 @@
-# Liq Terminal (V16)
+# Liq Terminal (V17)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **TPO et profils jour / semaine / mois** (V17) : bouton **▥ TPO** du Desk (profils de marché des séances d'1 jour, de 4 heures et d'1 heure, avec **single prints** et **poor high / poor low**), ces mêmes marques sur les graphiques et dans les confluences, et les **profils de volume de la semaine et du mois** à côté de celui du jour (voir « V17 » plus bas).
 - **Plusieurs unités de temps à la fois** (V16) : bouton **⊞ Multi-unités** du Desk, 2 à 5 graphiques du même actif côte à côte (5 min, 15 min, 1 h, 4 h, 1 jour au choix pour chacun), bougie en direct, VWAP, profil de la séance, niveaux clés, **réticule synchronisé** et ligne d'**alignement** des unités (voir « V16 » plus bas).
 - **Écran d'order flow** (V15) : style « nuit » (fond noir, bougies bleues et blanches, prix en bleu avec le décompte dessous), **profil de volume de la séance collé à l'échelle des prix** (part des acheteurs et des vendeurs, POC / VAH / VAL, plus haut et bas de séance, clôture de la veille), VWAP du jour à ±1 écart-type, **carnet d'ordres en direct aligné sur les prix** (taille en attente, nombre d'ordres, volume échangé à chaque prix), **gros ordres exécutés en losanges**, vitesse du ruban et latence (voir « V15 » plus bas).
 - **Poches de liquidité classées par importance** (V14) : chaque poche (estimée par l'intérêt ouvert ou visible dans le prix) affiche son **âge** (formée il y a…), un **score d'importance sur 100** (taille + confluences autour + fraîcheur) et son **rang** de son côté (N°1, N°2…), le même en 15 minutes, 1 heure ou 4 heures. Les poids viennent d'une **mesure sur 12 ans de BTC** (rapport « poches » dans la page **Backtest**, voir « V14 » plus bas).
@@ -109,6 +110,26 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V17 : TPO, single prints, poor high / low, profils semaine et mois
+
+### La vue TPO (bouton **▥ TPO** du Desk)
+- Trois colonnes, une par type de séance : **1 jour** (00 h – 24 h UTC, une lettre par tranche de **30 minutes** : A = 02 h – 02 h 30 heure de Paris l'été…), **4 heures** et **1 heure** (une lettre par tranche de **5 minutes**). Cases en haut pour n'en garder qu'une ou deux (choix gardé). Les séances les plus récentes sont à droite, près de l'échelle des prix ; la séance en cours est marquée « en cours ».
+- Chaque lettre est posée sur tous les prix que sa tranche a touchés. Les lettres claires sont les plus récentes ; quand la colonne est trop étroite, les lettres deviennent de petits blocs (le survol affiche toujours le prix, le nombre de tranches et les lettres de la ligne).
+- **POC** : la ligne la plus longue (prix le plus souvent visité dans le temps), surlignée. **Zone de valeur** (70 % des lettres autour du POC) : barre **bleue** à gauche de la séance. **Première heure** de la séance d'1 jour (tranches A et B, l'« initial balance ») : barre **verte**.
+- **Single prints** : **rectangle gris peu opaque**. Ce sont des prix touchés par **une seule tranche** au milieu du profil (au moins deux lignes de suite) : le prix y est passé vite, sans s'y arrêter. Tant qu'il n'a pas retraversé toute la zone depuis, le rectangle est **prolongé vers la droite** ; une fois comblé, il reste pâle dans sa séance.
+- **Queues** (lettres plus sombres tout en haut ou tout en bas) : single prints au bord du profil, rejet net, enchère terminée.
+- **Poor high / poor low** : trait **orange**. Le plus haut (ou le plus bas) de la séance a été touché par **au moins deux tranches**, sans queue : l'enchère s'est mal terminée et le niveau attire souvent un retour. Prolongé en pointillés tant que le prix ne l'a pas dépassé (« réparé »).
+
+### Sur les graphiques (principal et multi-unités)
+- Cases **TPO 1 j**, **4 h**, **1 h** de la barre d'outils : les single prints **non comblés** en rectangle gris (de leur séance jusqu'au bord droit) et les poor high / low **non réparés** en pointillés orange, avec leur nom (« single prints 4 h », « poor low 1 j »). Par défaut 1 j et 4 h (les séances d'1 h font beaucoup de marques : à garder pour le 5 ou 15 minutes).
+- **Dans les confluences** : les single prints non comblés et les poor high / low actifs des séances **d'1 jour et de 4 heures** proches du prix entrent dans la liste des niveaux (groupe **TPO**, gris pour les single prints, orange pour les poor) et peuvent former une zone avec d'autres niveaux.
+- **Profils de volume** : cases **Profil J**, **S** et **M**. En plus du profil du jour, le profil de la **semaine en cours** (depuis lundi 00 h UTC, bleu ardoise) et du **mois en cours** (depuis le 1er, brun), côte à côte à droite, chacun avec son POC (« POC semaine », « POC mois ») et sa zone de valeur en pointillés. Bougies 5 minutes quand elles couvrent la période, sinon 1 heure (le mois, après ~29 jours).
+- **Carnet d'ordres** plus transparent : on voit les bougies à travers.
+
+### Honnêteté
+- Les TPO sont calculés sur les **bougies de 5 minutes** de Binance (le plus haut et le plus bas de chaque tranche) : c'est la méthode habituelle, mais un aller-retour à l'intérieur d'une bougie de 5 minutes ne compte qu'une fois.
+- **Rien du TPO n'est mesuré** par le backtest du terminal, et les **idées de trade n'en tiennent pas compte** (elles restent calculées exactement comme avant, sans ces niveaux) : ce sont des repères de lecture, pas un signal validé.
 
 ## Ce qui est nouveau en V16 : analyser plusieurs unités de temps en même temps
 

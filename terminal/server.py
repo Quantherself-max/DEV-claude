@@ -488,6 +488,10 @@ def make_handler(app: App):
                     return self._json(app.service.get_vp(sym, (q.get("tf") or ["1h"])[0]))
                 if u.path == "/api/vps":
                     return self._json({**app.service.vp_state, "auto": {tf: list(v) for tf, v in __import__("engine.vpx", fromlist=["x"]).AUTO_BY_TF.items()}})
+                if u.path == "/api/tpo":
+                    sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
+                    gi = lambda k: int(float((q.get(k) or ["0"])[0] or 0)) or None
+                    return self._json(app.service.get_tpo(sym, (q.get("kind") or ["D"])[0], gi("n"), gi("rows")))
                 if u.path == "/api/mtf":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.service.get_mtf(sym, (q.get("tf") or ["1h"])[0]))

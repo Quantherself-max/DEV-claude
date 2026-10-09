@@ -17,6 +17,7 @@ from engine.atr import INTERVAL_MS, resample, rma_atr
 from engine import bias as bias_engine
 from engine import cvd as cvd_engine
 from engine import fine, liqsweep, pocketrank, sessionvp
+from engine import tpo as tpo_engine
 from engine import dominance as dominance_engine
 from engine import macro as macro_engine
 from engine import signals as signals_engine
@@ -89,7 +90,8 @@ class Market:
         self.naked = {"D": NakedPocs(30), "W": NakedPocs(12)}
         self.liq = LiqEngine()
         self.rank_error = None       # derniere erreur du classement des poches (V14), affichee dans « liquidity.rankError »
-        self._sess = (None, None)    # profil de la seance (V15) : (cle, resultat)
+        self._sess = {}              # profils de la seance / semaine / mois (V15, V17) : periode -> (cle, resultat)
+        self._tpo_cache = {}         # seances TPO terminees (V17)
         self._fed_h1 = -1
         self._fed_m5 = -1
         self.ready = False
@@ -595,7 +597,8 @@ class Market:
         return {"stats": summ, "recent": list(reversed(res[-10:]))}
 
     # ---------- etat complet pour un timeframe ----------
-    def state(self, tf: str) -> dict:
+    def state(self, tf: str, tpo: bool = True) -> dict:
+        """Etat complet du graphique. tpo=False : sans les marques TPO dans les confluences (calcul des idees de trade, inchange)."""
         cfg = self.cfg
         cs = self.chart_candles(tf)
         price = self.price()
@@ -634,6 +637,23 @@ class Market:
             pr = self._prob_for("above" if p["price"] > price else "below", p["price"] - price, 1)
             p["reach"] = pr["reach"] if pr else None
             levels.append(Level(f"LIQ|P{p['side']}{i}", f"Stops {'acheteurs' if p['side'] == 'long' else 'vendeurs'} (prix)", p["price"], "LIQ", "liq", {"pool": p}))
+        tmarks = None
+        if tpo:                                                  # V17 : single prints non comblees et poor highs / lows actifs (1 jour et 4 h)
+            try:
+                tmarks = self.tpo_marks()
+                TXT = {"D": "1 j", "4h": "4 h"}
+                for kd in ("D", "4h"):
+                    for ss in tmarks.get(kd, []):
+                        for i, (a, b, filled) in enumerate(ss["singles"]):
+                            mid = (a + b) / 2
+                            if not filled and abs(mid - price) <= win * 1.5:
+                                levels.append(Level(f"TPO|{kd}|S{ss['start']}|{i}", f"Single prints {TXT[kd]}", mid, "TPO", "tpo", {"tpo": {"lo": a, "hi": b, "kind": kd, "start": ss["start"]}}))
+                        for side, nm in (("poorHigh", "Poor high"), ("poorLow", "Poor low")):
+                            pm = ss.get(side)
+                            if pm and pm["active"] and abs(pm["price"] - price) <= win * 1.5:
+                                levels.append(Level(f"TPO|{kd}|{side}{ss['start']}", f"{nm} {TXT[kd]}", pm["price"], "TPO", "tpo", {"tpo": {"kind": kd, "start": ss["start"]}}))
+            except Exception as e:                               # sans TPO, le reste de l'etat reste juste
+                self.rank_error = f"TPO : {type(e).__name__}: {e}"
         tol = max(cfg.conf_atr * atr, cfg.conf_min_pct / 100.0 * price)
         sweeps = self.sweeps()
         zones = []
@@ -698,7 +718,7 @@ class Market:
                        "below": [z["id"] for z in below], "essential": essential},
             "liquidity": {"pools": liq["pools"], "extraPools": self._extra_pools(liq["pools"], price), "rankError": self.rank_error, "pricePools": pprices, "total": liq["total"], "sumLong": liq["sum_long"],
                           "sumShort": liq["sum_short"], "steps": self.liq.steps, "oiPoints": len(t.oi)},
-            "sweeps": sweeps, "context": self.context(), "session": self.session_profile(),
+            "sweeps": sweeps, "context": self.context(), "session": self.session_profile(), "profiles": self.profiles(), "tpo": tmarks,
             "vp": [{k: pf[k] for k in ("id", "label", "kind", "start", "end", "poc", "vah", "val", "hvn", "bars")} for pf in vps],
             "stats": self.stats_summary(),
         }
@@ -745,32 +765,57 @@ class Market:
             q["imp"] = score(q, q.get("score", 50) / 100.0, liqs, own=q["price"])
         pocketrank.rank(pprices)
 
-    def session_profile(self):
-        """Profil de volume de la seance (00 h UTC -> maintenant) avec part acheteuse, plus haut / bas, ouverture, cloture d'hier, VWAP du
-        jour et son ecart-type (bandes ±1σ). Bougies 5 min, bougie en cours comprise. None tant qu'il n'y a pas de volume."""
-        m5 = self.store.m5
-        if not m5:
+    PROFILE_TXT = {"D": "séance du jour (depuis 00 h UTC)", "W": "semaine en cours (depuis lundi 00 h UTC)", "M": "mois en cours (depuis le 1er, 00 h UTC)"}
+
+    def session_profile(self, kind: str = "D"):
+        """Profil de volume de la periode en cours (D = jour depuis 00 h UTC, W = semaine, M = mois) avec part acheteuse, plus haut / bas,
+        ouverture, cloture de la periode precedente, VWAP de la periode et son ecart-type. Bougies 5 min quand elles couvrent la periode,
+        sinon 1 h (mois : l'historique 5 min ne remonte qu'a ~29 jours). Bougie en cours comprise. None tant qu'il n'y a pas de volume."""
+        m5, h1 = self.store.m5, self.store.h1
+        if not m5 and not h1:
             return None
         now = self.source.now_ms()
-        start = now // DAY * DAY
-        last = m5[-1]
-        key = (start, len(m5), last.t, last.v, last.c)
-        if self._sess[0] == key:
-            return self._sess[1]
-        bars = [k for k in m5 if k.t >= start]
-        label = "séance du jour (depuis 00 h UTC)"
-        if len(bars) < 24:                                      # moins de 2 h de seance : on garde aussi la veille, plus lisible
+        tr = self.trackers[kind]
+        start = now // DAY * DAY if kind == "D" else (tr.acc.start if tr.acc.n else None)
+        if start is None:
+            return None
+        src = m5 if m5 and m5[0].t <= start else h1
+        if not src:
+            return None
+        last = src[-1]
+        key = (start, len(src), last.t, last.v, last.c)
+        hit = self._sess.get(kind)
+        if hit and hit[0] == key:
+            return hit[1]
+        bars = [k for k in src if k.t >= start]
+        label = self.PROFILE_TXT[kind]
+        if kind == "D" and len(bars) < 24:                       # moins de 2 h de seance : on garde aussi la veille, plus lisible
             start -= DAY
             bars = [k for k in m5 if k.t >= start]
             label = "depuis hier 00 h UTC (la séance du jour vient de commencer)"
         res = sessionvp.build(bars)
         if res is not None:
             res["label"] = label
-            tr = self.trackers["D"]
             vw, sd = tr.acc.vwap()
-            res.update(start=start, open=tr.acc.open, prevClose=(tr.prev or {}).get("close"), vwap=vw, sd=sd)
-        self._sess = (key, res)
+            res.update(kind=kind, start=start, open=tr.acc.open, prevClose=(tr.prev or {}).get("close"), vwap=vw, sd=sd,
+                       source="5 min" if src is m5 else "1 h")
+        self._sess[kind] = (key, res)
         return res
+
+    def profiles(self):
+        return {k: self.session_profile(k) for k in ("D", "W", "M")}
+
+    def tpo(self, kind: str, n: int | None = None, rows: int | None = None):
+        """Profils TPO des dernieres seances de 1 jour, 4 heures ou 1 heure (engine/tpo.py), bougies 5 min."""
+        return tpo_engine.sessions(self.store.m5, kind, self.source.now_ms(), n, rows, self._tpo_cache)
+
+    def tpo_marks(self):
+        """Marques TPO pour les graphiques : single prints non comblees, poor highs / lows non repares, par type de seance."""
+        out = {}
+        for kind in ("D", "4h", "1h"):
+            r = self.tpo(kind)
+            out[kind] = [{"start": x["start"], "end": x["end"], **x["marks"]} for x in r["sessions"]]
+        return out
 
     def _extra_pools(self, shown, price):
         """Poches N°1 et N°2 de chaque cote (reference 1 h) absentes de la liste affichee : ajoutees a l'AFFICHAGE seulement
@@ -978,14 +1023,30 @@ class Service:
             cs = m.chart_candles(tf)[-400:]
             ser = m.vwap_series(tf)
             sess = m.session_profile()
+            profs = m.profiles()
+            tmarks = m.tpo_marks()
             levels = [{"name": self.KEY_LEVELS[l.name], "price": l.price} for l in m.base_levels() if l.name in self.KEY_LEVELS and l.price]
             price = m.price()
             atr = rma_atr(cs[-300:], 14)
         out = {"symbol": symbol, "tf": tf, "ready": True, "price": price, "atr": atr, "now": self.source.now_ms(),
-               "candles": [[k.t // 1000, k.o, k.h, k.l, k.c, k.v] for k in cs], "session": sess, "levels": levels}
+               "candles": [[k.t // 1000, k.o, k.h, k.l, k.c, k.v] for k in cs], "session": sess, "profiles": profs, "tpo": tmarks, "levels": levels}
         if ser.get("ready"):
             out.update(times=ser["times"], vwapD=ser["vwap"].get("D"), sdD=ser["sd"].get("D"), vwapW=ser["vwap"].get("W"))
         return out
+
+    def get_tpo(self, symbol: str, kind: str, n: int | None = None, rows: int | None = None) -> dict:
+        """Profils TPO complets (lettres par prix) pour la vue TPO (V17)."""
+        m = self.markets.get(symbol)
+        if m is None:
+            raise KeyError(f"symbole inconnu : {symbol}")
+        if kind not in tpo_engine.KINDS:
+            raise KeyError(f"type de séance TPO inconnu : {kind}")
+        if not m.ready:
+            return {"symbol": symbol, "kind": kind, "ready": False}
+        with self.lock:
+            r = m.tpo(kind, max(1, min(60, n)) if n else None, max(6, min(200, rows)) if rows else None)
+            price = m.price()
+        return {"symbol": symbol, "ready": True, "price": price, "now": self.source.now_ms(), **r}
 
     def schedule_external(self, wait: bool = False) -> None:
         if not self.ext or self._ext_running:
@@ -1123,7 +1184,7 @@ class Service:
         now = self.source.now_ms()
         btc = self.markets.get("BTCUSDT")
         with self.lock:
-            state = m.state("1h")
+            state = m.state("1h", tpo=False)                        # idees : confluences sans TPO (non mesurees sur l'historique)
             self._an_state[symbol] = (time.time(), state)
             h1 = list(m.store.closed_h1())
             c5 = list(m.store.m5[-288 * 29:])

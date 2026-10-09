@@ -43,11 +43,15 @@ class Panel {
     nuit: {bg: '#0f0f0f', text: '#8a8a8a', fontSize: 11, font: 'ui-monospace, "SF Mono", Menlo, Consolas, "Roboto Mono", monospace', grid: 'rgba(255,255,255,0.028)',
       border: '#1d1d1d', up: '#6f9fe0', down: '#d9d9d9', ownTag: true, price: '#78adf7', priceText: '#0b0b0b', cd: '#141414', cdText: '#a0a0a0',
       cross: '#5a5a5a', crossLabel: '#2a2a2a', vwap: '#8296c0', band: 'rgba(120,173,247,0.32)', vpGrey: [98, 98, 98], vpVA: [124, 124, 124], vpPoc: [236, 236, 236],
-      vpBuy: [120, 173, 247], vpSell: [242, 242, 242], label: '#9a9a9a', domBg: 'rgba(8,8,8,0.82)'},
+      vpBuy: [120, 173, 247], vpSell: [242, 242, 242], label: '#9a9a9a', domBg: 'rgba(8,8,8,0.34)',
+      vpW: [86, 102, 138], vpWVA: [112, 132, 178], vpM: [134, 112, 88], vpMVA: [170, 142, 108],
+      spFill: 'rgba(170,170,170,0.12)', spLine: 'rgba(190,190,190,0.30)', poor: 'rgba(255,179,0,0.75)'},
     classique: {bg: 'rgba(0,0,0,0)', text: '#b2b5be', fontSize: 12, font: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif',
       grid: 'rgba(40,46,64,.35)', border: '#2a2e39', up: '#26a69a', down: '#ef5350', ownTag: false, price: '#4c8dff', priceText: '#ffffff', cd: null, cdText: '#ffffff',
       cross: '#758696', crossLabel: '#4c525e', vwap: '#FFB300', band: 'rgba(255,179,0,0.4)', vpGrey: [90, 98, 120], vpVA: [112, 126, 160], vpPoc: [255, 179, 0],
-      vpBuy: [61, 220, 151], vpSell: [255, 107, 107], label: '#a8acb8', domBg: 'rgba(11,14,17,0.86)'},
+      vpBuy: [61, 220, 151], vpSell: [255, 107, 107], label: '#a8acb8', domBg: 'rgba(11,14,17,0.38)',
+      vpW: [70, 110, 170], vpWVA: [96, 140, 205], vpM: [150, 118, 80], vpMVA: [190, 150, 100],
+      spFill: 'rgba(160,165,180,0.13)', spLine: 'rgba(180,184,196,0.35)', poor: 'rgba(255,179,0,0.8)'},
   };
   th() { return Panel.TH[LT.st.theme] || Panel.TH.nuit; }
   applyTheme() {
@@ -62,9 +66,82 @@ class Panel {
   }
   // largeurs (pixels) du profil de la seance et du carnet, colles a droite du graphique principal
   static DOMW = 318;
+  static profKinds(o) { return ['D', 'W', 'M'].filter(k => o && o[{D: 'sess', W: 'sessW', M: 'sessM'}[k]]); }
+  static tpoKinds(o) { return ['D', '4h', '1h'].filter(k => o && o[{D: 'tpoD', '4h': 'tpo4', '1h': 'tpo1'}[k]]); }
+  // V17 : profils de volume colles a droite, une colonne par periode (jour au bord de l'echelle, puis semaine, puis mois)
+  static drawProfiles(ctx, series, profs, kinds, x1, W, h, t) {
+    const rgba = LT.rgba, NAME = {D: 'jour', W: 'semaine', M: 'mois'}, cols = [];
+    let x = x1;
+    kinds.forEach(k => {
+      const s = profs && profs[k];
+      if (!s || !s.rows || !s.rows.length) return;
+      const g = k === 'D' ? t.vpGrey : k === 'W' ? t.vpW : t.vpM, gva = k === 'D' ? t.vpVA : k === 'W' ? t.vpWVA : t.vpMVA;
+      const mx = Math.max(...s.rows.map(r => r[1])) || 1, len = {};
+      s.rows.forEach(([lo, v, b]) => {
+        const yt = series.priceToCoordinate(lo + s.step), yb = series.priceToCoordinate(lo);
+        if (yt == null || yb == null || yb < 0 || yt > h) return;
+        const hh = Math.max(1, yb - yt - (yb - yt > 3 ? 1 : 0)), l = v / mx * W, mid = lo + s.step / 2;
+        const poc = s.poc >= lo && s.poc < lo + s.step, inVA = mid >= s.val && mid <= s.vah;
+        len[lo] = l;
+        ctx.fillStyle = rgba(poc ? t.vpPoc : inVA ? gva : g, poc ? 0.9 : inVA ? 0.8 : 0.55);
+        ctx.fillRect(x - l, yt, l, hh);
+        if (b != null && v > 0) {
+          const dl = Math.abs(2 * b - v) / mx * W;
+          if (dl >= 1) { ctx.fillStyle = rgba(2 * b >= v ? t.vpBuy : t.vpSell, 0.95); ctx.fillRect(x - l, yt, dl, hh); }
+        }
+      });
+      if (k !== 'D') {                                        // semaine / mois : POC nomme, VAH et VAL en pointilles sur leur colonne
+        ctx.font = `500 9px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+        [[s.poc, true], [s.vah, false], [s.val, false]].forEach(([px, strong]) => {
+          const y = series.priceToCoordinate(px); if (y == null || y < 8 || y > h - 30) return;
+          ctx.strokeStyle = strong ? 'rgba(236,236,236,.75)' : rgba(gva, 0.8); ctx.lineWidth = 1; ctx.setLineDash(strong ? [] : [3, 3]);
+          ctx.beginPath(); ctx.moveTo(x - W, Math.round(y) + 0.5); ctx.lineTo(x, Math.round(y) + 0.5); ctx.stroke(); ctx.setLineDash([]);
+          if (strong) { ctx.fillStyle = t.label; ctx.fillText('POC ' + NAME[k], x - W + 1, y - 1); }
+        });
+      }
+      cols.push({k, x, W, s, len});
+      x -= W + 8;
+    });
+    return {used: x1 - x, cols};
+  }
+  // V17 : single prints non comblees (rectangle gris) et poor highs / lows non repares (pointilles), de la seance jusqu'a xr
+  static drawTpo(ctx, series, xOf, marks, kinds, xr, h, t, small) {
+    if (!marks || !kinds.length) return;
+    const TXT = {D: '1 j', '4h': '4 h', '1h': '1 h'};
+    ctx.font = `500 ${small ? 8.5 : 9.5}px ${t.font}`;
+    const taken = [], free = (x, y) => !taken.some(q => Math.abs(q[0] - x) < 110 && Math.abs(q[1] - y) < 11);  // pas d'etiquettes superposees
+    kinds.forEach(k => (marks[k] || []).forEach(ss => {
+      let x0 = xOf(ss.start);
+      x0 = Math.max(0, x0 == null ? 0 : x0);
+      if (x0 >= xr - 4) return;
+      ss.singles.forEach(([lo, hi, filled]) => {
+        if (filled) return;
+        const yt = series.priceToCoordinate(hi), yb = series.priceToCoordinate(lo);
+        if (yt == null || yb == null || yb < 0 || yt > h - 26) return;
+        const hh = Math.max(2, yb - yt);
+        ctx.fillStyle = t.spFill; ctx.fillRect(x0, yt, xr - x0, hh);
+        ctx.strokeStyle = t.spLine; ctx.lineWidth = 1; ctx.strokeRect(Math.round(x0) + 0.5, Math.round(yt) + 0.5, Math.max(1, xr - x0 - 1), Math.max(1, hh - 1));
+        if (hh >= 11 && free(x0, yt)) { taken.push([x0, yt]); ctx.fillStyle = t.label; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('single prints ' + TXT[k], x0 + 3, yt + 2); }
+      });
+      [['poorHigh', 'poor high'], ['poorLow', 'poor low']].forEach(([key, lab]) => {
+        const pm = ss[key];
+        if (!pm || !pm.active) return;
+        const y = series.priceToCoordinate(pm.price);
+        if (y == null || y < 4 || y > h - 26) return;
+        ctx.strokeStyle = t.poor; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+        ctx.beginPath(); ctx.moveTo(x0, Math.round(y) + 0.5); ctx.lineTo(xr, Math.round(y) + 0.5); ctx.stroke(); ctx.setLineDash([]);
+        const ly = key === 'poorHigh' ? y - 6 : y + 6;
+        if (!free(xr - 60, ly)) return;
+        taken.push([xr - 60, ly]);
+        ctx.fillStyle = t.poor; ctx.textAlign = 'right'; ctx.textBaseline = key === 'poorHigh' ? 'bottom' : 'top';
+        ctx.fillText(`${lab} ${TXT[k]}`, xr - 4, key === 'poorHigh' ? y - 1 : y + 1);
+      });
+    }));
+    ctx.textBaseline = 'middle';
+  }
   overlayW(plotW) {
-    const o = LT.st.mainOpts || {}, W = Math.round(Math.min(150, Math.max(70, plotW * 0.15)));
-    return {W, sess: o.sess ? W + 30 : 0, dom: o.dom ? Panel.DOMW + 12 : 0};
+    const o = LT.st.mainOpts || {}, k = Panel.profKinds(o).length, W = Math.round(Math.min(150, Math.max(70, plotW * 0.15)) * (k > 1 ? 0.8 : 1));
+    return {W, sess: k ? k * (W + 8) + 30 : 0, dom: o.dom ? Panel.DOMW + 12 : 0};
   }
   // place vide a droite des bougies (en bougies) pour que le profil et le carnet ne cachent pas les dernieres bougies
   rightSpace() {
@@ -95,7 +172,12 @@ class Panel {
       `<label title="Poches de liquidations estimées par l'Open Interest"><input type="checkbox" data-opt="pools"> Poches</label>` +
       `<label title="Ordres d'arrêt visibles dans le prix : plus haut / plus bas de la veille, de la semaine, du mois, creux et sommets récents"><input type="checkbox" data-opt="ppools"> Plus hauts / bas</label>` +
       `<label title="Entrée, stop et objectifs de l'idée de trade du moment"><input type="checkbox" data-opt="plan"> Plan</label>` +
-      `<label title="Profil de volume de la séance (depuis 00 h UTC), collé à l'échelle des prix : volume par prix, part des acheteurs (bleu) ou des vendeurs (blanc), POC / VAH / VAL"><input type="checkbox" data-mo="sess"> Profil</label>` +
+      `<label title="Profil de volume du jour (depuis 00 h UTC), collé à l'échelle des prix : volume par prix, part des acheteurs (bleu) ou des vendeurs (blanc), POC / VAH / VAL"><input type="checkbox" data-mo="sess"> Profil J</label>` +
+      `<label title="Profil de volume de la semaine en cours (depuis lundi 00 h UTC), à gauche du profil du jour"><input type="checkbox" data-mo="sessW"> S</label>` +
+      `<label title="Profil de volume du mois en cours (depuis le 1er, 00 h UTC)"><input type="checkbox" data-mo="sessM"> M</label>` +
+      `<label title="TPO des séances d'1 jour : single prints non comblées (rectangle gris) et poor highs / lows non réparés (pointillés)"><input type="checkbox" data-mo="tpoD"> TPO 1 j</label>` +
+      `<label title="TPO des séances de 4 heures"><input type="checkbox" data-mo="tpo4"> 4 h</label>` +
+      `<label title="TPO des séances d'1 heure (beaucoup de marques : à utiliser en 5 ou 15 minutes)"><input type="checkbox" data-mo="tpo1"> 1 h</label>` +
       `<label title="VWAP du jour et bandes à ±1 écart-type"><input type="checkbox" data-mo="vwap"> VWAP</label>` +
       `<label title="Carnet d'ordres en direct aligné sur les prix : taille en attente (Binance), nombre d'ordres (OKX), volume échangé à chaque prix"><input type="checkbox" data-mo="dom"> Carnet</label>` +
       `<label title="Gros ordres exécutés (losanges) : bleu = acheteur agressif, blanc = vendeur agressif"><input type="checkbox" data-mo="big"> Gros ordres</label>` +
@@ -133,7 +215,8 @@ class Panel {
     if (ev.type !== 'change') return;
     if (t.dataset.mo) {
       st.mainOpts[t.dataset.mo] = t.checked; this.stamp = '';
-      LT.savePrefs(); LT.syncAllTools(); LT.refreshAll(); if (t.dataset.mo === 'dom' || t.dataset.mo === 'sess') this.resetView(); LT.pollFlow(); return;
+      LT.savePrefs(); LT.syncAllTools(); LT.refreshAll(); if (['dom', 'sess', 'sessW', 'sessM'].includes(t.dataset.mo)) this.resetView();
+      if (typeof MTF !== 'undefined') MTF.redraw(); LT.pollFlow(); return;
     }
     if (t.name === 'mode') { st.mode = t.value; }
     else if (t.dataset.opt === 'pools') { st.pools = t.checked; }
@@ -429,6 +512,7 @@ class Panel {
     const ctx = this.ctx, st = LT.st, {d, plotW} = L, byId = LT.byId, fmtP = LT.fmtP, pr = LT.pr;
     const sessW = this.drawSession(L, h);
     this.rightLimit = plotW - sessW - (st.mainOpts.dom ? Panel.DOMW + 12 : 0);
+    Panel.drawTpo(ctx, this.series, ms => this.timeX(ms / 1000, L), d.tpo, Panel.tpoKinds(st.mainOpts), this.rightLimit - 2, h, this.th(), false);
     const selZ = st.sel && st.sel.type === 'zone' ? st.sel.id : null;
     const zset = new Map(LT.shownZones(d).map(z => [z.id, z]));
     if (selZ && !zset.has(selZ)) { const z = byId(d.zones)[selZ]; if (z) zset.set(selZ, z); }
@@ -478,46 +562,37 @@ class Panel {
     this.drawFooter(L, h);
   }
 
-  // ---- V15 : profil de la seance colle a l'echelle des prix (gris = volume, bout bleu / blanc = surplus d'acheteurs / de vendeurs) ----
+  // ---- V15 / V17 : profils colles a l'echelle des prix (gris = volume, bout bleu / blanc = surplus d'acheteurs / de vendeurs) ----
   drawSession(L, h) {
-    const st = LT.st, s = L.d.session, t = this.th(), ctx = this.ctx, rgba = LT.rgba, fmtP = LT.fmtP;
-    if (!st.mainOpts.sess || !s || !s.rows || !s.rows.length) return 0;
+    const st = LT.st, t = this.th(), ctx = this.ctx, rgba = LT.rgba, fmtP = LT.fmtP, kinds = Panel.profKinds(st.mainOpts);
+    const profs = L.d.profiles || {D: L.d.session};
+    if (!kinds.length) return 0;
     const W = this.overlayW(L.plotW).W, x1 = L.plotW - 1;
-    const mx = Math.max(...s.rows.map(r => r[1])) || 1, len = {};
-    s.rows.forEach(([lo, v, b]) => {
-      const yt = this.series.priceToCoordinate(lo + s.step), yb = this.series.priceToCoordinate(lo);
-      if (yt == null || yb == null || yb < 0 || yt > h) return;
-      const hh = Math.max(1, yb - yt - (yb - yt > 3 ? 1 : 0)), l = v / mx * W, mid = lo + s.step / 2;
-      const poc = s.poc >= lo && s.poc < lo + s.step, inVA = mid >= s.val && mid <= s.vah;
-      len[lo] = l;
-      ctx.fillStyle = rgba(poc ? t.vpPoc : inVA ? t.vpVA : t.vpGrey, poc ? 0.9 : inVA ? 0.8 : 0.55);
-      ctx.fillRect(x1 - l, yt, l, hh);
-      if (b != null && v > 0) {
-        const dl = Math.abs(2 * b - v) / mx * W;
-        if (dl >= 1) { ctx.fillStyle = rgba(2 * b >= v ? t.vpBuy : t.vpSell, 0.95); ctx.fillRect(x1 - l, yt, dl, hh); }
-      }
-    });
-    ctx.font = `500 10px ${t.font}`; ctx.textBaseline = 'middle';
-    (s.marks || []).forEach(([px, dv]) => {                       // delta des niveaux marquants, au bout de la barre
-      const y = this.series.priceToCoordinate(px); if (y == null || y < 10 || y > h - 30) return;
-      const lo = Math.floor(px / s.step + 1e-9) * s.step, k = Object.keys(len).find(x => Math.abs(+x - lo) < s.step / 2);
-      const txt = (dv > 0 ? '+' : '−') + LT.fmtQty(Math.abs(dv));
-      ctx.fillStyle = dv > 0 ? rgba(t.vpBuy, 1) : rgba(t.vpSell, 0.95); ctx.textAlign = 'right';
-      ctx.fillText(txt, x1 - (k != null ? len[k] : W) - 4, y);
-    });
-    const items = [[s.poc, 'POC', true], [s.vah, 'VAH'], [s.val, 'VAL'], [s.high, 'HAUT SÉANCE ' + fmtP(s.high)], [s.low, 'BAS SÉANCE ' + fmtP(s.low)]];
-    if (s.prevClose) items.push([s.prevClose, 'CLÔTURE VEILLE ' + fmtP(s.prevClose)]);
-    const lab = items.map(([px, text, strong]) => ({y: this.series.priceToCoordinate(px), text, strong})).filter(it => it.y != null && it.y > 8 && it.y < h - 32);
-    LT.placeLabels(lab, 13, 10, h - 32).forEach(it => {
-      ctx.strokeStyle = it.strong ? 'rgba(236,236,236,.85)' : 'rgba(150,150,150,.5)'; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(x1 - W - 4, Math.round(it.y) + 0.5); ctx.lineTo(x1, Math.round(it.y) + 0.5); ctx.stroke();
-      ctx.textAlign = 'right';
-      if (it.text.length <= 4) { ctx.fillStyle = t.label; ctx.fillText(it.text, x1 - W - 6, it.ly); return; }    // POC, VAH, VAL : a gauche du profil
-      const tw = ctx.measureText(it.text).width + 8;                                                              // les autres : dans le profil, sur fond sombre
-      ctx.fillStyle = 'rgba(10,10,10,.78)'; ctx.fillRect(x1 - tw - 2, it.ly - 7, tw, 14);
-      ctx.fillStyle = t.label; ctx.fillText(it.text, x1 - 6, it.ly);
-    });
-    return W + 30;
+    const r = Panel.drawProfiles(ctx, this.series, profs, kinds, x1, W, h, t);
+    const d = r.cols.find(c => c.k === 'D');
+    if (d) {                                                    // jour : delta chiffre, POC / VAH / VAL et reperes de la seance
+      const s = d.s, len = d.len;
+      ctx.font = `500 10px ${t.font}`; ctx.textBaseline = 'middle';
+      (s.marks || []).forEach(([px, dv]) => {
+        const y = this.series.priceToCoordinate(px); if (y == null || y < 10 || y > h - 30) return;
+        const lo = Math.floor(px / s.step + 1e-9) * s.step, k = Object.keys(len).find(x => Math.abs(+x - lo) < s.step / 2);
+        ctx.fillStyle = dv > 0 ? rgba(t.vpBuy, 1) : rgba(t.vpSell, 0.95); ctx.textAlign = 'right';
+        ctx.fillText((dv > 0 ? '+' : '−') + LT.fmtQty(Math.abs(dv)), d.x - (k != null ? len[k] : W) - 4, y);
+      });
+      const items = [[s.poc, 'POC', true], [s.vah, 'VAH'], [s.val, 'VAL'], [s.high, 'HAUT SÉANCE ' + fmtP(s.high)], [s.low, 'BAS SÉANCE ' + fmtP(s.low)]];
+      if (s.prevClose) items.push([s.prevClose, 'CLÔTURE VEILLE ' + fmtP(s.prevClose)]);
+      const lab = items.map(([px, text, strong]) => ({y: this.series.priceToCoordinate(px), text, strong})).filter(it => it.y != null && it.y > 8 && it.y < h - 32);
+      LT.placeLabels(lab, 13, 10, h - 32).forEach(it => {
+        ctx.strokeStyle = it.strong ? 'rgba(236,236,236,.85)' : 'rgba(150,150,150,.5)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(d.x - W - 4, Math.round(it.y) + 0.5); ctx.lineTo(d.x, Math.round(it.y) + 0.5); ctx.stroke();
+        ctx.textAlign = 'right';
+        if (it.text.length <= 4) { ctx.fillStyle = t.label; ctx.fillText(it.text, d.x - W - 6, it.ly); return; }
+        const tw = ctx.measureText(it.text).width + 8;
+        ctx.fillStyle = 'rgba(10,10,10,.45)'; ctx.fillRect(d.x - tw - 2, it.ly - 7, tw, 14);
+        ctx.fillStyle = t.label; ctx.fillText(it.text, d.x - 6, it.ly);
+      });
+    }
+    return r.cols.length ? r.used + 30 : 0;
   }
   drawVwapTags(L, h) {
     const ctx = this.ctx, t = this.th(), fmtP = LT.fmtP;

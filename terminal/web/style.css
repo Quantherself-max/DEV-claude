@@ -340,3 +340,15 @@ button.mini{padding:1px 6px;font-size:11px}button.mini[hidden]{display:none}
 .mbody .chart{z-index:1}.mbody .ov{z-index:2;pointer-events:none}
 body.theme-nuit .mcell{background:#0f0f0f}body.theme-nuit .mhead{background:#0f0f0f;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
 @media (max-width:1000px){.mtfcells.n3,.mtfcells.n4,.mtfcells.n5{grid-template-columns:1fr;grid-template-rows:none;grid-auto-rows:minmax(260px,1fr)}.mtfcells .mcell{grid-column:auto!important}}
+/* V17 : vue TPO */
+#desk.ltpo{grid-template-columns:minmax(0,1fr)}
+.tpo{display:flex;flex-direction:column;gap:6px;min-height:0;min-width:0}.tpo.hide{display:none}
+.tpobar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:2px 2px;font-size:12px}.tpobar label{display:flex;align-items:center;gap:4px;cursor:pointer}
+.tpolegend{flex:1;min-width:280px}.tpolegend .tsp{display:inline-block;width:14px;height:9px;background:rgba(170,170,170,0.22);border:1px solid rgba(190,190,190,0.45);color:transparent;vertical-align:middle}.tpolegend .tpr{color:#FFB300;font-weight:700}
+.tpocols{flex:1;display:grid;gap:6px;min-height:0}
+.tpocol{display:flex;flex-direction:column;min-height:0;min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--bg);overflow:hidden}
+.tpocol .mbody{cursor:crosshair}
+.tpocol .tip{position:absolute;z-index:6;pointer-events:none;background:#0b0e11ee;border:1px solid #3a4258;border-radius:6px;padding:6px 9px;font-size:12px;max-width:240px;box-shadow:0 6px 20px #000a}
+.tpocol .tip[hidden]{display:none}
+body.theme-nuit .tpocol{background:#0f0f0f}
+@media (max-width:1000px){.tpocols{grid-template-columns:1fr!important;grid-auto-rows:minmax(420px,1fr)}}

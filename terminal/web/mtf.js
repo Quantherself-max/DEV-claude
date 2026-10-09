@@ -84,7 +84,7 @@ const MTF = (() => {
     }
     resetView() {
       const n = this.bars.length; if (!n) return;
-      const w = this.chart.timeScale().width() || 400, f = Math.min(0.5, (this.profW(w) + 28) / w);
+      const w = this.chart.timeScale().width() || 400, k = Math.max(1, Panel.profKinds(LT.st.mainOpts).length), f = Math.min(0.55, (k * (this.profW(w) + 8) + 28) / w);
       this.chart.timeScale().setVisibleLogicalRange({from: Math.max(0, n - 110), to: n + Math.ceil(110 * f / (1 - f)) + 3});
     }
     profW(w) { return Math.round(Math.min(90, Math.max(40, w * 0.16))); }
@@ -127,33 +127,32 @@ const MTF = (() => {
       const dpr = window.devicePixelRatio || 1, w = this.body.clientWidth, h = this.body.clientHeight, cv = this.ov;
       if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
       const ctx = this.ctx; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
-      const s = this.data && this.data.session, t = this.th(), rgba = LT.rgba;
+      const t = this.th(), o = LT.st.mainOpts, d = this.data;
+      if (!d) return;
       ctx.font = `500 9px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.fillStyle = t.label;
-      (this.data && this.data.levels || []).forEach(l => {                        // nom des niveaux cles, au bord gauche, au-dessus de leur ligne
+      (d.levels || []).forEach(l => {                                             // nom des niveaux cles, au bord gauche, au-dessus de leur ligne
         const y = this.series.priceToCoordinate(l.price); if (y != null && y > 12 && y < h - 28) ctx.fillText(l.name, 4, y - 1);
       });
-      if (!s || !s.rows || !s.rows.length) return;
-      const plotW = this.chart.timeScale().width(), W = this.profW(plotW), x1 = plotW - 1, mx = Math.max(...s.rows.map(r => r[1])) || 1;
-      s.rows.forEach(([lo, v, b]) => {
-        const yt = this.series.priceToCoordinate(lo + s.step), yb = this.series.priceToCoordinate(lo);
-        if (yt == null || yb == null || yb < 0 || yt > h) return;
-        const hh = Math.max(1, yb - yt - (yb - yt > 3 ? 1 : 0)), l = v / mx * W, mid = lo + s.step / 2;
-        const poc = s.poc >= lo && s.poc < lo + s.step, inVA = mid >= s.val && mid <= s.vah;
-        ctx.fillStyle = rgba(poc ? t.vpPoc : inVA ? t.vpVA : t.vpGrey, poc ? 0.9 : inVA ? 0.75 : 0.5);
-        ctx.fillRect(x1 - l, yt, l, hh);
-        if (b != null && v > 0) { const dl = Math.abs(2 * b - v) / mx * W; if (dl >= 1) { ctx.fillStyle = rgba(2 * b >= v ? t.vpBuy : t.vpSell, 0.95); ctx.fillRect(x1 - l, yt, dl, hh); } }
-      });
-      ctx.font = `500 9px ${t.font}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-      [[s.poc, 'POC'], [s.vah, 'VAH'], [s.val, 'VAL']].forEach(([px, lab]) => {
-        const y = this.series.priceToCoordinate(px); if (y == null || y < 6 || y > h - 28) return;
-        ctx.strokeStyle = lab === 'POC' ? 'rgba(236,236,236,.8)' : 'rgba(150,150,150,.45)'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(x1 - W - 2, Math.round(y) + 0.5); ctx.lineTo(x1, Math.round(y) + 0.5); ctx.stroke();
-        ctx.fillStyle = t.label; ctx.fillText(lab, x1 - W - 4, y);
-      });
+      const plotW = this.chart.timeScale().width(), kinds = Panel.profKinds(o), W = Math.round(this.profW(plotW) * (kinds.length > 1 ? 0.8 : 1));
+      const r = kinds.length ? Panel.drawProfiles(ctx, this.series, d.profiles || {D: d.session}, kinds, plotW - 1, W, h, t) : {used: 0, cols: []};
+      const dc = r.cols.find(c => c.k === 'D');
+      if (dc) {
+        ctx.font = `500 9px ${t.font}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+        [[dc.s.poc, 'POC'], [dc.s.vah, 'VAH'], [dc.s.val, 'VAL']].forEach(([px, lab]) => {
+          const y = this.series.priceToCoordinate(px); if (y == null || y < 6 || y > h - 28) return;
+          ctx.strokeStyle = lab === 'POC' ? 'rgba(236,236,236,.8)' : 'rgba(150,150,150,.45)'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(dc.x - W - 2, Math.round(y) + 0.5); ctx.lineTo(dc.x, Math.round(y) + 0.5); ctx.stroke();
+          ctx.fillStyle = t.label; ctx.fillText(lab, dc.x - W - 4, y);
+        });
+      }
+      const per = SEC[this.tf], ts = this.chart.timeScale();
+      const xOf = ms => { const bt = Math.floor(ms / 1000 / per) * per, x = ts.timeToCoordinate(bt); return x != null ? x : (this.bars.length && bt < this.bars[0].time ? 0 : null); };
+      Panel.drawTpo(ctx, this.series, xOf, d.tpo, Panel.tpoKinds(o), plotW - (r.cols.length ? r.used + 22 : 0) - 4, h, t, true);
     }
     tick() {
       if (!this.data) return;
-      const s = [this.series.priceToCoordinate(this.data.price) | 0, this.body.clientWidth, this.body.clientHeight, this.chart.timeScale().width(),
+      const s = [this.series.priceToCoordinate(this.data.price) | 0, this.body.clientWidth, this.body.clientHeight, this.chart.timeScale().width(), LT.st.theme,
+        Panel.profKinds(LT.st.mainOpts).join('') + Panel.tpoKinds(LT.st.mainOpts).join(''),
         (() => { const r = this.chart.timeScale().getVisibleLogicalRange(); return r ? r.from.toFixed(1) + ':' + r.to.toFixed(1) : ''; })()].join();
       if (s !== this.sig) { this.sig = s; this.draw(); }
       const per = SEC[this.tf], now = LT.serverNow() / 1000, left = Math.max(0, Math.ceil(Math.floor(now / per) * per + per - now));
@@ -231,5 +230,6 @@ const MTF = (() => {
   function refresh() { charts.forEach(c => { c.data = null; c.bars = []; c.load(true); }); }
   function onTick(price, tms) { if (on) charts.forEach(c => c.onTick(price, tms)); }
   function applyTheme() { charts.forEach(c => c.applyTheme()); }
-  return {init, show, hide, refresh, onTick, applyTheme, TFS, DEF, active: () => on, charts: () => charts};
+  function redraw() { charts.forEach(c => { c.sig = ''; c.resetView(); }); }
+  return {init, show, hide, refresh, onTick, applyTheme, redraw, TFS, DEF, active: () => on, charts: () => charts};
 })();

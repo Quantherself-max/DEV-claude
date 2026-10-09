@@ -50,11 +50,14 @@ function levelColor(lv) {
   if (lv.kind === 'avwap') return '#E0E0E0';
   if (lv.kind === 'xvp') return '#8FA8FF';
   if (lv.kind === 'hl') return '#D1D4DC';
+  if (lv.kind === 'tpo') return /^Poor/.test(lv.name) ? '#FFB300' : '#B8B8B8';
   const p = periodOf(lv.group);
   return lv.kind === 'vwap' ? PER[p] : lv.kind === 'open' ? PER_OPEN[p] : PER_VP[p];
 }
 function explain(name) {
   let m;
+  if (/^Single prints/.test(name)) return 'Single prints (TPO) : prix touchés par une seule tranche de temps de la séance, au milieu du profil. Le prix y est passé vite, sans s\'y arrêter ; zone non comblée depuis. Pas mesurée par le backtest du terminal.';
+  if (/^Poor (high|low)/.test(name)) return 'Poor high / poor low (TPO) : le plus haut (ou le plus bas) de la séance a été touché par au moins deux tranches de temps, sans queue : enchère mal terminée, pas encore dépassée. Pas mesuré par le backtest du terminal.';
   if (/^AVWAP/.test(name)) return 'VWAP ancrée à la date indiquée : prix moyen pondéré par le volume depuis cette date.';
   if ((m = /^([dwmy])VWAP$/.exec(name))) return `VWAP ${PN[m[1]]} en cours : prix moyen pondéré par le volume depuis le début de la période (UTC).`;
   if ((m = /^([dwmy])Open$/.exec(name))) return `Prix d'ouverture ${PN[m[1]]} en cours.`;
@@ -74,8 +77,8 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
   layout: window.innerWidth >= 1500 ? '3' : window.innerWidth >= 1100 ? '2' : '1', prevLayout: null, sideOpen: true, sbCollapsed: false,
   page: 'desk', sub: 'synth', planOn: true, planKey: null, plan: null, planSig: '', sig: null,
-  theme: 'nuit', mainOpts: {sess: true, vwap: true, dom: false, big: true}, flow: null,
-  mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}};
+  theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, tpoD: true, tpo4: true, tpo1: false, vwap: true, dom: false, big: true}, flow: null,
+  mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {D: true, '4h': true, '1h': true}};
 async function api(path, body) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
   const r = await fetch(path, opt);
@@ -141,10 +144,10 @@ function buildHeatImage(h) {
 }
 
 const panels = [];
-const LAYOUTS = {'1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: []};
+const LAYOUTS = {'1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: []};
 const needs = k => LAYOUTS[st.layout].includes(k) && st.page === 'desk';
 function savePrefs() {
-  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf})); } catch (e) { /* stockage indisponible */ }
+  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds})); } catch (e) { /* stockage indisponible */ }
 }
 function loadPrefs() {
   try {
@@ -160,6 +163,7 @@ function loadPrefs() {
     if (typeof p.expert === 'boolean') st.expert = p.expert;
     if (['nuit', 'classique'].includes(p.theme)) st.theme = p.theme;
     Object.assign(st.mainOpts, p.mainOpts || {});
+    if (p.tpoKinds && typeof p.tpoKinds === 'object') ['D', '4h', '1h'].forEach(k => { if (typeof p.tpoKinds[k] === 'boolean') st.tpoKinds[k] = p.tpoKinds[k]; });
     if (p.mtf && Array.isArray(p.mtf.tfs)) st.mtf = {n: Math.max(2, Math.min(5, +p.mtf.n || 4)), tfs: p.mtf.tfs.slice(0, 5)};
   } catch (e) { /* preferences illisibles : valeurs par defaut */ }
 }
@@ -177,6 +181,8 @@ function applyLayout() {
   panels.forEach(p => p.host.classList.toggle('hide', !want.includes(p.kind)));
   const g = $('#mtfGrid');                                              // V16 : grille multi-unites
   if (g) { g.classList.toggle('hide', st.layout !== 'mtf'); if (st.layout === 'mtf' && st.page === 'desk') MTF.show(); else MTF.hide(); }
+  const tg = $('#tpoGrid');                                             // V17 : vue TPO
+  if (tg) { tg.classList.toggle('hide', st.layout !== 'tpo'); if (st.layout === 'tpo' && st.page === 'desk') TPO.show(); else TPO.hide(); }
   document.querySelectorAll('#layouts button').forEach(b => b.classList.toggle('on', b.dataset.layout === st.layout));
   $('#deskwrap').classList.toggle('noside', !st.sideOpen);
   $('#sideToggle').textContent = st.sideOpen ? 'Panneau ▸' : '◂ Panneau';
@@ -193,6 +199,7 @@ function createPanels() {
   const desk = $('#desk');
   ['main', 'liq', 'vp'].forEach(k => { const el = document.createElement('section'); desk.appendChild(el); panels.push(new Panel(el, k)); });
   const g = document.createElement('section'); g.id = 'mtfGrid'; g.className = 'mtf hide'; desk.appendChild(g); MTF.init(window.LT, g);
+  const tg = document.createElement('section'); tg.id = 'tpoGrid'; tg.className = 'tpo hide'; desk.appendChild(tg); TPO.init(window.LT, tg);
   let sr = false, sx = false;
   panels.forEach(p => {
     p.chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
@@ -221,7 +228,7 @@ const livePrice = d => liveFresh() ? live.price : d.price;
 function onTick(price, tms, src) {
   if (!(price > 0)) return;
   live.price = price; live.t = Date.now(); live.src = src; live.dirty = true;
-  if (live.sym === st.symbol) MTF.onTick(price, tms);
+  if (live.sym === st.symbol) { MTF.onTick(price, tms); TPO.onTick(price); }
   const d = st.data;
   if (!d || d.symbol !== live.sym || !st.lastBarObj) return;
   const per = TF_SEC[st.tf], bt = Math.floor(tms / 1000 / per) * per;
@@ -677,7 +684,7 @@ function buildControls(cfg) {
   st.cfg = cfg;
   if (!cfg.symbols.includes(st.symbol)) st.symbol = cfg.symbols[0];
   const sel = $('#symbol'); sel.innerHTML = cfg.symbols.map(s => `<option${s === st.symbol ? ' selected' : ''}>${s}</option>`).join('');
-  sel.onchange = () => { st.symbol = sel.value; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); pollOverview(); pollSignals(); reloadSideTab(); MTF.refresh(); };
+  sel.onchange = () => { st.symbol = sel.value; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); pollOverview(); pollSignals(); reloadSideTab(); MTF.refresh(); TPO.refresh(); };
   const box = $('#tfs');
   box.innerHTML = cfg.tfs.map(t => `<button data-tf="${t}" class="${t === st.tf ? 'on' : ''}">${t}</button>`).join('');
   box.onclick = e => { const b = e.target.closest('button'); if (!b) return; st.tf = b.dataset.tf; st.sel = null; st.data = null; st.series = null; st.vpd = null;
@@ -731,6 +738,7 @@ function navigate(page, sub) {
   if (page === 'analysis') Analysis.show(st.sub);
   if (page === 'desk') setTimeout(() => { syncRange(); refreshAll(); }, 60);
   if (page === 'desk' && st.layout === 'mtf') MTF.show(); else MTF.hide();
+  if (page === 'desk' && st.layout === 'tpo') TPO.show(); else TPO.hide();
   if (page === 'overview') pollOverview();
   if (page === 'backtest') Backtest.show();
   if (page === 'history') History.show();
@@ -813,7 +821,7 @@ function applyTheme() {
   document.body.classList.toggle('theme-nuit', st.theme === 'nuit');
   const b = $('#themeBtn'); if (b) b.textContent = st.theme === 'nuit' ? '☾ nuit' : '☀ classique';
   panels.forEach(p => p.applyTheme());
-  MTF.applyTheme();
+  MTF.applyTheme(); TPO.redraw();
   st.version++;
 }
 
@@ -1157,7 +1165,7 @@ async function pollOverview() {
 }
 function openSymbol(sym, page) {
   if (st.cfg && st.cfg.symbols.includes(sym) && sym !== st.symbol) {
-    st.symbol = sym; $('#symbol').value = sym; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); reloadSideTab(); MTF.refresh();
+    st.symbol = sym; $('#symbol').value = sym; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); reloadSideTab(); MTF.refresh(); TPO.refresh();
   }
   location.hash = page === 'analysis' ? '#/analysis/synth' : '#/desk';
 }
