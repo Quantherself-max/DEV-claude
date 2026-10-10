@@ -1,4 +1,5 @@
-// Vue TPO (V17, refaite en V19) : profils de marché des séances d'1 jour (tranches de 30 min), de 4 heures et d'1 heure (tranches de 5 min).
+// Vue TPO (V17, refaite en V19, V20 : semaine et mois) : profils de marché des séances d'1 mois (tranches d'1 jour), d'1 semaine (tranches de
+// 4 heures, « première heure » = le lundi), d'1 jour (tranches de 30 min), de 4 heures et d'1 heure (tranches de 5 min).
 // Chaque tranche a sa lettre (A, B, C...) posée sur les prix qu'elle a touchés. Sur chaque séance : zone de valeur (fond bleuté), POC (ligne
 // surlignée), première heure (barre verte et objectifs d'extension), ouverture (▶) et clôture (◀), volume et delta à chaque prix (barres fines),
 // single prints (rectangle gris), poor high / low (trait orange), queues (lettres sombres), POC vierges (pointillés prolongés). À droite :
@@ -6,8 +7,9 @@
 // glisser horizontalement : séances plus anciennes ; double-clic : recadrer. Les taux affichés viennent de la mesure sur l'historique.
 const TPO = (() => {
   'use strict';
-  const KINDS = [['D', '1 jour', '30 min'], ['4h', '4 heures', '5 min'], ['1h', '1 heure', '5 min']];
-  const N = {D: 30, '4h': 42, '1h': 48};
+  const KINDS = [['M', '1 mois', '1 jour'], ['W', '1 semaine', '4 heures'], ['D', '1 jour', '30 minutes'], ['4h', '4 heures', '5 minutes'], ['1h', '1 heure', '5 minutes']];
+  const N = {M: 24, W: 26, D: 30, '4h': 42, '1h': 48};
+  const BR = Object.fromEntries(KINDS.map(([k, , b]) => [k, b]));
   const LET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
   let LT = null, root = null, on = false, timer = null, raf = 0, lastTick = 0;
   const pending = new Set();
@@ -18,7 +20,11 @@ const TPO = (() => {
   const num = (v, d = 1) => v == null ? '—' : v.toFixed(d).replace('.', ',').replace('-', '−');
   const PARIS = new Intl.DateTimeFormat('fr-FR', {timeZone: 'Europe/Paris', weekday: 'short', day: '2-digit', month: '2-digit'});
   const HOUR = new Intl.DateTimeFormat('fr-FR', {timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit'});
-  const when = (k, t) => k === 'D' ? PARIS.format(new Date(t)) : HOUR.format(new Date(t));
+  const DM = new Intl.DateTimeFormat('fr-FR', {timeZone: 'UTC', day: '2-digit', month: '2-digit'});
+  const MONTH = new Intl.DateTimeFormat('fr-FR', {timeZone: 'UTC', month: 'long', year: 'numeric'});
+  const when = (k, t) => k === 'D' ? PARIS.format(new Date(t)) : k === 'W' ? 'semaine du ' + DM.format(new Date(t)) : k === 'M' ? MONTH.format(new Date(t)) : HOUR.format(new Date(t));
+  const units = st => (st && st.units) || {next: 'la séance suivante', mid: '5 séances'};
+  const ibRange = d => ((d && d.ibRange) || 'la fourchette de la première heure').replace(/^la /, '');
   const opts = () => LT.st.tpoOpts;
   const V = k => (view[k] = view[k] || {zoom: 1, center: null, offset: 0, hover: null, drag: null});
   const SHAPE_SHORT = {P: 'P', b: 'b', D: 'D', I: 'I', B: 'B'};
@@ -33,7 +39,7 @@ const TPO = (() => {
       `<label class="small" title="Volume échangé à chaque prix (bleu : acheteurs agressifs dominants, blanc : vendeurs)"><input type="checkbox" data-tpo-o="vol"> volume</label>` +
       `<label class="small" title="Profil composite des dernières séances terminées, avec ses zones fortes (HVN) et faibles (LVN)"><input type="checkbox" data-tpo-o="comp"> composite</label>` +
       `<label class="small" title="POC jamais retraversés depuis leur séance, prolongés jusqu'à l'échelle des prix"><input type="checkbox" data-tpo-o="naked"> POC vierges</label>` +
-      `<label class="small" title="Première heure (initial balance) et ses objectifs d'extension x1,5 et x2"><input type="checkbox" data-tpo-o="ib"> première heure</label>` +
+      `<label class="small" title="Première heure (initial balance) et ses objectifs d'extension x1,5 et x2 : la première heure pour la séance d'1 jour, le lundi pour la semaine, la première semaine pour le mois"><input type="checkbox" data-tpo-o="ib"> première heure</label>` +
       `<span class="spacer"></span><span class="muted small">molette : zoom · glisser : déplacer · Maj + molette : séances plus anciennes · double-clic : recadrer</span></div>` +
       `<div class="tpocols"></div><details class="tpostudy"><summary>Ce que dit l'historique sur ces repères</summary><div class="tpostudybody muted small">Chargement…</div></details>`;
     window.addEventListener('mouseup', () => Object.values(view).forEach(v => { v.drag = null; }));
@@ -118,7 +124,7 @@ const TPO = (() => {
       return;
     }
     message('');
-    const fine = opts().fine, rowsOf = {D: 120, '4h': 72, '1h': 40};
+    const fine = opts().fine, rowsOf = {M: 120, W: 120, D: 120, '4h': 72, '1h': 40};
     await Promise.all(kinds().map(async ([k]) => {
       const sec = root.querySelector(`.tpocol[data-k="${k}"]`); if (!sec) return;
       try {
@@ -145,18 +151,19 @@ const TPO = (() => {
     }
     if (s.shape) chip('forme ' + SHAPE_SHORT[s.shape], s.shapeText || '');
     if (c.va) chip({higher: 'valeur ↑', lower: 'valeur ↓', inside: 'valeur intérieure', outside: 'valeur extérieure', overlapHigher: 'valeur ↗', overlapLower: 'valeur ↘'}[c.va.code] || c.va.code, c.va.text);
-    const e8 = c.eighty, rate8 = st && st.eighty ? ` Mesuré sur l'historique : objectif atteint ${pct(st.eighty.rate)} du temps (${st.eighty.n} cas), pas 80 %.` : '';
+    const e8 = c.eighty, rate8 = st && st.eighty && st.eighty.rate != null ? ` Mesuré sur l'historique : objectif atteint ${pct(st.eighty.rate)} du temps (${st.eighty.n} cas), pas 80 %.` : '';
+    const has80 = ['D', 'W', 'M'].includes(k), u = units(st), ibr = ibRange(d);
     if (c.open) {
       const og = st && st.openSame && st.openSame.groups ? st.openSame.groups[c.open.code] : null;
       chip({aboveRange: 'ouverture hors fourchette ↑', belowRange: 'ouverture hors fourchette ↓', aboveValue: 'ouverture au-dessus de la valeur', belowValue: 'ouverture sous la valeur', inValue: 'ouverture dans la valeur'}[c.open.code] || c.open.code,
         c.open.text + (og ? ` Mesuré : ces séances finissent en hausse ${pct(og.up)} du temps (moyenne ${pct(st.openSame.base)}), amplitude ×${num(og.rangeX, 2)}.` : '') +
-        (k === 'D' && e8 && !e8.trigger ? ` Si deux tranches de 30 min clôturent dans la valeur précédente, la « règle des 80 % » visera ${LT.fmtP(e8.target)}.` + rate8 : ''),
+        (has80 && e8 && !e8.trigger ? ` Si deux tranches de ${BR[k]} clôturent dans la valeur précédente, la « règle des 80 % » visera ${LT.fmtP(e8.target)}.` + rate8 : ''),
         c.open.code === 'belowValue' || c.open.code === 'belowRange' ? 'up' : c.open.code === 'aboveValue' || c.open.code === 'aboveRange' ? 'dn' : '');
     }
-    if (k === 'D' && e8 && e8.trigger) chip(`règle des 80 % : ${e8.reached ? 'objectif atteint' : 'objectif ' + LT.fmtP(e8.target)}`,
+    if (has80 && e8 && e8.trigger) chip(`règle des 80 % : ${e8.reached ? 'objectif atteint' : 'objectif ' + LT.fmtP(e8.target)}`,
       `Ouverture hors de la valeur précédente puis deux tranches clôturées dedans : objectif l'autre bord (${LT.fmtP(e8.target)}).` + rate8, e8.reached ? 'ok' : 'warn');
-    if (s.ibStats && s.ibStats.complete) chip(`1re heure ${s.ibStats.extUp > 0 && s.ibStats.extDn > 0 ? 'cassée des deux côtés' : s.ibStats.extUp > 0 ? 'cassée par le haut' : s.ibStats.extDn > 0 ? 'cassée par le bas' : 'intacte'}`,
-      `Hauteur de la première heure : ${LT.fmtP(s.ibStats.range)}. Extensions : haut ×${num(1 + s.ibStats.extUp, 2)}, bas ×${num(1 + s.ibStats.extDn, 2)}.` +
+    if (s.ibStats && s.ibStats.complete) chip(`${ibr} ${s.ibStats.extUp > 0 && s.ibStats.extDn > 0 ? 'cassée des deux côtés' : s.ibStats.extUp > 0 ? 'cassée par le haut' : s.ibStats.extDn > 0 ? 'cassée par le bas' : 'intacte'}`,
+      `« Première heure » de la séance (initial balance) : ${d.ibName || 'première heure'}. Hauteur : ${LT.fmtP(s.ibStats.range)}. Extensions : haut ×${num(1 + s.ibStats.extUp, 2)}, bas ×${num(1 + s.ibStats.extDn, 2)}.` +
       (st && st.ib ? ` Mesuré : une cassure atteint ×1,5 ${pct(st.ib.ext15)} du temps et ×2 ${pct(st.ib.ext2)}.` : ''));
     chip(`rotation ${s.rotation > 0 ? '+' : ''}${s.rotation}`, 'Facteur de rotation : +1 / −1 par plus haut et plus bas plus hauts / plus bas que la tranche précédente. Positif : les acheteurs mènent la séance.', s.rotation > 3 ? 'up' : s.rotation < -3 ? 'dn' : '');
     const tA = s.tpoAbove || 0, tB = s.tpoBelow || 0;
@@ -165,21 +172,29 @@ const TPO = (() => {
     const foot = [];
     if (st) {
       foot.push(`<span title="Mesuré sur ${esc(st.symbol)} (${esc(st.from)} → ${esc(st.to)}, ${st.n} séances)${st.proxy ? ' : mesure du bitcoin, pas de cette paire' : ''}">Mesuré :</span>`);
-      foot.push(`<span class="pr">━</span> poor high / low dépassé dès la séance suivante ${pct(st.poor.rate)} (extrême avec queue : ${pct(st.poor.excess)})`);
+      foot.push(`<span class="pr">━</span> poor high / low dépassé dès ${u.next} ${pct(st.poor.rate)} (extrême avec queue : ${pct(st.poor.excess)})`);
       foot.push(`POC retraversé ${pct(st.poc.rate)} (témoin ${pct(st.poc.control)})`);
-      foot.push(`<span class="tsp">▭</span> single prints comblés en ${st.singles.h} séances ${pct(st.singles.rate)} (témoin ${pct(st.singles.control)})`);
+      const sg = st.singles, rc = sg.reaction;
+      foot.push(`<span class="tsp">▭</span> <span title="Témoin : la même bande au même endroit de séances semblables où ces prix ont été échangés. Au premier retour du prix, la zone tient (rebond d'au moins sa hauteur avant d'être traversée)${rc && rc.rate != null ? ` ${pct(rc.rate)} du temps, contre ${pct(rc.control)} pour les témoins` : ''}.">single prints comblés dès ${u.next} ${pct(sg.rate)} (témoin ${pct(sg.control)})${sg.verdict === 'contraire' ? ' : pas un aimant' : ''}</span>`);
     }
     sec.querySelector('[data-foot]').innerHTML = foot.join(' · ');
   }
   function renderStudy() {
     const body = root.querySelector('.tpostudybody');
     const items = [], seen = new Set();
-    let src = null;
-    kinds().forEach(([k]) => { const st = data[k] && data[k].study; if (st) { src = st; (st.summary || []).forEach(x => { if (!seen.has(x.text)) { seen.add(x.text); items.push(x); } }); } });
+    let src = null, from = null, to = null;
+    kinds().forEach(([k]) => {
+      const st = data[k] && data[k].study;
+      if (!st) return;
+      src = st;
+      if (!from || st.from < from) from = st.from;
+      if (!to || st.to > to) to = st.to;
+      (st.summary || []).forEach(x => { if (!seen.has(x.text)) { seen.add(x.text); items.push(x); } });
+    });
     if (!src) { body.innerHTML = 'Pas encore de mesure disponible pour cette paire.'; return; }
-    body.innerHTML = `<p>Mesure faite avec exactement le moteur du terminal sur ${esc(src.symbol)} (${esc(src.source || '')}), ${esc(src.from)} → ${esc(src.to)}` +
-      `${src.proxy ? ' — mesure du bitcoin, pas encore de rapport pour cette paire (outil : tools/run_tpo_study.py)' : ''}. Chaque repère est comparé à un témoin placé à la même distance du prix. ` +
-      `« Mesuré » = écart net et de même sens sur les deux moitiés de la période.</p><ul>` +
+    body.innerHTML = `<p>Mesure faite avec exactement le moteur du terminal sur ${esc(src.symbol)} (${esc(src.source || '')}), ${esc(from)} → ${esc(to)}` +
+      `${src.proxy ? ' — mesure du bitcoin, pas encore de rapport pour cette paire (outil : tools/run_tpo_study.py)' : ''}. Les single prints sont comparées à la même bande placée au même endroit ` +
+      `de séances semblables ; les autres repères à un témoin placé à la même distance du prix. « Mesuré » = écart net et de même sens sur les deux moitiés de la période.</p><ul>` +
       items.map(x => { const v = VERD[x.verdict] || VERD.insuffisant; return `<li><span class="pill ${v[0]}">${v[1]}</span> ${esc(x.text)}</li>`; }).join('') + '</ul>';
   }
   // ---------- dessin ----------
@@ -208,6 +223,13 @@ const TPO = (() => {
       cw = c; fit = []; let used = 0;
       for (let i = visible.length - 1; i >= 0; i--) { const wd = maxC(visible[i]) * c + 16 + volW; if (used + wd > plotR - 4) break; used += wd; fit.unshift(visible[i]); }
       if (fit.length >= Math.min(need, visible.length)) break;
+    }
+    // profils tres larges (semaine, mois : jusqu'a 42 lettres par prix) : si moins de 3 seances tiennent, histogramme compact a l'echelle commune
+    const want = Math.min(3, visible.length);
+    if (fit.length < want && o.mode !== 'letters') {
+      const ssw = visible.slice(-want), tot = ssw.reduce((a, s) => a + maxC(s), 0);
+      cw = Math.max(0.6, (plotR - 4 - want * (16 + volW)) / Math.max(1, tot));
+      fit = ssw;
     }
     if (!fit.length) fit = visible.slice(-1);
     // echelle des prix : fourchette des seances visibles (et du prix), puis zoom / deplacement
@@ -289,7 +311,7 @@ const TPO = (() => {
           ctx.fillStyle = last ? 'rgba(255,196,64,0.98)' : poc ? rgba(t.vpPoc, 1) : tail ? rgba(t.vpGrey, 0.95) : isIb && o.ib ? `rgba(${Math.round(80 + 60 * f)},${Math.round(190 + 30 * f)},${Math.round(140 + 40 * f)},0.95)`
             : `rgba(${Math.round(140 + 100 * f)},${Math.round(150 + 60 * f)},${Math.round(170 + 77 * f)},0.95)`;
           if (showLetters) ctx.fillText(lets[q], lx + q * cw, y + 0.5);
-          else ctx.fillRect(lx + q * cw, y1 + (rowH > 3 ? 1 : 0), Math.max(1, cw - 1), Math.max(1, rowH - (rowH > 3 ? 2 : 0)));
+          else ctx.fillRect(lx + q * cw, y1 + (rowH > 3 ? 1 : 0), cw >= 3 ? cw - 1 : Math.max(0.6, cw), Math.max(1, rowH - (rowH > 3 ? 2 : 0)));
         }
         if (o.vol && r[3] > 0) {
           const bw = Math.max(1, (volW - 4) * r[3] / vmax), dl = r[4];
@@ -380,9 +402,11 @@ const TPO = (() => {
           const sp = s.singles.find(([a, b]) => p >= a && p < b), mk = s.marks || {};
           let html = `<b>${esc(when(k, s.start))}</b> · ${fmtP(Math.floor(p / step) * step)} – ${fmtP(Math.floor(p / step) * step + step)}<br>` +
             (r ? `${r[1]} tranche${r[1] > 1 ? 's' : ''} : ${esc(r[2])}` + (r[3] ? `<br>volume ${num(r[3], 2)}${r[4] != null ? ` · delta ${r[4] >= 0 ? '+' : '−'}${num(Math.abs(r[4]), 2)}` : ''}` : '') : 'aucune tranche à ce prix');
-          if (sp) html += `<br><span class="tipsp">single prints</span>${st ? ` : comblés en ${st.singles.h} séances ${pct(st.singles.rate)} du temps (témoin ${pct(st.singles.control)})` : ''}`;
-          html += `<br><span class="muted">POC ${fmtP(s.poc)}${s.vpoc ? ` (volume ${fmtP(s.vpoc)})` : ''} · valeur ${fmtP(s.val)} – ${fmtP(s.vah)}${s.ib ? ` · 1re heure ${fmtP(s.ib[0])} – ${fmtP(s.ib[1])}` : ''}</span>`;
-          if (mk.poc && mk.poc.naked) html += `<br><span class="muted">POC vierge${st ? ` : retraversé dès la séance suivante ${pct(st.poc.rate)} en moyenne (témoin ${pct(st.poc.control)})` : ''}</span>`;
+          const u = units(st), rc = st && st.singles.reaction;
+          if (sp) html += `<br><span class="tipsp">single prints</span>${st ? ` : comblés dès ${u.next} ${pct(st.singles.rate)} du temps (témoin ${pct(st.singles.control)})` +
+            (rc && rc.rate != null ? ` ; au retour du prix, tiennent ${pct(rc.rate)} (témoin ${pct(rc.control)})` : '') : ''}`;
+          html += `<br><span class="muted">POC ${fmtP(s.poc)}${s.vpoc ? ` (volume ${fmtP(s.vpoc)})` : ''} · valeur ${fmtP(s.val)} – ${fmtP(s.vah)}${s.ib ? ` · ${esc(d.ibName || 'première heure')} ${fmtP(s.ib[0])} – ${fmtP(s.ib[1])}` : ''}</span>`;
+          if (mk.poc && mk.poc.naked) html += `<br><span class="muted">POC vierge${st ? ` : retraversé dès ${u.next} ${pct(st.poc.rate)} en moyenne (témoin ${pct(st.poc.control)})` : ''}</span>`;
           if (c.dayType) html += `<br><span class="muted">${esc(c.dayType.label)}${s.shapeText ? ' · ' + esc(s.shapeText) : ''}</span>`;
           tip.innerHTML = html;
           tip.style.left = Math.min(w - 250, hx + 14) + 'px'; tip.style.top = Math.max(4, Math.min(h - 120, hy - 10)) + 'px'; tip.hidden = false;

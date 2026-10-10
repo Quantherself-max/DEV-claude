@@ -67,7 +67,7 @@ class Panel {
   // largeurs (pixels) du profil de la seance et du carnet, colles a droite du graphique principal
   static DOMW = 318;
   static profKinds(o) { return ['D', 'W', 'M'].filter(k => o && o[{D: 'sess', W: 'sessW', M: 'sessM'}[k]]); }
-  static tpoKinds(o) { return ['D', '4h', '1h'].filter(k => o && o[{D: 'tpoD', '4h': 'tpo4', '1h': 'tpo1'}[k]]); }
+  static tpoKinds(o) { return ['M', 'W', 'D', '4h', '1h'].filter(k => o && o[{M: 'tpoM', W: 'tpoW', D: 'tpoD', '4h': 'tpo4', '1h': 'tpo1'}[k]]); }
   // V17 : profils de volume colles a droite, une colonne par periode (jour au bord de l'echelle, puis semaine, puis mois)
   static drawProfiles(ctx, series, profs, kinds, x1, W, h, t, small = false) {
     const rgba = LT.rgba, NAME = {D: 'jour', W: 'semaine', M: 'mois'}, cols = [];
@@ -154,10 +154,11 @@ class Panel {
       });
     }
   }
-  // V17 : single prints non comblees (rectangle gris) et poor highs / lows non repares (pointilles), de la seance jusqu'a xr
+  // V17 : single prints non comblees (rectangle gris) et poor highs / lows non repares (pointilles), de la seance jusqu'a xr.
+  // V20 : semaine et mois dessines en premier, trait plus epais et fond un peu plus marque (zones rares et larges).
   static drawTpo(ctx, series, xOf, marks, kinds, xr, h, t, small) {
     if (!marks || !kinds.length) return;
-    const TXT = {D: '1 j', '4h': '4 h', '1h': '1 h'};
+    const TXT = {M: 'mois', W: 'semaine', D: '1 j', '4h': '4 h', '1h': '1 h'}, HTF = {M: true, W: true};
     ctx.font = `500 ${small ? 8.5 : 9.5}px ${t.font}`;
     const taken = [], free = (x, y) => !taken.some(q => Math.abs(q[0] - x) < 110 && Math.abs(q[1] - y) < 11);  // pas d'etiquettes superposees
     kinds.forEach(k => (marks[k] || []).forEach(ss => {
@@ -168,9 +169,10 @@ class Panel {
         if (filled) return;
         const yt = series.priceToCoordinate(hi), yb = series.priceToCoordinate(lo);
         if (yt == null || yb == null || yb < 0 || yt > h - 26) return;
-        const hh = Math.max(2, yb - yt);
+        const hh = Math.max(2, yb - yt), big = HTF[k];
         ctx.fillStyle = t.spFill; ctx.fillRect(x0, yt, xr - x0, hh);
-        ctx.strokeStyle = t.spLine; ctx.lineWidth = 1; ctx.strokeRect(Math.round(x0) + 0.5, Math.round(yt) + 0.5, Math.max(1, xr - x0 - 1), Math.max(1, hh - 1));
+        if (big) ctx.fillRect(x0, yt, xr - x0, hh);                                     // fond deux fois plus marque
+        ctx.strokeStyle = t.spLine; ctx.lineWidth = big ? 1.6 : 1; ctx.strokeRect(Math.round(x0) + 0.5, Math.round(yt) + 0.5, Math.max(1, xr - x0 - 1), Math.max(1, hh - 1));
         if (hh >= 11 && free(x0, yt)) { taken.push([x0, yt]); ctx.fillStyle = t.label; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('single prints ' + TXT[k], x0 + 3, yt + 2); }
       });
       [['poorHigh', 'poor high'], ['poorLow', 'poor low']].forEach(([key, lab]) => {
@@ -228,7 +230,9 @@ class Panel {
       `<label title="Nœuds de volume du profil du jour : bandes bleues = zones d'acceptation (HVN, beaucoup d'échanges), violettes = zones de rejet (LVN, le prix les traverse vite)"><input type="checkbox" data-mo="nodes"> Nœuds</label>` +
       `<label title="POC (trait clair), VAH et VAL (pointillés bleus) du jour tels qu'ils ont évolué au fil de la séance"><input type="checkbox" data-mo="dpoc"> POC évolutif</label>` +
       `<label title="POC des jours et semaines passés jamais retraversés depuis (pointillés), les plus proches du prix"><input type="checkbox" data-mo="npoc"> POC vierges</label>` +
-      `<label title="TPO des séances d'1 jour : single prints non comblées (rectangle gris) et poor highs / lows non réparés (pointillés)"><input type="checkbox" data-mo="tpoD"> TPO 1 j</label>` +
+      `<label title="TPO du mois (tranches d'1 jour) : single prints non comblées (rectangle gris, trait épais) et poor highs / lows non réparés (pointillés)"><input type="checkbox" data-mo="tpoM"> TPO mois</label>` +
+      `<label title="TPO de la semaine (lundi 00 h UTC, tranches de 4 heures)"><input type="checkbox" data-mo="tpoW"> semaine</label>` +
+      `<label title="TPO des séances d'1 jour (tranches de 30 minutes)"><input type="checkbox" data-mo="tpoD"> 1 j</label>` +
       `<label title="TPO des séances de 4 heures"><input type="checkbox" data-mo="tpo4"> 4 h</label>` +
       `<label title="TPO des séances d'1 heure (beaucoup de marques : à utiliser en 5 ou 15 minutes)"><input type="checkbox" data-mo="tpo1"> 1 h</label>` +
       `<label title="VWAP du jour et bandes à ±1 écart-type"><input type="checkbox" data-mo="vwap"> VWAP</label>` +

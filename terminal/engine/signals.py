@@ -24,7 +24,7 @@ import re
 # ---------- constantes ----------
 TFW = {1: 1.0, 2: 2.0, 3: 3.0, 4: 4.0}                      # jour, semaine, mois, annee
 TF_NAME = {0: "heure", 1: "jour", 2: "semaine", 3: "mois", 4: "année"}
-EMPH = {"vwap": 1.6, "avwap": 1.6, "vp": 1.2, "band": 1.1, "hl": 0.9, "open": 0.8, "npoc": 1.0, "round": 0.4}
+EMPH = {"vwap": 1.6, "avwap": 1.6, "vp": 1.2, "band": 1.1, "hl": 0.9, "open": 0.8, "npoc": 1.0, "round": 0.4, "tpo": 1.0}
 PER = {"D": 1, "W": 2, "M": 3, "Y": 4}
 PERIOD_OF = {}
 for _l in "dwmy":
@@ -140,6 +140,10 @@ def classify(lv: dict, now_ms: int = 0) -> dict:
             return {"tf": tf, "fam": "hl", "w": TFW[tf] * EMPH["hl"], "text": f"{'plus haut' if hi else 'plus bas'} {cur} : {px} (des ordres d'arrêt s'y trouvent)"}
         what = VP_WHAT.get(n[-3:], VP_WHAT["POC"]) if n[-3:] in VP_WHAT else VP_WHAT["POC"]
         return {"tf": tf, "fam": "vp", "w": TFW[tf] * EMPH["vp"], "text": f"{what} {cur} : {px}"}
+    if k == "tpo":                                          # V20 : marques TPO (single prints, poor high / low) ; semaine et mois = plus haute echelle
+        parts = (lv.get("id") or "").split("|")
+        tf = {"W": 2, "M": 3}.get(parts[1] if len(parts) > 2 else "D", 1)
+        return {"tf": tf, "fam": "tpo", "w": TFW[tf] * EMPH["tpo"], "text": f"{n} (profil de marché) : {px}"}
     if g == "nPOC":
         unit_w = "S-" in n
         age = n.rsplit("-", 1)[-1] if "-" in n else "?"

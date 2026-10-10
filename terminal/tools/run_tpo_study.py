@@ -2,8 +2,9 @@
 """TPO : les repères du profil de marché (single prints, poor high / low, POC, première heure, règle des 80 %, migration de la valeur, type de
 journée, forme) tiennent-ils leurs promesses sur l'historique ? Rapport affiché dans la vue TPO du terminal (« Ce que dit l'historique »).
 
-  python tools/run_tpo_study.py --folder dossier_bitstamp --label BTC                    # séances d'1 jour (bougies 15 min) depuis 2016
-  python tools/run_tpo_study.py --folder dossier_bitstamp --label BTC --fine dossier_5min  # + séances de 4 h et d'1 h (bougies 5 min)
+  python tools/run_tpo_study.py --folder dossier_bitstamp --label BTC                    # séances d'1 jour (bougies 15 min) depuis 2016,
+                                                                                         # semaine et mois (bougies 1 h) depuis le début des données
+  python tools/run_tpo_study.py --folder dossier_bitstamp --label BTC --fine dossier_5min  # + séances de 4 heures et d'1 heure (bougies 5 min)
   python tools/fetch_history.py SOLUSDT                                                  # une fois : historique 1 min de SOL
   python tools/run_tpo_study.py SOLUSDT                                                  # même mesure sur SOL
 
@@ -35,7 +36,8 @@ def main(argv=None):
     ap.add_argument("--folder", help="dossier de séries fines (b15m.bin ou b5m.bin) pour les séances d'1 jour")
     ap.add_argument("--fine", help="dossier avec b5m.bin pour les séances de 4 h et d'1 h (défaut : --folder)")
     ap.add_argument("--label", help="nom du rapport (défaut : symbole sans USDT)")
-    ap.add_argument("--start", default="2016-01-01", help="premier jour AAAA-MM-JJ (défaut 2016-01-01, ou le début des données)")
+    ap.add_argument("--start", default="2016-01-01", help="premier jour AAAA-MM-JJ des séances d'1 jour (défaut 2016-01-01, ou le début des données)")
+    ap.add_argument("--htf-start", default="2012-01-01", help="premier jour des séances d'1 semaine et d'1 mois (défaut : le plus tôt possible)")
     ap.add_argument("--out", default=str(ROOT / "data_local" / "reports"))
     ap.add_argument("--source", help="nom de la source affiché (défaut : nom du dossier)")
     a = ap.parse_args(argv)
@@ -58,11 +60,20 @@ def main(argv=None):
             t1 = time.time()
             rep[kind] = tpostudy.run(fine5, kind, s5, int(fine5.t[-1]))
             print(f"  séances de {kind} : {rep[kind].get('n')} ({time.time() - t1:.0f} s)", flush=True)
+    # V20 : semaine et mois, sur bougies 1 h (fichier b1h, sinon regroupement des bougies fines) : l'historique le plus long possible
+    h1 = _load(folder, ("b1h",)) or fine.resample(day, 3_600_000)
+    hs = max(bt.ms(*(int(x) for x in a.htf_start.split("-"))), int(h1.t[0]) + 15 * 86_400_000)
+    for kind in ("W", "M"):
+        t1 = time.time()
+        rep[kind] = tpostudy.run(h1, kind, hs, int(h1.t[-1]))
+        print(f"  séances d'1 {'semaine' if kind == 'W' else 'mois'} : {rep[kind].get('n')} ({time.time() - t1:.0f} s)", flush=True)
     rep["summary"] = tpostudy.summary(rep)
     t_last = int(day.t[-1])
     first = rep["summary"][0]["text"] if rep["summary"] else ""
+    froms = [rep[k]["from"] for k in tpostudy.ORDER if rep.get(k, {}).get("ready")]
+    tos = [rep[k]["to"] for k in tpostudy.ORDER if rep.get(k, {}).get("ready")]
     rep.update(label=label, computedAt=int(time.time() * 1000), seconds=round(time.time() - t0, 1),
-               period={"from": start, "to": t_last, "text": f"{rep['D'].get('from')} → {rep['D'].get('to')}"},
+               period={"from": min(start, hs), "to": t_last, "text": f"{min(froms)} → {max(tos)}" if froms else "—"},
                verdict={"text": "Mesure des repères du profil de marché. " + first})
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)

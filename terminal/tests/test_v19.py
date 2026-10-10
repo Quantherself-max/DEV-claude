@@ -86,7 +86,7 @@ class TpoStudyTests(unittest.TestCase):
         self.assertTrue({x["key"] for x in s} >= {"poor", "singles", "poc", "ib"})
         self.assertTrue(all(x["verdict"] in ("net", "contraire", "instable", "faible", "description", "hasard", "insuffisant") for x in s))
         c = tpostudy.compact(rep, "D")
-        self.assertEqual(c["singles"]["h"], 5)
+        self.assertEqual((c["singles"]["h"], c["singles"]["h2"]), (1, 5))           # V20 : des la seance suivante, et en 5 seances
         self.assertIsNone(tpostudy.compact(rep, "4h"))
         json.dumps(rep)
 

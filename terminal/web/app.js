@@ -56,8 +56,8 @@ function levelColor(lv) {
 }
 function explain(name) {
   let m;
-  if (/^Single prints/.test(name)) return 'Single prints (TPO) : prix touchés par une seule tranche de temps de la séance, au milieu du profil. Le prix y est passé vite, sans s\'y arrêter ; zone non comblée depuis. Pas mesurée par le backtest du terminal.';
-  if (/^Poor (high|low)/.test(name)) return 'Poor high / poor low (TPO) : le plus haut (ou le plus bas) de la séance a été touché par au moins deux tranches de temps, sans queue : enchère mal terminée, pas encore dépassée. Pas mesuré par le backtest du terminal.';
+  if (/^Single prints/.test(name)) return 'Single prints (TPO) : prix touchés par une seule tranche de temps de la séance (4 heures pour la semaine, 1 jour pour le mois), au milieu du profil. Le prix y est passé vite, sans s\'y arrêter ; zone non comblée depuis. Mesuré sur le bitcoin : pas un aimant (le prix y revient plutôt MOINS souvent qu\'à un prix comparable) et, au retour, elles ne tiennent pas mieux qu\'un autre prix. Elles signalent un mouvement convaincu.';
+  if (/^Poor (high|low)/.test(name)) return 'Poor high / poor low (TPO) : le plus haut (ou le plus bas) de la séance a été touché par au moins deux tranches de temps, sans queue : enchère mal terminée, pas encore dépassée. Mesuré : plus souvent dépassés qu\'un extrême avec queue sur 1 jour, 4 heures et 1 heure ; pas d\'effet démontré sur la semaine et le mois.';
   if (/^AVWAP/.test(name)) return 'VWAP ancrée à la date indiquée : prix moyen pondéré par le volume depuis cette date.';
   if ((m = /^([dwmy])VWAP$/.exec(name))) return `VWAP ${PN[m[1]]} en cours : prix moyen pondéré par le volume depuis le début de la période (UTC).`;
   if ((m = /^([dwmy])Open$/.exec(name))) return `Prix d'ouverture ${PN[m[1]]} en cours.`;
@@ -77,8 +77,8 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
   layout: window.innerWidth >= 1500 ? '3' : window.innerWidth >= 1100 ? '2' : '1', prevLayout: null, sideOpen: true, sbCollapsed: false,
   page: 'desk', sub: 'synth', planOn: true, planKey: null, plan: null, planSig: '', sig: null,
-  theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, nodes: true, dpoc: true, npoc: true, tpoD: true, tpo4: true, tpo1: false, vwap: true, dom: false, big: true}, flow: null,
-  mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {D: true, '4h': true, '1h': true},
+  theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, nodes: true, dpoc: true, npoc: true, tpoM: true, tpoW: true, tpoD: true, tpo4: false, tpo1: false, vwap: true, dom: false, big: true}, flow: null,
+  mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {M: true, W: true, D: true, '4h': false, '1h': false},
   tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true}};
 async function api(path, body) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
@@ -163,9 +163,14 @@ function loadPrefs() {
     if (typeof p.plan === 'boolean') st.planOn = p.plan;
     if (typeof p.expert === 'boolean') st.expert = p.expert;
     if (['nuit', 'classique'].includes(p.theme)) st.theme = p.theme;
+    // V20 : TPO semaine et mois. Preferences enregistrees avant (sans semaine / mois) : semaine et mois affiches, 4 h et 1 h retires des
+    // graphiques et de la vue TPO (les single prints de haute unite de temps sont moins nombreuses et plus lisibles) ; tout reste reglable.
+    const v20 = p.mainOpts && typeof p.mainOpts.tpoW !== 'boolean';
     Object.assign(st.mainOpts, p.mainOpts || {});
+    if (v20) Object.assign(st.mainOpts, {tpoM: true, tpoW: true, tpo4: false, tpo1: false});
     if (p.tpoOpts && typeof p.tpoOpts === 'object') Object.keys(st.tpoOpts).forEach(k => { if (typeof p.tpoOpts[k] === typeof st.tpoOpts[k]) st.tpoOpts[k] = p.tpoOpts[k]; });
-    if (p.tpoKinds && typeof p.tpoKinds === 'object') ['D', '4h', '1h'].forEach(k => { if (typeof p.tpoKinds[k] === 'boolean') st.tpoKinds[k] = p.tpoKinds[k]; });
+    if (p.tpoKinds && typeof p.tpoKinds === 'object' && typeof p.tpoKinds.W === 'boolean') ['M', 'W', 'D', '4h', '1h'].forEach(k => { if (typeof p.tpoKinds[k] === 'boolean') st.tpoKinds[k] = p.tpoKinds[k]; });
+    else if (p.tpoKinds && typeof p.tpoKinds === 'object' && typeof p.tpoKinds.D === 'boolean') st.tpoKinds.D = p.tpoKinds.D;
     if (p.mtf && Array.isArray(p.mtf.tfs)) st.mtf = {n: Math.max(2, Math.min(5, +p.mtf.n || 4)), tfs: p.mtf.tfs.slice(0, 5)};
   } catch (e) { /* preferences illisibles : valeurs par defaut */ }
 }
@@ -609,7 +614,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 19;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi)
+const NEED_API = 20;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {

@@ -543,7 +543,7 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(len(server_mod.code_signature()) == 40)
 
     def test_tpo_endpoint_profiles_and_confluences(self):
-        for kind in ("D", "4h", "1h"):
+        for kind in ("D", "4h", "1h", "W", "M"):
             code, body, _ = self.get(f"/api/tpo?symbol=BTCUSDT&kind={kind}&rows=30")
             self.assertEqual(code, 200)
             r = json.loads(body)
@@ -560,7 +560,7 @@ class ServerTests(unittest.TestCase):
         for k in ("W", "M"):
             if st["profiles"][k]:
                 self.assertEqual(st["profiles"][k]["kind"], k)
-        self.assertEqual(set(st["tpo"]), {"D", "4h", "1h"})
+        self.assertEqual(set(st["tpo"]), {"D", "4h", "1h", "W", "M"})                  # V20 : semaine et mois
         names = {l["name"] for l in st["levels"] if l["kind"] == "tpo"}
         self.assertTrue(all(n.startswith(("Single prints", "Poor high", "Poor low")) for n in names))
         self.assertFalse(any(n.endswith("1 h") for n in names))                       # seances d'1 h : trop de marques pour les confluences

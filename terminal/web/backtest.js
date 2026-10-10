@@ -469,30 +469,40 @@ const Backtest = (() => {
 
   // ---------- rapport « importance des poches » (V14) ----------
   const VCLS = v => /^effet \+|^indice \+/.test(v) ? 'up' : /^effet −|^indice −/.test(v) ? 'dn' : 'muted';
-  // ---------- V19 : reperes du profil de marche (TPO) ----------
-  const TPO_KIND = {D: "séances d'1 jour (tranches de 30 min)", '4h': 'séances de 4 heures (tranches de 5 min)', '1h': "séances d'1 heure (tranches de 5 min)"};
-  const TPO_V = {net: ['up', 'mesuré'], contraire: ['amb', 'effet contraire'], instable: ['amb', 'instable'], faible: ['amb', 'faible'], description: ['muted', 'fréquence'], hasard: ['muted', '≈ hasard']};
+  // ---------- V19 : reperes du profil de marche (TPO) ; V20 : semaine et mois, temoins apparies ----------
+  const TPO_KIND = {W: "séances d'1 semaine (lundi 00 h UTC, tranches de 4 heures)", M: "séances d'1 mois (tranches d'1 jour)", D: "séances d'1 jour (tranches de 30 minutes)",
+    '4h': 'séances de 4 heures (tranches de 5 minutes)', '1h': "séances d'1 heure (tranches de 5 minutes)"};
+  const TPO_UNIT = {W: 'semaines suivantes', M: 'mois suivants', D: 'séances suivantes', '4h': 'séances de 4 heures suivantes', '1h': 'heures suivantes'};
+  const TPO_NEXT = {W: 'la semaine suivante', M: 'le mois suivant', D: 'la séance suivante', '4h': 'la séance de 4 heures suivante', '1h': "l'heure suivante"};
+  const TPO_IB = {W: 'Fourchette du lundi (« première heure » de la semaine)', M: 'Fourchette de la première semaine (« première heure » du mois)', D: 'Première heure',
+    '4h': '30 premières minutes', '1h': '10 premières minutes'};
+  const TPO_V = {net: ['up', 'mesuré'], contraire: ['amb', 'effet contraire'], instable: ['amb', 'instable'], faible: ['amb', 'faible'], description: ['muted', 'fréquence'], hasard: ['muted', '≈ hasard'], insuffisant: ['muted', 'trop peu de cas']};
   function tpoVerdict(r) {
     return `<section class="card btv warn"><div class="bthead"><h2>Repères du profil de marché (TPO) <small>${esc(r.label || r.symbol)} · ${esc(r.period.text)} · ${esc(r.source || '')}</small></h2></div>
       <ul class="btnotes">${(r.summary || []).map(x => { const v = TPO_V[x.verdict] || ['muted', x.verdict]; return `<li><b class="${v[0]}">${v[1]}</b> — ${esc(x.text)}</li>`; }).join('')}</ul>
-      <div class="muted small">Chaque repère est comparé à un témoin placé à la même distance de la clôture (de l'autre côté), ou, pour les poor high / low, aux extrêmes avec queue à distance égale. « Mesuré » = écart au-delà de 2 erreurs-types (groupées par séance) ET de même signe sur les deux moitiés de la période.</div></section>`;
+      <div class="muted small">Single prints : comparées à la même bande placée au même endroit de séances semblables (même sens, même amplitude, clôture au même endroit) où ces prix ont été échangés par au moins deux tranches. POC : prix témoin à la même distance de la clôture, de l'autre côté. Poor high / low : extrêmes avec queue à distance égale. « Mesuré » = écart au-delà de 2 erreurs-types (groupées par séance) ET de même signe sur les deux moitiés de la période.</div></section>`;
   }
   function tpoTable(r, k) {
     const x = r[k];
     if (!x || !x.ready) return '';
-    const H = x.horizons.map(String), unit = k === 'D' ? 'séances suivantes' : k === '4h' ? 'séances de 4 h suivantes' : 'heures suivantes';
+    const H = x.horizons.map(String), unit = TPO_UNIT[k] || 'séances suivantes';
     const row = (name, f) => `<tr><td>${name}</td>${H.map(h => `<td class="r">${f(h)}</td>`).join('')}</tr>`;
-    const pair = (a, b, t) => `${pc(a)} <span class="muted">/ ${pc(b)}</span>${t != null && Math.abs(t) >= 2 ? ` <b class="${t > 0 ? 'up' : 'dn'}">${t > 0 ? '▲' : '▼'}</b>` : ''}`;
-    const sg = h => x.singles.all[h].fill, ex = h => x.extremes.all[h], po = h => x.poc.all[h];
-    const ib = x.ib, e8 = x.eighty, os = x.openSame;
-    return `<section class="card"><h3>${TPO_KIND[k]} <small class="muted">${x.n} séances · ${esc(x.from)} → ${esc(x.to)}</small></h3>
+    const pair = (a, b, t) => a == null ? '—' : `${pc(a)} <span class="muted">/ ${pc(b)}</span>${t != null && Math.abs(t) >= 2 ? ` <b class="${t > 0 ? 'up' : 'dn'}">${t > 0 ? '▲' : '▼'}</b>` : ''}`;
+    const sm = (p, h) => (x.singles[p][h] || {}).matched, sg = h => x.singles.all[h].fill, ex = h => x.extremes.all[h], po = h => x.poc.all[h];
+    const ib = x.ib, e8 = x.eighty, os = x.openSame, rc = x.singlesReaction, el = x.singlesElan;
+    const half = (o, lab) => o && o.rate != null ? `${lab} ${pc(o.rate)} / ${pc(o.control)}${o.t != null && Math.abs(o.t) >= 2 ? ` <b class="${o.t > 0 ? 'up' : 'dn'}">${o.t > 0 ? '▲' : '▼'}</b>` : ''}` : `${lab} trop peu de cas`;
+    return `<section class="card"><h3>${TPO_KIND[k]} <small class="muted">${x.n} séances · ${esc(x.from)} → ${esc(x.to)}${x.singleCount != null ? ` · ${x.singleCount} zones de single prints` : ''}</small></h3>
       <table class="t"><tr><th>Dans les … ${unit}</th>${H.map(h => `<th class="r">${h}</th>`).join('')}</tr>
-      ${row('Single prints comblés / témoin', h => pair(sg(h).rate, sg(h).control, sg(h).t))}
+      ${sm('all', H[0]) ? row('Single prints comblés / même bande, séances semblables', h => { const o = sm('all', h); return o ? pair(o.rate, o.control, o.t) : '—'; }) : ''}
+      ${row('Single prints comblés / bande miroir (V19)', h => pair(sg(h).rate, sg(h).control, sg(h).t))}
       ${row('Poor high / low dépassés / extrême avec queue', h => pair(ex(h).raw.poor.rate, ex(h).raw.excess.rate, ex(h).t))}
       ${row('POC retraversé / prix témoin', h => pair(po(h).all.rate, po(h).all.control, po(h).all.t))}
       ${row('POC vierge après 1 séance / témoin', h => po(h).virgin && po(h).virgin.rate != null ? pair(po(h).virgin.rate, po(h).virgin.control, po(h).virgin.t) : '—')}</table>
-      <div class="muted small">▲ / ▼ : écart au-delà de 2 erreurs-types. Poor high / low : comparaison stratifiée par distance à la clôture.</div>
-      ${ib ? `<div class="sect">Première heure</div><div class="small">Cassée des deux côtés ${pc(ib.both)}, d'un seul côté ${pc(ib.upOnly + ib.downOnly)}, jamais ${pc(ib.none)} ; extension ×1,5 atteinte ${pc(ib.ext15)} et ×2 ${pc(ib.ext2)} après une cassure ; depuis la première cassure, clôture au-delà du niveau cassé ${pc(ib.firstUp.closeBeyond)} (haut) / ${pc(ib.firstDown.closeBeyond)} (bas), retour jusqu'à l'autre bord ${pc(ib.firstUp.failure)} / ${pc(ib.firstDown.failure)}.</div>` : ''}
+      <div class="muted small">▲ / ▼ : écart au-delà de 2 erreurs-types. Poor high / low : comparaison stratifiée par distance à la clôture. Les témoins « miroir » (de l'autre côté de la clôture : bande miroir des single prints, prix témoin du POC) sont faussés par la hausse de fond du bitcoin, surtout sur la semaine et le mois : les single prints et les POC sont plus souvent sous la clôture.</div>
+      ${sm('all', H[0]) ? `<div class="sect">Single prints : stabilité et comportement</div><div class="small">Comblées dès ${TPO_NEXT[k] || 'la séance suivante'} (single prints / témoins) : ${half(sm('first', H[0]), '1re moitié')} · ${half(sm('second', H[0]), '2e moitié')}.` +
+        (rc && rc.all ? ` Au premier retour du prix, la zone tient (rebond d'au moins sa hauteur avant d'être traversée) : ${half(rc.all.matched, 'single prints / témoins')}.` : '') +
+        (el && el.all && el.all.rate != null ? ` Élan : la séance suivante va dans le même sens ${pc(el.all.rate)} du temps, contre ${pc(el.all.control)} après une séance semblable sans single print.` : '') + '</div>' : ''}
+      ${ib ? `<div class="sect">${TPO_IB[k] || 'Première heure'}</div><div class="small">Cassée des deux côtés ${pc(ib.both)}, d'un seul côté ${pc(ib.upOnly + ib.downOnly)}, jamais ${pc(ib.none)} ; extension ×1,5 atteinte ${pc(ib.ext15)} et ×2 ${pc(ib.ext2)} après une cassure ; depuis la première cassure, clôture au-delà du niveau cassé ${pc(ib.firstUp.closeBeyond)} (haut) / ${pc(ib.firstDown.closeBeyond)} (bas), retour jusqu'à l'autre bord ${pc(ib.firstUp.failure)} / ${pc(ib.firstDown.failure)}.</div>` : ''}
       ${e8 && e8.rate != null ? `<div class="sect">Règle des « 80 % »</div><div class="small">Objectif atteint ${pc(e8.rate)} du temps (${e8.n} cas), contre ${pc(e8.control)} après un simple retour dans la valeur (${e8.controlN} cas).</div>` : ''}
       ${os && os.groups ? `<div class="sect">Position de l'ouverture face à la valeur précédente (même séance)</div><table class="t"><tr><th>Ouverture</th><th class="r">séances</th><th class="r">finissent en hausse</th><th class="r">amplitude</th></tr>${
         [['belowRange', 'sous la fourchette'], ['belowValue', 'sous la valeur'], ['inValue', 'dans la valeur'], ['aboveValue', 'au-dessus de la valeur'], ['aboveRange', 'au-dessus de la fourchette']].filter(([g]) => os.groups[g]).map(([g, lab]) =>
@@ -501,9 +511,10 @@ const Backtest = (() => {
   }
   function tpoMethod(r) {
     return `<section class="card"><h3>Méthode</h3><ul class="btnotes">
-      <li><b>Moteur</b> : exactement celui du terminal (engine/tpo.py) ; pas de prix fixé sans regarder le futur (médiane des amplitudes des 10 séances précédentes divisée par ${r.D ? r.D.rows : 60} lignes pour 1 jour).</li>
-      <li><b>Témoins</b> : bande de même largeur (single prints) ou prix (POC) placés à la même distance de la clôture, de l'autre côté ; poor high / low comparés aux extrêmes avec queue dans les mêmes tranches de distance. Erreurs-types groupées par séance ; période coupée en deux moitiés pour vérifier la stabilité.</li>
-      <li><b>Limites</b> : un seul actif (bitcoin) ; données Bitstamp au comptant (pas le contrat perpétuel de Binance) ; plusieurs mesures faites à la fois, donc un écart isolé peut être dû à la chance. Pour mesurer SOL : <code>python tools/fetch_history.py SOLUSDT</code> puis <code>python tools/run_tpo_study.py SOLUSDT</code>.</li></ul></section>`;
+      <li><b>Moteur</b> : exactement celui du terminal (engine/tpo.py) ; pas de prix fixé sans regarder le futur (médiane des amplitudes des 10 séances précédentes divisée par ${r.D ? r.D.rows : 60} lignes pour 1 jour, ${r.W ? r.W.rows : 60} pour la semaine et le mois). Semaine et mois calculés sur bougies d'1 heure depuis 2012 : l'historique le plus long possible, car il y a peu de semaines et encore moins de mois.</li>
+      <li><b>Témoins des single prints</b> (V20) : pour chaque zone, la même bande (même position par rapport à la clôture, en amplitudes typiques) dans les 20 séances les plus proches dans le temps qui ont le même sens, une amplitude à ±30 % et une clôture au même endroit de leur fourchette (±0,15), et où ces prix ont été échangés par au moins deux tranches. On compare donc, à mouvement égal, des prix « passés vite » à des prix « échangés ». Réaction : au premier retour du prix, rebond d'au moins la hauteur de la zone avant de la traverser.</li>
+      <li><b>Autres témoins</b> : prix (POC) placé à la même distance de la clôture, de l'autre côté ; poor high / low comparés aux extrêmes avec queue dans les mêmes tranches de distance. Erreurs-types groupées par séance ; période coupée en deux moitiés pour vérifier la stabilité.</li>
+      <li><b>Limites</b> : un seul actif (bitcoin) ; données Bitstamp au comptant (pas le contrat perpétuel de Binance) ; peu de mois (176) et de semaines (768) : les écarts sur ces séances sont moins sûrs ; plusieurs mesures faites à la fois, donc un écart isolé peut être dû à la chance. Pour mesurer SOL : <code>python tools/fetch_history.py SOLUSDT</code> puis <code>python tools/run_tpo_study.py SOLUSDT</code>.</li></ul></section>`;
   }
   function pkVerdict(r) {
     const s = r.summary || {lines: []};
@@ -592,7 +603,7 @@ const Backtest = (() => {
     if (rep.kind === 'vwap-strategy') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + stratHedge(rep) + stratMethod(rep) + '</div>'; return; }
     if (rep.kind === 'rotation') { root.innerHTML = sel + '<div class="btgrid">' + rotVerdict(rep) + rotMap(rep) + rotGold(rep) + rotTargets(rep) + rotMethod(rep) + '</div>'; drawRotation(rep); return; }
     if (rep.kind === 'pockets') { root.innerHTML = sel + '<div class="btgrid">' + pkVerdict(rep) + pkTable(rep, 'reaction') + pkTable(rep, 'attraction') + pkSweep(rep) + pkMethod(rep) + '</div>'; return; }
-    if (rep.kind === 'tpo') { root.innerHTML = sel + '<div class="btgrid">' + tpoVerdict(rep) + ['D', '4h', '1h'].map(k => tpoTable(rep, k)).join('') + tpoMethod(rep) + '</div>'; return; }
+    if (rep.kind === 'tpo') { root.innerHTML = sel + '<div class="btgrid">' + tpoVerdict(rep) + ['W', 'M', 'D', '4h', '1h'].map(k => tpoTable(rep, k)).join('') + tpoMethod(rep) + '</div>'; return; }
     if (rep.kind === 'squeeze') { root.innerHTML = sel + '<div class="btgrid">' + sqVerdict(rep) + sqEvents(rep) + sqTargets(rep) + sqMethod(rep) + '</div>'; return; }
     if (rep.kind === 'indicators') { root.innerHTML = sel + '<div class="btgrid">' + indVerdict(rep) + indTable(rep) + indMethod(rep) + '</div>'; return; }
     if (rep.kind === 'avwap-swing') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + reactionCard(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + swingMethod(rep) + '</div>'; return; }

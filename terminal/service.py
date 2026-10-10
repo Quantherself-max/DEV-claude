@@ -641,11 +641,11 @@ class Market:
             p["reach"] = pr["reach"] if pr else None
             levels.append(Level(f"LIQ|P{p['side']}{i}", f"Stops {'acheteurs' if p['side'] == 'long' else 'vendeurs'} (prix)", p["price"], "LIQ", "liq", {"pool": p}))
         tmarks = None
-        if tpo:                                                  # V17 : single prints non comblees et poor highs / lows actifs (1 jour et 4 h)
+        if tpo:                                                  # V17 : single prints non comblees et poor highs / lows actifs (1 jour et 4 h ; V20 : semaine et mois)
             try:
                 tmarks = self.tpo_marks()
-                TXT = {"D": "1 j", "4h": "4 h"}
-                for kd in ("D", "4h"):
+                TXT = {"D": "1 j", "4h": "4 h", "W": "semaine", "M": "mois"}
+                for kd in ("M", "W", "D", "4h"):
                     for ss in tmarks.get(kd, []):
                         for i, (a, b, filled) in enumerate(ss["singles"]):
                             mid = (a + b) / 2
@@ -832,15 +832,34 @@ class Market:
         return {k: self.session_profile(k) for k in ("D", "W", "M")}
 
     def tpo(self, kind: str, n: int | None = None, rows: int | None = None):
-        """Profils TPO des dernieres seances de 1 jour, 4 heures ou 1 heure (engine/tpo.py), bougies 5 min."""
-        return tpo_engine.sessions(self.store.m5, kind, self.source.now_ms(), n, rows, self._tpo_cache)
+        """Profils TPO des dernieres seances (engine/tpo.py) : 1 jour, 4 heures et 1 heure sur bougies 5 min ; semaine et mois (V20) sur
+        bougies 1 h (la bougie en cours comprise), a partir du debut de la plus ancienne seance utile."""
+        spec = tpo_engine.KINDS[kind]
+        now = self.source.now_ms()
+        if spec["bars"] == "h1":
+            h1 = self.store.h1
+            s = tpo_engine.session_start(kind, now)
+            for _ in range(max(n or spec["n"], spec["comp"]) + 1):
+                s = tpo_engine.session_start(kind, s - 1)
+            bars = h1[bisect_left_t(h1, s):]
+        else:
+            bars = self.store.m5
+        return tpo_engine.sessions(bars, kind, now, n, rows, self._tpo_cache)
+
+    TPO_MARK_KINDS = ("D", "4h", "1h", "W", "M")
 
     def tpo_marks(self):
-        """Marques TPO pour les graphiques : single prints non comblees, poor highs / lows non repares, par type de seance."""
+        """Marques TPO pour les graphiques : single prints non comblees, poor highs / lows non repares, par type de seance. Gardees tant que
+        les bougies n'ont pas change (la page en redemande a chaque rafraichissement)."""
+        s = self.store
+        key = (len(s.m5), s.m5[-1].t if s.m5 else 0, s.m5[-1].c if s.m5 else 0, len(s.h1), s.h1[-1].c if s.h1 else 0, self.source.now_ms() // 60_000)
+        if getattr(self, "_tmarks", (None,))[0] == key:
+            return self._tmarks[1]
         out = {}
-        for kind in ("D", "4h", "1h"):
+        for kind in self.TPO_MARK_KINDS:
             r = self.tpo(kind)
             out[kind] = [{"start": x["start"], "end": x["end"], **x["marks"]} for x in r["sessions"]]
+        self._tmarks = (key, out)
         return out
 
     def _extra_pools(self, shown, price):

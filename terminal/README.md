@@ -1,9 +1,10 @@
-# Liq Terminal (V19)
+# Liq Terminal (V20)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **TPO de la semaine et du mois** (V20) : la vue **▥ TPO** affiche maintenant les profils de marché **du mois** (une lettre par jour) et **de la semaine** (lundi 00 h UTC, une lettre par tranche de 4 heures, « première heure » = le lundi), et leurs **single prints** sont tracées en priorité sur les graphiques et dans les confluences ; mesure sur **14 ans de bitcoin** de ce qu'elles valent vraiment (voir « V20 » plus bas).
 - **TPO complet et mesuré, profils de volume et zones plus précis** (V19) : vue **▥ TPO** refaite (zoom, séances plus anciennes, volume et delta à chaque prix, première heure et objectifs, type de journée, profil composite et ses zones fortes et faibles, POC vierges) avec ce que **10 ans de bitcoin** disent de chaque repère ; profils de volume répartis selon le trajet des bougies, nœuds de volume, POC évolutif ; zones de confluence avec **prix clé**, cœur et prix le plus échangé ; carnet d'ordres presque transparent (voir « V19 » plus bas).
 - **Bilan macro de la semaine** (V18) : menu **Analyse → Bilan macro de la semaine**. Chaque semaine : les annonces avec consensus, chiffre précédent et **chiffre publié** (base officielle de la Fed de Saint-Louis), la réaction mesurée des marchés, un tableau de bord par thème (inflation, emploi, croissance, Fed et taux, dollar, liquidité, crédit, énergie), les marchés et la crypto de la semaine, **ce que cela engendre**, une **mesure** de ce qui a vraiment compté pour le bitcoin, la semaine prochaine, et un commentaire facultatif de Claude (voir « V18 » plus bas).
 - **TPO et profils jour / semaine / mois** (V17) : bouton **▥ TPO** du Desk (profils de marché des séances d'1 jour, de 4 heures et d'1 heure, avec **single prints** et **poor high / poor low**), ces mêmes marques sur les graphiques et dans les confluences, et les **profils de volume de la semaine et du mois** à côté de celui du jour (voir « V17 » plus bas).
@@ -112,6 +113,39 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V20 : TPO de haute unité de temps (semaine et mois)
+
+Sur les séances courtes (1 heure, 4 heures), les single prints sont innombrables (plus de 10 000 zones sur les séances d'1 heure depuis 2021) et la plupart ne veulent rien dire. Sur la semaine et le mois, une single print est un prix qu'**une seule tranche de 4 heures (ou une seule journée) a touché de toute la semaine (du mois)** : des zones rares (en moyenne 0,4 par semaine sur les profils de la semaine, 0,6 par mois sur ceux du mois) et larges.
+
+### Dans le terminal
+- **Vue ▥ TPO** : deux nouvelles colonnes, **1 mois** (tranches d'1 jour, profil composite des 3 derniers mois) et **1 semaine** (tranches de 4 heures, composite des 4 dernières semaines), cochées par défaut avec la séance d'1 jour (4 heures et 1 heure restent disponibles). La « première heure » devient **le lundi** pour la semaine et **la première semaine** pour le mois (barre verte, objectifs ×1,5 et ×2) ; type de séance, forme, migration de la valeur, ouverture, règle des « 80 % », rotation, POC vierges : tout fonctionne comme pour le jour. Quand les profils sont trop larges pour tenir à trois, ils passent en **histogramme compact** à l'échelle commune.
+- **Graphiques** (principal et multi-unités) : cases **TPO mois** et **semaine** (cochées), single prints de haute unité de temps en **trait épais** et fond plus marqué, tracées en premier ; 4 heures et 1 heure décochées par défaut pour ne pas noyer le graphique (tout reste réglable).
+- **Confluences** : single prints et poor high / low **de la semaine et du mois** entrent dans les zones, avec le poids de leur échelle de temps (semaine ×2, mois ×3) pour le **prix clé** de la zone. Les idées de trade, elles, n'utilisent toujours pas le TPO.
+- Calcul sur les **bougies d'1 heure** (la bougie en cours comprise), donc sur plusieurs années d'historique ; marques TPO gardées en mémoire tant que les bougies ne changent pas.
+
+### Ce que disent 14 ans de bitcoin (rapport « TPO » de la page Backtest)
+Mesure refaite avec un **témoin plus juste** : pour chaque zone de single prints, la **même bande** (même position par rapport à la clôture, en amplitudes habituelles) dans les 20 séances les plus proches **qui ont le même sens, la même amplitude et une clôture au même endroit de leur fourchette**, et où ces prix ont été échangés par au moins deux tranches. On compare donc, à mouvement égal, des prix « passés vite » à des prix « échangés ». L'ancien témoin (bande miroir de l'autre côté de la clôture) était faussé par la hausse de fond du bitcoin, car les single prints sont surtout **sous** la clôture (laissées par les hausses). Semaine et mois : 768 semaines et 176 mois de 2012 à 2026 (bougies 1 h).
+
+| Single prints | Comblées dès la séance suivante (témoin) | Au retour du prix, la zone tient (témoin) | Verdict |
+|---|---|---|---|
+| **Mois** (102 zones) | **18 %** (34 %) ; en 3 mois 38 % (50 %) | 33 % (39 %) | **moins comblées qu'ailleurs** (2019-2026 : 13 % contre 38 %) |
+| **Semaine** (309 zones) | **32 %** (39 %) ; en 4 semaines 50 % (60 %) | 39 % (44 %) | même sens à tous les horizons, mais **seulement sur 2019-2026** (26 % contre 41 % ; 2012-2019 : aucun écart) : à confirmer |
+| **Jour** (1 383 zones) | 35 % (41 %) ; en 5 jours 64 % (67 %) | 42 % (43 %) | **moins comblées qu'ailleurs**, stable |
+| 4 heures (3 254 zones) | 37 % (38 %) | 37 % (41 %) | aucun écart pour le comblement |
+| 1 heure (10 634 zones) | 35 % (40 %) | 40 % (40 %) | moins comblées qu'ailleurs |
+
+**Ce que ça veut dire pour trader** :
+- Une single print n'est **pas un aimant**, quelle que soit l'unité de temps : le prix y revient plutôt **moins** souvent qu'à un prix comparable, et l'écart **grandit avec l'unité de temps** (mois : −16 points). Elle marque un mouvement **convaincu** : le marché a accepté les nouveaux prix et ne revient pas vite. Ne pas viser son comblement comme objectif.
+- **Au retour du prix**, une single print ne tient **ni mieux ni moins bien** qu'un autre prix (rebond d'au moins sa hauteur avant d'être traversée : même fréquence que les témoins) : ce n'est pas un support ou une résistance en soi. Ce sont les autres repères (VWAP, profils de volume, poches) qui doivent décider d'une entrée.
+- **Élan** : après un mois qui laisse des single prints, le mois suivant va dans le même sens 67 % du temps contre 47 % après un mois semblable sans single print (seulement 42 cas : à confirmer) ; sur le jour, 48 % contre 44 % (mesuré et stable) ; rien sur la semaine.
+- Les autres repères de la semaine et du mois : **poor high / low** sans effet (contrairement au jour et à l'heure), **POC** sans effet aimant, **fourchette du lundi** cassée des deux côtés 39 % des semaines (cassure par le haut : la semaine clôture au-dessus 57 % du temps, par le bas : en dessous 48 %, l'écart reflète surtout la hausse de fond du bitcoin), règle des « 80 % » : 47 % sur la semaine (129 cas), 29 % sur le mois (35 cas).
+
+Variantes regardées pour choisir les réglages (même conclusion) : tranches d'1 jour ou de 12 heures pour la semaine, 40 ou 100 lignes au lieu de 60. Pour refaire la mesure : `python tools/run_tpo_study.py --folder dossier_bitstamp --fine dossier_5min --label BTC` (1 minute) ; sur SOL : `python tools/fetch_history.py SOLUSDT` puis `python tools/run_tpo_study.py SOLUSDT`.
+
+### Honnêteté
+- Un seul actif (bitcoin au comptant, Bitstamp). Peu de mois (176) et de semaines (768) : les écarts sur ces séances sont moins sûrs que sur le jour ; la partie « stabilité » de chaque tableau de la page Backtest montre d'où ils viennent (première et seconde moitié de la période).
+- Le tableau V19 « single prints comblés en 5 jours 60 % contre 65 % » utilisait la bande miroir ; avec le témoin apparié l'écart est de 64 % contre 67 % en 5 jours et de 35 % contre 41 % dès le lendemain : même conclusion, mieux mesurée.
 
 ## Ce qui est nouveau en V19 : TPO complet et mesuré, profils de volume et zones plus précis
 

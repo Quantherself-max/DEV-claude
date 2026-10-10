@@ -13,29 +13,44 @@ V19 ajoute, par seance :
   - le contexte face a la seance precedente : MIGRATION de la zone de valeur, POSITION DE L'OUVERTURE, « REGLE DES 80 % » (ouverture hors de
     la valeur d'hier, retour dans la valeur tenu deux tranches : objectif l'autre bord) ;
   - les POC VIERGES (POC jamais retraverses depuis) et un PROFIL COMPOSITE des dernieres seances avec ses noeuds forts (HVN) et faibles (LVN).
-Tranches : 30 min pour la seance d'1 jour (00 h UTC), 5 min pour les seances de 4 h et d'1 h. Bougies 5 min. Module PUR."""
+Tranches : 30 min pour la seance d'1 jour (00 h UTC), 5 min pour les seances de 4 heures et d'1 heure (bougies 5 min).
+V20 : seances de HAUTE UNITE DE TEMPS, la SEMAINE (lundi 00 h UTC, tranches de 4 heures, « premiere heure » = le lundi) et le MOIS (mois
+calendaire, tranches d'1 jour, « premiere heure » = la premiere semaine), sur bougies 1 h : une single print y marque un prix qu'une seule
+tranche de 4 heures (ou une seule journee) a touche de toute la semaine (du mois). Module PUR."""
 import math
 from bisect import bisect_left
+from datetime import datetime, timezone
 
 from .sessionvp import nice_step, nodes, spread
 
 MIN = 60_000
 H = 60 * MIN
 DAY = 24 * H
+WEEK = 7 * DAY
 # rows : nombre de lignes pour l'amplitude typique d'une seance (memes reglages que la mesure sur l'historique, engine/tpostudy.py)
-KINDS = {"D": {"len": DAY, "bracket": 30 * MIN, "ib": 60 * MIN, "label": "1 jour", "n": 10, "rows": 60, "comp": 5},
-         "4h": {"len": 4 * H, "bracket": 5 * MIN, "ib": 30 * MIN, "label": "4 heures", "n": 12, "rows": 36, "comp": 6},
-         "1h": {"len": H, "bracket": 5 * MIN, "ib": 10 * MIN, "label": "1 heure", "n": 24, "rows": 20, "comp": 12}}
+# off : decalage du debut des seances (la semaine commence le lundi, le 1er janvier 1970 etait un jeudi) ; cal "month" : mois calendaire
+# bars : bougies utilisees en direct (m5 : 5 min sur ~29 jours ; h1 : 1 h sur plusieurs annees)
+# ib / ibName / ibRange : « premiere heure » de la seance (initial balance) ; all : « toute la seance » (textes des types de seance)
+KINDS = {"D": {"len": DAY, "bracket": 30 * MIN, "ib": 60 * MIN, "label": "1 jour", "n": 10, "rows": 60, "comp": 5, "bars": "m5",
+               "ibName": "première heure", "ibRange": "la fourchette de la première heure", "all": "toute la journée"},
+         "4h": {"len": 4 * H, "bracket": 5 * MIN, "ib": 30 * MIN, "label": "4 heures", "n": 12, "rows": 36, "comp": 6, "bars": "m5",
+                "ibName": "30 premières minutes", "ibRange": "la fourchette des 30 premières minutes", "all": "toute la séance"},
+         "1h": {"len": H, "bracket": 5 * MIN, "ib": 10 * MIN, "label": "1 heure", "n": 24, "rows": 20, "comp": 12, "bars": "m5",
+                "ibName": "10 premières minutes", "ibRange": "la fourchette des 10 premières minutes", "all": "toute l'heure"},
+         "W": {"len": WEEK, "off": 4 * DAY, "bracket": 4 * H, "ib": DAY, "label": "1 semaine", "n": 12, "rows": 60, "comp": 4, "bars": "h1",
+               "ibName": "lundi", "ibRange": "la fourchette du lundi", "all": "toute la semaine"},
+         "M": {"len": None, "cal": "month", "bracket": DAY, "ib": 7 * DAY, "label": "1 mois", "n": 12, "rows": 60, "comp": 3, "bars": "h1",
+               "ibName": "première semaine", "ibRange": "la fourchette de la première semaine", "all": "tout le mois"}}
 LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 VA = 0.70
 MIN_SINGLE = 2
 
 DAY_TYPES = {
     "nontrend": ("Sans tendance", "Peu d'activité, fourchette étroite : le marché attend (souvent avant une annonce)."),
-    "normal": ("Normale", "La première heure contient presque toute la journée : de gros intervenants ont fixé les bornes tôt."),
-    "normalvar": ("Variation de normale", "Une sortie de la première heure d'un seul côté, jusqu'à environ deux fois sa hauteur."),
-    "trend": ("Tendance", "Sortie franche d'un seul côté, clôture près de l'extrême : un camp a dominé toute la journée."),
-    "neutral": ("Neutre", "Sorties des deux côtés de la première heure : personne n'a pris le contrôle."),
+    "normal": ("Normale", "{IbRange} contient presque {all} : de gros intervenants ont fixé les bornes tôt."),
+    "normalvar": ("Variation de normale", "Une sortie de {ibRange} d'un seul côté, jusqu'à environ deux fois sa hauteur."),
+    "trend": ("Tendance", "Sortie franche d'un seul côté, clôture près de l'extrême : un camp a dominé {all}."),
+    "neutral": ("Neutre", "Sorties des deux côtés de {ibRange} : personne n'a pris le contrôle."),
     "double": ("Double distribution", "Deux zones d'échange séparées par des single prints : le marché a changé de niveau en cours de séance."),
 }
 SHAPES = {"P": "forme P : échanges concentrés en haut (rachats de vendeurs ou acheteurs tardifs)",
@@ -43,6 +58,42 @@ SHAPES = {"P": "forme P : échanges concentrés en haut (rachats de vendeurs ou 
           "D": "forme D : équilibre, échanges centrés",
           "I": "forme allongée : tendance, peu d'échanges à chaque prix",
           "B": "deux bosses : deux zones d'acceptation"}
+
+
+def type_text(code: str, kind: str = "D") -> str:
+    """Explication du type de seance, avec la « premiere heure » propre au type de seance (le lundi pour la semaine...)."""
+    sp = KINDS.get(kind, KINDS["D"])
+    return DAY_TYPES[code][1].format(IbRange=sp["ibRange"][0].upper() + sp["ibRange"][1:], ibRange=sp["ibRange"], all=sp["all"])
+
+
+# ---------- calendrier des seances ----------
+def session_start(kind: str, t: int) -> int:
+    """Debut de la seance qui contient l'instant t (ms)."""
+    sp = KINDS[kind]
+    if sp.get("cal") == "month":
+        d = datetime.fromtimestamp(t / 1000, timezone.utc)
+        return int(datetime(d.year, d.month, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    L, off = sp["len"], sp.get("off", 0)
+    return (t - off) // L * L + off
+
+
+def session_end(kind: str, s: int) -> int:
+    """Fin (exclue) de la seance qui commence en s."""
+    sp = KINDS[kind]
+    if sp.get("cal") == "month":
+        d = datetime.fromtimestamp(s / 1000, timezone.utc)
+        m = d.year * 12 + d.month                      # mois suivant (janvier = 0)
+        return int(datetime(m // 12, m % 12 + 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    return s + sp["len"]
+
+
+def session_index(kind: str, s: int) -> int:
+    """Numero d'ordre de la seance (deux seances consecutives : numeros consecutifs)."""
+    sp = KINDS[kind]
+    if sp.get("cal") == "month":
+        d = datetime.fromtimestamp(s / 1000, timezone.utc)
+        return d.year * 12 + d.month - 1
+    return (s - sp.get("off", 0)) // sp["len"]
 
 
 def brackets(bars, start: int, end: int, bracket_ms: int):
@@ -298,33 +349,37 @@ def sessions(bars, kind: str, now_ms: int, n: int | None = None, rows: int | Non
     (type de journee, migration de la valeur, ouverture, regle des 80 %). Pas commun a toutes les seances : la mediane de leurs amplitudes
     divisee par `rows`. `cache` garde les seances terminees. S'y ajoutent le profil composite et les POC vierges."""
     spec = KINDS[kind]
-    L, n, rows = spec["len"], n or spec["n"], rows or spec["rows"]
-    empty = {"kind": kind, "label": spec["label"], "step": None, "sessions": [], "composite": None, "naked": []}
+    n, rows = n or spec["n"], rows or spec["rows"]
+    empty = {"kind": kind, "label": spec["label"], "ibName": spec["ibName"], "ibRange": spec["ibRange"], "step": None, "sessions": [], "composite": None, "naked": []}
     if not bars:
         return empty
     times = [k.t for k in bars]
-    cur = now_ms // L * L
+    cur = session_start(kind, now_ms)
     back = max(n, spec["comp"]) + 1                        # une seance de plus pour le contexte de la premiere affichee
-    starts = [s for s in (cur - i * L for i in range(back - 1, -1, -1)) if s + L > times[0]]
+    starts = [cur]
+    while len(starts) < back:
+        starts.append(session_start(kind, starts[-1] - 1))
+    starts = [s for s in reversed(starts) if session_end(kind, s) > times[0]]
     spans = []
     for s in starts:
-        i0, i1 = bisect_left(times, s), bisect_left(times, s + L)
+        e = session_end(kind, s)
+        i0, i1 = bisect_left(times, s), bisect_left(times, e)
         if i1 > i0:
-            spans.append((s, i0, i1, max(k.h for k in bars[i0:i1]) - min(k.l for k in bars[i0:i1])))
+            spans.append((s, e, i0, i1, max(k.h for k in bars[i0:i1]) - min(k.l for k in bars[i0:i1])))
     if not spans:
         return empty
-    rg = sorted(x[3] for x in spans if x[3] > 0) or [1.0]
+    rg = sorted(x[4] for x in spans if x[4] > 0) or [1.0]
     step = nice_step(rg[len(rg) // 2] / max(4, rows))
     slo, shi = suffix_extremes(bars)
     if cache is not None and len(cache) > 500:
         cache.clear()
     built = []
-    for s, i0, i1, r in spans:
+    for s, e, i0, i1, r in spans:
         current = s == cur
-        key = (kind, s, step, "v19")
+        key = (kind, s, step, "v20")
         p = None if current or cache is None else cache.get(key)
         if p is None:
-            p = profile(bars[i0:i1], s, s + L, spec["bracket"], step, ib_ms=spec["ib"])
+            p = profile(bars[i0:i1], s, e, spec["bracket"], step, ib_ms=spec["ib"])
             if p is None:
                 continue
             if cache is not None and not current:
@@ -337,7 +392,7 @@ def sessions(bars, kind: str, now_ms: int, n: int | None = None, rows: int | Non
         ctx = {"dayType": None, "va": None, "open": None, "eighty": None}
         dt = day_type(p, typical[len(typical) // 2] if typical else None)
         if dt:
-            ctx["dayType"] = {"code": dt, "label": DAY_TYPES[dt][0], "text": DAY_TYPES[dt][1], "provisional": current}
+            ctx["dayType"] = {"code": dt, "label": DAY_TYPES[dt][0], "text": type_text(dt, kind), "provisional": current}
         if prev:
             ctx["va"] = dict(zip(("code", "text"), va_relation(p, prev)))
             ctx["open"] = dict(zip(("code", "text"), open_location(p, prev)))
@@ -347,4 +402,5 @@ def sessions(bars, kind: str, now_ms: int, n: int | None = None, rows: int | Non
     done = [x for x in out if not x["marks"]["current"]]
     comp = composite(done[-spec["comp"]:], step)
     naked = [{"start": x["start"], "price": x["poc"], "age": len(out) - 1 - i} for i, x in enumerate(out) if x["marks"]["poc"]["naked"]]
-    return {"kind": kind, "label": spec["label"], "step": step, "sessions": out[-n:], "composite": comp, "naked": naked}
+    return {"kind": kind, "label": spec["label"], "ibName": spec["ibName"], "ibRange": spec["ibRange"], "bracketMs": spec["bracket"], "step": step,
+            "sessions": out[-n:], "composite": comp, "naked": naked}
