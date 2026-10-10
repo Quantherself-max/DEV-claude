@@ -17,6 +17,7 @@ from engine.atr import INTERVAL_MS, resample, rma_atr
 from engine import bias as bias_engine
 from engine import cvd as cvd_engine
 from engine import fine, liqsweep, pocketrank, sessionvp
+from engine import absorption as absorb_engine
 from engine import tpo as tpo_engine
 from engine import tpostudy
 from engine import zoneprec
@@ -95,6 +96,7 @@ class Market:
         self.rank_error = None       # derniere erreur du classement des poches (V14), affichee dans « liquidity.rankError »
         self._sess = {}              # profils de la seance / semaine / mois (V15, V17) : periode -> (cle, resultat)
         self._tpo_cache = {}         # seances TPO terminees (V17)
+        self.absorb_study: dict = {}  # V21 : mesure des absorptions par unite de temps (rapport de l'outil, sinon calcul du terminal)
         self._fed_h1 = -1
         self._fed_m5 = -1
         self.ready = False
@@ -720,9 +722,13 @@ class Market:
         above = [z for k, z in enumerate(above) if k < 3 or z["id"] in ess_set]         # les zones essentielles sont toujours listees
         below = [z for k, z in enumerate(below) if k < 3 or z["id"] in ess_set]
         inside = [z for z in zones if z["side"] == "in"]
+        try:                                                     # V21 : absorptions (delta fort contre le sens de la bougie)
+            absorb = self.absorptions(tf, zones, tol, cs)
+        except Exception as e:                                   # jamais au prix de l'etat
+            absorb = {"real": False, "events": [], "error": f"{type(e).__name__}: {e}"}
         t = self.store
         return {
-            "symbol": self.symbol, "tf": tf, "source": self.source.name, "now": self.source.now_ms(),
+            "symbol": self.symbol, "tf": tf, "source": self.source.name, "now": self.source.now_ms(), "absorb": absorb,
             "price": price, "atr": atr, "atrPct": atr / price * 100.0, "window": win, "tol": tol,
             "candles": [[k.t // 1000, k.o, k.h, k.l, k.c, k.v] for k in cs[-400:]],
             "levels": lv_out, "zones": zones,
@@ -847,6 +853,27 @@ class Market:
         return tpo_engine.sessions(bars, kind, now, n, rows, self._tpo_cache)
 
     TPO_MARK_KINDS = ("D", "4h", "1h", "W", "M")
+    # mesure affichee a cote des absorptions de chaque unite de temps (la plus proche disponible)
+    ABS_STUDY_TF = {"5m": ("5m", "15m", "1h"), "15m": ("15m", "1h"), "1h": ("1h",), "4h": ("4h", "1h"), "1d": ("1d", "4h")}
+
+    def absorptions(self, tf: str, zones=None, tol: float = 0.0, cs=None) -> dict:
+        """Absorptions des bougies FERMEES de l'unite de temps (V21, engine/absorption.py), avec la zone de confluence ou elles se sont
+        produites (bougies recentes) et ce qu'en dit la mesure faite sur ce marche. Rien sans vrai volume acheteur agressif."""
+        cs = self.chart_candles(tf) if cs is None else cs
+        step = INTERVAL_MS[tf]
+        closed = cs[:-1] if cs and cs[-1].t + step > self.source.now_ms() else cs
+        real = absorb_engine.has_real_delta(closed)
+        evs = absorb_engine.detect(closed[-(400 + absorb_engine.N_NORM + absorb_engine.EXT + 40):], last=400) if real else []
+        if zones and closed:
+            recent = closed[max(0, len(closed) - 48)].t
+            for e in evs:
+                if e["t"] >= recent:
+                    z = next((z for z in zones if z["lo"] - tol <= e["price"] <= z["hi"] + tol), None)
+                    if z:
+                        e["zone"] = {"id": z["id"], "score": z["score"], "key": z.get("key") or z["mid"]}
+        key = next((k for k in self.ABS_STUDY_TF.get(tf, ("1h",)) if (self.absorb_study.get(k) or {}).get("ready")), None)
+        return {"real": real, "events": evs, "studyTf": key, "study": absorb_engine.compact(self.absorb_study.get(key)) if key else None,
+                "simulated": getattr(self.source, "name", "") != "binance"}
 
     def tpo_marks(self):
         """Marques TPO pour les graphiques : single prints non comblees, poor highs / lows non repares, par type de seance. Gardees tant que
@@ -1077,8 +1104,14 @@ class Service:
             levels = [{"name": self.KEY_LEVELS[l.name], "price": l.price} for l in m.base_levels() if l.name in self.KEY_LEVELS and l.price]
             price = m.price()
             atr = rma_atr(cs[-300:], 14)
+        try:                                                        # V21 : absorptions de cette unite de temps
+            with self.lock:
+                absorb = m.absorptions(tf)["events"]
+        except Exception:
+            absorb = []
         out = {"symbol": symbol, "tf": tf, "ready": True, "price": price, "atr": atr, "now": self.source.now_ms(),
-               "candles": [[k.t // 1000, k.o, k.h, k.l, k.c, k.v] for k in cs], "session": sess, "profiles": profs, "tpo": tmarks, "levels": levels}
+               "candles": [[k.t // 1000, k.o, k.h, k.l, k.c, k.v] for k in cs], "session": sess, "profiles": profs, "tpo": tmarks, "levels": levels,
+               "absorb": absorb}
         if ser.get("ready"):
             out.update(times=ser["times"], vwapD=ser["vwap"].get("D"), sdD=ser["sd"].get("D"), vwapW=ser["vwap"].get("W"))
         return out
@@ -1173,6 +1206,11 @@ class Service:
                 self.errors.pop(f"biais {sym}", None)
             except Exception as e:
                 self.errors[f"biais {sym}"] = f"{type(e).__name__}: {e}"
+            try:                                                # V21 : mesure des absorptions sur l'historique du terminal
+                self.compute_absorb(sym, candles)
+                self.errors.pop(f"absorptions {sym}", None)
+            except Exception as e:
+                self.errors[f"absorptions {sym}"] = f"{type(e).__name__}: {e}"
             if self.cfg.signal_on:
                 try:                                                # rejeu des idees de trade (structure seule) depuis le debut de l'historique
                     self.compute_sigval(sym, candles, atrs)
@@ -1183,6 +1221,45 @@ class Service:
             self.errors[f"stats {sym}"] = f"{type(e).__name__}: {e}"
         finally:
             self._stats_running.discard(sym)
+
+    def compute_absorb(self, sym: str, candles) -> None:
+        """Mesure des absorptions (V21) : si tu as lance tools/run_absorption_study.py (historique 1 minute de Binance, plusieurs unites de
+        temps), son rapport est utilise ; sinon le terminal mesure lui-meme sur son historique 1 h (vrai volume acheteur agressif de
+        Binance, depuis 2019) et en 4 h, au plus une fois par jour, et ecrit data_local/reports/absorption_<ACTIF>.json (page Backtest)."""
+        m = self.markets[sym]
+        base = sym[:-4] if sym.endswith("USDT") else sym
+        binance = getattr(self.source, "name", "") == "binance"
+        path = Path(self.cfg.data_dir) / "reports" / f"absorption_{base}.json"
+        rep = None
+        if binance and path.exists():
+            try:
+                rep = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                rep = None
+        own = rep is not None and rep.get("origin") == "outil" and rep.get("version") == absorb_engine.VERSION
+        mine = rep if rep is not None and rep.get("origin") == "terminal" and rep.get("version") == absorb_engine.VERSION \
+            and time.time() * 1000 - (rep.get("computedAt") or 0) < 24 * 3_600_000 and (rep.get("bars1h") or 0) >= len(candles) - 48 else None
+        if not own and mine is None:
+            if not absorb_engine.has_real_delta(candles):
+                with self.lock:
+                    m.absorb_study = {}
+                return
+            t0 = time.time()
+            h4 = resample(candles, INTERVAL_MS["4h"])
+            if h4 and h4[-1].t + INTERVAL_MS["4h"] > candles[-1].t + H1:
+                h4 = h4[:-1]                                     # derniere bougie de 4 h incomplete
+            tfs = {"1h": absorb_engine.study(candles), "4h": absorb_engine.study(h4)}
+            mine = absorb_engine.report(base, tfs, "Binance (bougies 1 h du terminal, vrai volume acheteur agressif)" if binance else "données simulées",
+                                        "terminal", int(time.time() * 1000), round(time.time() - t0, 1))
+            mine["bars1h"] = len(candles)
+            if binance and any(st.get("ready") for st in tfs.values()):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(mine, ensure_ascii=False), encoding="utf-8")
+        study = dict((mine or {}).get("tfs") or {})
+        if own:                                                  # le rapport de l'outil (plus long, plus fin) l'emporte
+            study.update({k: v for k, v in (rep.get("tfs") or {}).items() if v and v.get("ready")})
+        with self.lock:
+            m.absorb_study = study
 
     def compute_sigval(self, sym, candles, atrs) -> None:
         m = self.markets[sym]
@@ -1563,6 +1640,23 @@ class Service:
                 "stop": best["stop"], "tp1": best["tp1"], "eligible": best["eligible"], "hold": best["hold"][:1], "gates": [str(g) for g in (best.get("gates") or [])][:2],
                 "align": best.get("align"), "minScore": sg["minScore"], "direction": getattr(self.cfg, "signal_direction", "both")}
 
+    def _absorb_brief(self, symbol: str):
+        """Absorption la plus recente en 4 h (3 dernieres bougies) ou en 1 h (6 dernieres), avec la mesure faite sur ce marche (V21)."""
+        m = self.markets.get(symbol)
+        if m is None or not m.ready:
+            return None
+        with self.lock:
+            for tf, back in (("4h", 3), ("1h", 6)):
+                a = m.absorptions(tf)
+                if not a["real"]:
+                    return {"real": False}
+                step = INTERVAL_MS[tf]
+                last = max((e for e in a["events"] if e["t"] >= self.source.now_ms() - (back + 1) * step), key=lambda e: e["t"], default=None)
+                if last:
+                    return {"real": True, "tf": tf, "event": last, "study": a["study"], "studyTf": a["studyTf"], "simulated": a["simulated"],
+                            "base": symbol[:-4] if symbol.endswith("USDT") else symbol, "now": self.source.now_ms()}
+        return {"real": True, "event": None}
+
     def lecture(self, symbol: str) -> dict:
         """L'essentiel du marche pour cette paire en une page (engine/lecture.py) : tendance, idee, ce qui arrive, positionnement, derives, macro, liquidite."""
         m = self.markets.get(symbol)
@@ -1585,7 +1679,7 @@ class Service:
              "options": (dv.get("options") or {}).get(ocoin), "optionsCoin": ocoin, "dvol": (dv.get("dvol") or {}).get(ocoin),
              "futures": ((dv.get("futures") or {}).get(ocoin) or {}).get("rows"), "indicators": snap.get("indicators"), "indicatorLevels": levels, "rotationReport": reports_mod.load(self.report_dirs, "BTC", "rotation"),
              "squeezeReport": reports_mod.load(self.report_dirs, base, "squeeze") or reports_mod.load(self.report_dirs, "BTC", "squeeze"), "sources": an.get("sources"),
-             "macroWeek": self.mw_archive.get(macroweek.week_key(macroweek.week_start(now)))}
+             "macroWeek": self.mw_archive.get(macroweek.week_key(macroweek.week_start(now))), "absorb": self._absorb_brief(symbol)}
         out = lecture_engine.build(d)
         out["symbol"] = symbol
         return out

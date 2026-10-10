@@ -46,6 +46,13 @@ class SimulatedSource(Source):
             hour = ((SIM_START + k * M5) // 3_600_000) % 24
             v = (1 + abs(r) / 0.0011) * (0.6 + 0.8 * math.sin(math.pi * hour / 24) ** 2) * rnd.uniform(0.6, 1.4)
             tb = v * min(0.9, max(0.1, 0.5 + 0.35 * math.tanh(r / 0.0011) + rnd.gauss(0, 0.05)))
+            # V21 : de temps en temps, des ordres passifs absorbent le flux (heure entiere ou bougie isolee) : delta CONTRE le prix.
+            # Calcule sans nouveau tirage aleatoire : le chemin des prix reste le meme.
+            hk = ((k // 12) * 2654435761 + 12345) % 160
+            if hk in (0, 80):                                   # une heure de ventes (achats) agressives massives
+                tb = v * (0.1 if hk == 0 else 0.9)
+            elif (k * 40503) % 400 == 0:                        # une bougie isolee au flux inverse
+                tb = v * (0.5 - 0.45 * (1 if r > 0 else -1))
             raw.append((o, h, l, c, v, tb))
             px = c
         scale = TARGET.get(symbol, 100.0) / raw[-1][3]

@@ -81,6 +81,39 @@ def flow_chip(d: dict):
     return chip("flow", "Positionnement", "Flux d'ordres (acheteurs agressifs, 24 h)", fr(b, 1) + " %", note, "")
 
 
+def _px(v):
+    return fr(v, 0 if v >= 1000 else 2 if v >= 1 else 4)
+
+
+def absorb_chip(d: dict):
+    """V21 : absorption recente (delta fort contre le sens de la bougie, en 4 h ou en 1 h), avec la mesure faite sur ce marche."""
+    a = d.get("absorb")
+    if not a or not a.get("real") or not a.get("event"):
+        return None
+    e, st = a["event"], a.get("study") or {}
+    bull = e["side"] == "bull"
+    tfn = {"1h": "1 heure", "4h": "4 heures"}.get(a["tf"], a["tf"])
+    age = (a["now"] - e["t"]) / 3_600_000
+    qty = abs(e["delta"])
+    q = f"{qty:,.0f}".replace(",", " ") if qty >= 100 else f"{qty:.1f}".replace(".", ",")
+    note = (f"Bougie de {tfn} : {q} {a.get('base', '')} {'vendus' if bull else 'achetés'} de plus de façon agressive (delta à {fr(abs(e['z']), 1)} écarts-types), "
+            f"et pourtant la bougie finit en {'hausse' if bull else 'baisse'} : des ordres passifs ont tout absorbé vers {_px(e['price'])}."
+            + (" Au plus bas des 12 dernières bougies." if bull and e.get("extreme") else " Au plus haut des 12 dernières bougies." if e.get("extreme") else ""))
+    ev = "contexte"
+    s = st.get(e["side"]) if st else None
+    if s and s.get("up") is not None:
+        mv = "monte" if bull else "baisse"
+        note += (f" Mesuré sur ce marché ({st.get('unit')}{', données simulées' if a.get('simulated') else ''}) : dans les {st.get('primary', 4)} bougies suivantes, le prix {mv} "
+                 f"{fr(s['up'] * 100, 0)} % du temps, contre {fr(s['upCtl'] * 100, 0)} % après une bougie semblable au flux ordinaire")
+        note += " (effet net et stable)." if s["verdict"] == "net" else " (effet contraire)." if s["verdict"] == "contraire" else " : pas d'écart démontré."
+        if s["verdict"] == "net" and not a.get("simulated"):
+            ev = "indice"
+    else:
+        note += " Pas encore mesuré sur ce marché (calcul en tâche de fond après le démarrage)."
+    return chip("absorb", "Positionnement", "Absorption (delta contre le prix)", f"{'acheteuse' if bull else 'vendeuse'} · {tfn} · il y a {fr(age, 0)} h",
+                note=note, tone="up" if bull else "dn", evidence=ev)
+
+
 def liq_chip(d: dict):
     ctx = d.get("ctx") or {}
     r = (ctx.get("liqReal") or {}).get("24h")
@@ -233,7 +266,7 @@ def squeeze_block(d: dict):
 
 def build(d: dict) -> dict:
     """Entrees : voir engine/lecture.py (en-tete) et Service.lecture."""
-    chips = [c for c in (funding_chip(d), oi_chip(d), flow_chip(d), liq_chip(d)) if c]
+    chips = [c for c in (funding_chip(d), oi_chip(d), flow_chip(d), absorb_chip(d), liq_chip(d)) if c]
     chips += options_chips(d)
     chips += [c for c in (macro_chip(d), week_chip(d), fng_chip(d), dom_chip(d)) if c]
     chips += indicator_chips(d)

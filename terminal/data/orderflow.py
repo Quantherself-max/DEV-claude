@@ -212,11 +212,170 @@ class OkxBook:
                     [(float(p), float(v[0]), v[1]) for p, v in self.asks.items()])
 
 
+def _nice(raw: float) -> float:
+    if raw <= 0:
+        return 1.0
+    e = 10 ** math.floor(math.log10(raw))
+    for m in (1, 2, 2.5, 5, 10):
+        if m * e >= raw * 0.999:
+            return round(m * e, 12)
+    return 10 * e
+
+
+class AbsorbWatch:
+    """Absorptions en direct (V21), au prix pres : sur les WINDOW dernieres secondes, beaucoup de volume agressif d'un seul cote a une meme
+    tranche de prix (au moins deux fois plus que l'autre cote), sans que le prix passe au travers (jamais plus d'une tranche au-dela depuis
+    le premier echange a ce prix). Ensuite : CONFIRMEE (le prix s'eloigne de 6 tranches dans le sens de l'absorption), CASSEE (il traverse
+    de 2 tranches) ou TENUE (ni l'un ni l'autre en CONFIRM secondes). Une seule absorption signalee par episode a un prix. « Reapprovisionnee » : il s'est execute a ce prix au moins deux fois
+    la taille encore affichee dans le carnet Binance : un gros ordre passif se recharge (souvent un ordre cache, « iceberg »).
+    Seuil : 95e centile des plus gros volumes d'un cote par tranche (releve toutes les 5 s sur la derniere heure), avec un plancher en
+    dollars par paire. Tranche : environ 0,02 % du prix. Rien n'est mesure sur l'historique (il faudrait chaque transaction et le carnet)."""
+    WINDOW = 60.0
+    CONFIRM = 300.0
+    SAMPLE = 5.0
+    MIN_SAMPLES = 60
+    AWAY = 6                                             # confirmee : le prix s'eloigne de 6 tranches (environ 0,12 %)
+    FLOOR = {"BTC": 1_500_000.0, "ETH": 600_000.0, "SOL": 300_000.0}
+    DEFAULT_FLOOR = 150_000.0
+
+    def __init__(self, sym: str, book_size=None):
+        self.sym = sym
+        self.floor = self.FLOOR.get(base_of(sym.upper()), self.DEFAULT_FLOOR)
+        self.book_size = book_size                       # (bas, haut, "bid" | "ask") -> taille affichee, ou None
+        self.step = None
+        self.trades: deque = deque()                     # (t_s, tranche, quantite, cote)
+        self.agg: dict = {}                              # tranche -> [achat, vente agressifs, debut vendeurs dominants, debut acheteurs dominants, deja signale (vendeurs, acheteurs)]
+        self.kmin: deque = deque()                       # minimum / maximum glissants des tranches echangees : (t_s, tranche)
+        self.kmax: deque = deque()
+        self.samples: deque = deque(maxlen=720)
+        self.thr = None
+        self.next_sample = 0.0
+        self.events: deque = deque(maxlen=400)
+        self.open: dict = {}
+        self.seq = 0
+
+    def _since(self, dq, t0):
+        """Minimum (ou maximum) des tranches echangees depuis t0 : premier element de la file monotone a partir de t0."""
+        for t, k in dq:
+            if t >= t0:
+                return k
+        return None
+
+    def on_trade(self, t_s: float, price: float, qty: float, side: str):
+        if self.step is None:
+            self.step = _nice(price * 0.0002)
+        k = math.floor(price / self.step + 1e-9)
+        self.trades.append((t_s, k, qty, side))
+        a = self.agg.get(k)
+        if a is None:
+            a = self.agg[k] = [0.0, 0.0, None, None, False, False]
+        a[0 if side == "buy" else 1] += qty
+        self._mark(a, t_s, price)
+        while self.kmin and self.kmin[-1][1] >= k:
+            self.kmin.pop()
+        self.kmin.append((t_s, k))
+        while self.kmax and self.kmax[-1][1] <= k:
+            self.kmax.pop()
+        self.kmax.append((t_s, k))
+        cut = t_s - self.WINDOW
+        while self.trades and self.trades[0][0] < cut:
+            _t, k0, q0, s0 = self.trades.popleft()
+            b = self.agg.get(k0)
+            if b is not None:
+                b[0 if s0 == "buy" else 1] -= q0
+                if b[0] <= 1e-12 and b[1] <= 1e-12:
+                    del self.agg[k0]
+                else:
+                    self._mark(b, t_s, price)
+        while self.kmin and self.kmin[0][0] < cut:
+            self.kmin.popleft()
+        while self.kmax and self.kmax[0][0] < cut:
+            self.kmax.popleft()
+        if t_s >= self.next_sample:
+            self.next_sample = t_s + self.SAMPLE
+            if self.agg:
+                self.samples.append(max(max(b[0], b[1]) for b in self.agg.values()) * price)
+                if len(self.samples) >= self.MIN_SAMPLES:
+                    srt = sorted(self.samples)
+                    self.thr = max(self.floor, srt[int(0.95 * (len(srt) - 1))])
+        self._resolve(k, t_s)
+        self._check(k, t_s, price)
+
+    def _mark(self, b, t_s, price):
+        """Debut de la domination d'un cote a une tranche (au moins 30 % du seuil et deux fois l'autre cote) ; oublie sous 20 % ou 1,5 fois."""
+        if self.thr is None:
+            return
+        for i, (mine, other) in ((2, (b[1], b[0])), (3, (b[0], b[1]))):
+            usd = mine * price
+            if b[i] is None:
+                if usd >= 0.3 * self.thr and mine >= 2 * other:
+                    b[i] = t_s
+            elif usd < 0.2 * self.thr or mine < 1.5 * other:
+                b[i], b[i + 2] = None, False                     # fin de l'episode : une nouvelle absorption pourra etre signalee ici
+
+    def _resolve(self, k, t_s):
+        for key, ev in list(self.open.items()):
+            k0, side = key
+            if side == "bull":
+                st = "cassée" if k <= k0 - 2 else "confirmée" if k >= k0 + self.AWAY else None
+            else:
+                st = "cassée" if k >= k0 + 2 else "confirmée" if k <= k0 - self.AWAY else None
+            if st is None and t_s - ev["t"] / 1000.0 > self.CONFIRM:
+                st = "tenue"
+            if st:
+                ev["status"], ev["end"] = st, int(t_s * 1000)
+                del self.open[key]
+            else:
+                b = self.agg.get(k0)
+                if b:                                            # le volume absorbe continue de grossir tant que l'absorption dure
+                    ev["buy"], ev["sell"] = max(ev["buy"], b[0]), max(ev["sell"], b[1])
+                    ev["delta"] = ev["buy"] - ev["sell"]
+
+    def _check(self, k, t_s, price):
+        if self.thr is None:
+            return
+        b = self.agg.get(k)
+        if not b:
+            return
+        buy, sell, t_bull, t_bear, done_bull, done_bear = b
+        if t_bull is not None and not done_bull and sell * price >= self.thr and sell >= 2 * buy:
+            lo = self._since(self.kmin, t_bull)                  # depuis que les vendeurs dominent ici, le prix n'est pas passe au travers
+            if lo is not None and lo >= k - 1 and self._open(k, "bull", t_s, price, buy, sell):
+                b[4] = True                                      # une seule absorption par episode a ce prix
+        if t_bear is not None and not done_bear and buy * price >= self.thr and buy >= 2 * sell:
+            hi = self._since(self.kmax, t_bear)
+            if hi is not None and hi <= k + 1 and self._open(k, "bear", t_s, price, buy, sell):
+                b[5] = True
+
+    def _open(self, k, side, t_s, price, buy, sell):
+        for kk in (k, k - 1, k + 1):                             # une seule absorption en cours par prix (et par tranche voisine)
+            if (kk, side) in self.open:
+                return False
+        size = None
+        if self.book_size:
+            try:
+                size = self.book_size(k * self.step, (k + 1) * self.step, "bid" if side == "bull" else "ask")
+            except Exception:
+                size = None
+        done = sell if side == "bull" else buy
+        self.seq += 1
+        ev = {"id": self.seq, "t": int(t_s * 1000), "price": round(k * self.step, 10), "step": self.step, "side": side,
+              "buy": buy, "sell": sell, "delta": buy - sell, "usd": round(done * price), "status": "en cours", "end": None,
+              "shown": size, "refill": (bool(size) and done >= 2 * size) if size is not None else None}
+        self.open[(k, side)] = ev
+        self.events.append(ev)
+        return True
+
+    def recent(self, since_ms: int = 0, limit: int = 200):
+        return [dict(e) for e in self.events if e["t"] >= since_ms][-limit:]
+
+
 class Tape:
     """Ruban d'une paire (transactions agregees Binance)."""
 
-    def __init__(self, sym: str, now=time.time):
+    def __init__(self, sym: str, now=time.time, book_size=None):
         self.sym, self.now = sym, now
+        self.absorb = AbsorbWatch(sym, book_size)
         self.lock = threading.Lock()
         self.recent: deque = deque()                     # (t_reception_s, cote) des 60 dernieres secondes
         self.notional: deque = deque(maxlen=5000)
@@ -243,6 +402,7 @@ class Tape:
                 self.lat.append(recv_s * 1000 - e_ms)
             f = self.foot.setdefault(price, [0.0, 0.0])
             f[0 if side == "buy" else 1] += qty
+            self.absorb.on_trade(t_ms / 1000.0, price, qty, side)
             self.notional.append(usd)
             self.n_seen += 1
             if self.n_seen % 250 == 0:
@@ -262,6 +422,10 @@ class Tape:
     def reset(self):
         with self.lock:
             self.foot, self.since = {}, int(self.now() * 1000)
+
+    def absorptions(self, since_ms: int = 0):
+        with self.lock:
+            return self.absorb.recent(since_ms)
 
     def latency(self):
         return _median(self.lat)
@@ -310,10 +474,20 @@ class OrderFlow:
         self.ws_public, self.okx_ws, self.ctx, self.now = ws_public.rstrip("/"), okx_ws, ssl_context, now
         self.books = {s: BinanceBook(s, fetch_snapshot, threaded, now) for s in self.symbols}
         self.okx = {okx_inst(s): OkxBook(okx_inst(s)) for s in self.symbols}
-        self.tapes = {s: Tape(s, now) for s in self.symbols}
+        self.tapes = {s: Tape(s, now, self._book_size(s)) for s in self.symbols}
         self.clients: dict = {}
         self._ping = 0.0
         self.okx_error = ""
+
+    def _book_size(self, sym):
+        """Taille affichee dans le carnet Binance entre deux prix, cote acheteur (bid) ou vendeur (ask) ; None si le carnet n'est pas synchronise."""
+        def size(lo, hi, side):
+            bk = self.books[sym]
+            if not bk.synced:
+                return None
+            bids, asks = bk.levels()
+            return sum(q for p, q in (bids if side == "bid" else asks) if lo <= p < hi)
+        return size
 
     # --- messages ---
     def on_depth(self, text: str):
@@ -377,7 +551,8 @@ class OrderFlow:
                "book": {"source": "Binance", "synced": bk.synced, "error": bk.error, "resyncs": bk.resyncs},
                "orders": {"source": "OKX", "synced": ok.synced, "check": ok.check, "error": ok.error or self.okx_error},
                "tape": tp.speed(), "latency": {"trades": tp.latency(), "book": bk.latency()}, "threshold": round(tp.thr),
-               "big": [b for b in list(tp.big) if b["t"] >= big_since][-500:]}
+               "big": [b for b in list(tp.big) if b["t"] >= big_since][-500:], "absorb": tp.absorptions(big_since),
+               "absorbThr": tp.absorb.thr}
         if mid is None or step <= 0:
             out["rows"] = []
             return out
@@ -425,6 +600,7 @@ class SimFlow:
         self.tapes = {s: Tape(s, now) for s in self.symbols}
         self.lock = threading.Lock()
         self._last = {s: now() for s in self.symbols}
+        self._episode = {s: (now() + 330.0, None) for s in self.symbols}  # V21 : episodes d'absorption fabriques (debut, (fin, cote, prix)) ; le premier apres la mise en route du seuil
 
     def _pump(self, sym):
         """Ajoute les transactions fictives ecoulees depuis le dernier appel (environ 20 par seconde)."""
@@ -438,11 +614,24 @@ class SimFlow:
         if not px:
             return
         tp = self.tapes[sym]
+        nxt, ep = self._episode[sym]
         for i in range(n):
             t = last + (i + 1) * (now - last) / n
+            if ep is None and t >= nxt:                     # de temps en temps, un gros ordre passif absorbe les agressifs pendant 25 s
+                side = "bull" if self.rnd.random() < 0.5 else "bear"
+                ep = (t + 25.0, side, round(px * (1 - 0.0003 if side == "bull" else 1 + 0.0003), 2))
+            if ep is not None and t > ep[0]:
+                nxt, ep = t + self.rnd.uniform(600, 1500), None
             p = round(px * (1 + self.rnd.gauss(0, 0.0004)), 2)
             usd = math.exp(self.rnd.gauss(8.0, 1.6))
-            tp.on_trade(p, usd / p, self.rnd.random() < 0.5, int(t * 1000), int(t * 1000) - 40, t)
+            maker = self.rnd.random() < 0.5
+            if ep is not None:
+                lvl = ep[2]
+                p = max(p, lvl) if ep[1] == "bull" else min(p, lvl)          # le prix ne passe pas au travers
+                if self.rnd.random() < 0.5:
+                    p, usd, maker = lvl, math.exp(self.rnd.gauss(11.2, 0.5)), ep[1] == "bull"   # vendeurs (acheteurs) agressifs absorbes
+            tp.on_trade(p, usd / p, maker, int(t * 1000), int(t * 1000) - 40, t)
+        self._episode[sym] = (nxt, ep)
 
     def ladder(self, sym: str, step: float, rows: int = 60, center: float | None = None, big_since: int = 0) -> dict:
         sym = sym.upper()
@@ -454,7 +643,7 @@ class SimFlow:
                "book": {"source": "simulé", "synced": True, "error": "", "resyncs": 0},
                "orders": {"source": "simulé", "synced": True, "check": True, "error": ""},
                "tape": tp.speed(), "latency": {"trades": 40, "book": 60}, "threshold": round(tp.thr),
-               "big": [b for b in list(tp.big) if b["t"] >= big_since][-500:]}
+               "big": [b for b in list(tp.big) if b["t"] >= big_since][-500:], "absorb": tp.absorptions(big_since), "absorbThr": tp.absorb.thr}
         if not px or step <= 0:
             out["rows"] = []
             return out

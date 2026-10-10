@@ -4,8 +4,8 @@ import json
 import re
 from pathlib import Path
 
-_LABEL = re.compile(r"^(backtest|strategy|avwap|indicators|rotation|squeeze|pockets|tpo)_([A-Za-z0-9]+)\.json$")
-KINDS = ("backtest", "strategy", "avwap", "indicators", "rotation", "squeeze", "pockets", "tpo")           # backtest : idees du terminal ; strategy : ta strategie (VWAP / profil de volume) ; avwap : VWAP ancres sur un mouvement d'au moins 5 % ; indicators : valeur des indicateurs (en chaine, macro) sur le prix futur ; rotation : ou va le capital, or ; squeeze : delta, CVD, volume, squeezes ; pockets : importance des poches (confluences, maturite) ; tpo : reperes du profil de marche (V19)
+_LABEL = re.compile(r"^(backtest|strategy|avwap|indicators|rotation|squeeze|pockets|tpo|absorption)_([A-Za-z0-9]+)\.json$")
+KINDS = ("backtest", "strategy", "avwap", "indicators", "rotation", "squeeze", "pockets", "tpo", "absorption")           # absorption : delta fort contre le sens de la bougie (V21) ; backtest : idees du terminal ; strategy : ta strategie (VWAP / profil de volume) ; avwap : VWAP ancres sur un mouvement d'au moins 5 % ; indicators : valeur des indicateurs (en chaine, macro) sur le prix futur ; rotation : ou va le capital, or ; squeeze : delta, CVD, volume, squeezes ; pockets : importance des poches (confluences, maturite) ; tpo : reperes du profil de marche (V19)
 
 
 def base_of(symbol: str) -> str:

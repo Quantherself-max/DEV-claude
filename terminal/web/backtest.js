@@ -10,7 +10,7 @@ const Backtest = (() => {
   const dateFr = ms => new Date(ms).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit', year: 'numeric'});
   let LT = null, list = null, label = null, kind = 'backtest', rep = null, loading = false, error = null, sortKey = null, showAll = false;
 
-  const repKind = r => ({'vwap-strategy': 'strategy', 'avwap-swing': 'avwap', indicators: 'indicators', rotation: 'rotation', squeeze: 'squeeze', pockets: 'pockets', tpo: 'tpo'})[r.kind] || 'backtest';
+  const repKind = r => ({'vwap-strategy': 'strategy', 'avwap-swing': 'avwap', indicators: 'indicators', rotation: 'rotation', squeeze: 'squeeze', pockets: 'pockets', tpo: 'tpo', absorption: 'absorption'})[r.kind] || 'backtest';
 
   async function show() {
     if (loading) return;
@@ -469,6 +469,42 @@ const Backtest = (() => {
 
   // ---------- rapport « importance des poches » (V14) ----------
   const VCLS = v => /^effet \+|^indice \+/.test(v) ? 'up' : /^effet −|^indice −/.test(v) ? 'dn' : 'muted';
+  // ---------- V21 : absorptions (delta fort contre le sens de la bougie) ----------
+  const ABS_TF = {'5m': '5 minutes', '15m': '15 minutes', '1h': '1 heure', '4h': '4 heures', '1d': '1 jour'};
+  const ABS_V = {net: ['up', 'mesuré'], contraire: ['amb', 'effet contraire'], instable: ['amb', 'instable'], hasard: ['muted', '≈ hasard'], insuffisant: ['muted', 'trop peu de cas']};
+  function absVerdict(r) {
+    const who = r.origin === 'terminal' ? 'mesure faite par ton terminal sur son historique Binance (bougies 1 h depuis 2019, regroupées en 4 h)' : 'mesure de l\'outil tools/run_absorption_study.py (historique 1 minute de Binance Vision)';
+    return `<section class="card btv warn"><div class="bthead"><h2>Absorptions : delta fort contre le sens de la bougie <small>${esc(r.label || r.symbol)} · ${esc(r.period.text)} · ${esc(r.source || '')}</small></h2></div>
+      <ul class="btnotes">${(r.summary || []).map(x => { const v = ABS_V[x.verdict] || ['muted', x.verdict]; return `<li><b class="${v[0]}">${v[1]}</b> — ${esc(x.text)}</li>`; }).join('')}</ul>
+      <div class="muted small">${esc(who)}. Chaque absorption est comparée aux 20 bougies les plus proches dans le temps qui ont le même sens, le même corps (en ATR, ±30 %) et le même volume relatif (±30 %), mais un delta ordinaire : on isole ce qu'ajoute le delta. « Mesuré » = écart au-delà de 2 erreurs-types ET de même signe sur les deux moitiés de la période.</div></section>`;
+  }
+  function absTable(r, k) {
+    const x = (r.tfs || {})[k];
+    if (!x || !x.ready) return '';
+    const H = x.horizons.map(String);
+    const pair = o => o && o.rate != null ? `${pc(o.rate)} <span class="muted">/ ${pc(o.control)}</span>${o.t != null && Math.abs(o.t) >= 2 ? ` <b class="${o.t > 0 ? 'up' : 'dn'}">${o.t > 0 ? '▲' : '▼'}</b>` : ''}` : '—';
+    const ret = o => o && o.mean != null ? `${num(o.mean, 2)} % <span class="muted">/ ${num(o.control, 2)} %</span>${o.t != null && Math.abs(o.t) >= 2 ? ` <b class="${o.t > 0 ? 'up' : 'dn'}">${o.t > 0 ? '▲' : '▼'}</b>` : ''}` : '—';
+    const side = sd => {
+      const s = x[sd], up = sd === 'bull';
+      const row = (name, f) => `<tr><td>${name}</td>${H.map(h => `<td class="r">${f(s.h[h] || {})}</td>`).join('')}</tr>`;
+      return `<div class="sect">${up ? 'Absorption acheteuse (vendeurs absorbés)' : 'Absorption vendeuse (acheteurs absorbés)'} — ${s.n} cas (${num(s.per1000, 1)} pour 1 000 bougies), dont ${s.extreme} au plus ${up ? 'bas' : 'haut'} des 12 dernières bougies</div>
+        <table class="t"><tr><th>Dans les … bougies suivantes</th>${H.map(h => `<th class="r">${h}</th>`).join('')}</tr>
+        ${row(`le prix ${up ? 'monte' : 'baisse'} / témoin`, o => pair(o.up))}
+        ${row(`le plus ${up ? 'bas' : 'haut'} de la bougie tient / témoin`, o => pair(o.hold))}
+        ${row('rendement moyen dans son sens / témoin', o => ret(o.ret))}</table>
+        <div class="small">Sur ${x.primary} bougies : 1re moitié ${pair(s.first.up)}, 2e moitié ${pair(s.second.up)} ; seulement au plus ${up ? 'bas' : 'haut'} : ${pair(s.extremeOnly.up)}.</div>`;
+    };
+    return `<section class="card"><h3>Bougies de ${ABS_TF[k] || k} <small class="muted">${x.bars} bougies · ${esc(new Date(x.from).toISOString().slice(0, 10))} → ${esc(new Date(x.to).toISOString().slice(0, 10))} · delta d'au moins ${num(x.zMin, 1)} écarts-types contre la bougie</small></h3>
+      ${side('bull')}${side('bear')}
+      <div class="muted small">▲ / ▼ : écart au-delà de 2 erreurs-types. Témoin : bougies semblables au flux ordinaire. Toutes bougies confondues, le prix monte ${pc((x.base || {})[String(x.primary)])} du temps sur ${x.primary} bougies.</div></section>`;
+  }
+  function absMethod(r) {
+    return `<section class="card"><h3>Méthode</h3><ul class="btnotes">
+      <li><b>Absorption</b> : sur une bougie, le delta (volume acheteur agressif − volume vendeur agressif, donnée réelle de Binance) est d'au moins 2 écarts-types (échelle : les 96 bougies précédentes) et va CONTRE le sens de la bougie : très vendeur sur une bougie qui finit en hausse (les vendeurs agressifs ont été absorbés par des acheteurs passifs), très acheteur sur une bougie qui finit en baisse.</li>
+      <li><b>Ce qui est mesuré</b> : le sens du prix dans les bougies suivantes, et si le plus bas (plus haut) de la bougie d'absorption tient, face à des bougies semblables au flux ordinaire. Rien du futur dans la détection.</li>
+      <li><b>En direct</b>, le terminal repère aussi les absorptions au prix près (volume agressif absorbé à un prix en moins d'une minute, ordre réapprovisionné) : elles ne sont pas mesurées sur l'historique, faute d'archive de chaque transaction et du carnet.</li>
+      <li><b>Pour aller plus loin</b> (5 et 15 minutes, plusieurs années) : <code>python tools/fetch_history.py SOLUSDT</code> puis <code>python tools/run_absorption_study.py SOLUSDT</code> ; ce rapport remplace alors celui du terminal.</li></ul></section>`;
+  }
   // ---------- V19 : reperes du profil de marche (TPO) ; V20 : semaine et mois, temoins apparies ----------
   const TPO_KIND = {W: "séances d'1 semaine (lundi 00 h UTC, tranches de 4 heures)", M: "séances d'1 mois (tranches d'1 jour)", D: "séances d'1 jour (tranches de 30 minutes)",
     '4h': 'séances de 4 heures (tranches de 5 minutes)', '1h': "séances d'1 heure (tranches de 5 minutes)"};
@@ -597,13 +633,14 @@ const Backtest = (() => {
     if (loading && !rep) { root.innerHTML = '<section class="card"><div class="muted">Chargement du rapport…</div></section>'; return; }
     if (!list || !list.length) { root.innerHTML = '<section class="card"><h2>Backtest</h2><div class="muted">Aucun rapport trouvé. Lance <code>python tools/run_study.py BTCUSDT</code> après avoir téléchargé l\'historique (<code>python tools/fetch_history.py BTCUSDT</code>).</div></section>'; return; }
     if (!rep) return;
-    const kname = k => k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : k === 'indicators' ? 'indicateurs (en chaîne, macro, liquidité)' : k === 'rotation' ? 'où va l\'argent (rotation, or)' : k === 'squeeze' ? 'delta, CVD et squeezes' : k === 'pockets' ? 'importance des poches (confluences, âge)' : k === 'tpo' ? 'repères du profil de marché (TPO)' : 'idées du terminal';
+    const kname = k => k === 'absorption' ? 'absorptions (delta contre le prix)' : k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : k === 'indicators' ? 'indicateurs (en chaîne, macro, liquidité)' : k === 'rotation' ? 'où va l\'argent (rotation, or)' : k === 'squeeze' ? 'delta, CVD et squeezes' : k === 'pockets' ? 'importance des poches (confluences, âge)' : k === 'tpo' ? 'repères du profil de marché (TPO)' : 'idées du terminal';
     const sel = `<div class="btbar"><label>Rapport <select id="btSel">${list.map(x => `<option value="${esc(x.kind)}|${esc(x.label)}" ${x.label === label && x.kind === kind ? 'selected' : ''}>${esc(x.label)} · ${kname(x.kind)}${x.own ? ' (calculé sur tes données)' : ' (livré avec le terminal)'}</option>`).join('')}</select></label>
       <span class="muted small">Calculé le ${dateFr(rep.computedAt)} en ${rep.seconds < 90 ? rep.seconds + ' s' : Math.round(rep.seconds / 60) + ' min'}</span></div>`;
     if (rep.kind === 'vwap-strategy') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + stratHedge(rep) + stratMethod(rep) + '</div>'; return; }
     if (rep.kind === 'rotation') { root.innerHTML = sel + '<div class="btgrid">' + rotVerdict(rep) + rotMap(rep) + rotGold(rep) + rotTargets(rep) + rotMethod(rep) + '</div>'; drawRotation(rep); return; }
     if (rep.kind === 'pockets') { root.innerHTML = sel + '<div class="btgrid">' + pkVerdict(rep) + pkTable(rep, 'reaction') + pkTable(rep, 'attraction') + pkSweep(rep) + pkMethod(rep) + '</div>'; return; }
     if (rep.kind === 'tpo') { root.innerHTML = sel + '<div class="btgrid">' + tpoVerdict(rep) + ['W', 'M', 'D', '4h', '1h'].map(k => tpoTable(rep, k)).join('') + tpoMethod(rep) + '</div>'; return; }
+    if (rep.kind === 'absorption') { root.innerHTML = sel + '<div class="btgrid">' + absVerdict(rep) + ['5m', '15m', '1h', '4h', '1d'].map(k => absTable(rep, k)).join('') + absMethod(rep) + '</div>'; return; }
     if (rep.kind === 'squeeze') { root.innerHTML = sel + '<div class="btgrid">' + sqVerdict(rep) + sqEvents(rep) + sqTargets(rep) + sqMethod(rep) + '</div>'; return; }
     if (rep.kind === 'indicators') { root.innerHTML = sel + '<div class="btgrid">' + indVerdict(rep) + indTable(rep) + indMethod(rep) + '</div>'; return; }
     if (rep.kind === 'avwap-swing') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + reactionCard(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + swingMethod(rep) + '</div>'; return; }

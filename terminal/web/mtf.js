@@ -148,11 +148,12 @@ const MTF = (() => {
       const per = SEC[this.tf], ts = this.chart.timeScale();
       const xOf = ms => { const bt = Math.floor(ms / 1000 / per) * per, x = ts.timeToCoordinate(bt); return x != null ? x : (this.bars.length && bt < this.bars[0].time ? 0 : null); };
       Panel.drawTpo(ctx, this.series, xOf, d.tpo, Panel.tpoKinds(o), plotW - (r.cols.length ? r.used + 22 : 0) - 4, h, t, true);
+      if (o.absorb && d.absorb) Panel.absMarks(ctx, this.series, xOf, d.absorb, plotW - (r.cols.length ? r.used + 22 : 0) - 4, h, t, true);   // V21
     }
     tick() {
       if (!this.data) return;
       const s = [this.series.priceToCoordinate(this.data.price) | 0, this.body.clientWidth, this.body.clientHeight, this.chart.timeScale().width(), LT.st.theme,
-        Panel.profKinds(LT.st.mainOpts).join('') + Panel.tpoKinds(LT.st.mainOpts).join(''),
+        Panel.profKinds(LT.st.mainOpts).join('') + Panel.tpoKinds(LT.st.mainOpts).join('') + (LT.st.mainOpts.absorb ? 'A' : ''),
         (() => { const r = this.chart.timeScale().getVisibleLogicalRange(); return r ? r.from.toFixed(1) + ':' + r.to.toFixed(1) : ''; })()].join();
       if (s !== this.sig) { this.sig = s; this.draw(); }
       const per = SEC[this.tf], now = LT.serverNow() / 1000, left = Math.max(0, Math.ceil(Math.floor(now / per) * per + per - now));

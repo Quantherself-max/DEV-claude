@@ -238,6 +238,7 @@ class Panel {
       `<label title="VWAP du jour et bandes à ±1 écart-type"><input type="checkbox" data-mo="vwap"> VWAP</label>` +
       `<label title="Carnet d'ordres en direct aligné sur les prix : taille en attente (Binance), nombre d'ordres (OKX), volume échangé à chaque prix"><input type="checkbox" data-mo="dom"> Carnet</label>` +
       `<label title="Gros ordres exécutés (losanges) : bleu = acheteur agressif, blanc = vendeur agressif"><input type="checkbox" data-mo="big"> Gros ordres</label>` +
+      `<label title="Absorptions : delta fort CONTRE le sens de la bougie (triangle vert = vendeurs absorbés, rouge = acheteurs absorbés) et, en direct, volume agressif absorbé à un prix sans qu'il passe au travers (cercles). Survole pour le détail et la mesure"><input type="checkbox" data-mo="absorb"> Absorptions</label>` +
       `<button class="mini" data-flowreset title="Remettre à zéro le volume échangé affiché dans le carnet">↺ volumes</button>`;
     if (kind === 'liq') return `<span class="seg mini" data-hours><button data-h="24">24 h</button><button data-h="72">3 j</button><button data-h="168">7 j</button><button data-h="0">29 j</button></span>` +
       `<label><input type="checkbox" data-lq="pools"> Poches</label><label><input type="checkbox" data-lq="sweeps"> Balayages</label>` +
@@ -624,6 +625,7 @@ class Panel {
     });
     this.drawVwapTags(L, h);
     this.drawBig(L, h);
+    this.drawAbsorb(L, h);
     this.drawFlow(L, h, plotW - sessW);
     this.drawFooter(L, h);
   }
@@ -689,6 +691,83 @@ class Panel {
       ctx.fillText(LT.fmtUsdShort(b.usd), x, y + 0.5);
     });
   }
+  // ---- V21 : absorptions. Sur les bougies : delta fort CONTRE le sens de la bougie (triangle vert sous la bougie = vendeurs absorbes,
+  // rouge au-dessus = acheteurs absorbes ; plein = forte ou au plus bas / haut ; anneau orange = sur une zone de confluence).
+  // En direct (ruban + carnet) : cercle au prix ou le volume agressif a ete absorbe (pointille = en cours, plein = confirmee,
+  // barre = cassee, losange = ordre passif reapprovisionne). Bulle au survol. ----
+  drawAbsorb(L, h) {
+    const st = LT.st, ctx = this.ctx, t = this.th(), rgba = LT.rgba, d = L.d, xr = (this.rightLimit || L.plotW) - 2;
+    this.absHits = [];
+    if (!st.mainOpts.absorb) return;
+    const UP = [61, 220, 151], DN = [255, 107, 107], a = d.absorb || {}, sd = a.study, unit = (d.symbol || '').replace(/USDT$/, '');
+    const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+    const pct = v => v == null ? '—' : Math.round(v * 100) + ' %', n1 = v => v == null ? '—' : v.toFixed(1).replace('.', ',');
+    const VERD = {net: 'effet net et stable', contraire: 'effet contraire', instable: 'écart non confirmé', hasard: 'pas d\'écart démontré', insuffisant: 'trop peu de cas'};
+    const measured = side => {
+      const s = sd && sd[side];
+      if (!s || s.up == null) return 'Pas encore mesuré sur ce marché (calcul en tâche de fond après le démarrage).';
+      return `Mesuré sur ce marché (bougies de ${sd.unit}${a.simulated ? ', données simulées' : ''}) : dans les ${sd.primary} bougies suivantes, le prix ` +
+        `${side === 'bull' ? 'monte' : 'baisse'} ${pct(s.up)} du temps, contre ${pct(s.upCtl)} après une bougie semblable au flux ordinaire : ${VERD[s.verdict] || s.verdict}.`;
+    };
+    const sgn = v => (v > 0 ? '+' : '−') + LT.fmtQty(Math.abs(v));
+    Panel.absMarks(ctx, this.series, ms => this.timeX(ms / 1000, L), a.events, xr, h, t, false).forEach(({e, x, y, s}) => {
+      const bull = e.side === 'bull';
+      const when = new Date(e.t).toLocaleString('fr-FR', {weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'});
+      this.absHits.push({x, y, r: s + 5, html: `<b class="${bull ? 'up' : 'dn'}">Absorption ${bull ? 'acheteuse (vendeurs absorbés)' : 'vendeuse (acheteurs absorbés)'}</b><br>` +
+        `<span class="muted">bougie du ${esc(when)}</span><br>Delta <b>${sgn(e.delta)} ${esc(unit)}</b> (${n1(Math.abs(e.z))} écarts-types) et pourtant la bougie finit en ${bull ? 'hausse' : 'baisse'} : ` +
+        `${bull ? 'les vendeurs' : 'les acheteurs'} agressifs ont été absorbés par des ordres passifs vers ${LT.fmtP(e.price)}.<br>` +
+        `Volume ×${n1(e.vr)} la normale${e.extreme ? ` · au plus ${bull ? 'bas' : 'haut'} des 12 dernières bougies` : ''}${e.zone ? ' · <b>sur une zone de confluence</b>' : ''}.<br>` +
+        `<span class="muted">${esc(measured(e.side))}</span>`});
+    });
+    const f = st.flow;                                                  // en direct : ruban et carnet
+    if (!f || f.symbol !== d.symbol || !f.absorb || !f.absorb.length) return;
+    const thr = f.absorbThr || 1, ST = {'en cours': 'en cours', 'confirmée': 'confirmée : le prix s\'est éloigné dans son sens', 'cassée': 'cassée : le prix est passé au travers', 'tenue': 'tenue (5 minutes sans départ)'};
+    f.absorb.forEach(e => {
+      let x = this.timeX(e.t / 1000, L);
+      const y = this.series.priceToCoordinate(e.price + e.step / 2);
+      const bull = e.side === 'bull', col = bull ? UP : DN, r = Math.max(6, Math.min(14, 5 + 3 * Math.log2(1 + e.usd / thr))), broken = e.status === 'cassée';
+      if (x != null && x > xr && x <= L.plotW + 2) x = xr - r - 2;                // bougie en cours cachee par le carnet : cercle epingle au bord
+      if (x == null || y == null || x < 0 || x > xr || y < 6 || y > h - 30) return;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+      if (e.status === 'confirmée') { ctx.fillStyle = rgba(col, 0.28); ctx.fill(); }
+      ctx.strokeStyle = rgba(col, broken ? 0.4 : 1); ctx.lineWidth = 1.6;
+      if (e.status === 'en cours') ctx.setLineDash([3, 2]);
+      ctx.stroke(); ctx.setLineDash([]);
+      if (broken) { ctx.beginPath(); ctx.moveTo(x - r * 0.65, y + r * 0.65); ctx.lineTo(x + r * 0.65, y - r * 0.65); ctx.stroke(); }
+      if (e.refill) { ctx.fillStyle = rgba(col, 1); ctx.beginPath(); ctx.moveTo(x, y - 3.5); ctx.lineTo(x + 3.5, y); ctx.lineTo(x, y + 3.5); ctx.lineTo(x - 3.5, y); ctx.fill(); }
+      ctx.font = `600 9px ${t.font}`; ctx.fillStyle = rgba(col, broken ? 0.5 : 1); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(`${bull ? '−' : '+'}${LT.fmtUsdShort(e.usd)}`, x + r + 3, y);
+      const when = new Date(e.t).toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+      this.absHits.push({x, y, r: r + 3, html: `<b class="${bull ? 'up' : 'dn'}">Absorption en direct · ${bull ? 'vendeurs absorbés' : 'acheteurs absorbés'}</b><br>` +
+        `<span class="muted">${esc(when)} · ${LT.fmtP(e.price)} – ${LT.fmtP(e.price + e.step)}</span><br>` +
+        `${LT.fmtUsdShort(e.usd)} $ ${bull ? 'vendus' : 'achetés'} agressivement à ce prix en moins d'une minute (delta ${sgn(e.delta)} ${esc(unit)}), sans que le prix passe au travers.<br>` +
+        `Statut : <b>${esc(ST[e.status] || e.status)}</b>${e.refill ? '<br><b>Ordre réapprovisionné</b> : il s\'est exécuté au moins deux fois la taille encore affichée dans le carnet (ordre caché probable).' : ''}` +
+        `<br><span class="muted">Non mesuré sur l'historique (il faudrait chaque transaction et le carnet).</span>`});
+    });
+  }
+  // V21 : triangles d'absorption sur les bougies (graphique principal et grille multi-unites). Renvoie leurs positions.
+  static absMarks(ctx, series, xOf, events, xr, h, t, small) {
+    const rgba = LT.rgba, out = [], UP = [61, 220, 151], DN = [255, 107, 107];
+    (events || []).forEach(e => {
+      const x = xOf(e.t), yp = series.priceToCoordinate(e.price);
+      if (x == null || yp == null || x < 0 || x > xr) return;
+      const bull = e.side === 'bull', col = bull ? UP : DN, s = (small ? 2 : 3) + e.grade, y = bull ? yp + 6 + s : yp - 6 - s;
+      if (y < 6 || y > h - 30) return;
+      ctx.beginPath();
+      if (bull) { ctx.moveTo(x, y - s); ctx.lineTo(x + s, y + s * 0.85); ctx.lineTo(x - s, y + s * 0.85); }
+      else { ctx.moveTo(x, y + s); ctx.lineTo(x + s, y - s * 0.85); ctx.lineTo(x - s, y - s * 0.85); }
+      ctx.closePath();
+      ctx.fillStyle = e.grade >= 2 ? rgba(col, 0.95) : 'rgba(12,12,12,0.75)'; ctx.fill();
+      ctx.strokeStyle = rgba(col, 1); ctx.lineWidth = 1.2; ctx.stroke();
+      if (e.zone) { ctx.strokeStyle = 'rgba(255,179,0,0.9)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, y, s + 4, 0, Math.PI * 2); ctx.stroke(); }
+      if (e.grade >= 2 && !small) {
+        ctx.font = `600 9px ${t.font}`; ctx.fillStyle = rgba(col, 1); ctx.textAlign = 'center'; ctx.textBaseline = bull ? 'top' : 'bottom';
+        ctx.fillText((e.delta > 0 ? '+' : '−') + LT.fmtQty(Math.abs(e.delta)), x, bull ? y + s + 3 : y - s - 3);
+      }
+      out.push({e, x, y, s});
+    });
+    return out;
+  }
   // ---- V15 : carnet d'ordres aligne sur les prix, a gauche du profil ----
   drawFlow(L, h, xr) {
     const st = LT.st, f = st.flow, t = this.th(), ctx = this.ctx, rgba = LT.rgba, fq = LT.fmtQty;
@@ -716,6 +795,7 @@ class Panel {
       ctx.font = `500 9px ${t.font}`; ctx.textAlign = outer === 'left' ? 'left' : 'right';
       ctx.fillText(String(n), outer === 'left' ? x + 2 : x + w - 2, y);
     };
+    const absNow = st.mainOpts.absorb ? (f.absorb || []).filter(e => e.t >= Date.now() - 600000 && e.status !== 'cassée') : [];
     rows.forEach(r => {
       const [lo, bid, ask, bn, an, buy, sell] = r, hi = lo + f.step;
       const yt = this.series.priceToCoordinate(hi), yb = this.series.priceToCoordinate(lo);
@@ -723,9 +803,16 @@ class Panel {
       const y = (yt + yb) / 2, rh = Math.abs(yb - yt);
       if (y < 30 || y > h - 30) return;
       const cur = px >= lo && px < hi;
+      const ab = absNow.find(e => e.price < hi && e.price + e.step > lo);           // V21 : absorption en direct a ce prix
       if (bid > 0) { const w = bid / mxS * X.bidS[1]; ctx.fillStyle = rgba(t.vpBuy, 0.13); ctx.fillRect(X.bidS[0] + X.bidS[1] - w, yt + 1, w, Math.max(1, rh - 2)); }
       if (ask > 0) { const w = ask / mxS * X.askS[1]; ctx.fillStyle = rgba(t.vpSell, 0.09); ctx.fillRect(X.askS[0], yt + 1, w, Math.max(1, rh - 2)); }
       if (cur) { ctx.fillStyle = t.price; ctx.fillRect(X.px[0] + 2, yt + 1, X.px[1] - 4, Math.max(1, rh - 2)); }
+      if (ab) {                                                                      // apres le prix courant : toujours visible
+        const ac = ab.side === 'bull' ? [61, 220, 151] : [255, 107, 107];
+        if (!cur) { ctx.fillStyle = rgba(ac, 0.2); ctx.fillRect(X.px[0] + 2, yt + 1, X.px[1] - 4, Math.max(1, rh - 2)); }
+        ctx.fillStyle = rgba(ac, 0.95); ctx.fillRect(X.px[0] - 2, yt + 1, 4, Math.max(1, rh - 2));
+        ctx.font = `700 8px ${t.font}`; ctx.textAlign = 'left'; ctx.fillText('A', X.px[0] + 4, y);
+      }
       txt.y = y; ctx.font = `500 10.5px ${t.font}`;
       ctx.shadowColor = 'rgba(0,0,0,0.85)'; ctx.shadowBlur = cur ? 0 : 3;              // fond presque transparent : un halo garde les chiffres lisibles
       txt('px', LT.fmtP(lo), 'center', cur ? t.priceText : t.label);
@@ -914,6 +1001,14 @@ class Panel {
   }
   onMove(ev) {
     const st = LT.st, H = st.heat, tip = this.tipEl;
+    if (this.kind === 'main') {                                         // V21 : bulle des absorptions
+      const r = this.body.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+      const hit = (this.absHits || []).find(q => Math.abs(q.x - x) <= q.r && Math.abs(q.y - y) <= q.r);
+      if (!hit) { tip.hidden = true; return; }
+      tip.innerHTML = hit.html; tip.hidden = false;
+      tip.style.left = Math.max(4, Math.min(r.width - 340, x + 14)) + 'px'; tip.style.top = Math.max(4, Math.min(r.height - 190, y - 40)) + 'px';
+      return;
+    }
     if (this.kind !== 'liq' || !H || !H.ready || !st.data) { tip.hidden = true; return; }
     const r = this.body.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top, L = this.layout();
     if (!L || x > L.plotW) { tip.hidden = true; return; }

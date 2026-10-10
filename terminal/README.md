@@ -1,9 +1,10 @@
-# Liq Terminal (V20)
+# Liq Terminal (V21)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Absorptions avec le delta** (V21) : sur le graphique principal, chaque bougie dont le delta (volume acheteur agressif − vendeur agressif, donnée réelle de Binance) va fortement CONTRE son sens est marquée (vendeurs absorbés : triangle vert ; acheteurs absorbés : triangle rouge), et en direct le terminal repère au prix près les gros volumes agressifs absorbés sans que le prix passe au travers (cercles, et repère dans le carnet). Le terminal **mesure lui-même** sur ton historique Binance si ces absorptions annoncent la suite (voir « V21 » plus bas).
 - **TPO de la semaine et du mois** (V20) : la vue **▥ TPO** affiche maintenant les profils de marché **du mois** (une lettre par jour) et **de la semaine** (lundi 00 h UTC, une lettre par tranche de 4 heures, « première heure » = le lundi), et leurs **single prints** sont tracées en priorité sur les graphiques et dans les confluences ; mesure sur **14 ans de bitcoin** de ce qu'elles valent vraiment (voir « V20 » plus bas).
 - **TPO complet et mesuré, profils de volume et zones plus précis** (V19) : vue **▥ TPO** refaite (zoom, séances plus anciennes, volume et delta à chaque prix, première heure et objectifs, type de journée, profil composite et ses zones fortes et faibles, POC vierges) avec ce que **10 ans de bitcoin** disent de chaque repère ; profils de volume répartis selon le trajet des bougies, nœuds de volume, POC évolutif ; zones de confluence avec **prix clé**, cœur et prix le plus échangé ; carnet d'ordres presque transparent (voir « V19 » plus bas).
 - **Bilan macro de la semaine** (V18) : menu **Analyse → Bilan macro de la semaine**. Chaque semaine : les annonces avec consensus, chiffre précédent et **chiffre publié** (base officielle de la Fed de Saint-Louis), la réaction mesurée des marchés, un tableau de bord par thème (inflation, emploi, croissance, Fed et taux, dollar, liquidité, crédit, énergie), les marchés et la crypto de la semaine, **ce que cela engendre**, une **mesure** de ce qui a vraiment compté pour le bitcoin, la semaine prochaine, et un commentaire facultatif de Claude (voir « V18 » plus bas).
@@ -113,6 +114,35 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V21 : les absorptions, avec le delta
+
+Une **absorption**, c'est beaucoup d'ordres **agressifs** d'un côté (des ventes au marché, par exemple), et pourtant le prix ne va pas dans leur sens : en face, des ordres **passifs** (souvent cachés et rechargés au fur et à mesure) ont tout encaissé. Le terminal les repère de deux façons.
+
+### Sur les bougies (case **Absorptions** du graphique principal, cochée par défaut)
+- **Absorption acheteuse** (les vendeurs sont absorbés) : delta d'au moins **2 écarts-types** de la normale des 96 bougies précédentes, très **vendeur**, sur une bougie qui finit pourtant en **hausse** → triangle **vert** sous la bougie.
+- **Absorption vendeuse** (les acheteurs sont absorbés) : delta très **acheteur** sur une bougie qui finit en **baisse** → triangle **rouge** au-dessus.
+- Triangle **plein** et chiffre du delta : absorption forte (3 écarts-types ou plus) ou **au plus bas / au plus haut** des 12 dernières bougies (là où une absorption a le plus de sens). **Anneau orange** : elle s'est produite sur une **zone de confluence**.
+- **Survole** un triangle : delta en pièces (BTC, SOL), écarts-types, volume par rapport à la normale, et **ce que la mesure dit** sur ce marché.
+- Toutes les unités de temps (5 minutes à 1 jour). Le delta est **réel** (volume acheteur agressif de Binance) : sans cette donnée, rien n'est affiché.
+
+### En direct, au prix près (ruban et carnet)
+- Sur les 60 dernières secondes, un gros volume agressif d'un seul côté à **un même prix** (au moins deux fois l'autre côté, au-dessus d'un seuil qui s'adapte au marché), sans que le prix passe au travers → **cercle** à ce prix sur le graphique, avec le montant absorbé, et **repère vert ou rouge dans le carnet**.
+- Ensuite : **confirmée** (cercle plein : le prix s'éloigne d'environ 0,12 % dans son sens), **cassée** (cercle barré : le prix passe au travers) ou **tenue** (ni l'un ni l'autre en 5 minutes). **Losange** au centre : il s'est exécuté à ce prix au moins **deux fois la taille encore affichée** dans le carnet Binance → l'ordre passif se recharge (ordre caché probable, « iceberg »).
+- Ces absorptions en direct ne sont **pas mesurables** sur l'historique (il faudrait l'archive de chaque transaction et du carnet) : la bulle le dit.
+
+### Ce que dit la mesure (calculée chez toi, sur tes données)
+L'historique Binance n'a pas pu être téléchargé pendant le développement (accès bloqué), et l'historique Bitstamp disponible n'a qu'un delta **estimé** : impossible d'y voir une absorption. Le terminal fait donc la mesure **lui-même**, en tâche de fond, sur son historique Binance (bougies 1 heure depuis 2019 pour le BTC, 2020 pour SOL, avec le vrai volume acheteur agressif, et regroupées en 4 heures) :
+- pour chaque absorption : le prix va-t-il dans son sens dans les **4 bougies suivantes** ? le plus bas (plus haut) de la bougie **tient-il** ?
+- face aux 20 bougies les plus proches dans le temps qui ont **le même sens, le même corps et le même volume**, mais un **delta ordinaire** : on isole exactement ce qu'ajoute le delta ;
+- verdict « mesuré » seulement si l'écart dépasse 2 erreurs-types **et** garde le même sens sur les deux moitiés de la période.
+
+Le résultat apparaît dans la bulle des triangles, dans la ligne **Absorption** de la Lecture (avec le niveau de preuve) et dans la page **Backtest** (rapport « absorptions »). Pour les petites unités de temps (5 et 15 minutes) et plus d'historique : `python tools/fetch_history.py SOLUSDT` puis `python tools/run_absorption_study.py SOLUSDT` (une à quelques minutes) ; ce rapport remplace alors la mesure du terminal.
+
+### Honnêteté
+- La détection et la mesure n'ont pas pu être vérifiées sur de vraies données Binance pendant le développement : seulement sur des données simulées et des tests (l'outil retrouve un effet quand on en met un, et n'en invente pas quand il n'y en a pas). Les premiers chiffres réels s'afficheront chez toi quelques minutes après le démarrage.
+- Les absorptions ne changent **ni les idées de trade ni Telegram** tant qu'elles ne sont pas mesurées.
+- En mode « données simulées », des absorptions sont fabriquées de temps en temps pour que l'écran serve d'exemple.
 
 ## Ce qui est nouveau en V20 : TPO de haute unité de temps (semaine et mois)
 
