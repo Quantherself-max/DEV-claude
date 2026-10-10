@@ -1,9 +1,10 @@
-# Liq Terminal (V17.1)
+# Liq Terminal (V18)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Bilan macro de la semaine** (V18) : menu **Analyse → Bilan macro de la semaine**. Chaque semaine : les annonces avec consensus, chiffre précédent et **chiffre publié** (base officielle de la Fed de Saint-Louis), la réaction mesurée des marchés, un tableau de bord par thème (inflation, emploi, croissance, Fed et taux, dollar, liquidité, crédit, énergie), les marchés et la crypto de la semaine, **ce que cela engendre**, une **mesure** de ce qui a vraiment compté pour le bitcoin, la semaine prochaine, et un commentaire facultatif de Claude (voir « V18 » plus bas).
 - **TPO et profils jour / semaine / mois** (V17) : bouton **▥ TPO** du Desk (profils de marché des séances d'1 jour, de 4 heures et d'1 heure, avec **single prints** et **poor high / poor low**), ces mêmes marques sur les graphiques et dans les confluences, et les **profils de volume de la semaine et du mois** à côté de celui du jour (voir « V17 » plus bas).
 - **Plusieurs unités de temps à la fois** (V16) : bouton **⊞ Multi-unités** du Desk, 2 à 5 graphiques du même actif côte à côte (5 min, 15 min, 1 h, 4 h, 1 jour au choix pour chacun), bougie en direct, VWAP, profil de la séance, niveaux clés, **réticule synchronisé** et ligne d'**alignement** des unités (voir « V16 » plus bas).
 - **Écran d'order flow** (V15) : style « nuit » (fond noir, bougies bleues et blanches, prix en bleu avec le décompte dessous), **profil de volume de la séance collé à l'échelle des prix** (part des acheteurs et des vendeurs, POC / VAH / VAL, plus haut et bas de séance, clôture de la veille), VWAP du jour à ±1 écart-type, **carnet d'ordres en direct aligné sur les prix** (taille en attente, nombre d'ordres, volume échangé à chaque prix), **gros ordres exécutés en losanges**, vitesse du ruban et latence (voir « V15 » plus bas).
@@ -110,6 +111,33 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V18 : le bilan macro de chaque semaine
+
+Menu **Analyse → Bilan macro de la semaine** (aussi dans les onglets de la page Analyse). Un menu en haut choisit la semaine : celle en cours (recalculée toutes les 5 minutes) et les précédentes. Une version est **archivée chaque semaine** (deux ans gardés) ; les 8 dernières semaines peuvent aussi être établies après coup, avec seulement les chiffres déjà publiés en fin de semaine.
+
+### Ce que contient le bilan
+- **Ce que cela engendre** : le « vent macro » pour les actifs à risque et les cryptos (de défavorable à favorable), avec ce qui soutient et ce qui freine, le bilan des surprises de la semaine et la lecture du marché au moment des annonces (taux et dollar).
+- **Annonces de la semaine** (heures de Paris) : consensus, chiffre précédent, **chiffre publié**, écart au consensus, ce que cela veut dire, et la réaction mesurée dans les 15 minutes (taux à 10 ans, dollar, bitcoin). Les annonces à venir affichent ce qu'un chiffre au-dessus du consensus impliquerait.
+- **Tableau de bord par thème**, chaque thème avec sa lecture (favorable, neutre, défavorable) :
+  - *Inflation* : sur un an, sous-jacente (hors alimentation et énergie), rythme des 3 derniers mois, indice préféré de la Fed, inflation anticipée par le marché ;
+  - *Emploi* : chômage, règle de Sahm (signal de récession), créations d'emplois, inscriptions au chômage, salaires, offres d'emploi ;
+  - *Croissance* : produit intérieur brut, ventes au détail ;
+  - *Fed et taux* : taux directeur, taux à 2 et 10 ans, ce que le marché anticipe, pente de la courbe, taux réel ;
+  - *Dollar* ; *Liquidité* : bilan de la Fed, compte du Trésor, prises en pension, **liquidité nette**, masse monétaire ;
+  - *Risque et crédit* : écarts de taux des entreprises à haut rendement, volatilité, conditions financières ; *Énergie* : pétrole.
+- **Marchés sur la semaine** (bitcoin, ether, solana, indices américains, or, dollar, taux à 10 ans, volatilité) et **crypto** (dominance du bitcoin, capitalisation, sentiment, stablecoins, où va l'argent).
+- **Ce qui a vraiment compté pour le bitcoin** : pour chaque moteur (liquidité, dollar, taux réel, crédit, taux à 10 ans), le rendement moyen du bitcoin la semaine suivante (et les 4 semaines suivantes) selon que le moteur était favorable ou non, avec un verdict honnête (« écart net » ou « ≈ hasard »). Calculé sur ton PC avec les vraies données.
+- **Semaine prochaine** : les annonces à surveiller et les deux scénarios.
+- **Commentaire de Claude** (bouton, facultatif, avec ta clé API de la V12) : rapports de la Fed et du reste du monde, géopolitique, fonds indiciels cotés (ETF), institutionnels, avec ses sources. Quelques centimes par commentaire, gardé avec la semaine.
+- Une ligne **« Bilan macro de la semaine »** apparaît aussi dans le panneau Lecture du Desk.
+- **Telegram** : Réglages → 3, case « Bilan macro de la semaine, le samedi matin ». **Désactivé par défaut** (Telegram reste réservé aux idées de trade tant que tu ne la coches pas).
+
+### D'où viennent les chiffres, et les limites
+- **Chiffres officiels américains** : base FRED de la Réserve fédérale de Saint-Louis, téléchargement public sans clé (30 séries, tout l'historique depuis 2016 au premier lancement, puis toutes les 3 heures et peu après chaque annonce américaine). FRED donne la dernière valeur connue : les emplois et le produit intérieur brut sont parfois **révisés** après coup. Le chiffre publié d'une annonce est figé dans l'archive dès qu'il est trouvé.
+- **Garde-fou** : le chiffre publié n'est affiché que si FRED est déjà à jour (vérifié avec le « chiffre précédent » du calendrier). Juste après une annonce, il peut rester « non fourni » une à quelques heures. Les statistiques hors États-Unis et les indices privés (ISM, confiance des consommateurs) ne sont pas dans FRED : « non fourni », mais la réaction des marchés est mesurée.
+- Les lectures « favorable / défavorable » sont des **règles classiques d'économistes, pas des prévisions**, et **les idées de trade n'en tiennent pas compte**. La mesure du bilan dit lesquelles ont réellement fait une différence pour le bitcoin ; plusieurs moteurs étant testés à la fois, un écart isolé peut être dû à la chance.
+- Je n'ai pas pu tester les vrais téléchargements FRED depuis mon environnement (accès bloqué) : tout est vérifié sur des données simulées et des tests automatiques. Si un problème apparaît, la page affiche « Sources en difficulté » avec le détail.
 
 ## V17.1 : « HTTP 404 » dans la vue TPO (ancien programme encore lancé)
 

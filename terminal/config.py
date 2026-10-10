@@ -69,6 +69,7 @@ class Config:
     signal_valid_hours: int = 48          # duree de validite d'un ordre limite
     derivs_on: bool = True                # derives multi-bourses (Deribit, Bybit, OKX, Hyperliquid) et jeux libres en chaine : lecture seule, aucune cle
     signal_direction: str = "both"        # both = achats et ventes (jamais deux biais opposes a moins de 24 h) | long = achat seulement : les ventes deviennent des « alertes pour tes longs » | short
+    macro_week_telegram: bool = False     # bilan macro de la semaine envoye sur Telegram le samedi matin (V18) : desactive par defaut (Telegram = idees de trade)
     signal_trend_gate: bool = True        # n'envoyer que les idees dans le sens de la tendance de fond (moyennes 50 j / 200 j) : seul filtre valide par le backtest
     # avis d'influenceurs sur X (facultatif, indicatif, hors score) : jeton X (API officielle) + comptes a suivre
     x_on: bool = True
@@ -156,6 +157,7 @@ def load_config(env_path: Path | None = None) -> Config:
     c.chat_key = g("TERMINAL_ANTHROPIC_API_KEY", "").strip()
     c.chat_model = g("TERMINAL_CHAT_MODEL", c.chat_model).strip() or "claude-opus-5-5"
     c.chat_web = g("TERMINAL_CHAT_WEB", "1").lower() not in ("0", "false", "non", "no")
+    c.macro_week_telegram = g("TERMINAL_MACRO_WEEK_TELEGRAM", "0").lower() in ("1", "true", "oui", "yes")
     c.chat_telegram = g("TERMINAL_CHAT_TELEGRAM", "1").lower() not in ("0", "false", "non", "no")
     c.chat_budget = max(0.0, min(1000.0, float(g("TERMINAL_CHAT_BUDGET", c.chat_budget))))
     c.telegram_token = g("TELEGRAM_BOT_TOKEN", "")

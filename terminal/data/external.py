@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .base import DataError
+from . import fred as fred_mod
 from .derivs import BYBIT, DERIBIT, HYPER, OKX, DerivMixin, SimDerivMixin, compare_view
 from .opendata import OpenData
 
@@ -74,9 +75,11 @@ def normalize_event(raw: dict):
 
 
 class RealProviders(DerivMixin):
-    def __init__(self, ff=FF_URL, yahoo=YAHOO, coingecko=COINGECKO, paprika=PAPRIKA, alt=ALTERNATIVE, spot=SPOT, deribit=DERIBIT, bybit=BYBIT, okx=OKX, hyper=HYPER):
+    def __init__(self, ff=FF_URL, yahoo=YAHOO, coingecko=COINGECKO, paprika=PAPRIKA, alt=ALTERNATIVE, spot=SPOT, deribit=DERIBIT, bybit=BYBIT, okx=OKX, hyper=HYPER,
+                 fred=fred_mod.FRED):
         self.ff, self.yahoo, self.cg, self.pp, self.alt, self.spot = (u.rstrip("/") for u in (ff, yahoo, coingecko, paprika, alt, spot))
         self.deribit, self.bybit, self.okx, self.hyper = (u.rstrip("/") for u in (deribit, bybit, okx, hyper))
+        self.fred_base = fred.rstrip("/")
 
     def _get(self, url):
         return http_json(url, timeout=12, retries=2)
@@ -96,6 +99,9 @@ class RealProviders(DerivMixin):
                 continue
             out += [e for e in (normalize_event(r) for r in rows) if e]
         return out
+
+    def fred_series(self, sid, start):
+        return fred_mod.fetch(sid, start, self.fred_base)
 
     def yahoo_chart(self, symbol, interval, rng):
         from urllib.parse import quote
@@ -142,7 +148,7 @@ class RealProviders(DerivMixin):
 class ExternalHub:
     """Rafraichit les sources a leur propre rythme (appele regulierement) et garde un instantane lisible."""
     DUE = {"calendar": 1800, "cross5": 300, "crossD": 3600, "fng": 3600, "cg": 600, "alt": 900, "altD": 21600,
-           "options": 300, "dvol": 600, "futures": 300, "perps": 120, "opendata": 21600}
+           "options": 300, "dvol": 600, "futures": 300, "perps": 120, "opendata": 21600, "fred": 10800}
     DERIV_CURRENCIES = ("BTC", "ETH")                      # options et futures datees de Deribit
 
     def __init__(self, providers, now_ms=lambda: int(time.time() * 1000), data_dir: str | None = None, symbols=(), derivs: bool = False):
@@ -161,10 +167,14 @@ class ExternalHub:
         self.altD: dict[str, list] = {}                     # cloture quotidienne (2,7 ans) des paires alt/BTC + BTCUSDT
         self.derivs: dict = {"options": {}, "dvol": {}, "futures": {}, "perps": {}}      # derives Deribit / Bybit / OKX / Hyperliquid (V9)
         self.indicators: dict = {}                          # derniere valeur et rang percentile des indicateurs en chaine / macro (jeux libres)
+        self.fred: dict[str, list] = {}                     # chiffres macro officiels americains (V18) : id FRED -> [(date d'observation, valeur)]
+        self.fred_errors: dict[str, str] = {}
         self.errors: dict[str, str] = {}
         self.updated: dict[str, float] = {}
         self._due: dict[str, float] = {}
         self._rec_last: dict[str, int] = {}
+        self._fred_dirty = False
+        self._fred_evt = 0
         self.opendata = OpenData(Path(data_dir) / "opendata") if data_dir else None
         self._load()
 
@@ -180,6 +190,10 @@ class ExternalHub:
             self.cg_hist = [tuple(r) for r in json.loads((self.dir / "dominance_hist.json").read_text(encoding="utf-8"))]
         except (OSError, ValueError):
             pass
+        try:
+            self.fred = {k: [tuple(x) for x in v] for k, v in json.loads((self.dir / "fred.json").read_text(encoding="utf-8")).items()}
+        except (OSError, ValueError, AttributeError):
+            pass
 
     def save(self):
         if not self.dir:
@@ -190,6 +204,12 @@ class ExternalHub:
             cal = {k: v for k, v in self.calendar.items() if v["t"] >= cut}
             (self.dir / "macro_events.json").write_text(json.dumps(cal), encoding="utf-8")
             (self.dir / "dominance_hist.json").write_text(json.dumps(self.cg_hist[-4000:]), encoding="utf-8")
+            if self._fred_dirty:
+                tmp = self.dir / "fred.json.tmp"
+                with self.lock:
+                    tmp.write_text(json.dumps(self.fred), encoding="utf-8")
+                tmp.replace(self.dir / "fred.json")
+                self._fred_dirty = False
         except OSError:
             pass
 
@@ -215,6 +235,7 @@ class ExternalHub:
         self._run("crossD", lambda: self._cross("1d", "10y", self.crossD), force)
         self._run("alt", self._alt, force)
         self._run("altD", self._altD, force)
+        self._run("fred", self._fred, force or self._fred_after_event())
         if self.derivs_on:
             self._run("options", self._options, force)
             self._run("dvol", self._dvol, force)
@@ -229,6 +250,38 @@ class ExternalHub:
             for e in evs:
                 old = self.calendar.get(e["id"], {})
                 self.calendar[e["id"]] = {**old, **e}           # on garde la reaction mesuree deja enregistree
+
+    def _fred(self):
+        """Chiffres officiels (FRED) : tout l'historique depuis 2016 la premiere fois, ensuite la derniere annee (revisions comprises).
+        Une serie en panne n'arrete pas les autres ; si toutes echouent (hors ligne), on garde la copie locale."""
+        now, got, bad = self.now_ms(), 0, {}
+        for sid in fred_mod.SERIES:
+            if len(bad) >= 3 and not got:
+                break                                           # FRED injoignable : inutile d'insister
+            try:
+                rows = self.p.fred_series(sid, fred_mod.start_for(self.fred.get(sid), now))
+            except Exception as e:
+                bad[sid] = str(e)[:120]
+                continue
+            with self.lock:
+                self.fred[sid] = fred_mod.merge(self.fred.get(sid), rows)
+            got += 1
+        self.fred_errors = bad
+        self._fred_dirty = self._fred_dirty or got > 0
+        if not got:
+            raise DataError("FRED : " + (next(iter(bad.values())) if bad else "aucune série"))
+
+    def _fred_after_event(self) -> bool:
+        """Une annonce americaine importante vient de tomber (entre 40 min et 4 h) et FRED n'a pas ete relu depuis : on le relit."""
+        now = self.now_ms()
+        if now - self._fred_evt < 1_800_000:                    # au plus une relecture par demi-heure
+            return False
+        last = self.updated.get("fred", 0) * 1000
+        for e in list(self.calendar.values()):
+            if e.get("country") == "USD" and e.get("impact", 0) >= 2 and 40 * 60_000 <= now - e["t"] <= 4 * 3_600_000 and last < e["t"] + 40 * 60_000:
+                self._fred_evt = now
+                return True
+        return False
 
     def _cg(self):
         g = self.p.coingecko_global()
@@ -408,6 +461,7 @@ class ExternalHub:
     def snapshot(self) -> dict:
         with self.lock:
             return {"derivs": {k: dict(v) for k, v in self.derivs.items()}, "indicators": dict(self.indicators), "calendar": dict(self.calendar), "cross5": dict(self.cross5), "crossD": dict(self.crossD),
+                    "fred": dict(self.fred), "fredErrors": dict(self.fred_errors),
                     "fng": list(self.fng), "cg": self.cg, "cg_hist": list(self.cg_hist), "alt": dict(self.alt),
                     "altD": dict(self.altD),
                     "errors": dict(self.errors), "updated": dict(self.updated)}
@@ -434,8 +488,8 @@ class SimProviders(SimDerivMixin):
         return out
 
     def calendar(self):
-        now = self.now_ms()
         H = 3_600_000
+        now = self.now_ms() // H * H                          # heures rondes : memes identifiants d'un rafraichissement a l'autre
         spec = [(-30 * H, "CPI m/m", "USD", 3, "0.3%", "0.2%"), (-52 * H, "Unemployment Claims", "USD", 2, "230K", "227K"),
                 (-76 * H, "ISM Services PMI", "USD", 2, "52.1", "51.5"), (3 * H, "Core PCE Price Index m/m", "USD", 3, "0.3%", "0.2%"),
                 (20 * H, "FOMC Meeting Minutes", "USD", 3, "", ""), (30 * H, "Unemployment Claims", "USD", 2, "225K", "230K"),
@@ -444,6 +498,10 @@ class SimProviders(SimDerivMixin):
         return [normalize_event({"title": t, "country": c, "date": datetime.fromtimestamp((now + dt) / 1000, timezone.utc).isoformat(),
                                  "impact": {3: "High", 2: "Medium", 1: "Low"}[i], "forecast": f, "previous": p})
                 for dt, t, c, i, f, p in spec]
+
+    def fred_series(self, sid, start):
+        t = int(datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
+        return fred_mod.simulated(sid, self.now_ms(), t)
 
     def yahoo_chart(self, symbol, interval, rng):
         now = self.now_ms()

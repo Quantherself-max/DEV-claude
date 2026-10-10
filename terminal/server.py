@@ -30,8 +30,8 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "17.1"
-API_LEVEL = 17                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "18"
+API_LEVEL = 18                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -271,8 +271,45 @@ class App:
         while not self.stop.is_set():
             t0 = time.time()
             self.service.refresh_all()
+            self.macro_week_tick()
             self.wake.clear()
             self.wake.wait(max(1.0, self.cfg.refresh_seconds - (time.time() - t0)))
+
+    # --- bilan macro de la semaine (V18) ---
+    def macro_week_tick(self, force: bool = False) -> None:
+        """Toutes les 30 minutes : le bilan de la semaine en cours est recalcule et archive (une version par semaine, meme sans ouvrir la page).
+        Si l'option est cochee, il part sur Telegram le samedi a partir de 8 h UTC (les chiffres americains de la semaine sont sortis)."""
+        now = time.time()
+        ext = self.service.ext
+        fred_t = (ext.updated.get("fred"), ext.updated.get("calendar")) if ext else None
+        if not force and now - getattr(self, "_mw_tick", 0) < 1800 and fred_t == getattr(self, "_mw_src", None):
+            return
+        self._mw_tick, self._mw_src = now, fred_t
+        try:
+            rep = self.service.macro_week()
+        except Exception as e:
+            self.service.errors["bilan macro"] = f"{type(e).__name__}: {str(e)[:120]}"
+            return
+        self.service.errors.pop("bilan macro", None)
+        due = rep["start"] + 5 * 86_400_000 + 8 * 3_600_000
+        if self.cfg.macro_week_telegram and self.cfg.telegram_on and not rep.get("sentAt") and self.service.source.now_ms() >= due:
+            from alerts.assistant import split_text
+            try:
+                for part in split_text(rep["summary"]):
+                    self.notifier.send(part)
+                self.service.macro_week_mark_sent(rep["week"], now)
+            except Exception as e:
+                self.service.errors["bilan macro Telegram"] = f"{type(e).__name__}: {str(e)[:120]}"
+
+    def macro_week_comment(self, key: str | None) -> dict:
+        """Commentaire de Claude sur une semaine : rapports, geopolitique, institutionnels (recherche web), a partir du bilan chiffre."""
+        from alerts.assistant import WEEK_PROMPT
+        rep = self.service.macro_week(key)
+        res = self.assistant.ask(WEEK_PROMPT, src="bilan", context=rep["summary"], web_uses=6)
+        if res.get("ok"):
+            self.service.macro_week_comment(rep["week"], {"text": res["answer"], "t": int(time.time() * 1000), "usd": round(res.get("usd", 0.0), 4),
+                                                         "model": res.get("model")})
+        return {**res, "week": rep["week"]}
 
     # --- mise a jour automatique (updater.py) ---
     def start_updates(self):
@@ -390,6 +427,7 @@ class App:
                 "alertMode": c.alert_mode, "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "alertZones": c.alert_zones, "historyYears": c.history_years,
                 "signalOn": c.signal_on, "signalMinScore": c.signal_min_score, "signalMaxWeek": c.signal_max_week, "signalMaxPerSymbol": c.signal_max_per_symbol,
                 "signalLeverage": c.signal_leverage, "signalTrendGate": c.signal_trend_gate, "signalDirection": c.signal_direction,
+                "macroWeekTelegram": c.macro_week_telegram,
                 "x": {"on": c.x_on, "configured": bool(c.x_token and c.x_accounts), "tokenHint": ("..." + c.x_token[-4:]) if c.x_token else "",
                       "accounts": list(c.x_accounts), "posts": c.x_posts},
                 "chat": {"configured": bool(c.chat_key), "keyHint": ("..." + c.chat_key[-4:]) if c.chat_key else "", "model": c.chat_model, "web": c.chat_web,
@@ -458,6 +496,8 @@ class App:
             upd["TERMINAL_X_POSTS"] = str(max(5, min(20, int(body["xPosts"]))))
         if body.get("xOn") is not None:
             upd["TERMINAL_X_ON"] = "1" if body["xOn"] else "0"
+        if body.get("macroWeekTelegram") is not None:
+            upd["TERMINAL_MACRO_WEEK_TELEGRAM"] = "1" if body["macroWeekTelegram"] else "0"
         if body.get("chatKey"):
             key = str(body["chatKey"]).strip()
             if not re.fullmatch(r"[A-Za-z0-9_\-]{20,300}", key):
@@ -545,6 +585,10 @@ def make_handler(app: App):
                     return self._json(app.service.get_vp(sym, (q.get("tf") or ["1h"])[0]))
                 if u.path == "/api/vps":
                     return self._json({**app.service.vp_state, "auto": {tf: list(v) for tf, v in __import__("engine.vpx", fromlist=["x"]).AUTO_BY_TF.items()}})
+                if u.path == "/api/macroweek":
+                    return self._json(app.service.macro_week((q.get("week") or [None])[0] or None))
+                if u.path == "/api/macroweeks":
+                    return self._json(app.service.macro_weeks())
                 if u.path == "/api/tpo":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     gi = lambda k: int(float((q.get(k) or ["0"])[0] or 0)) or None
@@ -669,6 +713,8 @@ def make_handler(app: App):
                     return self._json(app.save_settings(body))
                 if path == "/api/chat":
                     return self._json(app.assistant.ask(str(body.get("question") or ""), src="web"))
+                if path == "/api/macroweek/comment":
+                    return self._json(app.macro_week_comment(str(body.get("week") or "") or None))
                 if path == "/api/chat/reset":
                     app.assistant.reset()
                     return self._json({"ok": True})

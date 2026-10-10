@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from data.external import ExternalHub, RealProviders, SimProviders, normalize_event, parse_num, CROSS, ALT_PAIRS
+from data.fred import SERIES as FRED_SERIES
 
 NOW = 1_790_000_000_000
 
@@ -43,6 +44,10 @@ class Fake(BaseHTTPRequestHandler):
             return self._send({"bitcoin_dominance_percentage": 57.9, "market_cap_usd": 3.1e12, "market_cap_change_24h": -0.5})
         if u.path == "/fng/":
             return self._send({"data": [{"value": "35", "value_classification": "Fear", "timestamp": "1789900000"}, {"value": "40", "value_classification": "Fear", "timestamp": "1789813600"}]})
+        if u.path == "/graph/fredgraph.csv":                     # chiffres officiels (V18) : CSV de la base FRED
+            body = f"observation_date,{q.get('id')}\n2026-07-01,4.2\n2026-08-01,.\n2026-09-01,4.3\n".encode()
+            self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            return
         if u.path == "/api/v3/klines":
             n = int(q.get("limit", 720))
             return self._send([[NOW - (n - i) * 3600_000, "0.02", "0.02", "0.02", f"{0.02 + i * 1e-6}", "1", 0, "1", 1, "1", "1", "0"] for i in range(n)])
@@ -64,7 +69,7 @@ class ExternalTests(unittest.TestCase):
         Fake.fail = set(); Fake.hits = []
 
     def prov(self):
-        return RealProviders(self.b, self.b, self.b, self.b, self.b, self.b)
+        return RealProviders(self.b, self.b, self.b, self.b, self.b, self.b, fred=self.b)
 
     def test_parse_and_normalize(self):
         self.assertEqual(parse_num("0.3%"), (0.3, "%"))
@@ -120,6 +125,8 @@ class ExternalTests(unittest.TestCase):
             again = ExternalHub(self.prov(), lambda: NOW, d)                       # redemarrage : archive relue
             self.assertEqual(len(again.calendar), 4)
             self.assertEqual(len(again.cg_hist), 1)
+            self.assertEqual(again.fred["UNRATE"], [(1782864000000, 4.2), (1788220800000, 4.3)])     # chiffres officiels relus (valeur manquante « . » ignoree)
+            self.assertEqual(set(again.fred), set(FRED_SERIES))
             Fake.fail = {"DX-Y.NYB", "/v1/global"}
             hub._due.clear(); hub.refresh(force=True)
             e = hub.snapshot()["errors"]
@@ -127,9 +134,10 @@ class ExternalTests(unittest.TestCase):
             self.assertIn("US10Y", hub.snapshot()["cross5"])                          # les autres series restent disponibles
 
     def test_total_failure_is_reported_not_raised(self):
-        hub = ExternalHub(RealProviders("http://127.0.0.1:9", "http://127.0.0.1:9", "http://127.0.0.1:9", "http://127.0.0.1:9", "http://127.0.0.1:9", "http://127.0.0.1:9"), lambda: NOW)
+        hub = ExternalHub(RealProviders("http://127.0.0.1:9", "http://127.0.0.1:9", "http://127.0.0.1:9", "http://127.0.0.1:9", "http://127.0.0.1:9", "http://127.0.0.1:9",
+                                        fred="http://127.0.0.1:9"), lambda: NOW)
         t0 = time.time(); hub.refresh(force=True)
-        self.assertEqual(set(hub.snapshot()["errors"]), {"calendar", "cg", "fng", "cross5", "crossD", "alt", "altD"})
+        self.assertEqual(set(hub.snapshot()["errors"]), {"calendar", "cg", "fng", "cross5", "crossD", "alt", "altD", "fred"})
         self.assertEqual(hub.snapshot()["calendar"], {})
 
     def test_simulated_providers_cover_every_item(self):

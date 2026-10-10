@@ -354,3 +354,24 @@ body.theme-nuit .mcell{background:#0f0f0f}body.theme-nuit .mhead{background:#0f0
 .tpocol .tpomsg[hidden]{display:none}
 body.theme-nuit .tpocol{background:#0f0f0f}
 @media (max-width:1000px){.tpocols{grid-template-columns:1fr!important;grid-auto-rows:minmax(420px,1fr)}}
+/* V18 : bilan macro de la semaine */
+.mwbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}.mwbar select{max-width:min(560px,80vw)}
+.mwtitle{font-size:16px;margin:4px 0 10px}
+#mwBody>.acard{margin-bottom:10px}
+.mwhero .mwvent{font-size:22px;font-weight:700;margin:2px 0 6px}.mwhero .mwvent.up{color:var(--up)}.mwhero .mwvent.dn{color:var(--dn)}
+.mwhero p{margin:6px 0;font-size:13px;line-height:1.5}
+.mwgauge{position:relative;height:8px;border-radius:4px;margin:6px 0 10px;max-width:420px;background:linear-gradient(90deg,#ff6b6b55,#8a8a8a33 50%,#3ddc9755)}
+.mwgauge i{position:absolute;top:-4px;width:4px;height:16px;margin-left:-2px;border-radius:2px;background:#e6e6e6}
+.mwgauge u{position:absolute;left:50%;top:-2px;width:1px;height:12px;background:#8a8a8a}
+.mwparts{display:flex;gap:6px;flex-wrap:wrap}.pill.up{color:var(--up);border-color:#3ddc9760}.pill.dn{color:#ff9a9a;border-color:#ff6b6b60}
+.mwgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:10px;margin-bottom:10px}
+.mwthread{font-size:12.5px;line-height:1.45;margin:0 0 8px;color:#c9ccd4}.mwthread.up{color:#9fe6c5}.mwthread.dn{color:#ffb3b3}
+.mwscroll{overflow-x:auto}.mwtable td{vertical-align:top}.mwtable tr.mwfut td{opacity:.75}.mwread{min-width:260px;font-size:12px;line-height:1.4}
+.nowrap{white-space:nowrap}
+.mwverdict{min-width:240px}
+.mwbarcell{width:38%}.mwbarcell i{display:block;height:8px;border-radius:2px}.mwbarcell i.pos{background:#3ddc9799;margin-left:50%}.mwbarcell i.neg{background:#ff6b6b99;margin-left:auto;margin-right:50%}
+.mwnext{margin:0;padding-left:18px}.mwnext li{margin:6px 0;font-size:13px}
+.mwcomment{white-space:pre-wrap;font-size:13px;line-height:1.55}
+.warnbox{border-color:#7a5a1a;background:#2a210f;color:#f3d9a4}
+body.theme-nuit .mwthread{color:#bdbdbd}
+@media (max-width:700px){.mwgrid{grid-template-columns:1fr}}

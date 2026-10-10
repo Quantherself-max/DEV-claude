@@ -275,18 +275,20 @@ const Analysis = (() => {
   }
 
   // ---------- interface ----------
-  const TITLES = {synth: 'Biais & probabilités', macro: 'Macro & annonces', dom: 'Dominance BTC / alts', plan: 'Plan de trade', lex: 'Lexique du graphique'};
+  const TITLES = {synth: 'Biais & probabilités', macro: 'Macro & annonces', week: 'Bilan macro de la semaine', dom: 'Dominance BTC / alts', plan: 'Plan de trade', lex: 'Lexique du graphique'};
   function show(name) {                                          // appele par le menu de gauche
     document.querySelectorAll('#anTabs button').forEach(x => x.classList.toggle('on', x.dataset.an === name));
     document.querySelectorAll('.anpane').forEach(p => p.hidden = p.dataset.anpane !== name);
     $('#anTitle').textContent = TITLES[name] || '';
     if (name === 'plan') runPlan();
+    if (name === 'week') MacroWeek.show(); else MacroWeek.hide();
     if (S.an) render(S.an);
   }
   function init(lt) {
     LT = lt;
     $('#anTabs').onclick = e => { const b = e.target.closest('button[data-an]'); if (b) show(b.dataset.an); };
     renderPlanForm(); renderLex();
+    MacroWeek.init(lt, $('#anWeek'));
   }
   function render(an) {
     S.an = an;

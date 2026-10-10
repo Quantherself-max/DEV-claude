@@ -35,6 +35,16 @@ Comment répondre :
 - Niveaux de preuve du terminal : seule la tendance de fond (moyennes 50 et 200 jours) est validée par son backtest ; le reste (financement, intérêt ouvert, flux, squeezes, options, macro) est du contexte sans avantage démontré. Ne présente jamais un indicateur non prouvé comme prédictif.
 - Si on te demande quoi faire : des scénarios avec leurs niveaux d'invalidation et ce qui ferait changer d'avis, le risque du levier en une phrase, sans moraliser. Ce n'est pas un conseil financier et tu ne passes aucun ordre."""
 
+WEEK_PROMPT = """Écris le commentaire macro de la semaine à partir du bilan chiffré joint (chiffres officiels américains, réactions mesurées des marchés, lecture du terminal).
+Cherche sur le web ce qui manque au bilan : communiqué, compte rendu ou discours de la Fed ; chiffres publiés hors des États-Unis (zone euro, Chine, Japon, Royaume-Uni) ; géopolitique (conflits, sanctions, droits de douane, élections) ; flux des fonds indiciels cotés (ETF) sur le bitcoin et l'ether ; annonces réglementaires et mouvements institutionnels marquants.
+Plan, en texte brut lisible sur un téléphone :
+1. L'essentiel de la semaine en trois phrases.
+2. Les rapports et chiffres marquants, avec ce qu'ils disent.
+3. Géopolitique et institutionnels.
+4. Ce que cela engendre : dollar, taux, liquidité, puis bitcoin et solana (scénarios, jamais de certitude).
+5. La semaine prochaine : quoi surveiller et pourquoi.
+Ne contredis pas les chiffres du bilan ; si une source donne un autre chiffre, signale l'écart. Cite tes sources."""
+
 HELP = ("Pose-moi n'importe quelle question sur le marché ou sur les analyses du terminal, par exemple :\n"
         "• pourquoi le BTC a perdu 2 % cet après-midi ?\n• les shorts s'accumulent sur SOL ?\n• qu'est-ce qui arrive cette semaine en macro ?\n\n"
         "Commandes : /reset (nouvelle conversation), /cout (dépense du mois), /aide.")
@@ -245,7 +255,8 @@ class Assistant:
         """Derniers echanges (question, reponse) depuis le dernier /reset, en texte simple."""
         h = self.state["history"]
         cut = max((i for i, x in enumerate(h) if x["role"] == "system"), default=-1)
-        msgs = [{"role": x["role"], "content": x["text"]} for x in h[cut + 1:] if x["role"] in ("user", "assistant") and x.get("ok", True)]
+        msgs = [{"role": x["role"], "content": x["text"]} for x in h[cut + 1:]
+                if x["role"] in ("user", "assistant") and x.get("ok", True) and x.get("src") != "bilan"]       # commentaires du bilan macro : hors conversation
         msgs = msgs[-2 * HISTORY_TURNS:]
         while msgs and msgs[0]["role"] != "user":
             msgs.pop(0)
@@ -262,10 +273,10 @@ class Assistant:
             usd += (getattr(stu, "web_search_requests", 0) or 0) * WEB_SEARCH_USD if stu else 0.0
         return usd
 
-    def _request(self, client, model: str, messages: list):
+    def _request(self, client, model: str, messages: list, web_uses: int = 3):
         tools = []
         if self.cfg.chat_web:
-            tools = [{"type": "web_search_20250305" if model == "claude-haiku-4-5" else "web_search_20260209", "name": "web_search", "max_uses": 3}]
+            tools = [{"type": "web_search_20250305" if model == "claude-haiku-4-5" else "web_search_20260209", "name": "web_search", "max_uses": web_uses}]
         kw = {"model": model, "max_tokens": 16000, "system": SYSTEM, "messages": messages}
         if tools:
             kw["tools"] = tools
@@ -274,8 +285,9 @@ class Assistant:
         kw["output_config"] = {"effort": "medium"}
         return client.beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kw)    # refus d'un filtre : autre modele, meme appel
 
-    def ask(self, question: str, src: str = "web", now_ms: int | None = None) -> dict:
-        """Repond a une question. {ok, answer, usd, model, seconds} ; ok False avec un message lisible en cas de probleme."""
+    def ask(self, question: str, src: str = "web", now_ms: int | None = None, context: str | None = None, web_uses: int = 3) -> dict:
+        """Repond a une question. {ok, answer, usd, model, seconds} ; ok False avec un message lisible en cas de probleme.
+        context : donnees fournies a la place de celles du terminal (bilan macro), sans reprendre la conversation en cours."""
         question = (question or "").strip()[:4000]
         c = self.cfg
         if not question:
@@ -293,26 +305,29 @@ class Assistant:
         model = c.chat_model if c.chat_model in MODELS else DEFAULT_MODEL
         try:
             now = now_ms or ex.now_ms()
-            svc = self.get_service()
-            try:
-                ctx = build_context(svc, now)
-            except Exception as e:
-                ctx = f"(Données du terminal indisponibles : {type(e).__name__})"
+            if context is not None:
+                ctx = context
+            else:
+                svc = self.get_service()
+                try:
+                    ctx = build_context(svc, now)
+                except Exception as e:
+                    ctx = f"(Données du terminal indisponibles : {type(e).__name__})"
             with self.lock:
-                msgs = self._turns()
+                msgs = self._turns() if context is None else []
                 self.state["history"].append({"role": "user", "text": question, "t": now, "src": src})
             msgs.append({"role": "user", "content": f"<donnees_du_terminal>\n{ctx}\n</donnees_du_terminal>\n\n{question}"})
             client = anthropic.Anthropic(api_key=c.chat_key, timeout=180.0, max_retries=2)
             usages, resp, done = [], None, []
             try:
-                resp = self._request(client, model, msgs)
+                resp = self._request(client, model, msgs, web_uses)
                 usages.append(resp.usage)
                 done.append(resp)
                 for _ in range(MAX_CONTINUE):                                   # recherche web longue : la reponse reprend la ou elle s'est arretee
                     if resp.stop_reason != "pause_turn":
                         break
                     msgs = msgs + [{"role": "assistant", "content": resp.content}]
-                    resp = self._request(client, model, msgs)
+                    resp = self._request(client, model, msgs, web_uses)
                     usages.append(resp.usage)
                     done.append(resp)
             except anthropic.AuthenticationError:

@@ -21,6 +21,7 @@
     <div class="sgroup">ANALYSE</div>
     <a href="#/analysis/synth" data-nav="analysis" data-sub="synth" data-expert hidden><i>◆</i><span>Biais &amp; probabilités</span></a>
     <a href="#/analysis/macro" data-nav="analysis" data-sub="macro"><i>▲</i><span>Macro &amp; annonces</span></a>
+    <a href="#/analysis/week" data-nav="analysis" data-sub="week" title="Chaque semaine : chiffres publiés, rapports, tableau de bord macro et ce que cela engendre"><i>▤</i><span>Bilan macro de la semaine</span></a>
     <a href="#/analysis/dom" data-nav="analysis" data-sub="dom" data-expert hidden><i>◧</i><span>Dominance BTC / alts</span></a>
     <a href="#/analysis/plan" data-nav="analysis" data-sub="plan"><i>⚖</i><span>Plan de trade</span></a>
     <div class="sgroup">AIDE</div>
@@ -175,6 +176,7 @@
     <h2 id="anTitle">Biais &amp; probabilités</h2>
     <button data-an="synth" class="on">Biais &amp; probabilités</button>
     <button data-an="macro">Macro &amp; annonces</button>
+    <button data-an="week">Bilan de la semaine</button>
     <button data-an="dom">Dominance BTC / alts</button>
     <button data-an="plan">Plan de trade</button>
     <button data-an="lex">Lexique du graphique</button>
@@ -182,6 +184,7 @@
   </nav>
   <div class="anpane" data-anpane="synth"><div id="anSynth" class="muted">Analyse en cours…</div></div>
   <div class="anpane" data-anpane="macro" hidden><div id="anMacro" class="muted">Analyse en cours…</div></div>
+  <div class="anpane" data-anpane="week" hidden><div id="anWeek"></div></div>
   <div class="anpane" data-anpane="dom" hidden><div id="anDom" class="muted">Analyse en cours…</div></div>
   <div class="anpane" data-anpane="plan" hidden><div id="anPlan"></div></div>
   <div class="anpane" data-anpane="lex" hidden><div id="anLex"></div></div>
@@ -230,6 +233,7 @@
           <label class="field chk"><input id="aSweep" type="checkbox"> Alerte quand une grosse poche est balayée</label>
           <label class="field chk"><input id="aMacro" type="checkbox"> Alerte avant une annonce majeure (CPI, Fed...) et bilan de la réaction</label>
         </div>
+        <label class="field chk"><input id="mwTg" type="checkbox"> Bilan macro de la semaine, le samedi matin (chiffres publiés, tableau de bord, ce que cela engendre, semaine prochaine)</label>
         <p class="muted small">Par défaut, tu ne reçois que les idées de trade (avec leur suivi : ordre exécuté, objectifs, stop). Les alertes de zones, de poches et d'annonces ne sont envoyées qu'en mode « Idées de trade + alertes ». Score = nombre de sources différentes dans la zone (+1 si la plus grosse poche de liquidation d'un côté en fait partie).</p>
       </section>
       <section>
@@ -301,6 +305,7 @@
 <script src="panels.js"></script>
 <script src="mtf.js"></script>
 <script src="tpo.js"></script>
+<script src="macroweek.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

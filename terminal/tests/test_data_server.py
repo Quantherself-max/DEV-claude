@@ -498,6 +498,20 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.get("/api/mtf?symbol=BTCUSDT&tf=2m")[0], 404)
         self.assertEqual(self.get("/api/mtf?symbol=NOPEUSDT&tf=1h")[0], 404)
 
+    def test_macroweek_endpoints(self):
+        code, body, _ = self.get("/api/macroweek")
+        self.assertEqual(code, 200)
+        r = json.loads(body)
+        self.assertTrue({"week", "events", "themes", "verdict", "markets", "crypto", "next", "summary", "sources"} <= set(r))
+        code, body, _ = self.get("/api/macroweeks")
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body)["current"], r["week"])
+        self.assertEqual(self.get("/api/macroweek?week=pas-une-date")[0], 400)
+        code, res = self.post("/api/macroweek/comment", {"week": r["week"]})
+        self.assertEqual(code, 200)
+        self.assertFalse(res["ok"])                                                       # pas de cle API Claude : message lisible
+        self.assertIn("Clé API", res["answer"])
+
     def test_version_and_code_watch(self):
         from unittest import mock
         import server as server_mod

@@ -126,6 +126,19 @@ def macro_chip(d: dict):
     return chip("macro", "Macro et liquidité", "Macro (dollar, taux, actions, volatilité)", lab.upper(), note, "up" if lab == "risk-on" else "dn" if lab == "risk-off" else "", "contexte")
 
 
+def week_chip(d: dict):
+    """Bilan macro de la semaine (V18) : le vent macro et ses principaux soutiens et freins."""
+    w = d.get("macroWeek")
+    v = (w or {}).get("verdict") or {}
+    if not v.get("label"):
+        return None
+    sc = v.get("score") or 0.0
+    pos = [p["title"].lower() for p in v.get("parts", []) if p["score"] > 0]
+    neg = [p["title"].lower() for p in v.get("parts", []) if p["score"] < 0]
+    note = ("Soutiens : " + ", ".join(pos) + ". " if pos else "") + ("Freins : " + ", ".join(neg) + ". " if neg else "") + "Détail : Analyse → Bilan macro de la semaine."
+    return chip("macroweek", "Macro et liquidité", "Bilan macro de la semaine", v["label"].upper(), note, "up" if sc >= 0.75 else "dn" if sc <= -0.75 else "", "contexte")
+
+
 def fng_chip(d: dict):
     f = d.get("fng")
     if not f:
@@ -222,7 +235,7 @@ def build(d: dict) -> dict:
     """Entrees : voir engine/lecture.py (en-tete) et Service.lecture."""
     chips = [c for c in (funding_chip(d), oi_chip(d), flow_chip(d), liq_chip(d)) if c]
     chips += options_chips(d)
-    chips += [c for c in (macro_chip(d), fng_chip(d), dom_chip(d)) if c]
+    chips += [c for c in (macro_chip(d), week_chip(d), fng_chip(d), dom_chip(d)) if c]
     chips += indicator_chips(d)
     tr = d.get("trend")
     head = {"symbol": d.get("symbol"), "price": d.get("price"), "change24": d.get("change24")}

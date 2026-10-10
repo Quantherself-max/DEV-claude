@@ -20,6 +20,7 @@ from engine import fine, liqsweep, pocketrank, sessionvp
 from engine import tpo as tpo_engine
 from engine import dominance as dominance_engine
 from engine import macro as macro_engine
+from engine import macroweek
 from engine import signals as signals_engine
 from engine import sigtest
 from engine import synth as synth_engine
@@ -943,6 +944,10 @@ class Service:
         self._plan_cache: dict = {}
         self._regime_cache: dict = {}
         self._ev_cache: dict = {}
+        self._mw_cache: dict = {}                    # bilans macro hebdomadaires (V18) : semaine -> (instant, bilan)
+        self._mw_study = None                        # mesure historique des moteurs macro sur le bitcoin (recalculee toutes les 6 h)
+        self._mw_lock = threading.Lock()
+        self.mw_archive: dict = self._mw_load()
         self.load_vp()
 
     def attach_ext(self, hub) -> None:
@@ -1220,6 +1225,146 @@ class Service:
         self._an_cache[symbol] = (time.time(), out)
         return out
 
+    # ---------- bilan macro de la semaine (V18) ----------
+    MW_KEEP = 104                                    # semaines gardees dans l'archive (deux ans)
+    MW_BACK = 8                                      # semaines passees reconstruites a la demande quand elles ne sont pas archivees
+
+    def _mw_file(self):
+        return Path(self.cfg.data_dir) / "macro_weeks.json" if getattr(self.source, "name", "") == "binance" else None
+
+    def _mw_load(self) -> dict:
+        f = self._mw_file()
+        try:
+            d = json.loads(f.read_text(encoding="utf-8")) if f else {}
+            return d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _mw_save(self) -> None:
+        f = self._mw_file()
+        if not f:
+            return
+        keep = dict(sorted(self.mw_archive.items())[-self.MW_KEEP:])
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".tmp")
+            tmp.write_text(json.dumps(keep, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(f)
+        except OSError:
+            pass
+
+    def _crypto_daily(self, snap) -> dict:
+        """Clotures quotidiennes du bitcoin, de l'ether et de solana : paires suivies par le terminal (a jour), sinon paires alt/BTC de Binance."""
+        out = {}
+        for name, sym in (("BTC", "BTCUSDT"), ("ETH", "ETHUSDT"), ("SOL", "SOLUSDT")):
+            m = self.markets.get(sym)
+            if m is not None and m.ready:
+                with self.lock:
+                    h1 = list(m.store.h1[-24 * 1200:])
+                out[name] = self._daily(h1)
+        altD, alt = snap.get("altD") or {}, snap.get("alt") or {}
+        if "BTC" not in out and altD.get("BTCUSDT"):
+            out["BTC"] = [(t // DAY * DAY, c) for t, c in altD["BTCUSDT"]]
+        btc = dict(out.get("BTC") or [])
+        for name, pair in (("ETH", "ETHBTC"), ("SOL", "SOLBTC")):
+            if name in out or not altD.get(pair):
+                continue
+            d = {t // DAY * DAY: c for t, c in altD[pair]}
+            d.update({t // DAY * DAY: c for t, c in alt.get(pair) or []})          # heures recentes : la journee en cours
+            out[name] = sorted((t, c * btc[t]) for t, c in d.items() if t in btc)
+        return out
+
+    def macro_week(self, key: str | None = None) -> dict:
+        """Bilan d'une semaine (cle = lundi « AAAA-MM-JJ », semaine en cours par defaut). Semaine en cours : recalculee au plus toutes les
+        5 minutes et archivee. Semaine passee : l'archive si elle existe (version finale), sinon reconstruite apres coup (au plus MW_BACK semaines)."""
+        now = self.source.now_ms()
+        cur = macroweek.week_start(now)
+        ws = macroweek.parse_week(key) if key else cur
+        if ws > cur:
+            raise ValueError("semaine à venir : pas encore de bilan")
+        k = macroweek.week_key(ws)
+        arch = self.mw_archive.get(k)
+        if arch and arch.get("final"):
+            return arch
+        if ws < cur - self.MW_BACK * macroweek.WEEK and not arch:
+            raise KeyError(f"pas de bilan archivé pour la semaine du {k}")
+        stamp = tuple(sorted((self.ext.updated or {}).items())) if self.ext else ()   # une source s'est mise a jour : on recalcule
+        hit = self._mw_cache.get(k)
+        if hit and time.time() - hit[0] < 300 and hit[2] == stamp:
+            return hit[1]
+        with self._mw_lock:
+            snap = self.ext.snapshot() if self.ext else {}
+            crypto = self._crypto_daily(snap)
+            st = self._mw_study
+            if st is None or time.time() - st[0] > 6 * 3600 or st[1] != len((snap.get("fred") or {}).get("WALCL") or []):
+                try:
+                    study = macroweek.drivers_study(snap.get("fred") or {}, crypto.get("BTC") or [], now)
+                except Exception as e:
+                    study = {"ready": False, "rows": [], "note": f"mesure impossible : {type(e).__name__}"}
+                self._mw_study = st = (time.time(), len((snap.get("fred") or {}).get("WALCL") or []), study)
+            rot = (snap.get("indicators") or {}).get("rotation")
+            rtext = ""
+            if rot:
+                try:
+                    from engine import rotation
+                    rtext = rotation.reading(rot)["text"]
+                except Exception:
+                    rtext = ""
+            rep = macroweek.build(ws, now, snap.get("fred") or {}, snap.get("calendar") or {}, snap.get("crossD") or {}, crypto,
+                                  snap.get("cg_hist"), snap.get("fng"), rot, rtext, st[2],
+                                  reconstructed=None if ws == cur or arch is None else bool(arch.get("reconstructed")))
+            rep["sources"] = {"fredErrors": snap.get("fredErrors") or {}, "errors": {k2: v for k2, v in (snap.get("errors") or {}).items()
+                                                                                      if k2 in ("fred", "calendar", "crossD", "cg", "fng")},
+                              "fredUpdated": (snap.get("updated") or {}).get("fred")}
+            if arch:                                 # garder le commentaire de Claude et l'etat d'envoi deja enregistres
+                for f in ("comment", "sentAt"):
+                    if arch.get(f):
+                        rep[f] = arch[f]
+            self._freeze_actuals(rep)
+            self._mw_cache[k] = (time.time(), rep, stamp)
+            if not rep["reconstructed"] or arch:
+                self.mw_archive[k] = rep
+                self._mw_save()
+            return rep
+
+    def _freeze_actuals(self, rep) -> None:
+        """Les chiffres publies retrouves sont gardes dans l'archive du calendrier : ils ne changeront plus avec les revisions ulterieures."""
+        if not self.ext:
+            return
+        with self.ext.lock:
+            for e in rep["events"]:
+                if e.get("actual") and e["id"] in self.ext.calendar and not self.ext.calendar[e["id"]].get("actual"):
+                    self.ext.calendar[e["id"]]["actual"] = e["actual"]
+
+    def macro_weeks(self) -> dict:
+        """Semaines disponibles : archivees, plus les MW_BACK dernieres (reconstructibles), de la plus recente a la plus ancienne."""
+        now = self.source.now_ms()
+        cur = macroweek.week_start(now)
+        keys = set(self.mw_archive) | {macroweek.week_key(cur - i * macroweek.WEEK) for i in range(self.MW_BACK + 1)}
+        out = []
+        for k in sorted(keys, reverse=True):
+            a = self.mw_archive.get(k) or {}
+            v = a.get("verdict") or {}
+            out.append({"week": k, "current": k == macroweek.week_key(cur), "archived": k in self.mw_archive, "final": bool(a.get("final")),
+                        "label": v.get("label"), "score": v.get("score"), "comment": bool(a.get("comment"))})
+        return {"weeks": out, "current": macroweek.week_key(cur)}
+
+    def macro_week_comment(self, key: str, comment: dict) -> None:
+        rep = self.macro_week(key)
+        rep["comment"] = comment
+        k = rep["week"]
+        self.mw_archive[k] = rep
+        hit = self._mw_cache.get(k)
+        if hit:
+            hit[1]["comment"] = comment
+        self._mw_save()
+
+    def macro_week_mark_sent(self, key: str, t: float) -> None:
+        rep = self.mw_archive.get(key)
+        if rep is not None:
+            rep["sentAt"] = t
+            self._mw_save()
+
     # ---------- idees de trade ----------
     def recent_m5(self, symbol: str, since_ms: int) -> list:
         """Bougies 5 min [(t, haut, bas, cloture)] depuis since_ms (suivi des idees ouvertes)."""
@@ -1390,7 +1535,8 @@ class Service:
              "trend": self._trend_brief(symbol), "idea": self._idea_brief(symbol), "perps": ((dv.get("perps") or {}).get(symbol) or {}).get("rows"),
              "options": (dv.get("options") or {}).get(ocoin), "optionsCoin": ocoin, "dvol": (dv.get("dvol") or {}).get(ocoin),
              "futures": ((dv.get("futures") or {}).get(ocoin) or {}).get("rows"), "indicators": snap.get("indicators"), "indicatorLevels": levels, "rotationReport": reports_mod.load(self.report_dirs, "BTC", "rotation"),
-             "squeezeReport": reports_mod.load(self.report_dirs, base, "squeeze") or reports_mod.load(self.report_dirs, "BTC", "squeeze"), "sources": an.get("sources")}
+             "squeezeReport": reports_mod.load(self.report_dirs, base, "squeeze") or reports_mod.load(self.report_dirs, "BTC", "squeeze"), "sources": an.get("sources"),
+             "macroWeek": self.mw_archive.get(macroweek.week_key(macroweek.week_start(now)))}
         out = lecture_engine.build(d)
         out["symbol"] = symbol
         return out
