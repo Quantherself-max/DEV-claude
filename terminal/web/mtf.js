@@ -134,7 +134,7 @@ const MTF = (() => {
         const y = this.series.priceToCoordinate(l.price); if (y != null && y > 12 && y < h - 28) ctx.fillText(l.name, 4, y - 1);
       });
       const plotW = this.chart.timeScale().width(), kinds = Panel.profKinds(o), W = Math.round(this.profW(plotW) * (kinds.length > 1 ? 0.8 : 1));
-      const r = kinds.length ? Panel.drawProfiles(ctx, this.series, d.profiles || {D: d.session}, kinds, plotW - 1, W, h, t) : {used: 0, cols: []};
+      const r = kinds.length ? Panel.drawProfiles(ctx, this.series, d.profiles || {D: d.session}, kinds, plotW - 1, W, h, t, true) : {used: 0, cols: []};
       const dc = r.cols.find(c => c.k === 'D');
       if (dc) {
         ctx.font = `500 9px ${t.font}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';

@@ -552,7 +552,7 @@ class ServerTests(unittest.TestCase):
             self.assertTrue(r["sessions"] and r["sessions"][-1]["marks"]["current"])
             for s in r["sessions"]:
                 self.assertTrue(s["low"] - s["step"] <= s["val"] <= s["poc"] <= s["vah"] <= s["high"] + s["step"])   # bornes arrondies a la ligne
-                self.assertTrue(all(len(row) == 3 and row[1] == len(row[2]) for row in s["rows"]))
+                self.assertTrue(all(len(row) == 5 and row[1] == len(row[2]) for row in s["rows"]))       # prix, lettres (nombre, liste), volume, delta
         self.assertEqual(self.get("/api/tpo?symbol=BTCUSDT&kind=2h")[0], 404)
         self.assertEqual(self.get("/api/tpo?symbol=NOPEUSDT&kind=D")[0], 404)
         st = json.loads(self.get("/api/state?symbol=BTCUSDT&tf=1h")[1])

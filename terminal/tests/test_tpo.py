@@ -97,5 +97,72 @@ class SessionsTests(unittest.TestCase):
         self.assertEqual((lo[0], hi[0]), (min(k.l for k in bars), max(k.h for k in bars)))
 
 
+class V19ProfileTests(unittest.TestCase):
+    """V19 : volume et delta par prix, premiere heure, forme, rotation, contexte face a la seance precedente, composite, POC vierges."""
+
+    def test_volume_delta_ib_rotation_and_shape(self):
+        bars = [Candle(0, 100.5, 102.5, 100.5, 102.5, 10.0, 8.0), Candle(M30, 102.5, 102.5, 100.5, 100.5, 10.0, 2.0),
+                Candle(2 * M30, 102.5, 106.5, 102.5, 106.5, 4.0, 3.0), Candle(3 * M30, 106.5, 107.5, 106.5, 107.5, 6.0, 3.0)]
+        p = tpo.profile(bars, 0, tpo.DAY, M30, 1.0, ib_ms=60 * 60_000)
+        self.assertEqual(len(p["rows"][0]), 5)
+        self.assertAlmostEqual(sum(r[3] for r in p["rows"]), 30.0)                  # tout le volume reparti
+        self.assertAlmostEqual(p["delta"], 2 * 16.0 - 30.0)
+        self.assertEqual(p["ib"], [100.5, 102.5])
+        st = p["ibStats"]
+        self.assertTrue(st["complete"])
+        self.assertAlmostEqual(st["extUp"], (107.5 - 102.5) / 2.0)
+        self.assertEqual(st["extDn"], 0.0)
+        self.assertEqual(st["targets"]["up2"], 104.5)
+        self.assertEqual(p["rotation"], (0 + 0) + (1 + 1) + (1 + 1))                  # B = A, puis C et D plus hauts
+        self.assertEqual((p["open"], p["close"]), (100.5, 107.5))
+        self.assertIn(p["shape"], ("P", "b", "D", "I", "B"))
+
+    def test_day_type_va_relation_open_and_eighty(self):
+        prev = {"val": 100.0, "vah": 104.0, "high": 106.0, "low": 98.0}
+        cur = {"val": 105.0, "vah": 108.0, "open": 105.0, "high": 109, "low": 103}
+        self.assertEqual(tpo.va_relation(cur, prev)[0], "higher")
+        self.assertEqual(tpo.va_relation({"val": 101.0, "vah": 103.0}, prev)[0], "inside")
+        self.assertEqual(tpo.va_relation({"val": 99.0, "vah": 105.0}, prev)[0], "outside")
+        self.assertEqual(tpo.open_location(cur, prev)[0], "aboveValue")
+        self.assertEqual(tpo.open_location({**cur, "open": 107.0}, prev)[0], "aboveRange")
+        self.assertEqual(tpo.open_location({**cur, "open": 102.0}, prev)[0], "inValue")
+        # regle des 80 % : ouverture au-dessus de la valeur, deux tranches cloturees dedans, puis l'autre bord (100) est atteint
+        bars = [Candle(0, 105, 105.5, 103.5, 103.8, 1, 0.5), Candle(M30, 103.8, 104.0, 102.5, 102.8, 1, 0.5),
+                Candle(2 * M30, 102.8, 103.0, 101.0, 101.2, 1, 0.5), Candle(3 * M30, 101.2, 101.3, 99.8, 100.1, 1, 0.5)]
+        p = tpo.profile(bars, 0, tpo.DAY, M30, 0.5)
+        e = tpo.eighty(p, prev, bars, 0.5)
+        self.assertEqual((e["side"], e["target"], e["reached"]), ("down", 100.0, True))
+        self.assertEqual(e["trigger"], 2 * M30)                                    # fin de la 2e tranche cloturee dans la valeur (B)
+        self.assertIsNone(tpo.eighty({**p, "open": 102.0}, prev, bars, 0.5))         # ouverture dans la valeur : pas de regle
+        dt = tpo.day_type({"ibStats": {"complete": True, "extUp": 0.05, "extDn": 0.0}, "high": 2, "low": 0, "close": 1}, 3.0)
+        self.assertEqual(dt, "normal")
+        self.assertEqual(tpo.day_type({"ibStats": {"complete": True, "extUp": 0.4, "extDn": 0.3}, "high": 2, "low": 0, "close": 1}, 2.0), "neutral")
+        self.assertEqual(tpo.day_type({"ibStats": {"complete": True, "extUp": 1.6, "extDn": 0.0}, "high": 3, "low": 0, "close": 2.9}, 2.0), "trend")
+        self.assertIsNone(tpo.day_type({"ibStats": {"complete": False, "extUp": 0, "extDn": 0}}, 1.0))
+
+    def test_sessions_composite_naked_and_context(self):
+        day = tpo.DAY
+        bars = []
+        for d in range(8):
+            for i in range(day // M5):
+                base = 100 + 3 * d + (i % 24) * 0.25
+                bars.append(Candle(d * day + i * M5, base, base + 0.4, base - 0.4, base + 0.1, 2.0, 1.2))
+        now = 7 * day + 6 * 3_600_000
+        bars = [k for k in bars if k.t <= now]
+        r = tpo.sessions(bars, "D", now, n=5)
+        self.assertEqual(len(r["sessions"]), 5)
+        last = r["sessions"][-1]
+        self.assertIsNotNone(last["ctx"]["va"])                                     # seance precedente connue
+        self.assertIn(last["ctx"]["open"]["code"], ("aboveRange", "aboveValue", "inValue", "belowValue", "belowRange"))
+        comp = r["composite"]
+        self.assertEqual(comp["n"], 5)                                             # 5 dernieres seances terminees
+        self.assertTrue(comp["val"] <= comp["poc"] <= comp["vah"])
+        self.assertEqual(sum(row[1] for row in comp["rows"]), sum(sum(row[1] for row in s["rows"]) for s in
+                                                              [x for x in tpo.sessions(bars, "D", now, n=8)["sessions"] if not x["marks"]["current"]][-5:]))
+        for x in r["naked"]:                                                       # POC vierge : jamais retraverse depuis sa seance
+            later = [k for k in bars if k.t >= x["start"] + day]
+            self.assertFalse(any(k.l <= x["price"] <= k.h for k in later))
+
+
 if __name__ == "__main__":
     unittest.main()

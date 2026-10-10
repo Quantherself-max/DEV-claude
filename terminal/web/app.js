@@ -77,8 +77,9 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
   layout: window.innerWidth >= 1500 ? '3' : window.innerWidth >= 1100 ? '2' : '1', prevLayout: null, sideOpen: true, sbCollapsed: false,
   page: 'desk', sub: 'synth', planOn: true, planKey: null, plan: null, planSig: '', sig: null,
-  theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, tpoD: true, tpo4: true, tpo1: false, vwap: true, dom: false, big: true}, flow: null,
-  mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {D: true, '4h': true, '1h': true}};
+  theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, nodes: true, dpoc: true, npoc: true, tpoD: true, tpo4: true, tpo1: false, vwap: true, dom: false, big: true}, flow: null,
+  mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {D: true, '4h': true, '1h': true},
+  tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true}};
 async function api(path, body) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
   const r = await fetch(path, opt);
@@ -147,7 +148,7 @@ const panels = [];
 const LAYOUTS = {'1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: []};
 const needs = k => LAYOUTS[st.layout].includes(k) && st.page === 'desk';
 function savePrefs() {
-  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds})); } catch (e) { /* stockage indisponible */ }
+  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds, tpoOpts: st.tpoOpts})); } catch (e) { /* stockage indisponible */ }
 }
 function loadPrefs() {
   try {
@@ -163,6 +164,7 @@ function loadPrefs() {
     if (typeof p.expert === 'boolean') st.expert = p.expert;
     if (['nuit', 'classique'].includes(p.theme)) st.theme = p.theme;
     Object.assign(st.mainOpts, p.mainOpts || {});
+    if (p.tpoOpts && typeof p.tpoOpts === 'object') Object.keys(st.tpoOpts).forEach(k => { if (typeof p.tpoOpts[k] === typeof st.tpoOpts[k]) st.tpoOpts[k] = p.tpoOpts[k]; });
     if (p.tpoKinds && typeof p.tpoKinds === 'object') ['D', '4h', '1h'].forEach(k => { if (typeof p.tpoKinds[k] === 'boolean') st.tpoKinds[k] = p.tpoKinds[k]; });
     if (p.mtf && Array.isArray(p.mtf.tfs)) st.mtf = {n: Math.max(2, Math.min(5, +p.mtf.n || 4)), tfs: p.mtf.tfs.slice(0, 5)};
   } catch (e) { /* preferences illisibles : valeurs par defaut */ }
@@ -333,7 +335,7 @@ function zoneRow(z, d) {
   const sel = st.sel && st.sel.type === 'zone' && st.sel.id === z.id ? ' sel' : '';
   const ess = (d.ladder.essential || []).includes(z.id);
   return `<div class="row${z.score < 3 ? ' weak' : ''}${st.mode === 'ess' && !ess ? ' weak' : ''}${sel}" data-zone="${z.id}">${ar}<span class="nm" title="${esc(names.join(' + '))}">${ess ? '<b class="amb" title="Zone essentielle (tracée sur le graphique)">★</b> ' : ''}${esc(names.join(' + '))}</span>` +
-    `<span class="pv">${fmtP(z.mid)}</span><span class="sub"><span data-zd="${z.id}">${zoneDist(z, d, livePrice(d))}</span><span class="dots">${dots}</span>${z.hasMagnet ? ' · plus grosse poche' : ''}` +
+    `<span class="pv" title="${z.key != null ? `prix clé (médiane pondérée des niveaux) ${fmtP(z.key)} · cœur ${fmtP(z.core[0])} – ${fmtP(z.core[1])}` + (z.vpoc ? ` · prix le plus échangé ${fmtP(z.vpoc)}` : '') : ''}">${fmtP(z.key != null ? z.key : z.mid)}</span><span class="sub"><span data-zd="${z.id}">${zoneDist(z, d, livePrice(d))}</span><span class="dots">${dots}</span>${z.hasMagnet ? ' · plus grosse poche' : ''}` +
     probLine(z) + '</span></div>';
 }
 function renderLadder(d) {
@@ -449,8 +451,14 @@ function renderDetail(d) {
     const where = {above: 'Zone au-dessus du prix (résistance).', below: 'Zone sous le prix (support).', in: 'Le prix est dans la zone.'}[z.side];
     const p = z.prob;
     const bucket = p ? (p.bucket === '3+' ? '3 sources ou plus' : p.bucket + ' sources') : '';
-    el.innerHTML = `<div><b>${ar} Confluence ${fmtP(z.mid)}</b> <span class="muted">${z.side === 'in' ? '' : fmtPct(z.distPct) + ' · ' + num(z.distAtr, 1) + ' ATR · '}score ${z.score}</span></div>` +
-      `<table class="mem">${rows}</table>` +
+    const PREC = {fine: 'précise', moyenne: 'moyenne', large: 'large'};
+    const precHtml = z.key != null ? `<div class="sect">Où agir dans la zone</div><table class="t">` +
+      `<tr><td>Prix clé <span class="muted small">(médiane des niveaux, chacun pesé selon son échelle de temps)</span></td><td class="r"><b>${fmtP(z.key)}</b></td></tr>` +
+      `<tr><td>Cœur <span class="muted small">(la moitié centrale du poids des niveaux)</span></td><td class="r">${fmtP(z.core[0])} – ${fmtP(z.core[1])}</td></tr>` +
+      (z.vpoc ? `<tr><td>Prix le plus échangé <span class="muted small">(14 derniers jours, bougies 5 min)</span></td><td class="r">${fmtP(z.vpoc)}</td></tr>` : '') +
+      `<tr><td>Largeur <span class="muted small">(toute la zone / cœur)</span></td><td class="r">${num(z.widthAtr, 2)} / ${num(z.coreAtr, 2)} ATR · ${PREC[z.precision] || '—'}</td></tr></table>` : '';
+    el.innerHTML = `<div><b>${ar} Confluence ${fmtP(z.key != null ? z.key : z.mid)}</b> <span class="muted">${z.side === 'in' ? '' : fmtPct(z.distPct) + ' · ' + num(z.distAtr, 1) + ' ATR · '}score ${z.score}</span></div>` +
+      `<table class="mem">${rows}</table>` + precHtml +
       (p ? (z.side !== 'in' ? reachBlock(p.reach, `atteigne la zone (${num(p.distAtrH1, 1)} ATR 1h)`) : '') +
         `<div class="sect">Si le prix touche la zone</div>` + statLine(p.bounce, p.base, `Zones à ${bucket} (${p.side === 'support' ? 'support' : p.side === 'resistance' ? 'résistance' : 'tous'})`) + defNote()
         : '<div class="note">Probabilités : calcul de l\'historique en cours…</div>') +
@@ -601,7 +609,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 18;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek)
+const NEED_API = 19;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {

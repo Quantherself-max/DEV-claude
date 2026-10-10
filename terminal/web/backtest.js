@@ -10,7 +10,7 @@ const Backtest = (() => {
   const dateFr = ms => new Date(ms).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit', year: 'numeric'});
   let LT = null, list = null, label = null, kind = 'backtest', rep = null, loading = false, error = null, sortKey = null, showAll = false;
 
-  const repKind = r => ({'vwap-strategy': 'strategy', 'avwap-swing': 'avwap', indicators: 'indicators', rotation: 'rotation', squeeze: 'squeeze', pockets: 'pockets'})[r.kind] || 'backtest';
+  const repKind = r => ({'vwap-strategy': 'strategy', 'avwap-swing': 'avwap', indicators: 'indicators', rotation: 'rotation', squeeze: 'squeeze', pockets: 'pockets', tpo: 'tpo'})[r.kind] || 'backtest';
 
   async function show() {
     if (loading) return;
@@ -469,6 +469,42 @@ const Backtest = (() => {
 
   // ---------- rapport « importance des poches » (V14) ----------
   const VCLS = v => /^effet \+|^indice \+/.test(v) ? 'up' : /^effet −|^indice −/.test(v) ? 'dn' : 'muted';
+  // ---------- V19 : reperes du profil de marche (TPO) ----------
+  const TPO_KIND = {D: "séances d'1 jour (tranches de 30 min)", '4h': 'séances de 4 heures (tranches de 5 min)', '1h': "séances d'1 heure (tranches de 5 min)"};
+  const TPO_V = {net: ['up', 'mesuré'], contraire: ['amb', 'effet contraire'], instable: ['amb', 'instable'], faible: ['amb', 'faible'], description: ['muted', 'fréquence'], hasard: ['muted', '≈ hasard']};
+  function tpoVerdict(r) {
+    return `<section class="card btv warn"><div class="bthead"><h2>Repères du profil de marché (TPO) <small>${esc(r.label || r.symbol)} · ${esc(r.period.text)} · ${esc(r.source || '')}</small></h2></div>
+      <ul class="btnotes">${(r.summary || []).map(x => { const v = TPO_V[x.verdict] || ['muted', x.verdict]; return `<li><b class="${v[0]}">${v[1]}</b> — ${esc(x.text)}</li>`; }).join('')}</ul>
+      <div class="muted small">Chaque repère est comparé à un témoin placé à la même distance de la clôture (de l'autre côté), ou, pour les poor high / low, aux extrêmes avec queue à distance égale. « Mesuré » = écart au-delà de 2 erreurs-types (groupées par séance) ET de même signe sur les deux moitiés de la période.</div></section>`;
+  }
+  function tpoTable(r, k) {
+    const x = r[k];
+    if (!x || !x.ready) return '';
+    const H = x.horizons.map(String), unit = k === 'D' ? 'séances suivantes' : k === '4h' ? 'séances de 4 h suivantes' : 'heures suivantes';
+    const row = (name, f) => `<tr><td>${name}</td>${H.map(h => `<td class="r">${f(h)}</td>`).join('')}</tr>`;
+    const pair = (a, b, t) => `${pc(a)} <span class="muted">/ ${pc(b)}</span>${t != null && Math.abs(t) >= 2 ? ` <b class="${t > 0 ? 'up' : 'dn'}">${t > 0 ? '▲' : '▼'}</b>` : ''}`;
+    const sg = h => x.singles.all[h].fill, ex = h => x.extremes.all[h], po = h => x.poc.all[h];
+    const ib = x.ib, e8 = x.eighty, os = x.openSame;
+    return `<section class="card"><h3>${TPO_KIND[k]} <small class="muted">${x.n} séances · ${esc(x.from)} → ${esc(x.to)}</small></h3>
+      <table class="t"><tr><th>Dans les … ${unit}</th>${H.map(h => `<th class="r">${h}</th>`).join('')}</tr>
+      ${row('Single prints comblés / témoin', h => pair(sg(h).rate, sg(h).control, sg(h).t))}
+      ${row('Poor high / low dépassés / extrême avec queue', h => pair(ex(h).raw.poor.rate, ex(h).raw.excess.rate, ex(h).t))}
+      ${row('POC retraversé / prix témoin', h => pair(po(h).all.rate, po(h).all.control, po(h).all.t))}
+      ${row('POC vierge après 1 séance / témoin', h => po(h).virgin && po(h).virgin.rate != null ? pair(po(h).virgin.rate, po(h).virgin.control, po(h).virgin.t) : '—')}</table>
+      <div class="muted small">▲ / ▼ : écart au-delà de 2 erreurs-types. Poor high / low : comparaison stratifiée par distance à la clôture.</div>
+      ${ib ? `<div class="sect">Première heure</div><div class="small">Cassée des deux côtés ${pc(ib.both)}, d'un seul côté ${pc(ib.upOnly + ib.downOnly)}, jamais ${pc(ib.none)} ; extension ×1,5 atteinte ${pc(ib.ext15)} et ×2 ${pc(ib.ext2)} après une cassure ; depuis la première cassure, clôture au-delà du niveau cassé ${pc(ib.firstUp.closeBeyond)} (haut) / ${pc(ib.firstDown.closeBeyond)} (bas), retour jusqu'à l'autre bord ${pc(ib.firstUp.failure)} / ${pc(ib.firstDown.failure)}.</div>` : ''}
+      ${e8 && e8.rate != null ? `<div class="sect">Règle des « 80 % »</div><div class="small">Objectif atteint ${pc(e8.rate)} du temps (${e8.n} cas), contre ${pc(e8.control)} après un simple retour dans la valeur (${e8.controlN} cas).</div>` : ''}
+      ${os && os.groups ? `<div class="sect">Position de l'ouverture face à la valeur précédente (même séance)</div><table class="t"><tr><th>Ouverture</th><th class="r">séances</th><th class="r">finissent en hausse</th><th class="r">amplitude</th></tr>${
+        [['belowRange', 'sous la fourchette'], ['belowValue', 'sous la valeur'], ['inValue', 'dans la valeur'], ['aboveValue', 'au-dessus de la valeur'], ['aboveRange', 'au-dessus de la fourchette']].filter(([g]) => os.groups[g]).map(([g, lab]) =>
+          `<tr><td>${lab}</td><td class="r">${os.groups[g].n}</td><td class="r">${pc(os.groups[g].up)}${os.groups[g].t != null && Math.abs(os.groups[g].t) >= 2 ? ` <b class="${os.groups[g].t > 0 ? 'up' : 'dn'}">${os.groups[g].t > 0 ? '▲' : '▼'}</b>` : ''}</td><td class="r">×${num(os.groups[g].rangeX, 2)}</td></tr>`).join('')
+      }</table><div class="muted small">Moyenne de toutes les séances : ${pc(os.base)} en hausse.</div>` : ''}</section>`;
+  }
+  function tpoMethod(r) {
+    return `<section class="card"><h3>Méthode</h3><ul class="btnotes">
+      <li><b>Moteur</b> : exactement celui du terminal (engine/tpo.py) ; pas de prix fixé sans regarder le futur (médiane des amplitudes des 10 séances précédentes divisée par ${r.D ? r.D.rows : 60} lignes pour 1 jour).</li>
+      <li><b>Témoins</b> : bande de même largeur (single prints) ou prix (POC) placés à la même distance de la clôture, de l'autre côté ; poor high / low comparés aux extrêmes avec queue dans les mêmes tranches de distance. Erreurs-types groupées par séance ; période coupée en deux moitiés pour vérifier la stabilité.</li>
+      <li><b>Limites</b> : un seul actif (bitcoin) ; données Bitstamp au comptant (pas le contrat perpétuel de Binance) ; plusieurs mesures faites à la fois, donc un écart isolé peut être dû à la chance. Pour mesurer SOL : <code>python tools/fetch_history.py SOLUSDT</code> puis <code>python tools/run_tpo_study.py SOLUSDT</code>.</li></ul></section>`;
+  }
   function pkVerdict(r) {
     const s = r.summary || {lines: []};
     return `<section class="card btv warn"><div class="bthead"><h2>Poches de liquidité : taille, confluences, âge <small>${esc(r.label)} · ${esc(r.period.text)} · ${r.stats.touches} premiers contacts · ${r.stats.samples} mesures d'attraction</small></h2></div>
@@ -550,12 +586,13 @@ const Backtest = (() => {
     if (loading && !rep) { root.innerHTML = '<section class="card"><div class="muted">Chargement du rapport…</div></section>'; return; }
     if (!list || !list.length) { root.innerHTML = '<section class="card"><h2>Backtest</h2><div class="muted">Aucun rapport trouvé. Lance <code>python tools/run_study.py BTCUSDT</code> après avoir téléchargé l\'historique (<code>python tools/fetch_history.py BTCUSDT</code>).</div></section>'; return; }
     if (!rep) return;
-    const kname = k => k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : k === 'indicators' ? 'indicateurs (en chaîne, macro, liquidité)' : k === 'rotation' ? 'où va l\'argent (rotation, or)' : k === 'squeeze' ? 'delta, CVD et squeezes' : k === 'pockets' ? 'importance des poches (confluences, âge)' : 'idées du terminal';
+    const kname = k => k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : k === 'indicators' ? 'indicateurs (en chaîne, macro, liquidité)' : k === 'rotation' ? 'où va l\'argent (rotation, or)' : k === 'squeeze' ? 'delta, CVD et squeezes' : k === 'pockets' ? 'importance des poches (confluences, âge)' : k === 'tpo' ? 'repères du profil de marché (TPO)' : 'idées du terminal';
     const sel = `<div class="btbar"><label>Rapport <select id="btSel">${list.map(x => `<option value="${esc(x.kind)}|${esc(x.label)}" ${x.label === label && x.kind === kind ? 'selected' : ''}>${esc(x.label)} · ${kname(x.kind)}${x.own ? ' (calculé sur tes données)' : ' (livré avec le terminal)'}</option>`).join('')}</select></label>
       <span class="muted small">Calculé le ${dateFr(rep.computedAt)} en ${rep.seconds < 90 ? rep.seconds + ' s' : Math.round(rep.seconds / 60) + ' min'}</span></div>`;
     if (rep.kind === 'vwap-strategy') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + stratHedge(rep) + stratMethod(rep) + '</div>'; return; }
     if (rep.kind === 'rotation') { root.innerHTML = sel + '<div class="btgrid">' + rotVerdict(rep) + rotMap(rep) + rotGold(rep) + rotTargets(rep) + rotMethod(rep) + '</div>'; drawRotation(rep); return; }
     if (rep.kind === 'pockets') { root.innerHTML = sel + '<div class="btgrid">' + pkVerdict(rep) + pkTable(rep, 'reaction') + pkTable(rep, 'attraction') + pkSweep(rep) + pkMethod(rep) + '</div>'; return; }
+    if (rep.kind === 'tpo') { root.innerHTML = sel + '<div class="btgrid">' + tpoVerdict(rep) + ['D', '4h', '1h'].map(k => tpoTable(rep, k)).join('') + tpoMethod(rep) + '</div>'; return; }
     if (rep.kind === 'squeeze') { root.innerHTML = sel + '<div class="btgrid">' + sqVerdict(rep) + sqEvents(rep) + sqTargets(rep) + sqMethod(rep) + '</div>'; return; }
     if (rep.kind === 'indicators') { root.innerHTML = sel + '<div class="btgrid">' + indVerdict(rep) + indTable(rep) + indMethod(rep) + '</div>'; return; }
     if (rep.kind === 'avwap-swing') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + reactionCard(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + swingMethod(rep) + '</div>'; return; }

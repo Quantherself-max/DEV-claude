@@ -375,3 +375,17 @@ body.theme-nuit .tpocol{background:#0f0f0f}
 .warnbox{border-color:#7a5a1a;background:#2a210f;color:#f3d9a4}
 body.theme-nuit .mwthread{color:#bdbdbd}
 @media (max-width:700px){.mwgrid{grid-template-columns:1fr}}
+/* V19 : vue TPO refaite */
+.tpobar select{padding:2px 4px;font-size:11px}.tpsep{width:1px;height:16px;background:var(--line)}
+.tpoctx{display:flex;flex-wrap:wrap;gap:4px;padding:4px 6px;border-bottom:1px solid var(--line);min-height:24px}
+.tpochip{font-size:10.5px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:#b9bcc6;white-space:nowrap;cursor:help}
+.tpochip.type{color:#e6e6e6;border-color:#5a6478}.tpochip.up{color:var(--up);border-color:#3ddc9760}.tpochip.dn{color:#ff9a9a;border-color:#ff6b6b60}
+.tpochip.ok{color:var(--up);border-color:#3ddc9760}.tpochip.warn{color:#ffcf70;border-color:#ffb30060}
+.tpofoot{padding:3px 8px;border-top:1px solid var(--line);line-height:1.4;max-height:3em;overflow:hidden}
+.tpofoot .tsp,.tpocol .tip .tipsp{display:inline-block;padding:0 3px;background:rgba(170,170,170,0.22);border:1px solid rgba(190,190,190,0.45);color:#ddd}
+.tpofoot .pr{color:#FFB300;font-weight:700}
+.tpocol .mbody canvas{cursor:crosshair}
+.tpostudy{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:4px 10px}
+.tpostudy summary{cursor:pointer;font-size:12px;color:#c9ccd4;padding:3px 0}
+.tpostudy ul{margin:4px 0 6px;padding-left:16px}.tpostudy li{margin:3px 0;line-height:1.45}.tpostudy p{margin:4px 0}
+.tpostudy .pill.ok{color:var(--up);border-color:#3ddc9760}.tpostudy .pill.warn{color:#ffcf70;border-color:#ffb30060}

@@ -30,8 +30,8 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "18"
-API_LEVEL = 18                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "19"
+API_LEVEL = 19                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 

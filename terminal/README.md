@@ -1,9 +1,10 @@
-# Liq Terminal (V18)
+# Liq Terminal (V19)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **TPO complet et mesuré, profils de volume et zones plus précis** (V19) : vue **▥ TPO** refaite (zoom, séances plus anciennes, volume et delta à chaque prix, première heure et objectifs, type de journée, profil composite et ses zones fortes et faibles, POC vierges) avec ce que **10 ans de bitcoin** disent de chaque repère ; profils de volume répartis selon le trajet des bougies, nœuds de volume, POC évolutif ; zones de confluence avec **prix clé**, cœur et prix le plus échangé ; carnet d'ordres presque transparent (voir « V19 » plus bas).
 - **Bilan macro de la semaine** (V18) : menu **Analyse → Bilan macro de la semaine**. Chaque semaine : les annonces avec consensus, chiffre précédent et **chiffre publié** (base officielle de la Fed de Saint-Louis), la réaction mesurée des marchés, un tableau de bord par thème (inflation, emploi, croissance, Fed et taux, dollar, liquidité, crédit, énergie), les marchés et la crypto de la semaine, **ce que cela engendre**, une **mesure** de ce qui a vraiment compté pour le bitcoin, la semaine prochaine, et un commentaire facultatif de Claude (voir « V18 » plus bas).
 - **TPO et profils jour / semaine / mois** (V17) : bouton **▥ TPO** du Desk (profils de marché des séances d'1 jour, de 4 heures et d'1 heure, avec **single prints** et **poor high / poor low**), ces mêmes marques sur les graphiques et dans les confluences, et les **profils de volume de la semaine et du mois** à côté de celui du jour (voir « V17 » plus bas).
 - **Plusieurs unités de temps à la fois** (V16) : bouton **⊞ Multi-unités** du Desk, 2 à 5 graphiques du même actif côte à côte (5 min, 15 min, 1 h, 4 h, 1 jour au choix pour chacun), bougie en direct, VWAP, profil de la séance, niveaux clés, **réticule synchronisé** et ligne d'**alignement** des unités (voir « V16 » plus bas).
@@ -111,6 +112,52 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V19 : TPO complet et mesuré, profils de volume et zones plus précis
+
+### La vue TPO (bouton **▥ TPO** du Desk), refaite
+- **Navigation** : molette = zoom sur les prix, glisser = déplacer, **Maj + molette** (ou glisser à l'horizontale) = séances plus anciennes (jusqu'à 30 jours, 42 séances de 4 h, 48 heures), double-clic = recadrer.
+- **Sur chaque séance** : zone de valeur en fond bleuté (et barre bleue), POC surligné, **première heure** (« initial balance », barre verte, lettres A et B en vert) avec ses objectifs **×1,5** et **×2** sur la séance en cours, **ouverture ▶** et **clôture ◀**, **volume et delta à chaque prix** (barres fines : bleu = acheteurs agressifs dominants, blanc = vendeurs), single prints (rectangle gris), poor high / low (trait orange), queues (lettres sombres), dernière lettre de la séance en cours en orange, **POC vierges** prolongés en pointillés.
+- **Profil composite** à droite (5 jours, 6 séances de 4 h ou 12 heures) avec ses **zones fortes (HVN, bleu)** et **faibles (LVN, orange)**, reportées en bandes légères sur tout le graphique.
+- **Contexte de la séance en cours** (pastilles sous le titre, détail au survol) : type de journée (classement de J. Dalton, avec sa fréquence sur l'historique), forme du profil (P, b, D, I, B), migration de la zone de valeur, position de l'ouverture face à la valeur précédente (avec ce qui a été mesuré), règle des « 80 % », cassure de la première heure, facteur de rotation, répartition des lettres autour du POC.
+- **Bulle au survol** : lettres, volume et delta du prix, taux mesuré des single prints et des POC vierges. Cases : affichage (lettres ou blocs), lignes fines, volume, composite, POC vierges, première heure.
+- Pour coller à la mesure, la séance d'1 jour compte maintenant **60 lignes** pour son amplitude habituelle (40 avant) : les repères sont plus fins.
+
+### Ce que disent 10 ans de bitcoin (rapport « TPO » de la page Backtest, et panneau « Ce que dit l'historique » de la vue TPO)
+Mesure faite avec exactement le moteur du terminal (Bitstamp : bougies de 15 min depuis 2016 pour 3 930 jours, de 5 min depuis 2021 pour 12 600 séances de 4 h et 50 400 heures). Chaque repère est comparé à un **témoin placé à la même distance du prix** :
+
+| Repère | Ce qui se passe | Verdict |
+|---|---|---|
+| **Poor high / poor low** | dépassés dès la séance suivante 48 % du temps (1 jour), 50 % (4 h), 51 % (1 h), contre 42 %, 41 %, 40 % pour un extrême avec queue | **effet réel et stable** : la queue est un vrai rejet, le poor high / low une enchère inachevée |
+| **POC** | retraversé dès la séance suivante 68 % du temps contre 65 % pour un prix témoin ; POC resté vierge une heure : revisité 51 % contre 45 % | **léger effet aimant**, net mais faible (2 à 6 points) |
+| **Ouverture sous la valeur précédente** | la séance finit en hausse 60 % du temps (1 jour), 59 % (4 h), 56 % (1 h), contre 52 % en moyenne ; au-dessus : 48 %, 45 %, 45 % | **retour vers la valeur** mesuré, séances plus larges (×1,2) |
+| **Single prints** | comblés en 5 jours 60 % du temps, mais une zone témoin l'est 65 % ; en 4 h et en 1 h : comme le hasard | **pas d'effet aimant** (sur 1 jour, même un peu l'inverse) |
+| **Règle des « 80 % »** | autre bord atteint **43 %** du temps (1 026 cas), contre 38 % après un simple retour dans la valeur | utile, mais **très loin de 80 %** |
+| **Première heure** | cassée des deux côtés 70 % des jours ; depuis la première cassure, la journée clôture au-delà du niveau cassé 53 % (haut) / 46 % (bas) | la cassure **ne dit presque rien** de la suite |
+
+Pour mesurer SOL : `python tools/fetch_history.py SOLUSDT` puis `python tools/run_tpo_study.py SOLUSDT` (le rapport remplace celui du bitcoin pour cette paire).
+
+### Profils de volume
+- **Plus précis** : le volume de chaque bougie suit son **trajet probable** (haussière : ouverture → plus bas → plus haut → clôture ; baissière : l'inverse), au lieu d'être étalé uniformément ; les prix traversés deux fois reçoivent deux fois plus de volume.
+- **Nœuds de volume** (case « Nœuds ») : **HVN** (bleu, zones d'acceptation) et **LVN** (violet, zones de rejet que le prix traverse vite), sur le bord de chaque profil et en bandes légères sur le graphique.
+- **POC évolutif** (case « POC évolutif ») : le POC (trait clair) et la zone de valeur (pointillés bleus) du jour tels qu'ils ont bougé au fil de la séance.
+- **POC vierges** (case « POC vierges ») : les POC des jours (J-n) et des semaines (S-n) passés jamais retraversés, les 6 plus proches du prix, prolongés en pointillés avec leur prix.
+- Titre de chaque profil avec sa **forme** (P, b, D).
+
+### Zones de confluence plus précises
+Les membres des zones ne changent pas (les idées de trade restent calculées exactement comme avant), mais chaque zone indique maintenant **où agir** :
+- **Prix clé** (trait orange, et prix affiché dans les listes) : médiane de ses niveaux, chacun pesé selon son échelle de temps (jour 1, semaine 2, mois 3, année 4) et sa famille (VWAP ×1,6, profils de volume ×1,2…) ;
+- **Cœur** (bande orange plus marquée) : la partie de la zone qui porte la moitié centrale de ce poids ;
+- **Prix le plus échangé** dans la zone sur les 14 derniers jours (petit losange blanc au bord droit) ;
+- **Largeur** en ATR et précision (précise, moyenne, large) dans la fiche de la zone (« Où agir dans la zone »).
+
+### Carnet d'ordres
+Fond encore plus transparent (12 % au lieu de 34 %), barres de taille plus légères, chiffres lisibles grâce à un léger halo : les bougies se voient à travers.
+
+### Honnêteté
+- La mesure porte sur le bitcoin au comptant (Bitstamp), pas sur le contrat perpétuel de Binance ni sur SOL (outil fourni). Plusieurs mesures étant faites à la fois, seuls les écarts nets ET de même sens sur les deux moitiés de la période sont marqués « mesuré ».
+- Les repères TPO et les nœuds de volume **ne sont pas utilisés par les idées de trade**.
+- La première heure classique (1 h à partir de 00 h UTC) est petite sur un marché ouvert 24 h sur 24 : elle est cassée des deux côtés 70 % des jours, d'où beaucoup de journées « neutres » ; la fréquence de chaque type de journée est affichée.
 
 ## Ce qui est nouveau en V18 : le bilan macro de chaque semaine
 

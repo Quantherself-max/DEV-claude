@@ -18,6 +18,8 @@ from engine import bias as bias_engine
 from engine import cvd as cvd_engine
 from engine import fine, liqsweep, pocketrank, sessionvp
 from engine import tpo as tpo_engine
+from engine import tpostudy
+from engine import zoneprec
 from engine import dominance as dominance_engine
 from engine import macro as macro_engine
 from engine import macroweek
@@ -688,6 +690,15 @@ class Market:
         # importance : sources distinctes, aimant, type de niveau meilleur que le hasard, proximite
         base = fam_stats.get(BASELINE, {}).get("all") if fam_stats else None
         lvd = {l["id"]: l for l in lv_out}
+        try:                                                     # V19 : precision des zones (prix cle, coeur, prix le plus echange) ; membres inchanges
+            fine = self._fine_profile(price)
+            now_ms = self.source.now_ms()
+            for z in zones:
+                mem = [lvd[i] for i in z["members"] if i in lvd]
+                if mem:
+                    z.update(zoneprec.refine(z, mem, [(signals_engine.classify(lv, now_ms).get("w") or 0.5) for lv in mem], atr, fine))
+        except Exception as e:                                   # la precision est un plus : jamais au prix de l'etat
+            self.rank_error = f"précision des zones : {type(e).__name__}: {e}"
         for z in zones:
             edge = 0
             for i in z["members"]:
@@ -767,6 +778,20 @@ class Market:
         pocketrank.rank(pprices)
 
     PROFILE_TXT = {"D": "séance du jour (depuis 00 h UTC)", "W": "semaine en cours (depuis lundi 00 h UTC)", "M": "mois en cours (depuis le 1er, 00 h UTC)"}
+
+    def _fine_profile(self, price: float):
+        """Profil de volume fin des 14 derniers jours autour du prix (precision des zones), recalcule a chaque nouvelle bougie 5 min ou si le prix
+        s'eloigne de plus de 6 % du centre du profil."""
+        m5 = self.store.m5
+        if not m5:
+            return None
+        key = (len(m5), m5[-1].t)
+        hit = getattr(self, "_zone_fine", None)
+        if hit and hit[0] == key and abs(price / hit[1] - 1.0) < 0.06:
+            return hit[2]
+        fp = zoneprec.FineProfile([k for k in m5[-288 * 14:] if k.v > 0], price)
+        self._zone_fine = (key, price, fp)
+        return fp
 
     def session_profile(self, kind: str = "D"):
         """Profil de volume de la periode en cours (D = jour depuis 00 h UTC, W = semaine, M = mois) avec part acheteuse, plus haut / bas,
@@ -1049,9 +1074,14 @@ class Service:
         if not m.ready:
             return {"symbol": symbol, "kind": kind, "ready": False}
         with self.lock:
-            r = m.tpo(kind, max(1, min(60, n)) if n else None, max(6, min(200, rows)) if rows else None)
+            r = m.tpo(kind, max(1, min(60, n)) if n else None, max(6, min(240, rows)) if rows else None)
             price = m.price()
-        return {"symbol": symbol, "ready": True, "price": price, "now": self.source.now_ms(), **r}
+        base = symbol[:-4] if symbol.endswith("USDT") else symbol
+        rep = reports_mod.load(self.report_dirs, base, "tpo")
+        study = tpostudy.compact(rep or reports_mod.load(self.report_dirs, "BTC", "tpo"), kind)   # mesure sur l'historique (BTC par defaut)
+        if study and not rep and base != "BTC":
+            study["proxy"] = True                                  # mesure faite sur le bitcoin, pas sur cette paire
+        return {"symbol": symbol, "ready": True, "price": price, "now": self.source.now_ms(), **r, "study": study}
 
     def schedule_external(self, wait: bool = False) -> None:
         if not self.ext or self._ext_running:

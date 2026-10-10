@@ -43,13 +43,13 @@ class Panel {
     nuit: {bg: '#0f0f0f', text: '#8a8a8a', fontSize: 11, font: 'ui-monospace, "SF Mono", Menlo, Consolas, "Roboto Mono", monospace', grid: 'rgba(255,255,255,0.028)',
       border: '#1d1d1d', up: '#6f9fe0', down: '#d9d9d9', ownTag: true, price: '#78adf7', priceText: '#0b0b0b', cd: '#141414', cdText: '#a0a0a0',
       cross: '#5a5a5a', crossLabel: '#2a2a2a', vwap: '#8296c0', band: 'rgba(120,173,247,0.32)', vpGrey: [98, 98, 98], vpVA: [124, 124, 124], vpPoc: [236, 236, 236],
-      vpBuy: [120, 173, 247], vpSell: [242, 242, 242], label: '#9a9a9a', domBg: 'rgba(8,8,8,0.34)',
+      vpBuy: [120, 173, 247], vpSell: [242, 242, 242], label: '#9a9a9a', domBg: 'rgba(8,8,8,0.12)',
       vpW: [86, 102, 138], vpWVA: [112, 132, 178], vpM: [134, 112, 88], vpMVA: [170, 142, 108],
       spFill: 'rgba(170,170,170,0.12)', spLine: 'rgba(190,190,190,0.30)', poor: 'rgba(255,179,0,0.75)'},
     classique: {bg: 'rgba(0,0,0,0)', text: '#b2b5be', fontSize: 12, font: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif',
       grid: 'rgba(40,46,64,.35)', border: '#2a2e39', up: '#26a69a', down: '#ef5350', ownTag: false, price: '#4c8dff', priceText: '#ffffff', cd: null, cdText: '#ffffff',
       cross: '#758696', crossLabel: '#4c525e', vwap: '#FFB300', band: 'rgba(255,179,0,0.4)', vpGrey: [90, 98, 120], vpVA: [112, 126, 160], vpPoc: [255, 179, 0],
-      vpBuy: [61, 220, 151], vpSell: [255, 107, 107], label: '#a8acb8', domBg: 'rgba(11,14,17,0.38)',
+      vpBuy: [61, 220, 151], vpSell: [255, 107, 107], label: '#a8acb8', domBg: 'rgba(11,14,17,0.14)',
       vpW: [70, 110, 170], vpWVA: [96, 140, 205], vpM: [150, 118, 80], vpMVA: [190, 150, 100],
       spFill: 'rgba(160,165,180,0.13)', spLine: 'rgba(180,184,196,0.35)', poor: 'rgba(255,179,0,0.8)'},
   };
@@ -69,7 +69,7 @@ class Panel {
   static profKinds(o) { return ['D', 'W', 'M'].filter(k => o && o[{D: 'sess', W: 'sessW', M: 'sessM'}[k]]); }
   static tpoKinds(o) { return ['D', '4h', '1h'].filter(k => o && o[{D: 'tpoD', '4h': 'tpo4', '1h': 'tpo1'}[k]]); }
   // V17 : profils de volume colles a droite, une colonne par periode (jour au bord de l'echelle, puis semaine, puis mois)
-  static drawProfiles(ctx, series, profs, kinds, x1, W, h, t) {
+  static drawProfiles(ctx, series, profs, kinds, x1, W, h, t, small = false) {
     const rgba = LT.rgba, NAME = {D: 'jour', W: 'semaine', M: 'mois'}, cols = [];
     let x = x1;
     kinds.forEach(k => {
@@ -99,10 +99,60 @@ class Panel {
           if (strong) { ctx.fillStyle = t.label; ctx.fillText('POC ' + NAME[k], x - W + 1, y - 1); }
         });
       }
+      // V19 : noeuds de volume sur le bord gauche de la colonne (bleu = HVN, zone d'acceptation ; violet = LVN, zone de rejet) et titre
+      ctx.font = `500 9px ${t.font}`; ctx.textBaseline = 'middle'; ctx.textAlign = 'right';
+      [[s.hvn, 'rgba(120,173,247,0.9)', 'HVN'], [s.lvn, 'rgba(190,120,255,0.9)', 'LVN']].forEach(([arr, col, lab]) => (arr || []).forEach(([a, b]) => {
+        const ya = series.priceToCoordinate(a), yb = series.priceToCoordinate(b);
+        if (ya == null || yb == null || ya < 0 || yb > h) return;
+        ctx.fillStyle = col; ctx.fillRect(x - W - 4, yb, 2, Math.max(2, ya - yb));
+        if (!small && (ya - yb >= 10 || lab === 'LVN')) ctx.fillText(lab, x - W - 7, (ya + yb) / 2);
+      }));
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = t.label;
+      if (!small) ctx.fillText(NAME[k] + (s.shape ? ' · forme ' + s.shape : ''), x - W, 4);
       cols.push({k, x, W, s, len});
       x -= W + 8;
     });
     return {used: x1 - x, cols};
+  }
+  // V19 : POC / VAH / VAL evolutifs de la seance du jour (valeur au fil de la seance), noeuds de volume en bandes, POC vierges des jours / semaines passes
+  drawVpExtras(L, h) {
+    const st = LT.st, o = st.mainOpts, ctx = this.ctx, t = this.th(), rgba = LT.rgba, fmtP = LT.fmtP, d = L.d;
+    const D = (d.profiles || {}).D || d.session, xr = this.rightLimit || L.plotW;
+    if (o.nodes && D && o.sess) {
+      [[D.hvn, 'rgba(120,173,247,0.05)'], [D.lvn, 'rgba(190,120,255,0.06)']].forEach(([arr, col]) => (arr || []).forEach(([a, b]) => {
+        const ya = this.series.priceToCoordinate(a), yb = this.series.priceToCoordinate(b);
+        if (ya == null || yb == null) return;
+        ctx.fillStyle = col; ctx.fillRect(0, yb, xr, Math.max(1, ya - yb));
+      }));
+    }
+    if (o.dpoc && D && D.developing && D.developing.length > 1 && st.tf !== '1d') {
+      const pts = D.developing.map(([tm, poc, vah, val]) => ({x: this.timeX(tm / 1000, L), poc, vah, val})).filter(p => p.x != null && p.x <= xr);
+      const line = (key, col, dash, wdt) => {
+        ctx.strokeStyle = col; ctx.lineWidth = wdt; ctx.setLineDash(dash); ctx.beginPath();
+        let started = false, py = null;
+        pts.forEach(p => {
+          const y = this.series.priceToCoordinate(p[key]); if (y == null) return;
+          if (!started) { ctx.moveTo(p.x, y); started = true; } else { ctx.lineTo(p.x, py); ctx.lineTo(p.x, y); }   // marches d'escalier
+          py = y;
+        });
+        if (started && py != null) ctx.lineTo(Math.min(xr, pts[pts.length - 1].x + 6), py);
+        ctx.stroke(); ctx.setLineDash([]);
+      };
+      line('vah', rgba(t.vpBuy, 0.45), [3, 3], 1);
+      line('val', rgba(t.vpBuy, 0.45), [3, 3], 1);
+      line('poc', 'rgba(236,236,236,0.7)', [], 1.2);
+    }
+    if (o.npoc) {
+      const np = (d.levels || []).filter(l => l.kind === 'npoc').map(l => ({l, y: this.series.priceToCoordinate(l.price)})).filter(x => x.y != null && x.y > 8 && x.y < h - 30)
+        .sort((a, b) => Math.abs(a.l.distAtr) - Math.abs(b.l.distAtr)).slice(0, 6);
+      ctx.font = `500 9.5px ${t.font}`; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+      np.forEach(({l, y}) => {
+        const yy = Math.round(y) + 0.5, m = /nPOC ([JS])-(\d+)/.exec(l.name) || [], lab = `POC vierge ${m[1] || ''}-${m[2] || '?'} ${fmtP(l.price)}`;
+        ctx.strokeStyle = m[1] === 'S' ? rgba(t.vpWVA || [112, 132, 178], 0.75) : 'rgba(236,236,236,0.5)'; ctx.lineWidth = 1; ctx.setLineDash([1, 3]);
+        ctx.beginPath(); ctx.moveTo(xr * 0.35, yy); ctx.lineTo(xr - 2, yy); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(200,200,200,0.85)'; ctx.fillText(lab, xr - 6, yy - 1);
+      });
+    }
   }
   // V17 : single prints non comblees (rectangle gris) et poor highs / lows non repares (pointilles), de la seance jusqu'a xr
   static drawTpo(ctx, series, xOf, marks, kinds, xr, h, t, small) {
@@ -175,6 +225,9 @@ class Panel {
       `<label title="Profil de volume du jour (depuis 00 h UTC), collé à l'échelle des prix : volume par prix, part des acheteurs (bleu) ou des vendeurs (blanc), POC / VAH / VAL"><input type="checkbox" data-mo="sess"> Profil J</label>` +
       `<label title="Profil de volume de la semaine en cours (depuis lundi 00 h UTC), à gauche du profil du jour"><input type="checkbox" data-mo="sessW"> S</label>` +
       `<label title="Profil de volume du mois en cours (depuis le 1er, 00 h UTC)"><input type="checkbox" data-mo="sessM"> M</label>` +
+      `<label title="Nœuds de volume du profil du jour : bandes bleues = zones d'acceptation (HVN, beaucoup d'échanges), violettes = zones de rejet (LVN, le prix les traverse vite)"><input type="checkbox" data-mo="nodes"> Nœuds</label>` +
+      `<label title="POC (trait clair), VAH et VAL (pointillés bleus) du jour tels qu'ils ont évolué au fil de la séance"><input type="checkbox" data-mo="dpoc"> POC évolutif</label>` +
+      `<label title="POC des jours et semaines passés jamais retraversés depuis (pointillés), les plus proches du prix"><input type="checkbox" data-mo="npoc"> POC vierges</label>` +
       `<label title="TPO des séances d'1 jour : single prints non comblées (rectangle gris) et poor highs / lows non réparés (pointillés)"><input type="checkbox" data-mo="tpoD"> TPO 1 j</label>` +
       `<label title="TPO des séances de 4 heures"><input type="checkbox" data-mo="tpo4"> 4 h</label>` +
       `<label title="TPO des séances d'1 heure (beaucoup de marques : à utiliser en 5 ou 15 minutes)"><input type="checkbox" data-mo="tpo1"> 1 h</label>` +
@@ -512,6 +565,7 @@ class Panel {
     const ctx = this.ctx, st = LT.st, {d, plotW} = L, byId = LT.byId, fmtP = LT.fmtP, pr = LT.pr;
     const sessW = this.drawSession(L, h);
     this.rightLimit = plotW - sessW - (st.mainOpts.dom ? Panel.DOMW + 12 : 0);
+    this.drawVpExtras(L, h);
     Panel.drawTpo(ctx, this.series, ms => this.timeX(ms / 1000, L), d.tpo, Panel.tpoKinds(st.mainOpts), this.rightLimit - 2, h, this.th(), false);
     const selZ = st.sel && st.sel.type === 'zone' ? st.sel.id : null;
     const zset = new Map(LT.shownZones(d).map(z => [z.id, z]));
@@ -521,10 +575,18 @@ class Panel {
       const yt = this.series.priceToCoordinate(z.hi), yb = this.series.priceToCoordinate(z.lo);
       if (yt == null || yb == null) return;
       const span = Math.abs(yb - yt), hh = Math.max(6, span), y = Math.min(yt, yb) - (hh - span) / 2, sel = z.id === selZ;
-      ctx.fillStyle = `rgba(255,179,0,${sel ? 0.2 : 0.07 + 0.025 * Math.min(4, z.score)})`;
+      ctx.fillStyle = `rgba(255,179,0,${sel ? 0.14 : 0.045 + 0.015 * Math.min(4, z.score)})`;
       ctx.fillRect(0, y, plotW, hh);
+      // V19 : coeur de la zone (plus marque), prix cle (trait) et prix le plus echange (petit losange blanc au bord droit)
+      if (z.core && z.key != null) {
+        const ca = this.series.priceToCoordinate(z.core[1]), cb = this.series.priceToCoordinate(z.core[0]), yk = this.series.priceToCoordinate(z.key);
+        if (ca != null && cb != null && Math.abs(cb - ca) >= 2 && Math.abs(cb - ca) < hh - 1) { ctx.fillStyle = `rgba(255,179,0,${sel ? 0.16 : 0.08 + 0.015 * Math.min(4, z.score)})`; ctx.fillRect(0, Math.min(ca, cb), plotW, Math.abs(cb - ca)); }
+        if (yk != null) { ctx.strokeStyle = `rgba(255,179,0,${sel ? 0.95 : 0.6})`; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, Math.round(yk) + 0.5); ctx.lineTo(plotW, Math.round(yk) + 0.5); ctx.stroke(); }
+        const yv = z.vpoc ? this.series.priceToCoordinate(z.vpoc) : null, xv = (this.rightLimit || plotW) - 10;
+        if (yv != null) { ctx.fillStyle = 'rgba(236,236,236,0.85)'; ctx.beginPath(); ctx.moveTo(xv, yv - 4); ctx.lineTo(xv + 4, yv); ctx.lineTo(xv, yv + 4); ctx.lineTo(xv - 4, yv); ctx.fill(); }
+      }
       if (sel) { ctx.strokeStyle = 'rgba(255,179,0,.85)'; ctx.lineWidth = 1; ctx.strokeRect(0.5, y + 0.5, plotW - 1, hh - 1); }
-      if (st.mode === 'ess') zl.push({y: y + hh / 2, z});
+      if (st.mode === 'ess') zl.push({y: (z.key != null ? (this.series.priceToCoordinate(z.key) ?? y + hh / 2) : y + hh / 2), z});
     });
     this.drawPools(L, h);
     this.drawPlan(L, h);
@@ -532,7 +594,7 @@ class Panel {
     if (st.mode === 'ess') LT.placeLabels(zl, 17, 12, h - 30).forEach(it => {
       const z = it.z, ar = z.side === 'above' ? '▲' : z.side === 'below' ? '▼' : '◆', col = z.side === 'above' ? '#3ddc97' : z.side === 'below' ? '#ff6b6b' : '#ffb300';
       const reach = z.prob && z.side !== 'in' ? ' · ' + pr(z.prob.reach['24']) + '/24 h' : '';
-      const txt = `${ar} ${fmtP(z.mid)}  ${'●'.repeat(Math.min(5, z.score))}${reach}`;
+      const txt = `${ar} ${fmtP(z.key != null ? z.key : z.mid)}  ${'●'.repeat(Math.min(5, z.score))}${reach}`;
       ctx.font = '600 11px sans-serif';
       const tw = ctx.measureText(txt).width + 18;
       const zx = this.place(10, it.ly, tw, 18, (this.rightLimit || plotW) - 6);
@@ -657,18 +719,22 @@ class Panel {
       const y = (yt + yb) / 2, rh = Math.abs(yb - yt);
       if (y < 30 || y > h - 30) return;
       const cur = px >= lo && px < hi;
-      if (bid > 0) { const w = bid / mxS * X.bidS[1]; ctx.fillStyle = rgba(t.vpBuy, 0.2); ctx.fillRect(X.bidS[0] + X.bidS[1] - w, yt + 1, w, Math.max(1, rh - 2)); }
-      if (ask > 0) { const w = ask / mxS * X.askS[1]; ctx.fillStyle = rgba(t.vpSell, 0.14); ctx.fillRect(X.askS[0], yt + 1, w, Math.max(1, rh - 2)); }
+      if (bid > 0) { const w = bid / mxS * X.bidS[1]; ctx.fillStyle = rgba(t.vpBuy, 0.13); ctx.fillRect(X.bidS[0] + X.bidS[1] - w, yt + 1, w, Math.max(1, rh - 2)); }
+      if (ask > 0) { const w = ask / mxS * X.askS[1]; ctx.fillStyle = rgba(t.vpSell, 0.09); ctx.fillRect(X.askS[0], yt + 1, w, Math.max(1, rh - 2)); }
       if (cur) { ctx.fillStyle = t.price; ctx.fillRect(X.px[0] + 2, yt + 1, X.px[1] - 4, Math.max(1, rh - 2)); }
       txt.y = y; ctx.font = `500 10.5px ${t.font}`;
+      ctx.shadowColor = 'rgba(0,0,0,0.85)'; ctx.shadowBlur = cur ? 0 : 3;              // fond presque transparent : un halo garde les chiffres lisibles
       txt('px', LT.fmtP(lo), 'center', cur ? t.priceText : t.label);
+      ctx.shadowBlur = 3;
       if (bid > 0) txt('bidS', fq(bid), 'right', rgba(t.vpBuy, 1));
       if (ask > 0) { ctx.textAlign = 'left'; txt('askS', fq(ask), 'left', rgba(t.vpSell, 0.95)); }
       if (sell > 0) txt('sell', fq(sell), 'right', sell >= buy ? rgba(t.vpSell, 0.9) : t.label);
       if (buy > 0) txt('buy', fq(buy), 'left', buy >= sell ? rgba(t.vpBuy, 1) : t.label);
       ticks('bidS', bn, 'left', rgba(t.vpBuy, 0.75), y, rh);
       ticks('askS', an, 'right', rgba(t.vpSell, 0.7), y, rh);
+      ctx.shadowBlur = 0;
     });
+    ctx.shadowBlur = 0; ctx.shadowColor = 'transparent';
   }
   // ---- V15 : ligne d'etat en bas a gauche (latence, vitesse du ruban, seuil des gros ordres) ----
   drawFooter(L, h) {
