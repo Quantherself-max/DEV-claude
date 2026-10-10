@@ -237,8 +237,10 @@ class Panel {
       `<label title="TPO des séances d'1 heure (beaucoup de marques : à utiliser en 5 ou 15 minutes)"><input type="checkbox" data-mo="tpo1"> 1 h</label>` +
       `<label title="VWAP du jour et bandes à ±1 écart-type"><input type="checkbox" data-mo="vwap"> VWAP</label>` +
       `<label title="Carnet d'ordres en direct aligné sur les prix : taille en attente (Binance), nombre d'ordres (OKX), volume échangé à chaque prix"><input type="checkbox" data-mo="dom"> Carnet</label>` +
-      `<label title="Gros ordres exécutés (losanges) : bleu = acheteur agressif, blanc = vendeur agressif"><input type="checkbox" data-mo="big"> Gros ordres</label>` +
+      `<label title="Gros ordres exécutés (losanges) : bleu = acheteur agressif, blanc = vendeur agressif. Les gros ordres d'une même bougie, d'un même côté et au même prix sont additionnés en un seul losange"><input type="checkbox" data-mo="big"> Gros ordres</label>` +
+      `<select class="mini" data-mosel="bigMin" title="Taille minimale d'un losange (somme des gros ordres d'une même bougie au même prix) : au-dessous, rien n'est dessiné"></select>` +
       `<label title="Absorptions : delta fort CONTRE le sens de la bougie (triangle vert = vendeurs absorbés, rouge = acheteurs absorbés) et, en direct, volume agressif absorbé à un prix sans qu'il passe au travers (cercles). Survole pour le détail et la mesure"><input type="checkbox" data-mo="absorb"> Absorptions</label>` +
+      `<select class="mini" data-mosel="absorbMode" title="Fortes : delta d'au moins 3 écarts-types ou au plus bas / plus haut des 12 dernières bougies, volume au moins 1,3 fois la normale, une seule par grappe de bougies ; en direct, au moins 1,5 fois le seuil ou ordre réapprovisionné, sur les 3 dernières heures. Toutes : tout ce qui est détecté"><option value="fortes">fortes</option><option value="toutes">toutes</option></select>` +
       `<button class="mini" data-flowreset title="Remettre à zéro le volume échangé affiché dans le carnet">↺ volumes</button>`;
     if (kind === 'liq') return `<span class="seg mini" data-hours><button data-h="24">24 h</button><button data-h="72">3 j</button><button data-h="168">7 j</button><button data-h="0">29 j</button></span>` +
       `<label><input type="checkbox" data-lq="pools"> Poches</label><label><input type="checkbox" data-lq="sweeps"> Balayages</label>` +
@@ -257,6 +259,9 @@ class Panel {
     h.querySelectorAll('[data-opt=ppools]').forEach(c => c.checked = st.ppools);
     h.querySelectorAll('[data-opt=plan]').forEach(c => c.checked = st.planOn);
     h.querySelectorAll('[data-mo]').forEach(c => c.checked = !!st.mainOpts[c.dataset.mo]);
+    this.syncBigSel();                                                      // V21.1 : tailles adaptees a la paire
+    h.querySelectorAll('[data-mosel=bigMin]').forEach(sel => { sel.value = String(st.mainOpts.bigMin ?? 2); sel.disabled = !st.mainOpts.big; });
+    h.querySelectorAll('[data-mosel=absorbMode]').forEach(sel => { sel.value = st.mainOpts.absorbMode || 'fortes'; sel.disabled = !st.mainOpts.absorb; });
     h.querySelectorAll('[data-flowreset]').forEach(b => b.hidden = !st.mainOpts.dom);
     h.querySelectorAll('[data-lq]').forEach(c => c.checked = !!st.liqOpts[c.dataset.lq]);
     h.querySelectorAll('[data-vp]').forEach(c => c.checked = !!st.vpOpts[c.dataset.vp]);
@@ -271,6 +276,10 @@ class Panel {
       LT.api('/api/flow/reset', {symbol: st.symbol}).then(() => LT.pollFlow()).catch(() => {}); return;
     }
     if (ev.type !== 'change') return;
+    if (t.dataset.mosel) {                                              // V21.1 : selection des gros ordres et des absorptions
+      st.mainOpts[t.dataset.mosel] = t.dataset.mosel === 'bigMin' ? +t.value : t.value; this.stamp = '';
+      LT.savePrefs(); LT.syncAllTools(); LT.refreshAll(); if (typeof MTF !== 'undefined') MTF.redraw(); return;
+    }
     if (t.dataset.mo) {
       st.mainOpts[t.dataset.mo] = t.checked; this.stamp = '';
       LT.savePrefs(); LT.syncAllTools(); LT.refreshAll(); if (['dom', 'sess', 'sessW', 'sessM'].includes(t.dataset.mo)) this.resetView();
@@ -674,21 +683,56 @@ class Panel {
       ctx.fillText(text, Math.min(L.xr + 8, (this.rightLimit || L.plotW) - tw - 6), y);
     }
   }
-  // ---- V15 : gros ordres executes (losanges) ----
+  // ---- V15 : gros ordres executes (losanges) ; V21.1 : regroupes par bougie, cote et prix, et filtres par taille ----
+  static bigSteps(sym) {
+    const b = (sym || '').replace(/USDT$/, '');
+    return b === 'BTC' ? [250e3, 5e5, 1e6, 2e6, 5e6] : b === 'ETH' ? [1e5, 2.5e5, 5e5, 1e6, 2e6] : [5e4, 1e5, 2.5e5, 5e5, 1e6];
+  }
+  static bigMinUsd(st) { const s = Panel.bigSteps(st.symbol); return s[Math.max(0, Math.min(s.length - 1, st.mainOpts.bigMin ?? 2))]; }
+  static esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c])); }
+  // tailles du menu « Gros ordres » adaptees a la paire affichee (mises a jour quand la paire change)
+  syncBigSel() {
+    const st = LT.st;
+    this.host.querySelectorAll('[data-mosel=bigMin]').forEach(sel => {
+      if (sel.dataset.sym === String(st.symbol)) return;
+      sel.innerHTML = Panel.bigSteps(st.symbol).map((v, i) => `<option value="${i}">≥ ${LT.fmtUsdShort(v)} $</option>`).join('');
+      sel.dataset.sym = String(st.symbol); sel.value = String(st.mainOpts.bigMin ?? 2);
+    });
+  }
+  // somme des gros ordres d'une meme bougie, d'un meme cote, a moins de 0,05 % l'un de l'autre ; seuls les groupes >= minUsd restent
+  static clusterBig(big, perMs, minUsd) {
+    const m = new Map();
+    (big || []).forEach(b => {
+      const bt = Math.floor(b.t / perMs) * perMs, key = `${b.side}|${bt}|${Math.round(Math.log(b.price) / 0.0005)}`;
+      let g = m.get(key);
+      if (!g) { g = {side: b.side, bt, t: b.t, t1: b.t, usd: 0, qty: 0, n: 0, pv: 0}; m.set(key, g); }
+      g.usd += b.usd; g.qty += b.qty; g.n += 1; g.pv += b.price * b.usd; g.t = Math.min(g.t, b.t); g.t1 = Math.max(g.t1, b.t);
+    });
+    return [...m.values()].map(g => ({...g, price: g.pv / g.usd})).filter(g => g.usd >= minUsd);
+  }
   drawBig(L, h) {
     const st = LT.st, f = st.flow, t = this.th(), ctx = this.ctx, rgba = LT.rgba;
+    this.bigHits = [];
+    this.syncBigSel();
     if (!st.mainOpts.big || !f || f.symbol !== L.d.symbol || !f.big || !f.big.length) return;
-    const thr = f.threshold || 1;
+    const esc = Panel.esc;
+    const minUsd = Panel.bigMinUsd(st), per = (LT.TF_SEC[st.tf] || 3600) * 1000, last = f.big[f.big.length - 1];
+    const key = `${f.symbol}|${f.big.length}|${last.t}|${minUsd}|${per}`;
+    if (this._bigKey !== key) { this._bigKey = key; this._bigGroups = Panel.clusterBig(f.big, per, minUsd); }
+    const fmtT = ms => new Date(ms).toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    f.big.forEach(b => {
-      const x = this.timeX(b.t / 1000, L), y = this.series.priceToCoordinate(b.price);
+    this._bigGroups.forEach(g => {
+      const x = this.timeX(g.t / 1000, L), y = this.series.priceToCoordinate(g.price);
       if (x == null || y == null || x < 0 || x > L.plotW || y < 4 || y > h - 28) return;
-      const r = Math.max(7, Math.min(15, 6 + 3.2 * Math.log2(1 + b.usd / thr))), col = b.side === 'buy' ? t.vpBuy : t.vpSell;
+      const r = Math.max(7, Math.min(16, 7 + 3 * Math.log2(g.usd / minUsd))), col = g.side === 'buy' ? t.vpBuy : t.vpSell;
       ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath();
       ctx.fillStyle = 'rgba(12,12,12,0.6)'; ctx.fill();
-      ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = 1.3; ctx.stroke();
+      ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = g.n > 1 ? 1.8 : 1.3; ctx.stroke();
       ctx.font = `600 ${r >= 11 ? 9 : 8}px ${t.font}`; ctx.fillStyle = rgba(col, 1);
-      ctx.fillText(LT.fmtUsdShort(b.usd), x, y + 0.5);
+      ctx.fillText(LT.fmtUsdShort(g.usd), x, y + 0.5);
+      this.bigHits.push({x, y, r: r + 2, html: `<b class="${g.side === 'buy' ? 'up' : 'dn'}">${g.n > 1 ? `${g.n} gros ordres` : 'Gros ordre'} ${g.side === 'buy' ? 'acheteur' + (g.n > 1 ? 's' : '') : 'vendeur' + (g.n > 1 ? 's' : '')} agressif${g.n > 1 ? 's' : ''}</b><br>` +
+        `${LT.fmtUsdShort(g.usd)} $ au total, ${LT.fmtQty(g.qty)} ${esc((L.d.symbol || '').replace(/USDT$/, ''))}, prix moyen ${LT.fmtP(g.price)}<br>` +
+        `<span class="muted">${g.n > 1 ? `de ${fmtT(g.t)} à ${fmtT(g.t1)}` : fmtT(g.t)} · affichés à partir de ${LT.fmtUsdShort(minUsd)} $ (réglage à côté de « Gros ordres »)</span>`});
     });
   }
   // ---- V21 : absorptions. Sur les bougies : delta fort CONTRE le sens de la bougie (triangle vert sous la bougie = vendeurs absorbes,
@@ -703,26 +747,27 @@ class Panel {
     const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
     const pct = v => v == null ? '—' : Math.round(v * 100) + ' %', n1 = v => v == null ? '—' : v.toFixed(1).replace('.', ',');
     const VERD = {net: 'effet net et stable', contraire: 'effet contraire', instable: 'écart non confirmé', hasard: 'pas d\'écart démontré', insuffisant: 'trop peu de cas'};
-    const measured = side => {
-      const s = sd && sd[side];
+    const measured = (side, strong) => {
+      const s0 = sd && sd[side], s = strong && s0 && s0.strong && s0.strong.up != null ? s0.strong : s0;
       if (!s || s.up == null) return 'Pas encore mesuré sur ce marché (calcul en tâche de fond après le démarrage).';
-      return `Mesuré sur ce marché (bougies de ${sd.unit}${a.simulated ? ', données simulées' : ''}) : dans les ${sd.primary} bougies suivantes, le prix ` +
-        `${side === 'bull' ? 'monte' : 'baisse'} ${pct(s.up)} du temps, contre ${pct(s.upCtl)} après une bougie semblable au flux ordinaire : ${VERD[s.verdict] || s.verdict}.`;
+      return `Mesuré sur ce marché (${s === s0 ? 'toutes les absorptions' : `absorptions fortes, ${s.n} cas`}, bougies de ${sd.unit}${a.simulated ? ', données simulées' : ''}) : ` +
+        `dans les ${sd.primary} bougies suivantes, le prix ${side === 'bull' ? 'monte' : 'baisse'} ${pct(s.up)} du temps, contre ${pct(s.upCtl)} après une bougie semblable au flux ordinaire : ${VERD[s.verdict] || s.verdict}.`;
     };
     const sgn = v => (v > 0 ? '+' : '−') + LT.fmtQty(Math.abs(v));
-    Panel.absMarks(ctx, this.series, ms => this.timeX(ms / 1000, L), a.events, xr, h, t, false).forEach(({e, x, y, s}) => {
+    Panel.absMarks(ctx, this.series, ms => this.timeX(ms / 1000, L), Panel.absShown(a.events, st), xr, h, t, false).forEach(({e, x, y, s}) => {
       const bull = e.side === 'bull';
       const when = new Date(e.t).toLocaleString('fr-FR', {weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'});
       this.absHits.push({x, y, r: s + 5, html: `<b class="${bull ? 'up' : 'dn'}">Absorption ${bull ? 'acheteuse (vendeurs absorbés)' : 'vendeuse (acheteurs absorbés)'}</b><br>` +
         `<span class="muted">bougie du ${esc(when)}</span><br>Delta <b>${sgn(e.delta)} ${esc(unit)}</b> (${n1(Math.abs(e.z))} écarts-types) et pourtant la bougie finit en ${bull ? 'hausse' : 'baisse'} : ` +
         `${bull ? 'les vendeurs' : 'les acheteurs'} agressifs ont été absorbés par des ordres passifs vers ${LT.fmtP(e.price)}.<br>` +
         `Volume ×${n1(e.vr)} la normale${e.extreme ? ` · au plus ${bull ? 'bas' : 'haut'} des 12 dernières bougies` : ''}${e.zone ? ' · <b>sur une zone de confluence</b>' : ''}.<br>` +
-        `<span class="muted">${esc(measured(e.side))}</span>`});
+        `${e.strong ? '<b>Absorption forte</b>. ' : ''}<span class="muted">${esc(measured(e.side, e.strong))}</span>`});
     });
     const f = st.flow;                                                  // en direct : ruban et carnet
     if (!f || f.symbol !== d.symbol || !f.absorb || !f.absorb.length) return;
+    const live = Panel.absLiveShown(f.absorb, st);
     const thr = f.absorbThr || 1, ST = {'en cours': 'en cours', 'confirmée': 'confirmée : le prix s\'est éloigné dans son sens', 'cassée': 'cassée : le prix est passé au travers', 'tenue': 'tenue (5 minutes sans départ)'};
-    f.absorb.forEach(e => {
+    live.forEach(e => {
       let x = this.timeX(e.t / 1000, L);
       const y = this.series.priceToCoordinate(e.price + e.step / 2);
       const bull = e.side === 'bull', col = bull ? UP : DN, r = Math.max(6, Math.min(14, 5 + 3 * Math.log2(1 + e.usd / thr))), broken = e.status === 'cassée';
@@ -744,6 +789,16 @@ class Panel {
         `Statut : <b>${esc(ST[e.status] || e.status)}</b>${e.refill ? '<br><b>Ordre réapprovisionné</b> : il s\'est exécuté au moins deux fois la taille encore affichée dans le carnet (ordre caché probable).' : ''}` +
         `<br><span class="muted">Non mesuré sur l'historique (il faudrait chaque transaction et le carnet).</span>`});
     });
+  }
+  // V21.1 : ce qui est affiche selon le reglage (« fortes » par defaut, « toutes »)
+  static absShown(events, st) {
+    return (st.mainOpts.absorbMode || 'fortes') === 'toutes' ? (events || []) : (events || []).filter(e => e.strong && e.top);
+  }
+  static absLiveShown(events, st) {
+    if ((st.mainOpts.absorbMode || 'fortes') === 'toutes') return events || [];
+    const now = LT.serverNow();                                         // horloge du serveur (celle du PC peut avoir quelques minutes d'ecart)
+    return (events || []).filter(e => ((e.ratio || 0) >= 1.5 || e.refill) && now - e.t <= 3 * 3600e3 &&
+      !(e.status === 'cassée' && now - (e.end || e.t) > 120e3));
   }
   // V21 : triangles d'absorption sur les bougies (graphique principal et grille multi-unites). Renvoie leurs positions.
   static absMarks(ctx, series, xOf, events, xr, h, t, small) {
@@ -795,7 +850,7 @@ class Panel {
       ctx.font = `500 9px ${t.font}`; ctx.textAlign = outer === 'left' ? 'left' : 'right';
       ctx.fillText(String(n), outer === 'left' ? x + 2 : x + w - 2, y);
     };
-    const absNow = st.mainOpts.absorb ? (f.absorb || []).filter(e => e.t >= Date.now() - 600000 && e.status !== 'cassée') : [];
+    const absNow = st.mainOpts.absorb ? Panel.absLiveShown(f.absorb, st).filter(e => e.t >= LT.serverNow() - 600000 && e.status !== 'cassée') : [];
     rows.forEach(r => {
       const [lo, bid, ask, bn, an, buy, sell] = r, hi = lo + f.step;
       const yt = this.series.priceToCoordinate(hi), yb = this.series.priceToCoordinate(lo);
@@ -1003,7 +1058,7 @@ class Panel {
     const st = LT.st, H = st.heat, tip = this.tipEl;
     if (this.kind === 'main') {                                         // V21 : bulle des absorptions
       const r = this.body.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
-      const hit = (this.absHits || []).find(q => Math.abs(q.x - x) <= q.r && Math.abs(q.y - y) <= q.r);
+      const hit = (this.absHits || []).concat(this.bigHits || []).find(q => Math.abs(q.x - x) <= q.r && Math.abs(q.y - y) <= q.r);
       if (!hit) { tip.hidden = true; return; }
       tip.innerHTML = hit.html; tip.hidden = false;
       tip.style.left = Math.max(4, Math.min(r.width - 340, x + 14)) + 'px'; tip.style.top = Math.max(4, Math.min(r.height - 190, y - 40)) + 'px';

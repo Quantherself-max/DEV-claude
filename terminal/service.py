@@ -1641,7 +1641,7 @@ class Service:
                 "align": best.get("align"), "minScore": sg["minScore"], "direction": getattr(self.cfg, "signal_direction", "both")}
 
     def _absorb_brief(self, symbol: str):
-        """Absorption la plus recente en 4 h (3 dernieres bougies) ou en 1 h (6 dernieres), avec la mesure faite sur ce marche (V21)."""
+        """Absorption FORTE la plus recente en 4 h (3 dernieres bougies) ou en 1 h (6 dernieres), avec la mesure faite sur ce marche (V21)."""
         m = self.markets.get(symbol)
         if m is None or not m.ready:
             return None
@@ -1651,7 +1651,7 @@ class Service:
                 if not a["real"]:
                     return {"real": False}
                 step = INTERVAL_MS[tf]
-                last = max((e for e in a["events"] if e["t"] >= self.source.now_ms() - (back + 1) * step), key=lambda e: e["t"], default=None)
+                last = max((e for e in a["events"] if e.get("strong") and e["t"] >= self.source.now_ms() - (back + 1) * step), key=lambda e: e["t"], default=None)
                 if last:
                     return {"real": True, "tf": tf, "event": last, "study": a["study"], "studyTf": a["studyTf"], "simulated": a["simulated"],
                             "base": symbol[:-4] if symbol.endswith("USDT") else symbol, "now": self.source.now_ms()}

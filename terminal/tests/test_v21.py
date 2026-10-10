@@ -63,6 +63,21 @@ class CandleAbsorptionTests(unittest.TestCase):
         self.assertEqual(b["grade"], 3)                                          # forte et au plus bas
         self.assertEqual(ev[1]["price"], cs[-1].h)
         self.assertEqual(len(ab.detect(cs, last=1)), 1)
+        self.assertTrue(b["strong"] and b["top"])                                 # V21.1 : forte (au plus bas, volume 4 fois la normale)
+        cs2 = flow_bars()                                                       # deux absorptions voisines : une seule marque (la plus forte)
+        for k, d in enumerate((60.0, 20.0)):
+            o3 = cs2[-1].c
+            cs2.append(Candle(len(cs2) * H, o3, o3 * 1.003, o3 * 0.997, o3 * 1.001, 380.0, d))
+        e2 = ab.detect(cs2)
+        self.assertEqual(len(e2), 2)
+        self.assertEqual(sum(e["top"] for e in e2), 1)
+        best = max(e2, key=lambda e: (e["strong"], e["grade"], abs(e["z"])))
+        self.assertTrue(best["top"])
+        weak = flow_bars()
+        o4 = weak[-1].c
+        weak.append(Candle(len(weak) * H, o4, o4 * 1.002, o4 * 0.999, o4 * 1.001, 120.0, 30.0))    # delta fort mais volume ordinaire, pas d'extreme
+        w = ab.detect(weak)
+        self.assertTrue(w and not w[-1]["strong"])
         self.assertTrue(ab.has_real_delta(cs))
         self.assertFalse(ab.has_real_delta([Candle(k.t, k.o, k.h, k.l, k.c, k.v, 0.0) for k in cs]))
 
@@ -80,6 +95,8 @@ class CandleAbsorptionTests(unittest.TestCase):
         self.assertIn("Absorption acheteuse", rep["summary"][0]["text"] + rep["summary"][1]["text"])
         c = ab.compact(st)
         self.assertEqual((c["unit"], c["primary"]), ("1 heure", 4))
+        self.assertIn("strong", c["bull"])                                     # V21.1 : mesure des seules absorptions fortes
+        self.assertLessEqual(st["bull"]["strong"]["n"], st["bull"]["n"])
         json.dumps(rep)
         self.assertEqual(ab.study(synth(200, 1))["ready"], False)
 
@@ -115,7 +132,8 @@ class LiveAbsorptionTests(unittest.TestCase):
         self.assertEqual(len(bear), 1)
         w.on_trade(t + 1, 100.36, 1.0, "buy")
         self.assertEqual(bear[0]["status"], "cassée")
-        self.assertTrue(all("usd" in x and "refill" in x for x in w.recent()))
+        self.assertTrue(all("usd" in x and "refill" in x and "ratio" in x for x in w.recent()))
+        self.assertGreaterEqual(e["ratio"], 1.0)                                 # au moins le seuil au moment de la detection
 
 
 class ServiceV21Tests(unittest.TestCase):

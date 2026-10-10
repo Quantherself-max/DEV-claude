@@ -18,10 +18,12 @@ Moities de la periode pour la stabilite, comme les autres mesures du terminal. M
 import math
 from collections import deque
 
-VERSION = 1
+VERSION = 2
 N_NORM = 96            # bougies precedentes pour l'echelle du delta et le volume habituel
 Z_MIN = 2.0            # delta d'au moins 2 ecarts-types contre le sens de la bougie
 EXT = 12               # « au plus bas / au plus haut » des 12 bougies precedentes
+STRONG_VR = 1.3        # V21.1 : absorption FORTE = au moins 3 ecarts-types OU au plus bas / plus haut, ET volume >= 1,3 fois la normale
+CLUSTER = 3            # une seule absorption affichee (la plus forte) par grappe de 3 bougies du meme cote
 HORIZONS = (1, 4, 12, 24, 72)
 PRIMARY = 4            # horizon de reference des verdicts : les 4 bougies suivantes (fixe avant toute mesure)
 NCONT = 20
@@ -83,12 +85,23 @@ def side_of(zi, oi, ci, z_min: float = Z_MIN):
     return None
 
 
+def grade_of(zi, ex, z_min: float = Z_MIN) -> int:
+    return 1 + (abs(zi) >= 1.5 * z_min) + bool(ex)
+
+
+def is_strong(zi, ex, vri, z_min: float = Z_MIN) -> bool:
+    """Absorption FORTE (V21.1, ce que le graphique montre par defaut) : delta d'au moins 3 ecarts-types ou bougie au plus bas / plus haut
+    des EXT precedentes, ET volume d'au moins STRONG_VR fois la normale (un vrai effort)."""
+    return grade_of(zi, ex, z_min) >= 2 and vri is not None and vri >= STRONG_VR
+
+
 def detect(src, last: int | None = None, n: int = N_NORM, z_min: float = Z_MIN, ext: int = EXT) -> list:
     """Absorptions des bougies donnees (toutes FERMEES : l'appelant retire la bougie en cours), au plus sur les `last` dernieres.
-    [{t, side, price (plus bas pour acheteuse, plus haut pour vendeuse), delta, volume, z, vr, body, clv, extreme, grade}]"""
+    [{t, side, price (plus bas pour acheteuse, plus haut pour vendeuse), delta, volume, z, vr, body, clv, extreme, grade, strong, top}]
+    top : la plus forte de sa grappe (CLUSTER bougies de part et d'autre, meme cote) : une seule marque par grappe a l'affichage."""
     t, o, h, l, c, v, d = arrays(src)
     z, vr, body, atr, lo_ext, hi_ext = features(t, o, h, l, c, v, d, n, ext)
-    out = []
+    out, idx = [], []
     for i in range(max(n, len(c) - last if last else 0), len(c)):
         side = side_of(z[i], o[i], c[i], z_min)
         if not side:
@@ -98,7 +111,12 @@ def detect(src, last: int | None = None, n: int = N_NORM, z_min: float = Z_MIN, 
         out.append({"t": int(t[i]), "side": side, "price": l[i] if side == "bull" else h[i], "open": o[i], "close": c[i], "high": h[i], "low": l[i],
                     "delta": d[i], "volume": v[i], "z": round(z[i], 2), "vr": round(vr[i], 2), "body": round(body[i], 3),
                     "clv": round((2 * c[i] - h[i] - l[i]) / rng, 3) if rng > 0 else 0.0, "extreme": bool(ex),
-                    "grade": 1 + (abs(z[i]) >= 1.5 * z_min) + bool(ex)})
+                    "grade": grade_of(z[i], ex, z_min), "strong": is_strong(z[i], ex, vr[i], z_min)})
+        idx.append(i)
+    key = lambda e: (e["strong"], e["grade"], abs(e["z"]))
+    for e, i in zip(out, idx):                                 # a egalite, la plus ancienne de la grappe l'emporte
+        e["top"] = not any(f["side"] == e["side"] and j != i and abs(j - i) <= CLUSTER and (key(f) > key(e) or (key(f) == key(e) and j < i))
+                           for f, j in zip(out, idx))
     return out
 
 
@@ -204,7 +222,8 @@ def study(src, horizons=HORIZONS, primary: int = PRIMARY, n: int = N_NORM, z_min
                 if x is None or not ys:
                     continue
                 per[hz] = tuple((x[q], sum(y[q] for y in ys) / len(ys)) for q in range(3))
-            recs.append((i, lo_ext[i] if sgn > 0 else hi_ext[i], per))
+            ex = lo_ext[i] if sgn > 0 else hi_ext[i]
+            recs.append((i, ex, per, is_strong(z[i], ex, vr[i], z_min)))
 
         def agg(sel, hz):
             g = [r[2][hz] for r in sel if hz in r[2]]
@@ -221,10 +240,14 @@ def study(src, horizons=HORIZONS, primary: int = PRIMARY, n: int = N_NORM, z_min
         first = agg([r for r in recs if r[0] < half], primary)
         second = agg([r for r in recs if r[0] >= half], primary)
         extreme = agg([r for r in recs if r[1]], primary)
+        strong = [r for r in recs if r[3]]                    # V21.1 : seulement les absorptions fortes (ce que montre le graphique)
+        sa, s1, s2 = agg(strong, primary), agg([r for r in strong if r[0] < half], primary), agg([r for r in strong if r[0] >= half], primary)
         p = hs[str(primary)]
         res[side] = {"n": len(evs), "matched": len(recs), "extreme": sum(1 for r in recs if r[1]), "per1000": round(1000 * len(evs) / max(1, N - n), 2),
                      "h": hs, "first": first, "second": second, "extremeOnly": extreme,
-                     "verdict": {"up": _verdict(p["up"], first["up"], second["up"]), "hold": _verdict(p["hold"], first["hold"], second["hold"])}}
+                     "verdict": {"up": _verdict(p["up"], first["up"], second["up"]), "hold": _verdict(p["hold"], first["hold"], second["hold"])},
+                     "strong": {"n": len(strong), "per1000": round(1000 * len(strong) / max(1, N - n), 2), "agg": sa, "first": s1, "second": s2,
+                                "verdict": {"up": _verdict(sa["up"], s1["up"], s2["up"]), "hold": _verdict(sa["hold"], s1["hold"], s2["hold"])}}}
     base = {}
     for hz in H:                                              # taux de hausse de toutes les bougies (reference)
         ups = [int(c[k + hz] > c[k]) for k in range(n, N - hz)]
@@ -272,6 +295,11 @@ def summary(st: dict, label: str = "") -> list:
                f"{mv} {_pct(up['rate'])} du temps, contre {_pct(up['control'])} après une bougie semblable au flux ordinaire (écart {_pts(up['diff'])}, "
                f"statistique {_num(up['t'])}) : {VERDICT_TXT[s['verdict']['up']]}. Le {ext} de la bougie tient {_pct(hold['rate'])} du temps, contre "
                f"{_pct(hold['control'])} : {VERDICT_TXT[s['verdict']['hold']]}.")
+        sg = s.get("strong")
+        if sg and sg["agg"]["up"]["rate"] is not None:
+            su = sg["agg"]["up"]
+            txt += (f" Absorptions fortes seulement ({sg['n']} cas, celles que le graphique montre par défaut) : le prix {mv} {_pct(su['rate'])} du temps, "
+                    f"contre {_pct(su['control'])} : {VERDICT_TXT[sg['verdict']['up']]}.")
         out.append({"side": side, "verdict": s["verdict"]["up"], "holdVerdict": s["verdict"]["hold"], "text": txt})
     return out
 
@@ -287,6 +315,11 @@ def compact(st: dict):
         p = s["h"][hz]
         out[side] = {"n": s["n"], "up": p["up"]["rate"], "upCtl": p["up"]["control"], "hold": p["hold"]["rate"], "holdCtl": p["hold"]["control"],
                      "verdict": s["verdict"]["up"], "holdVerdict": s["verdict"]["hold"]}
+        sg = s.get("strong")
+        if sg:
+            a = sg["agg"]
+            out[side]["strong"] = {"n": sg["n"], "up": a["up"]["rate"], "upCtl": a["up"]["control"], "hold": a["hold"]["rate"], "holdCtl": a["hold"]["control"],
+                                   "verdict": sg["verdict"]["up"], "holdVerdict": sg["verdict"]["hold"]}
     return out
 
 

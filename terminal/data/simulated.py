@@ -49,9 +49,11 @@ class SimulatedSource(Source):
             # V21 : de temps en temps, des ordres passifs absorbent le flux (heure entiere ou bougie isolee) : delta CONTRE le prix.
             # Calcule sans nouveau tirage aleatoire : le chemin des prix reste le meme.
             hk = ((k // 12) * 2654435761 + 12345) % 160
-            if hk in (0, 80):                                   # une heure de ventes (achats) agressives massives
+            if hk in (0, 80):                                   # une heure de ventes (achats) agressives massives, avec plus de volume
+                v *= 1.8
                 tb = v * (0.1 if hk == 0 else 0.9)
             elif (k * 40503) % 400 == 0:                        # une bougie isolee au flux inverse
+                v *= 1.6
                 tb = v * (0.5 - 0.45 * (1 if r > 0 else -1))
             raw.append((o, h, l, c, v, tb))
             px = c

@@ -330,6 +330,11 @@ class AbsorbWatch:
                 if b:                                            # le volume absorbe continue de grossir tant que l'absorption dure
                     ev["buy"], ev["sell"] = max(ev["buy"], b[0]), max(ev["sell"], b[1])
                     ev["delta"] = ev["buy"] - ev["sell"]
+                    done = ev["sell"] if side == "bull" else ev["buy"]
+                    px = (k0 + 0.5) * self.step
+                    ev["usd"] = max(ev["usd"], round(done * px))
+                    if self.thr:
+                        ev["ratio"] = max(ev.get("ratio") or 0, round(done * px / self.thr, 2))
 
     def _check(self, k, t_s, price):
         if self.thr is None:
@@ -361,7 +366,8 @@ class AbsorbWatch:
         self.seq += 1
         ev = {"id": self.seq, "t": int(t_s * 1000), "price": round(k * self.step, 10), "step": self.step, "side": side,
               "buy": buy, "sell": sell, "delta": buy - sell, "usd": round(done * price), "status": "en cours", "end": None,
-              "shown": size, "refill": (bool(size) and done >= 2 * size) if size is not None else None}
+              "shown": size, "refill": (bool(size) and done >= 2 * size) if size is not None else None,
+              "ratio": round(done * price / self.thr, 2)}               # V21.1 : taille par rapport au seuil du moment (forte : au moins 1,5)
         self.open[(k, side)] = ev
         self.events.append(ev)
         return True

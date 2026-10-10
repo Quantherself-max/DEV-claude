@@ -100,11 +100,12 @@ def absorb_chip(d: dict):
             f"et pourtant la bougie finit en {'hausse' if bull else 'baisse'} : des ordres passifs ont tout absorbé vers {_px(e['price'])}."
             + (" Au plus bas des 12 dernières bougies." if bull and e.get("extreme") else " Au plus haut des 12 dernières bougies." if e.get("extreme") else ""))
     ev = "contexte"
-    s = st.get(e["side"]) if st else None
+    s0 = st.get(e["side"]) if st else None
+    s = s0.get("strong") if s0 and (s0.get("strong") or {}).get("up") is not None else s0       # V21.1 : mesure des absorptions fortes
     if s and s.get("up") is not None:
         mv = "monte" if bull else "baisse"
-        note += (f" Mesuré sur ce marché ({st.get('unit')}{', données simulées' if a.get('simulated') else ''}) : dans les {st.get('primary', 4)} bougies suivantes, le prix {mv} "
-                 f"{fr(s['up'] * 100, 0)} % du temps, contre {fr(s['upCtl'] * 100, 0)} % après une bougie semblable au flux ordinaire")
+        note += (f" Mesuré sur ce marché ({'absorptions fortes, ' if s is not s0 else ''}{st.get('unit')}{', données simulées' if a.get('simulated') else ''}) : dans les "
+                 f"{st.get('primary', 4)} bougies suivantes, le prix {mv} {fr(s['up'] * 100, 0)} % du temps, contre {fr(s['upCtl'] * 100, 0)} % après une bougie semblable au flux ordinaire")
         note += " (effet net et stable)." if s["verdict"] == "net" else " (effet contraire)." if s["verdict"] == "contraire" else " : pas d'écart démontré."
         if s["verdict"] == "net" and not a.get("simulated"):
             ev = "indice"

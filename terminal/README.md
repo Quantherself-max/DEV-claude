@@ -1,4 +1,4 @@
-# Liq Terminal (V21)
+# Liq Terminal (V21.1)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
@@ -114,6 +114,15 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## V21.1 : moins de bruit sur le graphique principal
+
+- **Absorptions « fortes » par défaut** (menu à côté de la case **Absorptions** : *fortes* ou *toutes*) :
+  - sur les bougies : delta d'au moins **3 écarts-types**, ou bougie au **plus bas / plus haut** des 12 dernières, **et** volume d'au moins **1,3 fois** la normale (un vrai effort) ; une seule marque (la plus forte) par grappe de bougies voisines du même côté ;
+  - en direct : au moins **1,5 fois** le seuil du moment, ou ordre passif **réapprovisionné**, sur les **3 dernières heures** seulement ; une absorption cassée disparaît au bout de 2 minutes ;
+  - la mesure du terminal est faite **aussi sur les seules absorptions fortes** : la bulle et la Lecture donnent ce chiffre-là (rapport « absorptions » de la page Backtest : les deux).
+- **Gros ordres regroupés et filtrés** (menu à côté de la case **Gros ordres**) : les gros ordres d'une même bougie, d'un même côté et au même prix (à 0,05 % près) sont **additionnés en un seul losange** (« 3 gros ordres acheteurs, 2,4 M$ au total »), et seuls les losanges au-dessus de la **taille choisie** sont dessinés : par défaut **1 M$** sur BTC, **500 k$** sur ETH, **250 k$** sur SOL (de 250 k$ à 5 M$ sur BTC, de 50 k$ à 1 M$ sur SOL). Survole un losange pour le détail.
+- Tes réglages sont gardés d'une fois sur l'autre.
 
 ## Ce qui est nouveau en V21 : les absorptions, avec le delta
 
