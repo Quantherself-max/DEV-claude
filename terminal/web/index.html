@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Liq Terminal</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<aside id="sidebar" aria-label="Workspace">
+  <div class="sbrand"><span class="logo">▥</span><div class="stxt"><b>LIQ TERMINAL</b><small>Desk / personnel</small></div>
+    <button id="sbToggle" title="Réduire / agrandir le menu" aria-label="Réduire le menu">«</button></div>
+  <nav>
+    <div class="sgroup">WORKSPACE</div>
+    <a href="#/desk" data-nav="desk"><i>▥</i><span>Desk</span></a>
+    <a href="#/overview" data-nav="overview"><i>▦</i><span>Overview</span></a>
+    <a href="#/signals" data-nav="signals"><i>◎</i><span>Idées de trade</span></a>
+    <a href="#/history" data-nav="history" title="Toutes les idées et alertes envoyées avec leur résultat, et la lecture du terminal jour après jour"><i>⧗</i><span>Historique</span></a>
+    <a href="#/backtest" data-nav="backtest"><i>⌁</i><span>Backtest</span></a>
+    <div class="sgroup">ANALYSE</div>
+    <a href="#/analysis/synth" data-nav="analysis" data-sub="synth" data-expert hidden><i>◆</i><span>Biais &amp; probabilités</span></a>
+    <a href="#/analysis/macro" data-nav="analysis" data-sub="macro"><i>▲</i><span>Macro &amp; annonces</span></a>
+    <a href="#/analysis/week" data-nav="analysis" data-sub="week" title="Chaque semaine : chiffres publiés, rapports, tableau de bord macro et ce que cela engendre"><i>▤</i><span>Bilan macro de la semaine</span></a>
+    <a href="#/analysis/dom" data-nav="analysis" data-sub="dom" data-expert hidden><i>◧</i><span>Dominance BTC / alts</span></a>
+    <a href="#/analysis/plan" data-nav="analysis" data-sub="plan"><i>⚖</i><span>Plan de trade</span></a>
+    <div class="sgroup">AIDE</div>
+    <a href="#/analysis/lex" data-nav="analysis" data-sub="lex"><i>?</i><span>Lexique</span></a>
+    <a href="#" id="navExpert" title="Affiche les onglets et pages de détail (contexte, statistiques, liquidité, profils, biais statistique, dominance)"><i>⋯</i><span id="navExpertTxt">Mode détaillé : non</span></a>
+    <a href="#" id="navSettings"><i>⚙</i><span>Réglages</span></a>
+  </nav>
+  <div class="sfoot"><span id="sbLive" class="badge" hidden>● DIFFÉRÉ</span></div>
+</aside>
+<div id="content">
+<header id="top">
+  <div class="crumb"><span class="muted">Workspace</span> <span class="muted">/</span> <b id="crumb">Desk</b></div>
+  <select id="symbol" aria-label="Symbole"></select>
+  <div id="tfs" class="seg" role="group" aria-label="Timeframe"></div>
+  <div class="price"><b id="price" title="Dernier prix échangé sur le perpétuel Binance">-</b><small id="atr"></small>
+    <span id="cbPrice" class="cb" hidden title="Prix Coinbase (spot USD) : le marché de ton graphique TradingView"></span></div>
+  <span id="regime" class="regime" hidden></span>
+  <button id="riskChip" class="badge risk" hidden></button>
+  <button id="sigChip" class="badge sig" hidden></button>
+  <div class="spacer"></div>
+  <button id="srcBadge" class="badge" title="Changer la source dans les réglages">-</button>
+  <button id="tgBadge" class="badge" title="Configurer Telegram dans les réglages">-</button>
+  <span id="liveBadge" class="badge" hidden>● DIFFÉRÉ</span>
+  <span id="status" class="muted">chargement...</span>
+  <button id="themeBtn" class="badge" title="Style des graphiques : nuit (fond noir, bougies bleues et blanches, comme les terminaux d'order flow) ou classique">☾ nuit</button>
+  <button id="openSettings" class="primary" title="Réglages">⚙</button>
+</header>
+<div id="banner" hidden></div>
+
+<section class="page" data-page="desk">
+  <div id="deskbar">
+    <span class="seg" id="layouts" role="group" aria-label="Mise en page">
+      <button data-layout="1" title="Graphique principal seul">▣ Principal</button>
+      <button data-layout="liq" title="Poches de liquidité seules">◧ Liquidité</button>
+      <button data-layout="vp" title="VWAP, AVWAP et volume profiles seuls">◨ VWAP · VP</button>
+      <button data-layout="2" title="Principal + liquidité">◫ 2 graphiques</button>
+      <button data-layout="3" title="Principal + liquidité + VWAP/VP">▦ 3 graphiques</button>
+      <button data-layout="mtf" title="Le même actif sur plusieurs unités de temps à la fois (2 à 5 graphiques, unité au choix pour chacun)">⊞ Multi-unités</button>
+      <button data-layout="tpo" title="TPO (profil de marché) des séances d'1 mois, d'1 semaine, d'1 jour, de 4 heures et d'1 heure : single prints, poor high / poor low, zone de valeur">▥ TPO</button>
+    </span>
+    <span class="muted small" id="deskhint">Zoom et défilement synchronisés entre les graphiques.</span>
+    <div class="spacer"></div>
+    <button id="sideToggle" class="seg-like" title="Afficher / masquer le panneau de droite">Panneau ▸</button>
+  </div>
+  <div id="deskwrap">
+    <div id="desk"></div>
+    <aside id="side">
+      <nav id="tabs" class="tabs" role="tablist">
+        <button data-tab="lecture" class="on">Lecture</button>
+        <button data-tab="signals">Idées</button>
+        <button data-tab="levels">Niveaux</button>
+        <button data-tab="mine">Stratégie</button>
+        <button data-tab="chat" title="Pose tes questions à Claude, qui répond avec toutes les données du terminal">Discussion</button>
+        <button data-tab="context" data-expert hidden>Contexte</button>
+        <button data-tab="stats" data-expert hidden>Stats</button>
+        <button data-tab="liquidity" data-expert hidden>Liquidité</button>
+        <button data-tab="vp" data-expert hidden>VP</button>
+        <button data-tab="alerts" data-expert hidden>Alertes</button>
+        <button id="tabMore" class="more" title="Afficher / masquer les onglets détaillés (contexte, statistiques, liquidité, profils, alertes)">Détails ▾</button>
+      </nav>
+      <div class="pane" data-pane="lecture">
+        <div id="lectureBox" class="sigbox"><section class="card"><div class="muted">Chargement…</div></section></div>
+      </div>
+      <div class="pane" data-pane="chat" hidden>
+        <section class="card chatcard"><h2>Discussion avec Claude <small id="chatInfo"></small></h2>
+          <div id="chatLog" class="chatlog"><div class="muted small">Chargement…</div></div>
+          <form id="chatForm" class="chatform"><textarea id="chatQ" rows="2" placeholder="Ex. : pourquoi le BTC a perdu 2 % cet après-midi ?" maxlength="4000"></textarea>
+            <button id="chatSend" class="primary" type="submit">Envoyer</button></form>
+          <div class="line"><button id="chatReset" class="seg-like" type="button">Nouvelle conversation</button><span id="chatRes" class="muted small"></span></div>
+        </section>
+      </div>
+      <div class="pane" data-pane="levels" hidden>
+        <section class="card">
+          <h2>Confluences <small id="confHint"></small></h2>
+          <div id="ladder"></div>
+        </section>
+        <section class="card" id="detailCard">
+          <h2>Détail <small>clique une zone, un niveau ou une poche</small></h2>
+          <div id="detail" class="muted">Rien de sélectionné.</div>
+        </section>
+        <section class="card">
+          <h2>Poches de liquidation <small>estimées (OI)</small></h2>
+          <div id="pools"></div>
+        </section>
+        <section class="card">
+          <h2>Plus hauts / plus bas <small>ordres d'arrêt visibles dans le prix</small></h2>
+          <div id="pricePools"></div>
+          <div class="note">Plus haut et plus bas de la veille, de la semaine, du mois ; creux et sommets récents ; deux niveaux presque égaux comptent comme une seule poche plus forte. Contrairement aux poches estimées par l'Open Interest (29 jours d'historique), ceux-ci se testent sur toute l'histoire : voir la page Backtest.</div>
+        </section>
+      </div>
+      <div class="pane" data-pane="signals" hidden>
+        <div id="sigBox" class="sigbox"><section class="card"><div class="muted">Chargement…</div></section></div>
+      </div>
+      <div class="pane" data-pane="mine" hidden>
+        <div id="mineBox" class="sigbox"><section class="card"><div class="muted">Chargement…</div></section></div>
+      </div>
+      <div class="pane" data-pane="context" hidden>
+        <section class="card"><h2>Contexte marché <small id="ctxHint"></small></h2><div id="context" class="muted">-</div></section>
+      </div>
+      <div class="pane" data-pane="stats" hidden>
+        <section class="card"><h2>Réaction du prix aux niveaux <small id="statsHint"></small></h2><div id="stats" class="muted">-</div></section>
+      </div>
+      <div class="pane" data-pane="liquidity" hidden>
+        <section class="card"><h2>Comment lire la carte</h2><div id="lqLegend"></div></section>
+        <section class="card"><h2>Poches actuelles <small>triées par importance (taille + confluences + fraîcheur)</small></h2><div id="pools2"></div></section>
+        <section class="card" id="detailCard2"><h2>Détail</h2><div id="detail2" class="muted">Clique une poche.</div></section>
+        <section class="card"><h2>Liquidations réelles <small id="realHint"></small></h2><div id="real" class="muted">-</div></section>
+        <section class="card"><h2>Poches balayées <small>journal</small></h2><div id="sweeps" class="muted">-</div></section>
+      </div>
+      <div class="pane" data-pane="vp" hidden>
+        <section class="card"><h2>Volume profiles <small>niveaux ajoutés à l'analyse</small></h2>
+          <div id="vpList" class="muted">Chargement…</div>
+          <div class="note">Chaque profil donne POC, VAH, VAL et HVN : ces niveaux entrent dans les confluences (sources « VP ») et les alertes. Clique un profil pour afficher son histogramme sur le graphique VWAP · VP.</div></section>
+        <section class="card"><h2>Ajouter un profil</h2>
+          <label class="field chk"><input id="vpAuto" type="checkbox"> Automatique selon la timeframe (3 fenêtres : <span id="vpAutoTxt"></span>)</label>
+          <div class="frm">
+            <label>Type<select id="vpKind"><option value="rolling">Glissant (N derniers jours)</option><option value="since">Depuis une date</option><option value="period">Période calendaire</option></select></label>
+            <label data-for="rolling">Jours<input id="vpDays" type="number" min="1" max="2500" value="45"></label>
+            <label data-for="since" hidden>Depuis le<input id="vpDate" type="date"></label>
+            <label data-for="period" hidden>Période<select id="vpPeriod"><option value="day">Jour</option><option value="week">Semaine</option><option value="month" selected>Mois</option><option value="quarter">Trimestre</option><option value="year">Année</option></select></label>
+            <label data-for="period" hidden>Il y a<select id="vpBack"><option value="0">En cours</option><option value="1">1 précédent</option><option value="2">2 précédents</option><option value="3">3 précédents</option><option value="6">6 précédents</option></select></label>
+          </div>
+          <div class="line"><button id="vpAdd" class="primary">Ajouter</button><span id="vpRes" class="muted small"></span></div>
+          <div id="vpSpecs"></div></section>
+        <section class="card"><h2>VWAP ancrées <small>en plus de celle des réglages</small></h2>
+          <div class="line"><input id="vpAnchorDate" type="date"><button id="anchorAdd">Ancrer ici</button></div>
+          <div id="vpAnchors"></div>
+          <div class="note">Les AVWAP du début de l'année et du mois précédents sont ajoutées automatiquement.</div></section>
+      </div>
+      <div class="pane" data-pane="alerts" hidden>
+        <section class="card"><h2>Alertes <small id="alertHint"></small></h2><div id="alerts" class="muted">-</div></section>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<section class="page" data-page="overview" hidden>
+  <div id="overview" class="ovwrap"><div class="muted">Chargement…</div></div>
+</section>
+
+<section class="page" data-page="history" hidden>
+  <div id="histBox" class="btwrap"></div>
+</section>
+
+<section class="page" data-page="backtest" hidden>
+  <div id="btBox" class="btwrap"><div class="muted">Chargement…</div></div>
+</section>
+
+<section class="page" data-page="analysis" hidden>
+<section id="analysis">
+  <nav id="anTabs" class="antabs" role="tablist">
+    <h2 id="anTitle">Biais &amp; probabilités</h2>
+    <button data-an="synth" class="on">Biais &amp; probabilités</button>
+    <button data-an="macro">Macro &amp; annonces</button>
+    <button data-an="week">Bilan de la semaine</button>
+    <button data-an="dom">Dominance BTC / alts</button>
+    <button data-an="plan">Plan de trade</button>
+    <button data-an="lex">Lexique du graphique</button>
+    <span class="spacer"></span><span id="anStatus" class="muted small"></span>
+  </nav>
+  <div class="anpane" data-anpane="synth"><div id="anSynth" class="muted">Analyse en cours…</div></div>
+  <div class="anpane" data-anpane="macro" hidden><div id="anMacro" class="muted">Analyse en cours…</div></div>
+  <div class="anpane" data-anpane="week" hidden><div id="anWeek"></div></div>
+  <div class="anpane" data-anpane="dom" hidden><div id="anDom" class="muted">Analyse en cours…</div></div>
+  <div class="anpane" data-anpane="plan" hidden><div id="anPlan"></div></div>
+  <div class="anpane" data-anpane="lex" hidden><div id="anLex"></div></div>
+</section>
+</section>
+
+<footer>Estimations et statistiques historiques à titre informatif, pas un conseil financier. La règle « aimant » (zone attirant le prix) est une hypothèse non validée.
+  Graphiques : <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a> (Apache-2.0).</footer>
+</div>
+
+<div id="modal" class="modal" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+    <div class="mhead"><h3 id="mTitle">Réglages</h3><button id="closeSettings" class="x" aria-label="Fermer">×</button></div>
+    <div class="mbody">
+      <section>
+        <h4><span class="step">1</span> Source des données</h4>
+        <label class="opt"><input type="radio" name="source" value="simulated"> <b>Simulées</b> <span class="muted">— prix fictifs, pour découvrir le terminal sans internet</span></label>
+        <label class="opt"><input type="radio" name="source" value="binance"> <b>Binance (réel)</b> <span class="muted">— vrais prix, volumes et Open Interest (gratuit, sans compte)</span></label>
+        <div class="line"><button id="testBinance">Tester la connexion Binance</button><span id="binanceRes" class="muted"></span></div>
+        <div id="binanceList" class="checks"></div>
+        <label class="field">Paires <input id="symbols" placeholder="BTCUSDT,SOLUSDT" autocomplete="off"></label>
+        <label class="field">Historique d'analyse (probabilités, biais, volume profiles)
+          <select id="histYears"><option value="0">Le plus long possible (depuis 2019)</option><option value="5">5 ans</option><option value="3">3 ans</option><option value="2">2 ans</option><option value="1">1 an</option></select></label>
+      </section>
+      <section>
+        <h4><span class="step">2</span> Alertes Telegram <small id="tgState"></small></h4>
+        <ol class="howto">
+          <li>Dans Telegram, ouvre <b>@BotFather</b>, envoie <code>/newbot</code>, choisis un nom : il te donne un <b>token</b>.</li>
+          <li>Colle le token ici :
+            <input id="tgToken" type="password" placeholder="123456789:AA..." autocomplete="off" spellcheck="false"></li>
+          <li>Ouvre ton nouveau bot dans Telegram et envoie-lui « bonjour », puis :
+            <button id="findChat">Trouver mon chat id</button> <span id="chatRes" class="muted"></span>
+            <input id="tgChat" placeholder="chat id (rempli automatiquement)" autocomplete="off"></li>
+          <li><button id="testTg">Envoyer un message de test</button> <span id="tgRes" class="muted"></span></li>
+        </ol>
+      </section>
+      <section>
+        <h4><span class="step">3</span> Ce que tu reçois sur Telegram</h4>
+        <label class="field">Alertes
+          <select id="aMode"><option value="ideas">Seulement les idées de trade (recommandé)</option><option value="all">Idées de trade + alertes de zones, de poches et d'annonces</option></select></label>
+        <div id="aExtra" class="grid2" hidden>
+          <label class="field">Score minimum <select id="aScore"><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+          <label class="field">Timeframe <select id="aTf"></select></label>
+          <label class="field">Pause entre 2 alertes d'une zone (h) <input id="aCool" type="number" min="0.5" max="48" step="0.5"></label>
+          <label class="field chk"><input id="aZones" type="checkbox"> Alertes « nouvelle confluence » et « le prix approche »</label>
+          <label class="field chk"><input id="aSweep" type="checkbox"> Alerte quand une grosse poche est balayée</label>
+          <label class="field chk"><input id="aMacro" type="checkbox"> Alerte avant une annonce majeure (CPI, Fed...) et bilan de la réaction</label>
+        </div>
+        <label class="field chk"><input id="mwTg" type="checkbox"> Bilan macro de la semaine, le samedi matin (chiffres publiés, tableau de bord, ce que cela engendre, semaine prochaine)</label>
+        <p class="muted small">Par défaut, tu ne reçois que les idées de trade (avec leur suivi : ordre exécuté, objectifs, stop). Les alertes de zones, de poches et d'annonces ne sont envoyées qu'en mode « Idées de trade + alertes ». Score = nombre de sources différentes dans la zone (+1 si la plus grosse poche de liquidation d'un côté en fait partie).</p>
+      </section>
+      <section>
+        <h4><span class="step">4</span> Idées de trade</h4>
+        <div class="grid2">
+          <label class="field chk"><input id="sOn" type="checkbox"> Envoyer des idées de trade sur Telegram</label>
+          <label class="field">Qualité minimale (sur 100) <input id="sMin" type="number" min="40" max="95" step="1"></label>
+          <label class="field">Idées par semaine au maximum <input id="sMax" type="number" min="1" max="10" step="1"></label>
+          <label class="field">… dont au maximum pour une même paire <input id="sMaxSym" type="number" min="1" max="10" step="1"></label>
+          <label class="field">Ton levier habituel (calcul de liquidation) <input id="sLev" type="number" min="1" max="125" step="1"></label>
+          <label class="field">Sens de mes trades <select id="sDir"><option value="both">Achats et ventes (recommandé)</option><option value="long">Achat seulement (les ventes deviennent des alertes)</option><option value="short">Vente seulement</option></select></label>
+          <label class="field chk"><input id="sTrend" type="checkbox"> Ne garder que les idées dans le sens de la tendance de fond (recommandé : c'est le seul filtre validé par le backtest)</label>
+        </div>
+        <p class="muted small">Seules les configurations rares où plusieurs niveaux importants se superposent sont envoyées, avec stop, objectifs et explication complète. 65 est un bon point de départ ; baisse le seuil si tu reçois trop peu d'idées, monte-le pour être plus sélectif.</p>
+      </section>
+      <section>
+        <h4><span class="step">5</span> Avis d'influenceurs sur X <small>facultatif</small></h4>
+        <label class="field chk"><input id="xOn" type="checkbox"> Ajouter, après chaque idée, l'avis de comptes X que tu suis (d'accord / en désaccord)</label>
+        <label class="field">Comptes à suivre (10 au maximum, séparés par des virgules) <input id="xAccounts" placeholder="compte1, compte2, compte3" autocomplete="off" spellcheck="false"></label>
+        <label class="field">Jeton d'accès X (API officielle) <input id="xToken" type="password" placeholder="Bearer token X (laisse vide pour garder l'actuel)" autocomplete="off" spellcheck="false"></label>
+        <div class="grid2">
+          <label class="field">Posts lus par compte <select id="xPosts"><option>5</option><option>10</option><option>15</option><option>20</option></select></label>
+          <div class="line"><button id="testX">Tester le jeton</button><span id="xRes" class="muted"></span></div>
+        </div>
+        <p class="muted small">Indicatif seulement : <b>n'entre jamais dans le score</b> et n'influence aucune idée. Lecture automatique par mots-clés des posts récents (48 h) qui parlent de la paire. La lecture se paie à l'API de X (environ 0,005 $ par post lu selon les tarifs publiés, à vérifier sur ton compte développeur) ; elle n'a lieu qu'au moment d'envoyer une idée ou quand tu cliques sur « Voir l'avis », puis elle est gardée 30 minutes. Le jeton reste dans ton fichier <code>.env</code>.</p>
+      </section>
+      <section>
+        <h4><span class="step">6</span> Mises à jour automatiques <small id="updState"></small></h4>
+        <div id="updInfo" class="muted small">-</div>
+        <label class="field chk"><input id="updAuto" type="checkbox"> Installer automatiquement les nouvelles versions (le terminal redémarre tout seul, la page se recharge)</label>
+        <ol class="howto">
+          <li>Le dépôt est <b>public</b> : rien à configurer, le terminal vérifie et installe tout seul. Le jeton GitHub est <b>facultatif</b> : il ne sert que si le dépôt redevient privé (GitHub → <b>Settings</b> → <b>Developer settings</b> → <b>Fine-grained tokens</b>, dépôt <code>DEV-claude</code>, <b>Contents : Read-only</b>).
+            <input id="updToken" type="password" placeholder="facultatif : github_pat_..." autocomplete="off" spellcheck="false"></li>
+          <li><button id="updCheck">Vérifier maintenant</button> <button id="updApply">Installer maintenant</button> <span id="updRes" class="muted"></span></li>
+        </ol>
+        <label class="field">Branche suivie <input id="updBranch" placeholder="auto" autocomplete="off" spellcheck="false"></label>
+        <p class="muted small">« auto » = la branche du dépôt la plus récemment mise à jour qui contient le terminal (chaque nouvelle session de travail publie sur sa propre branche). Avant d'installer, le terminal vérifie que la nouvelle version est complète et démarre, et sauvegarde l'actuelle ; si elle plante au démarrage, l'ancienne revient toute seule. Tes données (<code>data_local</code>) et tes réglages (<code>.env</code>) ne sont jamais touchés. Vérification toutes les 30 minutes. Le jeton reste dans ton fichier <code>.env</code>.</p>
+      </section>
+      <section>
+        <h4><span class="step">7</span> Discussion avec Claude <small id="chatState"></small></h4>
+        <p class="muted small">Pose tes questions sur Telegram (au même bot que les idées) ou dans l'onglet <b>Discussion</b> : « pourquoi le BTC a perdu 2 % ? », « les shorts s'accumulent sur SOL ? ». Claude répond avec toutes les données du terminal à cet instant (mouvements et liquidations, intérêt ouvert, flux, financement, options, macro, autres marchés) et cherche l'actualité sur le web si besoin. Seuls <b>tes</b> messages (ton chat id) reçoivent une réponse.</p>
+        <ol class="howto">
+          <li>Crée une clé API sur <b>console.anthropic.com</b> → <b>API Keys</b> → <b>Create Key</b>, et ajoute du crédit (<b>Billing</b>) : c'est payant à l'usage et séparé de l'abonnement Claude (environ 5 à 15 centimes par question avec Claude Opus 5.5, moins avec Sonnet ou Haiku).</li>
+          <li>Colle-la ici : <input id="chatKey" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false"></li>
+          <li><button id="chatInstall" type="button">Installer le module Claude</button> <span id="chatInstallRes" class="muted"></span></li>
+        </ol>
+        <div class="grid2">
+          <label class="field">Modèle <select id="chatModel"></select></label>
+          <label class="field">Budget maximum par mois (en dollars, 0 = sans limite) <input id="chatBudget" type="number" min="0" max="1000" step="1"></label>
+          <label class="field chk"><input id="chatWeb" type="checkbox"> Chercher l'actualité sur le web quand c'est utile (environ 1 centime par recherche)</label>
+          <label class="field chk"><input id="chatTg" type="checkbox"> Répondre à mes messages sur Telegram</label>
+        </div>
+        <p class="muted small">La clé reste dans ton fichier <code>.env</code>. Les données du terminal ne partent vers Claude qu'au moment où tu poses une question.</p>
+      </section>
+    </div>
+    <div class="mfoot"><span id="saveRes" class="muted"></span><button id="cancelSettings">Annuler</button><button id="saveSettings" class="primary">Enregistrer</button></div>
+  </div>
+</div>
+<div id="toast" hidden></div>
+<script src="vendor/lightweight-charts.standalone.production.js"></script>
+<script src="charts.js"></script>
+<script src="analysis.js"></script>
+<script src="overview.js"></script>
+<script src="signals.js"></script>
+<script src="backtest.js"></script>
+<script src="history.js"></script>
+<script src="strategy.js"></script>
+<script src="lecture.js"></script>
+<script src="panels.js"></script>
+<script src="mtf.js"></script>
+<script src="tpo.js"></script>
+<script src="macroweek.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
