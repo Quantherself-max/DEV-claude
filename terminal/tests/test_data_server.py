@@ -796,11 +796,11 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(code, 400)
         code, res = self.post("/api/telegram/chatid", {"token": "BAD:x"})
         self.assertEqual(res["chats"], [])
-        self.assertIn("refuse", res["detail"])
+        self.assertIn("token refusé", res["detail"])
         code, res = self.post("/api/telegram/chatid", {"token": "123:abc"})
         self.assertEqual(res["chats"], [{"id": "4242", "name": "Moi"}])
         service_before = self.app.service
-        code, res = self.post("/api/settings", {"telegramToken": "123:abcdefghijkl", "telegramChatId": "4242",
+        code, res = self.post("/api/settings", {"telegramToken": "1234567:AAHdqTcvCH1vGWJxfSeofSAsabcdefghijkl", "telegramChatId": "4242",
                                                 "alertMinScore": 4, "alertSweep": False})
         self.assertEqual(code, 200, res)
         self.assertTrue(res["telegram"]["configured"])
@@ -816,7 +816,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.app.cfg.alert_mode, "ideas")
         txt = self.env.read_text()
         self.assertIn("# mes reglages", txt)                                       # le reste du fichier est garde
-        self.assertIn("TELEGRAM_BOT_TOKEN=123:abcdefghijkl", txt)
+        self.assertIn("TELEGRAM_BOT_TOKEN=1234567:AAHdqTcvCH1vGWJxfSeofSAsabcdefghijkl", txt)
         self.assertIn("TERMINAL_ALERT_MIN_SCORE=4", txt)
         self.assertNotIn("abcdefghijkl", json.dumps(json.loads(self.get("/api/config")[1])))
         code, res = self.post("/api/test/telegram", {})

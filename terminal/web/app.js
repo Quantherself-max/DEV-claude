@@ -615,7 +615,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 22;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade)
+const NEED_API = 23;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -636,9 +636,10 @@ function header(d) {
   const sb = $('#srcBadge');
   sb.textContent = d.source === 'simulated' ? 'DONNÉES SIMULÉES' : 'BINANCE';
   sb.className = 'badge ' + (d.source === 'simulated' ? 'warn' : 'ok');
-  const tb = $('#tgBadge');
-  tb.textContent = st.cfg && st.cfg.telegram ? 'TELEGRAM ON' : 'TELEGRAM OFF';
-  tb.className = 'badge ' + (st.cfg && st.cfg.telegram ? 'ok' : '');
+  const tb = $('#tgBadge'), ts = (st.cfg && st.cfg.telegramState) || {};
+  tb.textContent = ts.error ? 'TELEGRAM ERREUR' : st.cfg && st.cfg.telegram ? 'TELEGRAM ON' : 'TELEGRAM OFF';
+  tb.className = 'badge ' + (ts.error ? 'bad' : st.cfg && st.cfg.telegram ? 'ok' : '');
+  tb.title = (ts.reason || 'Configurer Telegram dans les réglages') + ' — clique pour le diagnostic.';
   const age = Math.max(0, Math.round(Date.now() / 1000 - d.lastUpdate));
   $('#status').textContent = d.error ? 'erreur' : `niveaux : il y a ${age} s`;
   $('#status').className = d.error ? 'bad' : 'muted';
@@ -1027,8 +1028,10 @@ async function openSettings() {
     $('#tgToken').value = '';
     $('#tgToken').placeholder = s.telegram.tokenHint ? `token enregistré (${s.telegram.tokenHint}) : laisse vide pour le garder` : '123456789:AA...';
     $('#tgChat').value = s.telegram.chatId || '';
-    $('#tgState').textContent = s.telegram.configured ? '✓ configuré' : 'non configuré';
-    $('#tgState').className = s.telegram.configured ? 'up' : '';
+    $('#tgState').textContent = s.telegram.error ? '✗ envoi refusé' : s.telegram.configured ? '✓ configuré' : 'non configuré';
+    $('#tgState').className = s.telegram.error ? 'dn' : s.telegram.configured ? 'up' : '';
+    $('#tgFile').textContent = s.telegram.envFile ? 'Réglages enregistrés dans : ' + s.telegram.envFile : '';
+    $('#tgDiag').innerHTML = '';
     $('#aScore').value = String(s.alertMinScore);
     $('#aTf').innerHTML = (st.cfg ? st.cfg.tfs : ['1h']).map(t => `<option${t === s.alertTf ? ' selected' : ''}>${t}</option>`).join('');
     $('#aCool').value = s.alertCooldownHours;
@@ -1142,7 +1145,12 @@ async function updateNotice() {                                     // apres une
 const closeSettings = () => { M.hidden = true; };
 $('#aMode').onchange = () => { $('#aExtra').hidden = $('#aMode').value !== 'all'; };
 document.addEventListener('click', e => { if (e.target.closest('[data-open-settings]')) openSettings(); });
-$('#openSettings').onclick = openSettings; $('#srcBadge').onclick = openSettings; $('#tgBadge').onclick = openSettings;
+$('#openSettings').onclick = openSettings; $('#srcBadge').onclick = openSettings;
+$('#tgBadge').onclick = async () => {                                     // V25 : le badge ouvre les reglages sur Telegram et lance le diagnostic
+  await openSettings();
+  const sec = $('#tgDiag'); if (sec) sec.closest('section').scrollIntoView({block: 'start'});
+  diagTelegram();
+};
 $('#closeSettings').onclick = closeSettings; $('#cancelSettings').onclick = closeSettings;
 M.addEventListener('mousedown', e => { if (e.target === M) closeSettings(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !M.hidden) closeSettings(); });
@@ -1165,8 +1173,20 @@ $('#findChat').onclick = () => busy($('#findChat'), $('#chatRes'), async () => {
 $('#testTg').onclick = () => busy($('#testTg'), $('#tgRes'), async () => {
   const r = await api('/api/test/telegram', {token: $('#tgToken').value.trim(), chatId: $('#tgChat').value.trim()});
   $('#tgRes').className = r.ok ? 'up' : 'dn';
-  $('#tgRes').textContent = r.ok ? '✓ message envoyé : regarde Telegram' : '✗ ' + r.detail;
+  $('#tgRes').textContent = r.ok ? '✓ message envoyé : regarde Telegram' + (r.saved ? ' · token et chat id enregistrés' : '') : '✗ ' + r.detail;
+  if (r.saved) { buildControls(await api('/api/config')); $('#tgState').textContent = '✓ configuré'; $('#tgState').className = 'up'; $('#tgToken').value = ''; }
 });
+// V25 : diagnostic pas a pas (fichier des reglages, token, conversation, lecture des messages, dernier envoi)
+async function diagTelegram() {
+  $('#tgDiag').innerHTML = '<li class="muted">Vérification…</li>';
+  try {
+    const r = await api('/api/telegram/diagnose', {token: $('#tgToken').value.trim(), chatId: $('#tgChat').value.trim()});
+    $('#tgDiag').innerHTML = r.steps.map(x => `<li class="${x.ok === true ? 'up' : x.ok === false ? 'dn' : 'amb'}"><b>${x.ok === true ? '✓' : x.ok === false ? '✗' : '•'} ${esc(x.name)}</b> : ${esc(x.detail)}` +
+      (x.fix ? `<div class="fix">${esc(x.fix)}</div>` : '') + '</li>').join('') +
+      `<li class="${r.ok ? 'up' : 'dn'}"><b>${r.ok ? 'Tout est en ordre.' : 'Corrige le premier point en rouge, puis relance le diagnostic.'}</b></li>`;
+  } catch (e) { $('#tgDiag').innerHTML = `<li class="dn">Diagnostic impossible : ${esc(e.message)}</li>`; }
+}
+$('#diagTg').onclick = diagTelegram;
 $('#testX').onclick = () => busy($('#testX'), $('#xRes'), async () => {
   const r = await api('/api/test/x', {token: $('#xToken').value.trim(), handle: $('#xAccounts').value});
   $('#xRes').className = r.ok ? 'up' : 'dn';

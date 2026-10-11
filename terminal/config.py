@@ -1,5 +1,6 @@
 """Configuration : variables d'environnement, completees par un fichier .env (voir config.example.env)."""
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,15 +8,69 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 
+def _read_text(path: Path) -> str:
+    """Texte d'un fichier de reglages ecrit a la main : UTF-8 avec ou sans BOM (Bloc-notes de Windows), sinon Windows-1252."""
+    raw = path.read_bytes()
+    for enc in ("utf-8-sig", "cp1252"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", "replace")
+
+
 def _load_env_file(path: Path) -> dict:
     out = {}
     if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
+        for line in _read_text(path).splitlines():
+            line = line.strip().lstrip("\ufeff")
+            if line.startswith("export "):                          # « export CLE=valeur » (habitude des shells)
+                line = line[7:].lstrip()
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
                 out[k.strip()] = v.strip().strip('"').strip("'")
     return out
+
+
+def env_sources(env_path: Path) -> list:
+    """Fichiers de reglages lus, du moins prioritaire au plus prioritaire : « .env.txt » (Windows cache les extensions : un « .env » cree
+    avec le Bloc-notes devient souvent « .env.txt »), puis « .env », qui l'emporte."""
+    p = Path(env_path)
+    return [f for f in (p.with_name(p.name + ".txt"), p) if f.is_file()]
+
+
+# ---------- Telegram (V25) : token et chat id tels qu'on les colle, remis en forme ----------
+def clean_token(tok) -> str:
+    """Token du bot : sans espaces ni retours a la ligne, sans le prefixe « bot » ni l'adresse de l'API si on les a colles avec."""
+    t = re.sub(r"\s+", "", str(tok or "")).strip("\"'")
+    m = re.search(r"api\.telegram\.org/bot([^/?#]+)", t)
+    if m:
+        t = m.group(1)
+    if re.match(r"(?i)^bot\d+:", t):
+        t = t[3:]
+    return t
+
+
+def token_ok(tok: str) -> bool:
+    return bool(re.fullmatch(r"\d{3,15}:[A-Za-z0-9_-]{20,60}", tok or ""))
+
+
+def clean_chat(cid) -> str:
+    """Chat id : un nombre (negatif pour un groupe ou un canal) ou @nom_du_canal ; un lien t.me/nom devient @nom."""
+    c = re.sub(r"\s+", "", str(cid or "")).strip("\"'")
+    m = re.fullmatch(r"(?:https?://)?t\.me/([A-Za-z][A-Za-z0-9_]{3,31})", c)
+    if m:
+        c = "@" + m.group(1)
+    return c
+
+
+def chat_ok(cid: str) -> bool:
+    return bool(re.fullmatch(r"-?\d{1,20}", cid or "") or re.fullmatch(r"@[A-Za-z][A-Za-z0-9_]{3,31}", cid or ""))
+
+
+def chat_is_bot(cid: str, tok: str) -> bool:
+    """Erreur classique : le numero au debut du token (celui du bot lui-meme) colle a la place de son propre chat id."""
+    return bool(cid and tok and ":" in tok and cid.lstrip("-") == tok.split(":", 1)[0])
 
 
 @dataclass
@@ -107,8 +162,11 @@ class Config:
 
 
 def load_config(env_path: Path | None = None) -> Config:
-    env = _load_env_file(env_path or ROOT / ".env")
-    env.update({k: v for k, v in os.environ.items() if k.startswith(("TERMINAL_", "TELEGRAM_"))})
+    env = {}
+    for f in env_sources(env_path or ROOT / ".env"):
+        env.update(_load_env_file(f))
+    # variables du systeme : elles l'emportent sur le fichier, sauf si elles sont vides (une variable vide effacait le token du fichier)
+    env.update({k: v for k, v in os.environ.items() if k.startswith(("TERMINAL_", "TELEGRAM_")) and v.strip()})
     c = Config()
     g = env.get
     c.source = g("TERMINAL_SOURCE", c.source).lower()
@@ -162,8 +220,8 @@ def load_config(env_path: Path | None = None) -> Config:
     c.macro_week_telegram = g("TERMINAL_MACRO_WEEK_TELEGRAM", "0").lower() in ("1", "true", "oui", "yes")
     c.chat_telegram = g("TERMINAL_CHAT_TELEGRAM", "1").lower() not in ("0", "false", "non", "no")
     c.chat_budget = max(0.0, min(1000.0, float(g("TERMINAL_CHAT_BUDGET", c.chat_budget))))
-    c.telegram_token = g("TELEGRAM_BOT_TOKEN", "")
-    c.telegram_chat_id = g("TELEGRAM_CHAT_ID", "")
+    c.telegram_token = clean_token(g("TELEGRAM_BOT_TOKEN", ""))
+    c.telegram_chat_id = clean_chat(g("TELEGRAM_CHAT_ID", ""))
     c.telegram_api_base = g("TELEGRAM_API_BASE", c.telegram_api_base)
     c.data_dir = g("TERMINAL_DATA_DIR", c.data_dir)
     return c

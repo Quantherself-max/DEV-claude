@@ -221,8 +221,12 @@
           <li>Ouvre ton nouveau bot dans Telegram et envoie-lui « bonjour », puis :
             <button id="findChat">Trouver mon chat id</button> <span id="chatRes" class="muted"></span>
             <input id="tgChat" placeholder="chat id (rempli automatiquement)" autocomplete="off"></li>
-          <li><button id="testTg">Envoyer un message de test</button> <span id="tgRes" class="muted"></span></li>
+          <li><button id="testTg">Envoyer un message de test</button> <span id="tgRes" class="muted"></span>
+            <div class="muted small">Un test réussi enregistre le token et le chat id tout seul.</div></li>
         </ol>
+        <div class="line"><button id="diagTg" title="Vérifie chaque maillon : fichier des réglages, token, conversation, lecture des messages, dernier envoi">Diagnostic Telegram</button>
+          <span id="tgFile" class="muted small"></span></div>
+        <ul id="tgDiag" class="tgdiag"></ul>
       </section>
       <section>
         <h4><span class="step">3</span> Ce que tu reçois sur Telegram</h4>

@@ -119,6 +119,48 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## V24.2 : le bot Telegram ne reste plus « OFF » sans explication
+
+**Si le badge n'est pas sur ON** : clique dessus, corrige le premier point en rouge du diagnostic, puis clique sur « Envoyer un message de test ».
+
+### Ce qui pouvait laisser le badge sur OFF alors que le token et le chat id étaient saisis (corrigé)
+- **Fichier de réglages écrit avec le Bloc-notes** : il commence souvent par un caractère invisible qui rendait la première ligne illisible (souvent celle du token). Ce caractère est maintenant ignoré, et un fichier enregistré en Windows-1252 est lu aussi.
+- **« .env » devenu « .env.txt »** : Windows cache les extensions, donc un fichier créé à la main s'appelle souvent « .env.txt ». Il est maintenant lu (« .env » l'emporte s'il existe aussi).
+- **Variable du système vide** : une variable TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID vide dans Windows effaçait la valeur du fichier. Une variable vide est maintenant ignorée.
+- **Token collé avec des espaces, des guillemets, le préfixe « bot » ou toute l'adresse de l'API** : il est nettoyé.
+- **Chat id** : un lien t.me/nom devient @nom. Le numéro du bot (le début du token) collé à la place de ton propre chat id est refusé, avec l'explication.
+- **Oubli du bouton « Enregistrer »** : un message de test réussi enregistre maintenant le token et le chat id tout seul.
+- **Nouvelle version extraite dans un autre dossier** : l'ancien fichier de réglages n'y est pas. Le chemin exact du fichier lu est maintenant affiché dans les Réglages.
+
+### Le badge dit la vérité
+- **TELEGRAM ON** : token et chat id enregistrés, et le dernier envoi est passé (ou rien n'a encore été envoyé).
+- **TELEGRAM ERREUR** (rouge) : les réglages sont là, mais Telegram a refusé le dernier envoi. La raison s'affiche au survol.
+- **TELEGRAM OFF** : il manque le token ou le chat id. La raison s'affiche au survol.
+- **Un clic sur le badge** ouvre les Réglages sur Telegram et lance le diagnostic.
+
+### Le diagnostic (Réglages → 2 → « Diagnostic Telegram »)
+Il vérifie chaque maillon et dit quoi faire :
+- fichier de réglages lu, avec son chemin ;
+- variables du système qui l'emportent sur le fichier ;
+- token et chat id enregistrés, ou saisis mais pas encore enregistrés ;
+- format du token ;
+- token accepté par Telegram (avec le nom du bot) ;
+- webhook qui envoie les messages ailleurs ;
+- conversation trouvée ;
+- lecture de tes messages ;
+- dernier envoi.
+
+Les erreurs de Telegram sont traduites en clair : token refusé, chat id inconnu (tu n'as pas appuyé sur « Démarrer » dans le bot), bot bloqué, bot absent du groupe ou du canal, deux programmes qui lisent le même bot, trop de messages, Telegram injoignable (connexion, pare-feu, antivirus ou VPN).
+
+### Le bot répond, même sans clé Claude
+- **/etat** : prix, tendance de fond, idées de la semaine (5 au maximum) et biais du terminal.
+- **/idees** : les idées en cours (entrée, stop, objectif 1, statut).
+- **/aide** ou **/start** : ce que fait le bot.
+- **Un autre message** : sans clé Claude, le bot confirme qu'il l'a reçu et explique qu'une clé est nécessaire pour discuter.
+- **Un autre compte** qui écrit au bot reçoit une fois par jour son propre chat id, et aucune donnée du terminal. C'est pratique si le chat id enregistré est faux.
+
+Telegram reste réservé aux idées de trade (5 par semaine au maximum). Le bot ne fait que répondre quand tu lui écris.
+
 ## V24.1 : gros ordres agressifs et absorptions lisibles sur le graphique
 
 Avant, les gros ordres étaient des losanges **bleus et blancs, les couleurs mêmes des bougies du style « nuit »**, posés au centre de la bougie avec leur montant écrit dedans ; plusieurs ordres sur une même bougie s'empilaient avec les cercles des absorptions et on ne voyait plus la bougie.

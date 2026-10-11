@@ -47,7 +47,15 @@ Ne contredis pas les chiffres du bilan ; si une source donne un autre chiffre, s
 
 HELP = ("Pose-moi n'importe quelle question sur le marché ou sur les analyses du terminal, par exemple :\n"
         "• pourquoi le BTC a perdu 2 % cet après-midi ?\n• les shorts s'accumulent sur SOL ?\n• qu'est-ce qui arrive cette semaine en macro ?\n\n"
-        "Commandes : /reset (nouvelle conversation), /cout (dépense du mois), /aide.")
+        "Commandes : /etat (le terminal en bref), /idees (idées en cours), /reset (nouvelle conversation), /cout (dépense du mois), /aide.")
+# V25 : sans cle API Claude, le bot repond quand meme (il est bien relie au terminal) ; seule la discussion libre demande la cle
+HELP_NOKEY = ("Je suis bien relié à ton terminal : c'est ici que tu reçois les idées de trade (et leur suivi : ordre exécuté, objectifs, stop).\n\n"
+              "Commandes : /etat (le terminal en bref), /idees (idées en cours), /aide.\n\n"
+              "Pour me poser des questions libres (« pourquoi le BTC baisse ? »), ajoute une clé API Claude dans le terminal : Réglages → 7. Discussion avec Claude.")
+NO_KEY = ("Message bien reçu, le bot fonctionne. Pour discuter librement avec moi, il faut une clé API Claude (Réglages → 7 du terminal). "
+          "Sans clé : /etat (le terminal en bref) et /idees (idées en cours).")
+STRANGER = ("Ce bot est privé : il ne répond qu'au chat id enregistré dans le terminal.\n"
+            "Ton chat id est : {chat}\nSi ce bot est le tien, copie ce nombre dans le terminal : Réglages → 2. Alertes Telegram → chat id, puis Enregistrer.")
 
 
 def sdk():
@@ -379,7 +387,7 @@ class Assistant:
 class TelegramChat:
     """Lit les messages envoyes au bot (attente longue getUpdates) et repond avec l'assistant. Seul le chat id configure est servi."""
 
-    def __init__(self, cfg, assistant: Assistant, data_dir, make_notifier=None):
+    def __init__(self, cfg, assistant: Assistant, data_dir, make_notifier=None, commands=None):
         from alerts.notifier import TelegramNotifier
         self.cfg, self.assistant = cfg, assistant
         mk = make_notifier or (lambda timeout: TelegramNotifier(cfg.telegram_token, cfg.telegram_chat_id, cfg.telegram_api_base, timeout=timeout))
@@ -388,7 +396,11 @@ class TelegramChat:
         self.stop = threading.Event()
         self.thread = None
         self.last_error = None
+        self.last_poll = None                    # derniere lecture reussie des messages (diagnostic)
         self.ignored = 0
+        self.commands = dict(commands or {})     # V25 : /etat, /idees -> fonction qui renvoie le texte (sans cle Claude)
+        self.seen = {}                           # conversations vues : chat id -> nom (pour « Trouver mon chat id » pendant l'ecoute)
+        self._told = {}                          # chat id inconnu -> heure du dernier message « ce bot est prive »
 
     def _offset(self):
         try:
@@ -420,16 +432,34 @@ class TelegramChat:
 
     def handle(self, msg: dict) -> str | None:
         """Traite un message ; renvoie la reponse envoyee (pour les tests)."""
-        chat = str((msg.get("chat") or {}).get("id", ""))
+        c = msg.get("chat") or {}
+        chat = str(c.get("id", ""))
         text = (msg.get("text") or "").strip()
+        if chat:
+            self.seen[chat] = c.get("username") or c.get("title") or c.get("first_name") or self.seen.get(chat, "")
         if chat != str(self.cfg.telegram_chat_id):
             self.ignored += 1
+            # V25 : une fois par jour, on donne a l'inconnu son propre chat id (utile si le chat id enregistre est faux) ; aucune donnee du terminal
+            if chat and time.time() - self._told.get(chat, 0) > 86400:
+                self._told[chat] = time.time()
+                try:
+                    self.send_api._call("sendMessage", {"chat_id": chat, "text": STRANGER.format(chat=chat)})
+                except Exception as e:
+                    self.last_error = f"envoi : {type(e).__name__}"
             return None
         if not text:
             return None
         low = text.lower().split("@")[0]
+        cmd = low.lstrip("/").replace("é", "e")
         if low in ("/start", "/aide", "/help"):
-            out = HELP
+            out = HELP if self.cfg.chat_key else HELP_NOKEY
+        elif low.startswith("/") and cmd in self.commands:
+            try:
+                out = self.commands[cmd]()
+            except Exception as e:
+                out = f"Commande indisponible pour l'instant ({type(e).__name__})."
+        elif not self.cfg.chat_key and low not in ("/cout", "/coût", "/reset"):
+            out = NO_KEY
         elif low == "/reset":
             self.assistant.reset()
             out = "C'est noté : nouvelle conversation."
@@ -454,7 +484,7 @@ class TelegramChat:
                 if off is not None:
                     payload["offset"] = off
                 res = self.poll_api._call("getUpdates", payload)
-                self.last_error = None
+                self.last_error, self.last_poll = None, time.time()
                 if self.stop.is_set():                                         # remplace par un nouvel ecouteur : c'est lui qui traitera ces messages
                     return
                 for u in res.get("result", []):

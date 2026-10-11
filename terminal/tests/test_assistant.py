@@ -213,7 +213,10 @@ class AssistantTests(unittest.TestCase):
         chat = A.TelegramChat(a.cfg, a, self.tmp.name, make_notifier=lambda timeout: FakeTg())
         self.assertIsNone(chat.handle({"chat": {"id": 999}, "text": "pourquoi ?"}))
         self.assertEqual(chat.ignored, 1)
-        self.assertEqual(sent, [])
+        self.assertEqual(len(sent), 1)                                                # V25 : un inconnu recoit seulement son propre chat id
+        self.assertIn("999", sent[0][1]["text"])
+        self.assertEqual(self.calls, [])                                              # rien n'est envoye a Claude pour lui
+        sent.clear()
         self.assertIn("/reset", chat.handle({"chat": {"id": 42}, "text": "/aide"}))
         self.responses.append(resp("x" * 5000))
         out = chat.handle({"chat": {"id": 42}, "text": "explique"})

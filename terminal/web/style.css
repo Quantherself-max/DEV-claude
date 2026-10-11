@@ -443,3 +443,7 @@ ol.tl .evt{color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap
 .lgd{display:inline-flex;align-items:center;gap:3px;margin-left:2px;vertical-align:middle}
 .lgd .lb{display:inline-block;width:8px;height:8px;border-radius:50%}.lgd .lb.buy{background:rgba(0,214,125,.55);border:1px solid #00d67d}.lgd .lb.sell{background:rgba(255,72,110,.55);border:1px solid #ff486e}
 .lgd .lw{display:inline-block;width:9px;height:4px}.lgd .lw.up{border:2px solid #3ddc97;border-top:0}.lgd .lw.dn{border:2px solid #ff6b6b;border-bottom:0}
+
+/* V25 : diagnostic Telegram */
+ul.tgdiag{list-style:none;margin:6px 0 0;padding:0;font-size:12.5px}ul.tgdiag li{padding:4px 0;border-bottom:1px solid #1b2030;line-height:1.4}
+ul.tgdiag li.up b{color:var(--up)}ul.tgdiag li.dn b{color:var(--dn)}ul.tgdiag li.amb b{color:var(--amb)}ul.tgdiag .fix{color:#c6c9d2;margin:2px 0 0 16px}

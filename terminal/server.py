@@ -15,11 +15,12 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from alerts.assistant import MODELS as CHAT_MODELS, Assistant, TelegramChat, install_sdk
+from alerts import notifier as notifier_mod
 from alerts.notifier import ConsoleNotifier, TelegramNotifier
 from alerts import readings as readings_mod
 from alerts.rules import AlertEngine
 from alerts.trades import OPEN, TradeDesk
-from config import ROOT, load_config, write_env
+from config import ROOT, chat_is_bot, chat_ok, clean_chat, clean_token, env_sources, load_config, token_ok, write_env
 from data import reports as reports_mod
 from data.binance import BinanceSource
 from data.live import LiveFeed
@@ -30,8 +31,8 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "24.1"
-API_LEVEL = 22                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "24.2"
+API_LEVEL = 23                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -175,9 +176,122 @@ class App:
             old.close()
         self.tgchat = None
         c = self.cfg
-        if self.running and c.chat_telegram and c.telegram_on and c.chat_key:
-            self.tgchat = TelegramChat(c, self.assistant, c.data_dir)
+        if self.running and c.chat_telegram and c.telegram_on:          # V25 : le bot repond meme sans cle Claude (/etat, /idees, /aide)
+            self.tgchat = TelegramChat(c, self.assistant, c.data_dir, commands={"etat": self.bot_status, "idees": self.bot_ideas})
             self.tgchat.start()
+
+    # --- Telegram (V25) : reponses du bot sans Claude, etat du badge, diagnostic pas a pas ---
+    def bot_status(self) -> str:
+        """/etat : le terminal en bref (prix, biais, idees de la semaine, tendance de fond)."""
+        now = self.source.now_ms()
+        L = [f"Terminal en marche ({'données simulées' if self.cfg.source == 'simulated' else 'Binance'}), version {VERSION}."]
+        from engine.signals import fmt_price
+        for sym in self.cfg.symbols:
+            px = self.service.last_price(sym)
+            reg = self.service.regime(sym)
+            L.append(f"• {sym.replace('USDT', '')} : {fmt_price(px)}" if px else f"• {sym.replace('USDT', '')} : données en chargement")
+            if reg and reg.get("ready"):
+                L[-1] += f" · tendance de fond {reg['label']}"
+        d = self.desk.public(now)
+        w, b = d["week"], d["bias"]
+        L.append(f"Idées cette semaine : {w['sent']} sur {w['cap']} au maximum.")
+        L.append("Biais du terminal : " + (f"{'ACHAT' if b['side'] == 'long' else 'VENTE'} (idée {b['symbol'].replace('USDT', '')})" if b else "aucun (pas d'idée en cours ni de moins de 24 heures)."))
+        return "\n".join(L)
+
+    def bot_ideas(self) -> str:
+        """/idees : les idees encore ouvertes (ordre en attente ou position en cours)."""
+        from engine.explain import paris
+        from engine.signals import fmt_price
+        opens = [t for t in self.desk.trades if t["status"] in OPEN and t.get("mode") != "alerte"]
+        if not opens:
+            return "Aucune idée en cours. Les idées sont rares (5 par semaine au plus) : tu les reçois ici dès qu'elles sont envoyées."
+        st = {"pending": "ordre en attente", "active": "en position", "tp1": "objectif 1 atteint, le reste court"}
+        return "Idées en cours :\n" + "\n".join(
+            f"• {t['symbol'].replace('USDT', '')} {'achat' if t['side'] == 'long' else 'vente'} du {paris(t['created'])} : entrée {fmt_price(t['entry'])}, "
+            f"stop {fmt_price(t['stop'])}, objectif 1 {fmt_price(t['tp1'])} — {st.get(t['status'], t['status'])}" for t in opens)
+
+    def telegram_state(self) -> dict:
+        """Etat du badge : configure ou non (et pourquoi), dernier envoi, ecoute des messages."""
+        c = self.cfg
+        last = notifier_mod.last_for(c.telegram_token, c.telegram_chat_id)
+        if not c.telegram_token and not c.telegram_chat_id:
+            reason = "Ni token ni chat id enregistrés dans les réglages du terminal."
+        elif not c.telegram_token:
+            reason = "Token du bot manquant dans les réglages (Réglages → 2)."
+        elif not c.telegram_chat_id:
+            reason = "Chat id manquant dans les réglages (Réglages → 2 → « Trouver mon chat id »)."
+        elif last and not last.get("ok"):
+            reason = "Dernier envoi refusé : " + last.get("help", "")
+        else:
+            reason = "Token et chat id enregistrés" + (" ; dernier envoi réussi." if last.get("ok") else ".")
+        t = getattr(self, "tgchat", None)
+        return {"on": c.telegram_on, "error": bool(c.telegram_on and last and not last.get("ok")), "reason": reason, "last": last,
+                "listening": bool(t), "listenError": (t.last_error if t else None)}
+
+    def telegram_diagnose(self, token: str | None = None, chat: str | None = None) -> dict:
+        """Verifie chaque maillon et dit quoi faire : fichier de reglages lu, token et chat id enregistres, token accepte par Telegram,
+        conversation trouvee, ecoute des messages, dernier envoi. token / chat : valeurs du formulaire (pas encore enregistrees)."""
+        c, steps = self.cfg, []
+
+        def step(name, ok, detail, fix=""):
+            steps.append({"name": name, "ok": ok, "detail": detail, "fix": fix})
+        files = env_sources(self.env_path)
+        txt = self.env_path.with_name(self.env_path.name + ".txt")
+        step("Fichier des réglages", bool(files), f"lu : {', '.join(str(f) for f in files)}" if files else f"aucun fichier de réglages : {self.env_path}",
+             "Les réglages s'enregistrent avec le bouton « Enregistrer » en bas des Réglages." if not files else
+             (f"Un fichier « {txt.name} » existe aussi (Windows cache les extensions) : le terminal le lit, mais « .env » l'emporte." if txt.is_file() and self.env_path.is_file() else ""))
+        over = [k for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID") if os.environ.get(k, "").strip()]
+        if over:
+            step("Variables du système", None, "défini hors du fichier : " + ", ".join(over), "Ces variables l'emportent sur les Réglages : retire-les si elles sont anciennes.")
+        ftok, fchat = clean_token(token) if token else "", clean_chat(chat) if chat else ""
+        tok, cid = ftok or c.telegram_token, fchat or c.telegram_chat_id
+        step("Token enregistré", bool(c.telegram_token), ("…" + c.telegram_token[-4:]) if c.telegram_token else "aucun",
+             "" if c.telegram_token else "Colle le token donné par @BotFather, puis « Enregistrer » (ou un test réussi, qui enregistre tout seul).")
+        step("Chat id enregistré", bool(c.telegram_chat_id), c.telegram_chat_id or "aucun",
+             "" if c.telegram_chat_id else "Écris « bonjour » à ton bot dans Telegram, puis « Trouver mon chat id ».")
+        if (ftok and ftok != c.telegram_token) or (fchat and fchat != c.telegram_chat_id):
+            step("Formulaire", False, "les valeurs saisies ne sont pas encore enregistrées", "Clique sur « Enregistrer » en bas des Réglages (ou fais un test réussi).")
+        if not tok:
+            return {"steps": steps, "ok": False}
+        if chat_is_bot(cid, tok):
+            step("Chat id", False, f"{cid} est le numéro du bot lui-même (le début du token)",
+                 "Il faut TON chat id : écris « bonjour » à ton bot dans Telegram, puis clique sur « Trouver mon chat id ».")
+        if not token_ok(tok):
+            step("Format du token", False, "ne ressemble pas à un token de bot (123456789:AA… : des chiffres, deux-points, puis environ 35 caractères)",
+                 "Recopie-le depuis @BotFather : /mybots → ton bot → API Token.")
+        tg = TelegramNotifier(tok, cid, c.telegram_api_base, timeout=12)
+        ok, me = tg.call("getMe")
+        step("Token accepté par Telegram", ok, f"bot @{me.get('username')}" if ok and isinstance(me, dict) else str(me),
+             "" if ok else notifier_mod.explain(str(me)))
+        if not ok:
+            return {"steps": steps, "ok": False}
+        okw, wh = tg.call("getWebhookInfo")
+        if okw and isinstance(wh, dict) and wh.get("url"):
+            step("Webhook", False, f"le bot envoie ses messages à une autre adresse ({wh['url'][:60]}…)",
+                 "Les idées partent quand même, mais le bot ne peut pas lire tes messages. Supprime le webhook si tu ne l'utilises pas.")
+        if cid:
+            okc, ch = tg.call("getChat", {"chat_id": cid})
+            name = (ch.get("username") or ch.get("title") or ch.get("first_name") or "") if okc and isinstance(ch, dict) else ""
+            step("Conversation trouvée", okc, f"{ch.get('type', '')} {('@' + name) if name and ch.get('username') else name}".strip() if okc else str(ch),
+                 "" if okc else notifier_mod.explain(str(ch)))
+        t = getattr(self, "tgchat", None)
+        if not c.chat_telegram:
+            step("Lecture de tes messages", None, "désactivée (Réglages → 7 : « Discuter aussi sur Telegram »)",
+                 "Les idées partent quand même ; le bot ne répond simplement pas à tes messages.")
+        elif not (c.telegram_on and tok == c.telegram_token and cid == c.telegram_chat_id):
+            pass                                                     # rien a lire tant que ces valeurs ne sont pas enregistrees
+        elif not self.running:
+            step("Lecture de tes messages", None, "démarre avec le terminal")
+        elif t and t.last_error:
+            step("Lecture de tes messages", False, t.last_error, notifier_mod.explain(t.last_error))
+        else:
+            step("Lecture de tes messages", bool(t), ("le bot lit tes messages" + (" et Claude répond" if c.chat_key else " (/etat, /idees, /aide)")) if t else "pas démarrée",
+                 "" if t else "Redémarre le terminal.")
+        last = notifier_mod.last_for(tok, cid)
+        if last:
+            step("Dernier envoi", bool(last.get("ok")), ("réussi" if last.get("ok") else last.get("detail", "")) + f" ({time.strftime('%d/%m %H:%M', time.localtime(last['t']))})",
+                 "" if last.get("ok") else last.get("help", ""))
+        return {"steps": steps, "ok": all(x["ok"] is not False for x in steps)}
 
     def start_background(self):
         """Demarre les flux temps reel (apres la creation : les tests n'ouvrent aucune connexion)."""
@@ -481,7 +595,7 @@ class App:
         tok = c.telegram_token
         return {"source": c.source, "symbols": list(c.symbols),
                 "telegram": {"configured": c.telegram_on, "tokenHint": ("..." + tok[-4:]) if tok else "",
-                             "chatId": c.telegram_chat_id},
+                             "chatId": c.telegram_chat_id, "envFile": str(self.env_path), **self.telegram_state()},
                 "alertMinScore": c.alert_min_score, "alertTf": c.alert_tf, "alertCooldownHours": c.alert_cooldown_hours,
                 "alertMode": c.alert_mode, "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "alertZones": c.alert_zones, "historyYears": c.history_years,
                 "footprintDays": c.footprint_days, "trades": {s: t.status() for s, t in getattr(self, "trades", {}).items()},
@@ -504,14 +618,17 @@ class App:
             if syms:
                 upd["TERMINAL_SYMBOLS"] = ",".join(syms[:6])
         if body.get("telegramToken"):
-            tok = str(body["telegramToken"]).strip()
-            if ":" not in tok or len(tok) > 100:
-                raise ValueError("token Telegram invalide (format attendu 123456:ABC...)")
+            tok = clean_token(body["telegramToken"])                 # V25 : espaces, prefixe « bot » ou adresse de l'API retires
+            if not token_ok(tok):
+                raise ValueError("token Telegram invalide : il ressemble à 123456789:AAH… (des chiffres, deux-points, puis environ 35 caractères), tel que donné par @BotFather")
             upd["TELEGRAM_BOT_TOKEN"] = tok
         if "telegramChatId" in body:
-            cid = str(body["telegramChatId"]).strip()
-            if cid and not cid.lstrip("-").isdigit():
-                raise ValueError("chat id invalide (un nombre)")
+            cid = clean_chat(body["telegramChatId"])
+            if cid and not chat_ok(cid):
+                raise ValueError("chat id invalide : un nombre (123456789, ou -100… pour un groupe ou un canal) ou @nom_du_canal")
+            if chat_is_bot(cid, upd.get("TELEGRAM_BOT_TOKEN") or self.cfg.telegram_token):
+                raise ValueError("ce chat id est le numéro de ton bot (le début du token), pas le tien : écris « bonjour » à ton bot dans Telegram, "
+                                 "puis clique sur « Trouver mon chat id »")
             upd["TELEGRAM_CHAT_ID"] = cid
         if body.get("alertMinScore") is not None:
             upd["TERMINAL_ALERT_MIN_SCORE"] = str(max(2, min(6, int(body["alertMinScore"]))))
@@ -635,7 +752,7 @@ def make_handler(app: App):
                 if u.path == "/api/config":
                     c = app.cfg
                     return self._json({"symbols": list(c.symbols), "tfs": list(TFS), "source": c.source,
-                                       "telegram": c.telegram_on, "alertTf": c.alert_tf, "alertMinScore": c.alert_min_score,
+                                       "telegram": c.telegram_on, "telegramState": app.telegram_state(), "alertTf": c.alert_tf, "alertMinScore": c.alert_min_score,
                                        "alertMaxDistAtr": c.alert_max_dist_atr, "refresh": c.refresh_seconds,
                                        "anchor": c.anchor_date, "statsK": c.stats_k, "statsHorizon": c.stats_horizon,
                                        "historyYears": c.history_years,
@@ -805,27 +922,36 @@ def make_handler(app: App):
                     res = BinanceSource(retries=1, timeout=12).selftest(sym)
                     return self._json({"results": [{"name": a, "ok": b, "detail": c} for a, b, c in res]})
                 if path == "/api/test/telegram":
-                    tok = body.get("token") or app.cfg.telegram_token
-                    cid = body.get("chatId") or app.cfg.telegram_chat_id
+                    tok = clean_token(body.get("token")) or app.cfg.telegram_token
+                    cid = clean_chat(body.get("chatId")) or app.cfg.telegram_chat_id
                     if not tok or not cid:
                         return self._json({"ok": False, "detail": "token et chat id requis"})
                     ok, detail = TelegramNotifier(tok, cid, app.cfg.telegram_api_base).send(
                         "✅ Test du terminal : Telegram fonctionne.")
-                    return self._json({"ok": ok, "detail": detail})
+                    saved = False
+                    if ok and (tok != app.cfg.telegram_token or cid != app.cfg.telegram_chat_id) and token_ok(tok) and chat_ok(cid):
+                        app.save_settings({"telegramToken": tok, "telegramChatId": cid})      # V25 : un test reussi enregistre tout seul
+                        saved = True
+                    return self._json({"ok": ok, "detail": detail if ok else notifier_mod.explain(detail), "raw": detail, "saved": saved})
                 if path == "/api/test/x":
                     return self._json(app.social.test(str(body.get("token") or "").strip() or None, body.get("handle")))
+                if path == "/api/telegram/diagnose":
+                    return self._json(app.telegram_diagnose(str(body.get("token") or "").strip() or None, str(body.get("chatId") or "").strip() or None))
                 if path == "/api/telegram/chatid":
-                    tok = body.get("token") or app.cfg.telegram_token
+                    tok = clean_token(body.get("token")) or app.cfg.telegram_token
                     if not tok:
                         return self._json({"chats": [], "detail": "token requis"})
+                    t = app.tgchat
+                    if t and tok == app.cfg.telegram_token:              # le bot ecoute deja : lire Telegram en meme temps serait refuse (409)
+                        return self._json({"chats": [{"id": k, "name": v} for k, v in t.seen.items()],
+                                           "detail": "" if t.seen else "aucun message reçu depuis le démarrage : écris « bonjour » à ton bot, puis réessaie"})
                     try:
                         chats = TelegramNotifier(tok, "", app.cfg.telegram_api_base).find_chat_ids()
                     except Exception as e:
                         code = getattr(e, "code", None)
-                        msg = "token refuse par Telegram (verifie-le)" if code in (401, 404) else f"{type(e).__name__}: {e}"
-                        return self._json({"chats": [], "detail": msg})
+                        return self._json({"chats": [], "detail": notifier_mod.explain(f"HTTP {code}" if code else f"{type(e).__name__}: {e}")})
                     return self._json({"chats": [{"id": str(k), "name": v} for k, v in chats.items()],
-                                       "detail": "" if chats else "aucun message recu : ecris d'abord un message a ton bot"})
+                                       "detail": "" if chats else "aucun message reçu : ouvre ton bot dans Telegram, appuie sur Démarrer ou écris « bonjour », puis réessaie"})
                 return self._json({"error": "inconnu"}, 404)
             except ValueError as e:
                 return self._json({"error": str(e)}, 400)
