@@ -120,11 +120,18 @@ const Backtest = (() => {
       return `<tr><td><b>${name}</b></td>${cells.map(m => `<td><div class="btc"><b class="${rcol(m && m.expR)}">${sgn(m && m.expR)}</b> R${bar(m && m.expR, null, 0.4)}<small>${m ? m.n : 0} trades</small></div></td>`).join('')}</tr>`;
     }).join('');
     const ne = t.neutral;
-    return `<section class="card"><h2>Le seul filtre qui compte : la tendance de fond</h2>
+    // V22 : titre et conclusion lus dans les chiffres (vrai pour le BTC sur 13 ans, pas pour SOL)
+    const gap = eras.map((e, i) => { const a = (t.alignedEras || [])[i], c = (t.counterEras || [])[i]; return a && c && a.expR != null && c.expR != null ? a.expR - c.expR : null; });
+    const known = gap.filter(x => x != null), same = known.length > 0 && known.every(x => x > 0);
+    const early = eras.length && /^2013/.test(eras[0].label) ? ', y compris 2013-2016 qui n\'avait pas servi à le choisir' : '';
+    const fades = same && known.length > 1 && known[known.length - 1] < known[0];
+    const foot = same ? `Même sens de l'effet sur chaque grande période${early}.` + (fades ? ' Il s\'affaiblit avec le temps (le marché devient plus mûr) : prudence.' : '')
+      : `L'effet ne garde pas le même sens sur toutes les périodes (${eras.filter((e, i) => gap[i] != null && gap[i] <= 0).map(e => esc(e.label)).join(', ') || '—'} : à contre-courant aussi bien ou mieux) : sur cet actif, la tendance de fond n'est pas un filtre fiable.`;
+    return `<section class="card"><h2>${same ? 'Le seul filtre qui compte : la tendance de fond' : 'La tendance de fond'}</h2>
       <div class="muted small">Tendance de fond : le cours est au-dessus des moyennes de 50 et de 200 jours (haussière) ou sous les deux (baissière). Une idée est « dans le sens » si elle achète en tendance haussière ou vend en tendance baissière.</div>
       <table class="bttab"><thead><tr>${th}</tr></thead><tbody>${body}
       <tr><td class="muted">Tendance indécise (entre les deux moyennes)</td><td colspan="${eras.length + 1}"><span class="${rcol(ne.expR)}">${sgn(ne.expR)} R</span> <small>${ne.n} trades : aucun avantage mesuré</small></td></tr></tbody></table>
-      <div class="muted small">Même sens de l'effet sur chaque grande période, y compris 2013-2016 qui n'avait pas servi à le choisir. Il s'affaiblit avec le temps (le marché devient plus mûr) : prudence.</div></section>`;
+      <div class="muted small">${foot}</div></section>`;
   }
 
   function equityCard(r) {
@@ -209,12 +216,13 @@ const Backtest = (() => {
   }
 
   function methodCard(r) {
+    const realCvd = /Binance/.test(r.source || '');                   // V22 : vrai volume acheteur agressif (perpetuels Binance)
     return `<section class="card"><h2>Méthode et limites</h2><ul class="btnotes">
       <li><b>Données</b> : ${esc(r.source || '')} Le calcul est refait toutes les 15 minutes avec uniquement ce qui était connu à cet instant (aucune donnée du futur).</li>
-      <li><b>Idées</b> : exactement le code du terminal (niveaux VWAP jour → année, VWAP ancrés, profils de volume, poches de liquidité visibles dans le prix, balayages, CVD estimé), puis chaque idée est jouée sur les bougies d'une minute : ordre limite ou au marché, stop, objectif 1 avec prise de la moitié puis stop à l'entrée, objectif 2, sortie au bout de 72 h. Si le stop et l'objectif sont dans la même minute, le stop est compté en premier.</li>
-      <li><b>Exécution des ordres limites</b> : un ordre limite est supposé exécuté dès que le prix le touche (optimiste : la file d'attente peut empêcher l'exécution). Vérifié : en exigeant que le prix dépasse le niveau de 0,1 %, la règle actuelle passe de +0,13 à +0,125 R par trade, donc le résultat n'en dépend pas.</li>
+      <li><b>Idées</b> : exactement le code du terminal (niveaux VWAP jour → année, VWAP ancrés, profils de volume, poches de liquidité visibles dans le prix, balayages, CVD ${realCvd ? 'réel' : 'estimé'}), puis chaque idée est jouée sur les bougies d'une minute : ordre limite ou au marché, stop, objectif 1 avec prise de la moitié puis stop à l'entrée, objectif 2, sortie au bout de 72 h. Si le stop et l'objectif sont dans la même minute, le stop est compté en premier.</li>
+      <li><b>Exécution des ordres limites</b> : un ordre limite est supposé exécuté dès que le prix le touche (optimiste : la file d'attente peut empêcher l'exécution). ${/Bitstamp/.test(r.source || '') ? 'Vérifié : en exigeant que le prix dépasse le niveau de 0,1 %, la règle actuelle passe de +0,13 à +0,125 R par trade, donc le résultat n\'en dépend pas.' : ''}</li>
       <li><b>Sélection</b> : une position à la fois, ${5} idées par semaine au maximum, une zone ne revient pas avant 48 h.</li>
-      <li><b>Ce qui n'est pas testé</b> : les poches de liquidations estimées par l'Open Interest (29 jours d'historique seulement), le contexte macro et les annonces, le volume acheteur agressif réel (ici estimé), le financement réel et l'écart acheteur/vendeur. Les marchés de 2013 à 2016 étaient moins liquides : les frais réels y étaient plus élevés.</li>
+      <li><b>Ce qui n'est pas testé</b> : les poches de liquidations estimées par l'Open Interest (29 jours d'historique seulement), le contexte macro et les annonces, ${realCvd ? '' : 'le volume acheteur agressif réel (ici estimé), '}le financement réel et l'écart acheteur/vendeur.${(r.period && r.period.start < Date.UTC(2017, 0, 1)) ? ' Les marchés de 2013 à 2016 étaient moins liquides : les frais réels y étaient plus élevés.' : ''}</li>
       <li><b>Pour relancer sur tes données</b> (par exemple SOL avec le vrai volume acheteur de Binance) : <code>python tools/fetch_history.py SOLUSDT</code> puis <code>python tools/run_study.py SOLUSDT</code>. Le rapport apparaît ici automatiquement.</li>
       <li>Un résultat passé n'est pas une garantie. Un avantage mesuré de ce genre est modeste et peut disparaître.</li></ul></section>`;
   }
@@ -476,7 +484,7 @@ const Backtest = (() => {
     const who = r.origin === 'terminal' ? 'mesure faite par ton terminal sur son historique Binance (bougies 1 h depuis 2019, regroupées en 4 h)' : 'mesure de l\'outil tools/run_absorption_study.py (historique 1 minute de Binance Vision)';
     return `<section class="card btv warn"><div class="bthead"><h2>Absorptions : delta fort contre le sens de la bougie <small>${esc(r.label || r.symbol)} · ${esc(r.period.text)} · ${esc(r.source || '')}</small></h2></div>
       <ul class="btnotes">${(r.summary || []).map(x => { const v = ABS_V[x.verdict] || ['muted', x.verdict]; return `<li><b class="${v[0]}">${v[1]}</b> — ${esc(x.text)}</li>`; }).join('')}</ul>
-      <div class="muted small">${esc(who)}. Chaque absorption est comparée aux 20 bougies les plus proches dans le temps qui ont le même sens, le même corps (en ATR, ±30 %) et le même volume relatif (±30 %), mais un delta ordinaire : on isole ce qu'ajoute le delta. « Mesuré » = écart au-delà de 2 erreurs-types ET de même signe sur les deux moitiés de la période.</div></section>`;
+      <div class="muted small">${esc(who)}. Chaque absorption est comparée aux 20 bougies les plus proches dans le temps qui ont le même sens, le même corps (en ATR, ±30 %), le même volume relatif (±30 %), la même mèche du côté de l'absorption (distance entre la clôture et le plus bas ou le plus haut, ±30 %) et la même position au plus bas / plus haut des 12 dernières bougies, mais un delta ordinaire : on isole ce qu'ajoute le delta. « Mesuré » = écart au-delà de 2 erreurs-types ET de même signe sur les deux moitiés de la période.</div></section>`;
   }
   function absTable(r, k) {
     const x = (r.tfs || {})[k];
@@ -503,7 +511,8 @@ const Backtest = (() => {
       <li><b>Absorption</b> : sur une bougie, le delta (volume acheteur agressif − volume vendeur agressif, donnée réelle de Binance) est d'au moins 2 écarts-types (échelle : les 96 bougies précédentes) et va CONTRE le sens de la bougie : très vendeur sur une bougie qui finit en hausse (les vendeurs agressifs ont été absorbés par des acheteurs passifs), très acheteur sur une bougie qui finit en baisse.</li>
       <li><b>Ce qui est mesuré</b> : le sens du prix dans les bougies suivantes, et si le plus bas (plus haut) de la bougie d'absorption tient, face à des bougies semblables au flux ordinaire. Rien du futur dans la détection.</li>
       <li><b>En direct</b>, le terminal repère aussi les absorptions au prix près (volume agressif absorbé à un prix en moins d'une minute, ordre réapprovisionné) : elles ne sont pas mesurées sur l'historique, faute d'archive de chaque transaction et du carnet.</li>
-      <li><b>Pour aller plus loin</b> (5 et 15 minutes, plusieurs années) : <code>python tools/fetch_history.py SOLUSDT</code> puis <code>python tools/run_absorption_study.py SOLUSDT</code> ; ce rapport remplace alors celui du terminal.</li></ul></section>`;
+      <li><b>V22, mèche appariée</b> : une absorption acheteuse a souvent une longue mèche basse ; son plus bas est donc plus loin du prix et « tient » plus souvent par simple mécanique. Les témoins ont maintenant la même mèche : l'effet « le plus bas tient mieux » mesuré en V21 venait surtout de là.</li>
+      <li><b>Rapports livrés</b> pour SOL et le BTC (historique 1 minute de Binance Vision, perpétuels, depuis 2020) : ils remplacent la mesure 1 h / 4 h du terminal. Pour une autre paire : <code>python tools/fetch_history.py ETHUSDT</code> puis <code>python tools/run_absorption_study.py ETHUSDT</code>.</li></ul></section>`;
   }
   // ---------- V19 : reperes du profil de marche (TPO) ; V20 : semaine et mois, temoins apparies ----------
   const TPO_KIND = {W: "séances d'1 semaine (lundi 00 h UTC, tranches de 4 heures)", M: "séances d'1 mois (tranches d'1 jour)", D: "séances d'1 jour (tranches de 30 minutes)",
@@ -512,7 +521,7 @@ const Backtest = (() => {
   const TPO_NEXT = {W: 'la semaine suivante', M: 'le mois suivant', D: 'la séance suivante', '4h': 'la séance de 4 heures suivante', '1h': "l'heure suivante"};
   const TPO_IB = {W: 'Fourchette du lundi (« première heure » de la semaine)', M: 'Fourchette de la première semaine (« première heure » du mois)', D: 'Première heure',
     '4h': '30 premières minutes', '1h': '10 premières minutes'};
-  const TPO_V = {net: ['up', 'mesuré'], contraire: ['amb', 'effet contraire'], instable: ['amb', 'instable'], faible: ['amb', 'faible'], description: ['muted', 'fréquence'], hasard: ['muted', '≈ hasard'], insuffisant: ['muted', 'trop peu de cas']};
+  const TPO_V = {net: ['up', 'mesuré'], contraire: ['amb', 'effet contraire'], instable: ['amb', 'instable'], faible: ['amb', 'faible'], description: ['muted', 'fréquence'], hasard: ['muted', '≈ hasard'], insuffisant: ['muted', 'trop peu de cas'], check: ['muted', 'vérification']};
   function tpoVerdict(r) {
     return `<section class="card btv warn"><div class="bthead"><h2>Repères du profil de marché (TPO) <small>${esc(r.label || r.symbol)} · ${esc(r.period.text)} · ${esc(r.source || '')}</small></h2></div>
       <ul class="btnotes">${(r.summary || []).map(x => { const v = TPO_V[x.verdict] || ['muted', x.verdict]; return `<li><b class="${v[0]}">${v[1]}</b> — ${esc(x.text)}</li>`; }).join('')}</ul>
@@ -534,7 +543,7 @@ const Backtest = (() => {
       ${row('Poor high / low dépassés / extrême avec queue', h => pair(ex(h).raw.poor.rate, ex(h).raw.excess.rate, ex(h).t))}
       ${row('POC retraversé / prix témoin', h => pair(po(h).all.rate, po(h).all.control, po(h).all.t))}
       ${row('POC vierge après 1 séance / témoin', h => po(h).virgin && po(h).virgin.rate != null ? pair(po(h).virgin.rate, po(h).virgin.control, po(h).virgin.t) : '—')}</table>
-      <div class="muted small">▲ / ▼ : écart au-delà de 2 erreurs-types. Poor high / low : comparaison stratifiée par distance à la clôture. Les témoins « miroir » (de l'autre côté de la clôture : bande miroir des single prints, prix témoin du POC) sont faussés par la hausse de fond du bitcoin, surtout sur la semaine et le mois : les single prints et les POC sont plus souvent sous la clôture.</div>
+      <div class="muted small">▲ / ▼ : écart au-delà de 2 erreurs-types. Poor high / low : comparaison stratifiée par distance à la clôture. Les témoins « miroir » (de l'autre côté de la clôture : bande miroir des single prints, prix témoin du POC) sont faussés par la hausse de fond du marché, surtout sur la semaine et le mois : les single prints et les POC sont plus souvent sous la clôture.</div>
       ${sm('all', H[0]) ? `<div class="sect">Single prints : stabilité et comportement</div><div class="small">Comblées dès ${TPO_NEXT[k] || 'la séance suivante'} (single prints / témoins) : ${half(sm('first', H[0]), '1re moitié')} · ${half(sm('second', H[0]), '2e moitié')}.` +
         (rc && rc.all ? ` Au premier retour du prix, la zone tient (rebond d'au moins sa hauteur avant d'être traversée) : ${half(rc.all.matched, 'single prints / témoins')}.` : '') +
         (el && el.all && el.all.rate != null ? ` Élan : la séance suivante va dans le même sens ${pc(el.all.rate)} du temps, contre ${pc(el.all.control)} après une séance semblable sans single print.` : '') + '</div>' : ''}
@@ -546,11 +555,12 @@ const Backtest = (() => {
       }</table><div class="muted small">Moyenne de toutes les séances : ${pc(os.base)} en hausse.</div>` : ''}</section>`;
   }
   function tpoMethod(r) {
+    const y0 = r.period && r.period.from ? new Date(r.period.from).getUTCFullYear() : null, nn = k => r[k] && r[k].n != null ? r[k].n : '—';   // V22 : lu dans le rapport (BTC ou SOL)
     return `<section class="card"><h3>Méthode</h3><ul class="btnotes">
-      <li><b>Moteur</b> : exactement celui du terminal (engine/tpo.py) ; pas de prix fixé sans regarder le futur (médiane des amplitudes des 10 séances précédentes divisée par ${r.D ? r.D.rows : 60} lignes pour 1 jour, ${r.W ? r.W.rows : 60} pour la semaine et le mois). Semaine et mois calculés sur bougies d'1 heure depuis 2012 : l'historique le plus long possible, car il y a peu de semaines et encore moins de mois.</li>
+      <li><b>Moteur</b> : exactement celui du terminal (engine/tpo.py) ; pas de prix fixé sans regarder le futur (médiane des amplitudes des 10 séances précédentes divisée par ${r.D ? r.D.rows : 60} lignes pour 1 jour, ${r.W ? r.W.rows : 60} pour la semaine et le mois). Semaine et mois calculés sur bougies d'1 heure depuis ${y0 || 'le début des données'} : l'historique le plus long possible, car il y a peu de semaines et encore moins de mois.</li>
       <li><b>Témoins des single prints</b> (V20) : pour chaque zone, la même bande (même position par rapport à la clôture, en amplitudes typiques) dans les 20 séances les plus proches dans le temps qui ont le même sens, une amplitude à ±30 % et une clôture au même endroit de leur fourchette (±0,15), et où ces prix ont été échangés par au moins deux tranches. On compare donc, à mouvement égal, des prix « passés vite » à des prix « échangés ». Réaction : au premier retour du prix, rebond d'au moins la hauteur de la zone avant de la traverser.</li>
       <li><b>Autres témoins</b> : prix (POC) placé à la même distance de la clôture, de l'autre côté ; poor high / low comparés aux extrêmes avec queue dans les mêmes tranches de distance. Erreurs-types groupées par séance ; période coupée en deux moitiés pour vérifier la stabilité.</li>
-      <li><b>Limites</b> : un seul actif (bitcoin) ; données Bitstamp au comptant (pas le contrat perpétuel de Binance) ; peu de mois (176) et de semaines (768) : les écarts sur ces séances sont moins sûrs ; plusieurs mesures faites à la fois, donc un écart isolé peut être dû à la chance. Pour mesurer SOL : <code>python tools/fetch_history.py SOLUSDT</code> puis <code>python tools/run_tpo_study.py SOLUSDT</code>.</li></ul></section>`;
+      <li><b>Limites</b> : un seul actif (${esc(r.label || r.symbol || '')}) ; données : ${esc(r.source || '')} ; peu de mois (${nn('M')}) et de semaines (${nn('W')}) : les écarts sur ces séances sont moins sûrs ; plusieurs mesures faites à la fois, donc un écart isolé peut être dû à la chance. Pour mesurer une autre paire : <code>python tools/fetch_history.py ETHUSDT</code> puis <code>python tools/run_tpo_study.py ETHUSDT</code>.</li></ul></section>`;
   }
   function pkVerdict(r) {
     const s = r.summary || {lines: []};
@@ -585,8 +595,8 @@ const Backtest = (() => {
       <li><b>Poches mesurées</b> : plus hauts / plus bas de la veille, de la semaine et du mois précédents, creux et sommets confirmés sur 1 h, et extrêmes presque égaux (moins de 0,15 % d'écart). Âge = depuis quand le prix n'est plus revenu à ce niveau. Confluences = niveaux d'autres sources (VWAP, ouvertures, profils de volume, POC nus, nombres ronds, plus hauts / bas d'autres périodes) à moins de 0,3 amplitude moyenne d'une bougie d'une heure, pondérées comme dans le terminal (année 10, mois 9, semaine 7, jour 4).</li>
       <li><b>Attraction</b> : chaque jour à 00 h UTC, chaque poche intacte entre 0,5 et 8 amplitudes ; atteinte dans les 24 h comparée à la fréquence d'atteinte de la même distance sur tout l'historique. Témoin : niveaux tirés au hasard.</li>
       <li><b>Réaction</b> : au premier contact, depuis la clôture de la bougie de contact ; « attendu » = taux d'une marche au hasard depuis la même position (correction de dépassement). Horizon ${r.horizon} h, seuil ${num(r.k, 1)} amplitude.</li>
-      <li><b>Limites</b> : un seul actif (BTC au comptant, Bitstamp) ; les poches estimées par l'intérêt ouvert ne sont pas testables (29 jours d'historique chez Binance) ; les effets mesurés sont petits (quelques points de pourcentage), utiles pour classer, pas pour trader seuls.</li>
-      <li><b>Relancer sur SOL</b> : <code>python tools/fetch_history.py SOLUSDT</code> puis <code>python tools/run_pocket_study.py SOLUSDT</code>. Le rapport s'ajoute à cette liste.</li></ul></section>`;
+      <li><b>Limites</b> : un seul actif (${esc(r.label || '')}, ${esc(r.source || '')}) ; les poches estimées par l'intérêt ouvert ne sont pas testables (29 jours d'historique chez Binance) ; les effets mesurés sont petits (quelques points de pourcentage), utiles pour classer, pas pour trader seuls.</li>
+      <li><b>Relancer sur une autre paire</b> : <code>python tools/fetch_history.py ETHUSDT</code> puis <code>python tools/run_pocket_study.py ETHUSDT</code>. Le rapport s'ajoute à cette liste.</li></ul></section>`;
   }
 
   // ---------- rapport « delta, CVD et squeezes » ----------

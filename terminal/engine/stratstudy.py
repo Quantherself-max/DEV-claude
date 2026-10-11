@@ -439,7 +439,7 @@ def verdict(rep: dict) -> dict:
         beat = lambda pv, rn: f"les {rn} tirages" if pv == 0 else f"{(1 - pv) * 100:.0f} % des tirages"
         notes.append(f"Témoin : des trades de même forme à des instants tirés au hasard, dans la même tendance de fond, donnent {_r(ctrl['all']['expMean'])} R en moyenne "
                      f"(90 % des tirages entre {_r(ctrl['all']['exp5'])} et {_r(ctrl['all']['exp95'])}). La variante fait mieux que {beat(ctrl['allP'], runs)} sur toute la période"
-                     + (f" et que {beat(p_oos, ctrl['oos'].get('runs') or 0)} sur le test seul (le hasard fait {_r(ctrl['oos']['expMean'])} R sur 2022-2026)." if p_oos is not None and ctrl.get("oos") else "."))
+                     + (f" et que {beat(p_oos, ctrl['oos'].get('runs') or 0)} sur le test seul (le hasard fait {_r(ctrl['oos']['expMean'])} R sur {_year(rep['period']['split'])}-{_year(rep['period']['end'] - 1)})." if p_oos is not None and ctrl.get("oos") else "."))
     yrs = b.get("years") or {}
     if yrs:
         sy = _year(rep["period"]["split"])
@@ -449,7 +449,7 @@ def verdict(rep: dict) -> dict:
     sd = b.get("bySide") or {}
     if sd.get("long") and sd.get("short"):
         notes.append(f"Achats : {_r(sd['long']['expR'])} R sur {sd['long']['n']} trades ; ventes : {_r(sd['short']['expR'])} R sur {sd['short']['n']}"
-                     + (" : l'effet n'est donc pas seulement la hausse de long terme du bitcoin." if level != "none" and sd['long']['expR'] > 0 and sd['short']['expR'] > 0 else "."))
+                     + (" : l'effet n'est donc pas seulement la hausse de long terme du marché." if level != "none" and sd['long']['expR'] > 0 and sd['short']['expR'] > 0 else "."))
     es = exit_summary(rep)
     parts = []
     for field, lab, fmt in (("stop", "stops", lambda g: STOP_LABEL.get(g, g)), ("tp", "objectifs", tp_label), ("hold", "durées", lambda g: HOLD_LABEL.get(g, g))):

@@ -637,7 +637,8 @@ def run(ds: "bt.Dataset", label: str, start_ms: int, end_ms: int, split_ms: int,
     if recent and recent["expR"] is not None and len(cur_row["eras"]) > 1:
         notes.insert(1, f"Sur la période la plus récente ({recent['label']}) : {f2(recent['expR'])} fois le risque par trade ({recent['n']} trades, intervalle à 90 % de "
                         f"{f2(recent['expLo'])} à {f2(recent['expHi'])}). " + ("L'avantage y est encore démontré." if recent_edge else
-                        "L'avantage n'y est plus démontré : il s'est affaibli avec le temps (marché plus mûr), prudence."))
+                        "L'avantage n'y est plus démontré : il s'est affaibli avec le temps (marché plus mûr), prudence." if edge else
+                        "Pas d'avantage démontré sur cette période non plus."))
     if edge and recent_edge:
         verdict = "Avantage statistique modeste, démontré sur l'ensemble de l'historique et encore sur la période récente."
     elif edge:

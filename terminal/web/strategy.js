@@ -70,13 +70,15 @@ const Strategy = (() => {
     }).join('');
     return `<table class="bttab"><thead><tr><th>Ancre</th><th class="r">Prix de l'ancre</th><th class="r">VWAP ancré</th><th class="r">Distance</th><th class="r">Âge</th><th class="r">Baisse</th><th>Bougie 1 h</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
+  // V22 : debut de la periode de test lu dans le rapport (2022 pour Bitstamp, 2025 pour les perpetuels Binance)
+  const since = r => { const t = r && r.period && r.period.split; return t ? 'depuis ' + new Date(t).toLocaleDateString('fr-FR', {month: 'long', year: 'numeric', timeZone: 'UTC'}) : 'sur le test'; };
   function avwapBox(v) {
     const r = v.avwapReport;
     if (!r) return '';
     const f = m => m && m.expR != null ? `${m.expR >= 0 ? '+' : '−'}${n1(Math.abs(m.expR), 2)} R (${m.n} trades)` : '-';
     return `<div class="trendbox"><b>Ce que dit le backtest des VWAP ancrés sur mouvement</b> <span class="muted small">${esc(r.label)}${r.proxy ? ' (rapport BTC)' : ''}</span>
       <div class="small">${esc(r.verdict || '')}</div>
-      <div class="small muted">Meilleure variante : ${esc(r.bestName || '-')} · tout l'historique ${f(r.all)} · depuis 2022 ${f(r.oos)}. Détail : page Backtest, rapport « VWAP ancrés sur mouvement ».</div></div>`;
+      <div class="small muted">Meilleure variante : ${esc(r.bestName || '-')} · tout l'historique ${f(r.all)} · ${since(r)} ${f(r.oos)}. Détail : page Backtest, rapport « VWAP ancrés sur mouvement ».</div></div>`;
   }
   function reportBox(v) {
     const r = v.report;
@@ -85,7 +87,7 @@ const Strategy = (() => {
     const f = m => m && m.expR != null ? `${m.expR >= 0 ? '+' : '−'}${n1(Math.abs(m.expR), 2)} R (${m.n} trades)` : '-';
     return `<div class="trendbox"><b>Ce que dit le backtest</b> <span class="muted small">${esc(r.label)}${r.proxy ? ' (rapport BTC : pas encore de rapport pour ce symbole)' : ''}</span>
       <div class="small">${esc(r.verdict || '')}</div>
-      <div class="small muted">Meilleure variante : ${esc(r.bestName || '-')} · tout l'historique ${f(a)} · depuis 2022 ${f(o)}. Détail : page Backtest, rapport « ta stratégie ».</div></div>`;
+      <div class="small muted">Meilleure variante : ${esc(r.bestName || '-')} · tout l'historique ${f(a)} · ${since(r)} ${f(o)}. Détail : page Backtest, rapport « ta stratégie ».</div></div>`;
   }
 
   function render() {

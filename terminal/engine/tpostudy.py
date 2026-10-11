@@ -665,24 +665,30 @@ def summary(rep: dict) -> list:
         ex = r["extremes"]
         e, e1, e2 = ex["all"][hk], ex["first"][hk], ex["second"][hk]
         v = _verdict(e["t"], e1["diff"], e2["diff"], e["diff"])
+        if v == "net" and e["diff"] < 0:
+            v = "contraire"                                   # V22 : net mais dans l'autre sens (le poor high / low est MOINS souvent depasse)
         out.append({"key": "poor", "kind": kind, "verdict": v,
                     "text": f"Poor high / poor low ({KIND_TXT[kind]}) : dépassés dès {unit[0]} {_pct(e['raw']['poor']['rate'])} du temps, contre "
                             f"{_pct(e['raw']['excess']['rate'])} pour un extrême avec queue (excess) ; à distance égale de la clôture, écart "
                             f"{_pts(e['diff'])} (statistique {_num(e['t'])}). " +
                             ("Effet net et stable : la queue marque un vrai rejet, le poor high / low une enchère inachevée qui attire un retour."
-                             if v == "net" else "Effet non démontré.")})
+                             if v == "net" else "Effet inverse, net et stable : le poor high / low est MOINS souvent dépassé qu'un extrême avec queue."
+                             if v == "contraire" else "Effet non démontré.")})
         out.append(_singles_item(r, kind))
         el = _elan_item(r, kind)
         if el:
             out.append(el)
         pc, p1, p2 = (r["poc"][p][hk]["all"] for p in ("all", "first", "second"))
         v = _verdict(pc["t"], p1["diff"], p2["diff"], pc["diff"])
+        if v == "net" and pc["diff"] < 0:
+            v = "contraire"                                   # V22 : le POC est MOINS souvent retraverse qu'un prix a la meme distance
         pv = r["poc"]["all"][H[1]]["virgin"]
         out.append({"key": "poc", "kind": kind, "verdict": v,
                     "text": f"POC ({KIND_TXT[kind]}) : retraversé dès {unit[0]} {_pct(pc['rate'])} du temps, contre {_pct(pc['control'])} pour un prix témoin "
                             f"à la même distance (écart {_pts(pc['diff'])}, statistique {_num(pc['t'])})"
                             + (f" ; POC resté vierge {ONE[kind]} : revisité ensuite {_pct(pv['rate'])} contre {_pct(pv['control'])}" if pv and pv.get("rate") is not None else "")
-                            + (". Léger effet aimant, net et stable." if v == "net" else ". Effet faible ou instable." if v == "instable" else ". Pas d'effet démontré.")})
+                            + (". Léger effet aimant, net et stable." if v == "net" else ". Pas un aimant : il est MOINS souvent retraversé qu'un autre prix (net et stable)."
+                               if v == "contraire" else ". Effet faible ou instable." if v == "instable" else ". Pas d'effet démontré.")})
         ib = r.get("ib")
         if ib:
             fu, fd = ib["firstUp"], ib["firstDown"]
@@ -692,7 +698,7 @@ def summary(rep: dict) -> list:
             elif tu is not None and td is not None and tu <= -2 and td <= -2:
                 concl = "les cassures sont souvent des pièges, dans les deux sens."
             else:                                             # un cote au-dessus de 50 %, l'autre en dessous : c'est la tendance de fond, pas la cassure
-                concl = "la cassure ne dit presque rien de la suite" + (" (l'écart entre le haut et le bas reflète surtout la hausse de fond du bitcoin)."
+                concl = "la cassure ne dit presque rien de la suite" + (" (l'écart entre le haut et le bas reflète surtout la hausse de fond du marché sur la période)."
                                                                          if (fu.get("closeBeyond") or 0) - (fd.get("closeBeyond") or 0) > 0.05 else ".")
             out.append({"key": "ib", "kind": kind, "verdict": "description",
                         "text": f"{IB_TXT[kind]} ({KIND_TXT[kind]}, « première heure » de la séance) : sa fourchette est cassée des deux côtés {_pct(ib['both'])} du temps, "

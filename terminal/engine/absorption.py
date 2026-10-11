@@ -12,13 +12,16 @@ Echelle du delta : racine de la moyenne des carres des deltas des N_NORM bougies
 MESURE (study) : apres chaque absorption, sur les H bougies suivantes,
   - le prix va-t-il dans le sens de l'absorption (hausse apres une absorption acheteuse) ?
   - le plus bas (plus haut) de la bougie d'absorption tient-il ?
-face a des bougies SEMBLABLES (meme sens, corps a +/- 30 % en ATR, volume relatif a +/- 30 %) dont le delta est ORDINAIRE (a moins
-d'1 ecart-type de zero) : meme mouvement du prix, flux normal. On isole ainsi ce qu'ajoute le delta. Les NCONT plus proches dans le temps.
+face a des bougies SEMBLABLES (meme sens, corps a +/- 30 % en ATR, volume relatif a +/- 30 %, meme distance entre la cloture et le plus
+bas (plus haut) a +/- 30 % ou 0,1 ATR, meme position au plus bas / plus haut des EXT bougies ou non) dont le delta est ORDINAIRE (a moins
+d'1 ecart-type de zero) : meme mouvement du prix, meme meche, flux normal. On isole ainsi ce qu'ajoute le delta. Les NCONT plus proches dans
+le temps. V22 : la meche est appariee (sans elle, la longue meche basse d'une absorption acheteuse eloignait son plus bas du prix et le
+faisait « tenir » plus souvent par simple mecanique).
 Moities de la periode pour la stabilite, comme les autres mesures du terminal. Module PUR."""
 import math
 from collections import deque
 
-VERSION = 2
+VERSION = 3              # V22 : temoins apparies aussi sur la meche (distance cloture - extreme) et la position au plus bas / plus haut
 N_NORM = 96            # bougies precedentes pour l'echelle du delta et le volume habituel
 Z_MIN = 2.0            # delta d'au moins 2 ecarts-types contre le sens de la bougie
 EXT = 12               # « au plus bas / au plus haut » des 12 bougies precedentes
@@ -27,7 +30,8 @@ CLUSTER = 3            # une seule absorption affichee (la plus forte) par grapp
 HORIZONS = (1, 4, 12, 24, 72)
 PRIMARY = 4            # horizon de reference des verdicts : les 4 bougies suivantes (fixe avant toute mesure)
 NCONT = 20
-WIN = 600              # ecart maximal (en bougies) pour chercher des bougies semblables
+WIN = 10000            # ecart maximal (en bougies) pour chercher des bougies semblables ; les NCONT plus proches dans le temps sont pris d'abord
+                       # (V22 : 600 ne suffisait plus une fois la meche appariee : trop d'absorptions sans temoins)
 SIDE_TXT = {"bull": "acheteuse", "bear": "vendeuse"}
 
 
@@ -192,16 +196,21 @@ def study(src, horizons=HORIZONS, primary: int = PRIMARY, n: int = N_NORM, z_min
         hold = int(lo > l[k]) if sgn > 0 else int(hi < h[k])
         return up, hold, (c[k + hz] / c[k] - 1.0) * 100.0 * sgn
 
-    def controls(i):
+    def cushion(j, sgn):                                      # distance entre la cloture et l'extreme teste, en ATR (la meche du cote de l'absorption)
+        return ((c[j] - l[j]) if sgn > 0 else (h[j] - c[j])) / atr[j]
+
+    def controls(i, sgn):
         out, bi, vi = [], body[i], vr[i]
-        if not bi or not vi:
+        if not bi or not vi or not atr[i]:
             return out
+        ci, ex = cushion(i, sgn), (lo_ext if sgn > 0 else hi_ext)
+        tol = max(0.1, 0.3 * ci)
         for dj in range(1, win + 1):
             if i - dj < n and i + dj >= N - 1:
                 break
             for j in (i - dj, i + dj):
                 if n <= j < N - 1 and z[j] is not None and abs(z[j]) < 1.0 and body[j] and (body[j] > 0) == (bi > 0) \
-                        and abs(body[j] / bi - 1) <= 0.3 and abs(vr[j] / vi - 1) <= 0.3:
+                        and abs(body[j] / bi - 1) <= 0.3 and abs(vr[j] / vi - 1) <= 0.3 and ex[j] == ex[i] and abs(cushion(j, sgn) - ci) <= tol:
                     out.append(j)
                     if len(out) >= ncont:
                         return out
@@ -212,7 +221,7 @@ def study(src, horizons=HORIZONS, primary: int = PRIMARY, n: int = N_NORM, z_min
         evs = [i for i in range(n, N - 1) if side_of(z[i], o[i], c[i], z_min) == side]
         recs = []                                              # (i, extreme, {h: (resultat, moyenne temoins) x 3})
         for i in evs:
-            ctl = controls(i)
+            ctl = controls(i, sgn)
             if len(ctl) < 3:
                 continue
             per = {}

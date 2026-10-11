@@ -1230,15 +1230,25 @@ class Service:
         base = sym[:-4] if sym.endswith("USDT") else sym
         binance = getattr(self.source, "name", "") == "binance"
         path = Path(self.cfg.data_dir) / "reports" / f"absorption_{base}.json"
-        rep = None
-        if binance and path.exists():
+
+        def read(p):
             try:
-                rep = json.loads(path.read_text(encoding="utf-8"))
+                return json.loads(p.read_text(encoding="utf-8")) if binance and p.exists() else None
             except (OSError, ValueError):
-                rep = None
+                return None
+        rep = read(path)
         own = rep is not None and rep.get("origin") == "outil" and rep.get("version") == absorb_engine.VERSION
         mine = rep if rep is not None and rep.get("origin") == "terminal" and rep.get("version") == absorb_engine.VERSION \
             and time.time() * 1000 - (rep.get("computedAt") or 0) < 24 * 3_600_000 and (rep.get("bars1h") or 0) >= len(candles) - 48 else None
+        if not own:                                              # V22 : rapport de l'outil livre avec le terminal (Binance 1 minute, de 5 min a 4 h)
+            shipped = read(ROOT / "reports" / f"absorption_{base}.json")
+            if shipped is not None and shipped.get("origin") == "outil" and shipped.get("version") == absorb_engine.VERSION:
+                if rep is not None and rep.get("origin") == "terminal":
+                    try:
+                        path.unlink()                            # ta mesure 1 h / 4 h, plus courte, masquerait le rapport livre dans la page Backtest
+                    except OSError:
+                        pass
+                rep, own, mine = shipped, True, None
         if not own and mine is None:
             if not absorb_engine.has_real_delta(candles):
                 with self.lock:

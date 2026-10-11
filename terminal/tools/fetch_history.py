@@ -146,7 +146,7 @@ def main(argv=None):
     for f in files:
         history.append_rows(bars, history.parse_rows(history.read_zip_rows(str(f))), state)
     folder = Path(a.out) / sym
-    info = history.build_folder(bars, folder, {"symbol": sym, "market": a.market, "source": f"Binance Vision ({a.market}), volume acheteur agressif reel"})
+    info = history.build_folder(bars, folder, {"symbol": sym, "market": a.market, "source": f"Binance Vision ({a.market}), volume acheteur agressif réel"})
     print(f"{len(bars):,} minutes ({datetime.fromtimestamp(info['from'] / 1000, timezone.utc):%Y-%m-%d} -> {datetime.fromtimestamp(info['to'] / 1000, timezone.utc):%Y-%m-%d}) -> {folder}")
     print(f"Etape suivante :  python tools/run_study.py {sym}")
 

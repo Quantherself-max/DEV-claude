@@ -30,6 +30,16 @@ def _load(folder: Path, names):
     return None
 
 
+def _source(folder: Path) -> str:
+    """Source des donnees (meta.json ecrit par tools/fetch_history.py), sinon le nom du dossier."""
+    try:
+        meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return str(folder.name)
+    src = meta.get("source") or folder.name
+    return f"{src} ({meta['symbol']})" if meta.get("symbol") else str(src)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("symbol", nargs="?", help="ex. SOLUSDT (dossier data_local/history/<SYMBOLE>)")
@@ -39,7 +49,7 @@ def main(argv=None):
     ap.add_argument("--start", default="2016-01-01", help="premier jour AAAA-MM-JJ des séances d'1 jour (défaut 2016-01-01, ou le début des données)")
     ap.add_argument("--htf-start", default="2012-01-01", help="premier jour des séances d'1 semaine et d'1 mois (défaut : le plus tôt possible)")
     ap.add_argument("--out", default=str(ROOT / "data_local" / "reports"))
-    ap.add_argument("--source", help="nom de la source affiché (défaut : nom du dossier)")
+    ap.add_argument("--source", help="nom de la source affiché (défaut : celui de meta.json, sinon le nom du dossier)")
     a = ap.parse_args(argv)
     if not a.symbol and not a.folder:
         ap.error("donne un symbole (SOLUSDT) ou --folder")
@@ -52,7 +62,7 @@ def main(argv=None):
     start = max(bt.ms(*(int(x) for x in a.start.split("-"))), int(day.t[0]) + 15 * 86_400_000)
     t0 = time.time()
     rep = {"symbol": label, "kind": "tpo", "generated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-           "source": a.source or str(folder.name), "D": tpostudy.run(day, "D", start, int(day.t[-1]))}
+           "source": a.source or _source(folder), "D": tpostudy.run(day, "D", start, int(day.t[-1]))}
     print(f"  séances d'1 jour : {rep['D'].get('n')} ({time.time() - t0:.0f} s)", flush=True)
     if fine5 is not None:
         s5 = max(start, int(fine5.t[0]) + 3 * 86_400_000)

@@ -1,9 +1,10 @@
-# Liq Terminal (V21.1)
+# Liq Terminal (V22)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Toutes les mesures refaites sur l'historique Binance** (V22) : SOL a enfin **ses propres mesures** (idées du terminal, ta stratégie VWAP, VWAP ancrés, poches, squeezes avec l'intérêt ouvert réel, TPO, absorptions), calculées sur le **perpétuel SOL** depuis septembre 2020 avec le **vrai volume acheteur agressif** ; le BTC est vérifié sur deux historiques (13 ans de Bitstamp et le perpétuel Binance depuis 2020), qui disent la même chose (voir « V22 » plus bas).
 - **Absorptions avec le delta** (V21) : sur le graphique principal, chaque bougie dont le delta (volume acheteur agressif − vendeur agressif, donnée réelle de Binance) va fortement CONTRE son sens est marquée (vendeurs absorbés : triangle vert ; acheteurs absorbés : triangle rouge), et en direct le terminal repère au prix près les gros volumes agressifs absorbés sans que le prix passe au travers (cercles, et repère dans le carnet). Le terminal **mesure lui-même** sur ton historique Binance si ces absorptions annoncent la suite (voir « V21 » plus bas).
 - **TPO de la semaine et du mois** (V20) : la vue **▥ TPO** affiche maintenant les profils de marché **du mois** (une lettre par jour) et **de la semaine** (lundi 00 h UTC, une lettre par tranche de 4 heures, « première heure » = le lundi), et leurs **single prints** sont tracées en priorité sur les graphiques et dans les confluences ; mesure sur **14 ans de bitcoin** de ce qu'elles valent vraiment (voir « V20 » plus bas).
 - **TPO complet et mesuré, profils de volume et zones plus précis** (V19) : vue **▥ TPO** refaite (zoom, séances plus anciennes, volume et delta à chaque prix, première heure et objectifs, type de journée, profil composite et ses zones fortes et faibles, POC vierges) avec ce que **10 ans de bitcoin** disent de chaque repère ; profils de volume répartis selon le trajet des bougies, nœuds de volume, POC évolutif ; zones de confluence avec **prix clé**, cœur et prix le plus échangé ; carnet d'ordres presque transparent (voir « V19 » plus bas).
@@ -115,6 +116,43 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V22 : toutes les mesures refaites sur l'historique Binance (perpétuels SOL et BTC)
+
+L'accès aux archives publiques de Binance (data.binance.vision) est maintenant ouvert depuis l'environnement de développement. L'historique complet des **contrats perpétuels** a été téléchargé avec le **vrai volume acheteur agressif** de chaque minute, l'**intérêt ouvert** (toutes les 5 minutes depuis décembre 2021) et le **financement** :
+- **SOL** : du 14 septembre 2020 au 9 octobre 2026 (3,2 millions de minutes) ;
+- **BTC** : du 1er janvier 2020 au 9 octobre 2026 (3,6 millions de minutes).
+
+### SOL a maintenant ses propres mesures (page Backtest, liste « Rapport » : « SOL · … »)
+Jusqu'ici, SOL utilisait les rapports du BTC. Résultats sur le perpétuel SOL (apprentissage jusqu'à fin 2024, test 2025-2026) :
+
+| Mesure | Ce que dit SOL |
+|---|---|
+| Idées du terminal | Aucun avantage : −0,02 fois le risque par trade après frais, comme des entrées au hasard ; dans le sens de la tendance de fond +0,01, à contre-courant −0,04. |
+| Ta stratégie VWAP / profil de volume | La règle telle que tu la décris : +0,03 R par trade (1 106 trades), 0,00 sur le test : aucun avantage. Une condition ressort (« profil de volume de la semaine dernière confirmé + volume au-dessus de la moyenne », en suivant la clôture) : +0,09 R à l'apprentissage, +0,02 R sur le test : faible, qui s'érode, pas démontrée. |
+| VWAP ancrés sur un mouvement de 5 % | Aucun avantage (+0,01 R par trade, 981 trades ; −0,01 R sur le test) ; aucune réaction du prix au contact ne dépasse le hasard. |
+| Poches de liquidité | Pas d'attraction (touchées en 24 h 28,2 % du temps pour 30,0 % attendus) ; réaction au premier contact ≈ hasard. |
+| Delta, CVD, squeezes (vrai delta, intérêt ouvert, financement) | 4 mesures sur 87 prouvées, toutes sur l'**ampleur** du mouvement suivant (volume anormal, effort sans résultat, mouvement des 24 heures, écart prix / flux) ; **aucune sur le sens**. Le « carburant de short squeeze » reste un indice à surveiller, pas une preuve. |
+| TPO | Séances de 4 heures et d'1 heure : poor high / low dépassés plus souvent qu'un extrême avec queue, léger aimant du POC, ouverture hors de la valeur → retour vers elle. Séances d'1 jour et d'1 semaine : rien de démontré ; le POC de la semaine est même **moins** souvent retraversé qu'un autre prix. Single prints : jamais des aimants. |
+| Absorptions | Voir plus bas. |
+
+### BTC : deux historiques qui se vérifient
+- **Mesures de prix** (idées du terminal, ta stratégie, VWAP ancrés, poches, TPO) : le rapport garde les **13 ans de Bitstamp** (deux fois plus de cas) et porte, dans ses notes, la **vérification sur le perpétuel Binance** (2020-2026). Les conclusions sont les mêmes : aucun avantage démontré sur la période récente, la même condition de ta stratégie ressort (rejet du profil de volume de la semaine en cours : +0,10 R à l'apprentissage, +0,03 R sur le test), poches sans attraction, single prints qui ne sont pas des aimants.
+- **Mesures qui ont besoin du vrai delta ou de l'intérêt ouvert** : la mesure Binance **remplace** celle des squeezes (avec l'intérêt ouvert et le financement réels ; résultat identique : le flux annonce l'ampleur, pas le sens) et **s'ajoute** pour les absorptions.
+
+### Absorptions : mesure corrigée
+- Les bougies témoins ont maintenant aussi **la même mèche** du côté de l'absorption (distance entre la clôture et le plus bas ou le plus haut) et **la même position** au plus bas / plus haut des 12 dernières bougies. En V21, la longue mèche basse d'une absorption acheteuse éloignait son plus bas du prix et le faisait « tenir » plus souvent par simple mécanique : l'effet mesuré venait surtout de là.
+- Résultat sur SOL et le BTC (bougies de 5 minutes à 4 heures, perpétuels depuis 2020) : une absorption **n'annonce pas le sens** du prix mieux qu'une bougie semblable au flux ordinaire ; son plus bas (plus haut) tient un peu plus souvent (+1 à +12 points dans 7 cas sur 9), mais ce n'est démontré que dans 2 cas : un indice, pas une preuve.
+- Le terminal utilise ces rapports livrés (5 et 15 minutes compris) au lieu de sa propre mesure 1 heure / 4 heures.
+
+### Corrections de textes
+- TPO : un effet inverse (POC moins souvent retraversé, poor high / low moins souvent dépassé) n'est plus présenté comme un « aimant » ; plus de « bitcoin » dans les rapports de SOL.
+- Idées du terminal : « l'avantage s'est affaibli avec le temps » n'apparaît que s'il y en avait un.
+- Onglet Stratégie et rapports : la période de test est lue dans le rapport (2025 pour les perpétuels Binance) au lieu de « depuis 2022 » écrit en dur.
+
+### Limites
+- Les adresses directes de Binance (api.binance.com, fapi.binance.com) refusent les connexions depuis les États-Unis, où tourne l'environnement de développement : sans effet ici (les archives suffisent) ; ton terminal, chez toi, se connecte normalement.
+- Pas encore **chaque transaction** (profil de volume et absorptions au prix près sur l'historique) ni **Bybit, OKX et Coinbase** (volume et CVD de plusieurs bourses) : ce sont les prochaines étapes possibles, l'accès est ouvert.
+
 ## V21.1 : moins de bruit sur le graphique principal
 
 - **Absorptions « fortes » par défaut** (menu à côté de la case **Absorptions** : *fortes* ou *toutes*) :
@@ -143,7 +181,7 @@ Une **absorption**, c'est beaucoup d'ordres **agressifs** d'un côté (des vente
 ### Ce que dit la mesure (calculée chez toi, sur tes données)
 L'historique Binance n'a pas pu être téléchargé pendant le développement (accès bloqué), et l'historique Bitstamp disponible n'a qu'un delta **estimé** : impossible d'y voir une absorption. Le terminal fait donc la mesure **lui-même**, en tâche de fond, sur son historique Binance (bougies 1 heure depuis 2019 pour le BTC, 2020 pour SOL, avec le vrai volume acheteur agressif, et regroupées en 4 heures) :
 - pour chaque absorption : le prix va-t-il dans son sens dans les **4 bougies suivantes** ? le plus bas (plus haut) de la bougie **tient-il** ?
-- face aux 20 bougies les plus proches dans le temps qui ont **le même sens, le même corps et le même volume**, mais un **delta ordinaire** : on isole exactement ce qu'ajoute le delta ;
+- face aux 20 bougies les plus proches dans le temps qui ont **le même sens, le même corps et le même volume** (V22 : et **la même mèche**), mais un **delta ordinaire** : on isole exactement ce qu'ajoute le delta ;
 - verdict « mesuré » seulement si l'écart dépasse 2 erreurs-types **et** garde le même sens sur les deux moitiés de la période.
 
 Le résultat apparaît dans la bulle des triangles, dans la ligne **Absorption** de la Lecture (avec le niveau de preuve) et dans la page **Backtest** (rapport « absorptions »). Pour les petites unités de temps (5 et 15 minutes) et plus d'historique : `python tools/fetch_history.py SOLUSDT` puis `python tools/run_absorption_study.py SOLUSDT` (une à quelques minutes) ; ce rapport remplace alors la mesure du terminal.

@@ -206,8 +206,17 @@ class LectureBlock(unittest.TestCase):
         self.assertIn(blk["evidence"], ("indice", "informatif"))                 # le volume sans mouvement annonce plus d'ampleur (mesure)
         self.assertTrue(blk["evidenceNote"])
         fuel = {"code": "short_fuel", "label": "Des shorts s'accumulent", "text": "t", "tone": "warn", "bias": 1}
+        self.assertTrue(rep["hasOi"])                                            # V22 : rapport livré mesuré avec l'intérêt ouvert réel (Binance)
         blk = L.squeeze_block({"ctx": {"squeeze": self.view(fuel)}, "squeezeReport": rep})
-        self.assertEqual(blk["evidence"], "contexte")                            # le rapport livré n'a pas d'OI : non mesuré
+        self.assertIn(blk["evidence"], ("contexte", "indice", "informatif"))
+        self.assertTrue(blk["evidenceNote"].startswith("Sens"))                 # la mesure existe : son verdict est donné
+        _, key, _ = L.SQ_EVIDENCE["short_fuel"]
+        no_oi = json.loads(json.dumps(rep))                                      # rapport sans intérêt ouvert : non mesuré
+        no_oi["hasOi"] = False
+        for t in no_oi["targets"]:
+            t["rows"] = [x for x in t["rows"] if x["key"] != key]
+        blk = L.squeeze_block({"ctx": {"squeeze": self.view(fuel)}, "squeezeReport": no_oi})
+        self.assertEqual(blk["evidence"], "contexte")
         self.assertIn("Pas encore mesuré", blk["evidenceNote"])
         self.assertIsNone(L.squeeze_block({"ctx": {}}))
         json.dumps(blk)
