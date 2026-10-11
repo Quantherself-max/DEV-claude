@@ -438,3 +438,8 @@ ol.tl .evt{color:var(--mut);font-variant-numeric:tabular-nums;white-space:nowrap
 .hdet .fiche{position:sticky;left:0}
 @media (max-width:760px){table.htab th:nth-child(4),table.htab tr.hrow td:nth-child(4),table.htab th:nth-child(5),table.htab tr.hrow td:nth-child(5),table.htab th:nth-child(8),table.htab tr.hrow td:nth-child(8){display:none}}
 @media (max-width:560px){table.htab th:nth-child(6),table.htab tr.hrow td:nth-child(6){display:none}.hfilters{gap:6px}.ftext .cmpnote{margin-left:0}}
+
+/* V24.1 : legende du flux d'ordres dans l'en-tete (bulles = gros ordres agressifs, murs = absorptions en direct) */
+.lgd{display:inline-flex;align-items:center;gap:3px;margin-left:2px;vertical-align:middle}
+.lgd .lb{display:inline-block;width:8px;height:8px;border-radius:50%}.lgd .lb.buy{background:rgba(0,214,125,.55);border:1px solid #00d67d}.lgd .lb.sell{background:rgba(255,72,110,.55);border:1px solid #ff486e}
+.lgd .lw{display:inline-block;width:9px;height:4px}.lgd .lw.up{border:2px solid #3ddc97;border-top:0}.lgd .lw.dn{border:2px solid #ff6b6b;border-bottom:0}

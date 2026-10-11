@@ -3,6 +3,38 @@
 //   liq  : carte de chaleur des poches de liquidation, balayages, vraies liquidations, profil
 //   vp   : VWAP jour / semaine / mois / annee (+ bandes), VWAP ancrees, volume profiles (TF et plage visible)
 // Les panneaux partagent l'etat de app.js (window.LT.st) et sont synchronises (zoom, defilement, croix).
+// V24.1 : couche SOUS les bougies (primitive de Lightweight Charts) : les bulles des gros ordres sont dessinees derriere les bougies,
+// qui restent toujours entieres et lisibles par-dessus. Ancrees en temps et en prix : elles suivent le defilement et le zoom.
+class FlowUnder {
+  constructor() {
+    this.items = []; this.sig = ''; this.req = null; this.chart = null; this.series = null;
+    this.view = {zOrder: () => 'bottom', renderer: () => ({draw: target => this.draw(target)})};
+  }
+  attached(p) { this.chart = p.chart; this.series = p.series; this.req = p.requestUpdate; }
+  detached() { this.req = null; this.chart = null; }
+  updateAllViews() {}
+  paneViews() { return [this.view]; }
+  set(items) {
+    const sig = items.map(b => `${b.time}|${b.price.toFixed(6)}|${b.r.toFixed(1)}|${b.dx.toFixed(1)}|${b.fa}`).join(';');
+    if (sig === this.sig) return;
+    this.sig = sig; this.items = items;
+    if (this.req) this.req();
+  }
+  draw(target) {
+    if (!this.items.length || !this.chart || !this.series) return;
+    target.useMediaCoordinateSpace(({context: ctx}) => {
+      const ts = this.chart.timeScale(), rgba = LT.rgba;
+      for (const b of this.items) {
+        const xc = ts.timeToCoordinate(b.time), y = this.series.priceToCoordinate(b.price);
+        if (xc == null || y == null) continue;
+        ctx.beginPath(); ctx.arc(xc + b.dx, y, b.r, 0, Math.PI * 2);
+        ctx.fillStyle = rgba(b.c, b.fa); ctx.fill();
+        ctx.lineWidth = b.lw; ctx.strokeStyle = rgba(b.c, b.sa); ctx.stroke();
+      }
+    });
+  }
+}
+
 class Panel {
   constructor(host, kind) {
     this.host = host; this.kind = kind;
@@ -28,6 +60,7 @@ class Panel {
     this.series = this.chart.addCandlestickSeries({upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
       wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineColor: '',
       autoscaleInfoProvider: o => this.autoscale(o)});
+    if (kind === 'main' && this.series.attachPrimitive) { this.under = new FlowUnder(); this.series.attachPrimitive(this.under); }
     this.applyTheme();
     this.chart.subscribeClick(p => this.onClick(p));
     this.body.addEventListener('mousemove', ev => this.onMove(ev));
@@ -237,10 +270,11 @@ class Panel {
       `<label title="TPO des séances d'1 heure (beaucoup de marques : à utiliser en 5 ou 15 minutes)"><input type="checkbox" data-mo="tpo1"> 1 h</label>` +
       `<label title="VWAP du jour et bandes à ±1 écart-type"><input type="checkbox" data-mo="vwap"> VWAP</label>` +
       `<label title="Carnet d'ordres en direct aligné sur les prix : taille en attente (Binance), nombre d'ordres (OKX), volume échangé à chaque prix"><input type="checkbox" data-mo="dom"> Carnet</label>` +
-      `<label title="Gros ordres exécutés (losanges) : bleu = acheteur agressif, blanc = vendeur agressif. Les gros ordres d'une même bougie, d'un même côté et au même prix sont additionnés en un seul losange"><input type="checkbox" data-mo="big"> Gros ordres</label>` +
-      `<select class="mini" data-mosel="bigMin" title="Taille minimale d'un losange (somme des gros ordres d'une même bougie au même prix) : au-dessous, rien n'est dessiné"></select>` +
-      `<label title="Absorptions : delta fort CONTRE le sens de la bougie (triangle vert = vendeurs absorbés, rouge = acheteurs absorbés) et, en direct, volume agressif absorbé à un prix sans qu'il passe au travers (cercles). Survole pour le détail et la mesure"><input type="checkbox" data-mo="absorb"> Absorptions</label>` +
+      `<label title="Gros ordres agressifs exécutés (bulles) : vert = acheteurs agressifs (un peu à droite de la bougie), rouge = vendeurs agressifs (un peu à gauche). La taille de la bulle suit le montant ; les bulles d'une même bougie trop proches à l'écran sont réunies en une seule. Survole une bulle pour le détail"><input type="checkbox" data-mo="big"> Gros ordres <span class="lgd"><i class="lb buy"></i><i class="lb sell"></i></span></label>` +
+      `<select class="mini" data-mosel="bigMin" title="Taille minimale d'une bulle (somme des gros ordres d'une même bougie au même prix) : au-dessous, rien n'est dessiné"></select>` +
+      `<label title="Absorptions : sur la bougie, delta fort CONTRE son sens (triangle vert sous la bougie = vendeurs absorbés, rouge au-dessus = acheteurs absorbés) ; en direct, « mur » au prix où le volume agressif a été absorbé sans que le prix passe au travers (trait horizontal : pattes vers le haut = mur qui soutient, vers le bas = mur qui bloque ; pointillé = en cours, double trait = ordre réapprovisionné, pâle et barré = cassé). Survole pour le détail et la mesure"><input type="checkbox" data-mo="absorb"> Absorptions <span class="lgd"><i class="lw up"></i><i class="lw dn"></i></span></label>` +
       `<select class="mini" data-mosel="absorbMode" title="Fortes : delta d'au moins 3 écarts-types ou au plus bas / plus haut des 12 dernières bougies, volume au moins 1,3 fois la normale, une seule par grappe de bougies ; en direct, au moins 1,5 fois le seuil ou ordre réapprovisionné, sur les 3 dernières heures. Toutes : tout ce qui est détecté"><option value="fortes">fortes</option><option value="toutes">toutes</option></select>` +
+      `<select class="mini" data-mosel="bigLabels" title="Montants écrits à côté des gros ordres et des murs d'absorption : les 3 plus gros visibles (par défaut), tous ceux qui ont la place, ou aucun. Le détail reste toujours au survol"><option value="top">chiffres : 3 plus gros</option><option value="all">chiffres : tous</option><option value="none">chiffres : aucun</option></select>` +
       `<button class="mini" data-flowreset title="Remettre à zéro le volume échangé affiché dans le carnet">↺ volumes</button>`;
     if (kind === 'liq') return `<span class="seg mini" data-hours><button data-h="24">24 h</button><button data-h="72">3 j</button><button data-h="168">7 j</button><button data-h="0">29 j</button></span>` +
       `<label><input type="checkbox" data-lq="pools"> Poches</label><label><input type="checkbox" data-lq="sweeps"> Balayages</label>` +
@@ -262,6 +296,7 @@ class Panel {
     this.syncBigSel();                                                      // V21.1 : tailles adaptees a la paire
     h.querySelectorAll('[data-mosel=bigMin]').forEach(sel => { sel.value = String(st.mainOpts.bigMin ?? 2); sel.disabled = !st.mainOpts.big; });
     h.querySelectorAll('[data-mosel=absorbMode]').forEach(sel => { sel.value = st.mainOpts.absorbMode || 'fortes'; sel.disabled = !st.mainOpts.absorb; });
+    h.querySelectorAll('[data-mosel=bigLabels]').forEach(sel => { sel.value = st.mainOpts.bigLabels || 'top'; sel.disabled = !st.mainOpts.big && !st.mainOpts.absorb; });
     h.querySelectorAll('[data-flowreset]').forEach(b => b.hidden = !st.mainOpts.dom);
     h.querySelectorAll('[data-lq]').forEach(c => c.checked = !!st.liqOpts[c.dataset.lq]);
     h.querySelectorAll('[data-vp]').forEach(c => c.checked = !!st.vpOpts[c.dataset.vp]);
@@ -690,7 +725,7 @@ class Panel {
       ctx.fillText(text, Math.min(L.xr + 8, (this.rightLimit || L.plotW) - tw - 6), y);
     }
   }
-  // ---- V15 : gros ordres executes (losanges) ; V21.1 : regroupes par bougie, cote et prix, et filtres par taille ----
+  // ---- V15 : gros ordres executes ; V21.1 : regroupes par bougie, cote et prix, et filtres par taille ; V24.1 : bulles sous les bougies ----
   static bigSteps(sym) {
     const b = (sym || '').replace(/USDT$/, '');
     return b === 'BTC' ? [250e3, 5e5, 1e6, 2e6, 5e6] : b === 'ETH' ? [1e5, 2.5e5, 5e5, 1e6, 2e6] : [5e4, 1e5, 2.5e5, 5e5, 1e6];
@@ -712,40 +747,101 @@ class Panel {
     (big || []).forEach(b => {
       const bt = Math.floor(b.t / perMs) * perMs, key = `${b.side}|${bt}|${Math.round(Math.log(b.price) / 0.0005)}`;
       let g = m.get(key);
-      if (!g) { g = {side: b.side, bt, t: b.t, t1: b.t, usd: 0, qty: 0, n: 0, pv: 0}; m.set(key, g); }
+      if (!g) { g = {side: b.side, bt, t: b.t, t1: b.t, usd: 0, qty: 0, n: 0, pv: 0, lo: b.price, hi: b.price}; m.set(key, g); }
       g.usd += b.usd; g.qty += b.qty; g.n += 1; g.pv += b.price * b.usd; g.t = Math.min(g.t, b.t); g.t1 = Math.max(g.t1, b.t);
+      g.lo = Math.min(g.lo, b.price); g.hi = Math.max(g.hi, b.price);
     });
     return [...m.values()].map(g => ({...g, price: g.pv / g.usd})).filter(g => g.usd >= minUsd);
   }
+  // ---- V24.1 : lisibilite du flux d'ordres. Couleurs propres au flux, jamais celles des bougies (le style « nuit » a des bougies
+  // bleues et blanches) : vert = acheteurs agressifs / mur qui soutient, rouge = vendeurs agressifs / mur qui bloque. Une forme par
+  // type : bulle = gros ordre agressif, trait horizontal avec pattes = absorption en direct (mur), triangle = absorption sur la bougie.
+  // Bulles transparentes avec un lisere sombre (la bougie reste visible), fusionnees quand elles se chevauchent, chiffres seulement
+  // pour les plus importants (reglage « chiffres »), le detail au survol. ----
+  static FLOW = {buy: [0, 214, 125], sell: [255, 72, 110]};
+  static LABELS = {top: 3, all: 1e9, none: 0};
+  static bubbleR(usd, minUsd) { return Math.max(2.5, Math.min(10, 2.5 + 2 * Math.log2(Math.max(1, usd / minUsd)))); }
+  // bulles a l'ecran : vendeurs un peu a gauche du centre de la bougie, acheteurs un peu a droite (comme une empreinte) ; celles d'une
+  // meme bougie et d'un meme cote qui se chevauchent sont fusionnees (total, prix moyen, fourchette de prix)
+  static mergeBubbles(pts, minUsd) {
+    const cols = new Map(), out = [];
+    pts.forEach(p => { const k = p.side + '|' + p.bt; if (!cols.has(k)) cols.set(k, []); cols.get(k).push(p); });
+    cols.forEach(arr => {
+      arr.sort((a, b) => a.y - b.y);
+      let cur = null;
+      arr.forEach(p => {
+        if (cur && Math.abs(p.y - cur.y) < (p.r + cur.r) * 0.7) {
+          const usd = cur.usd + p.usd;
+          cur.y = (cur.y * cur.usd + p.y * p.usd) / usd; cur.price = (cur.price * cur.usd + p.price * p.usd) / usd;
+          cur.qty += p.qty; cur.n += p.n; cur.t = Math.min(cur.t, p.t); cur.t1 = Math.max(cur.t1, p.t1);
+          cur.lo = Math.min(cur.lo, p.lo); cur.hi = Math.max(cur.hi, p.hi); cur.usd = usd; cur.r = Panel.bubbleR(usd, minUsd); cur.merged = true;
+        } else {
+          if (cur) out.push(cur);
+          cur = {...p};
+        }
+      });
+      if (cur) out.push(cur);
+    });
+    return out;
+  }
+  // etiquette a cote d'une marque, sans recouvrir une autre etiquette (essaie au-dessus puis au-dessous) ; false si pas de place
+  placeTag(text, x, y, right, col, t) {
+    const ctx = this.ctx, boxes = this._tagBoxes || (this._tagBoxes = []);
+    ctx.font = `600 10px ${t.font}`;
+    const tw = ctx.measureText(text).width + 8, th = 14, x0 = right ? x : x - tw;
+    for (const dy of [0, -th - 2, th + 2, -2 * th - 4, 2 * th + 4]) {
+      const y0 = y - th / 2 + dy;
+      if (y0 < 4 || boxes.some(b => x0 < b.x + b.w && x0 + tw > b.x && y0 < b.y + b.h && y0 + th > b.y)) continue;
+      boxes.push({x: x0, y: y0, w: tw, h: th});
+      if (dy) { ctx.strokeStyle = LT.rgba(col, 0.5); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(right ? x - 2 : x + 2, y); ctx.lineTo(right ? x0 : x0 + tw, y0 + th / 2); ctx.stroke(); }
+      ctx.fillStyle = 'rgba(8,10,14,0.85)'; ctx.fillRect(x0, y0, tw, th);
+      ctx.fillStyle = LT.rgba(col, 1); ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(text, x0 + 4, y0 + th / 2 + 0.5);
+      return true;
+    }
+    return false;
+  }
   drawBig(L, h) {
     const st = LT.st, f = st.flow, t = this.th(), ctx = this.ctx, rgba = LT.rgba;
-    this.bigHits = [];
+    this.bigHits = []; this._tagBoxes = [];
     this.syncBigSel();
-    if (!st.mainOpts.big || !f || f.symbol !== L.d.symbol || !f.big || !f.big.length) return;
-    const esc = Panel.esc;
+    if (!st.mainOpts.big || !f || f.symbol !== L.d.symbol || !f.big || !f.big.length) { if (this.under) this.under.set([]); return; }
+    const esc = Panel.esc, unit = esc((L.d.symbol || '').replace(/USDT$/, ''));
     const minUsd = Panel.bigMinUsd(st), per = (LT.TF_SEC[st.tf] || 3600) * 1000, last = f.big[f.big.length - 1];
     const key = `${f.symbol}|${f.big.length}|${last.t}|${minUsd}|${per}`;
     if (this._bigKey !== key) { this._bigKey = key; this._bigGroups = Panel.clusterBig(f.big, per, minUsd); }
     const fmtT = ms => new Date(ms).toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const xr = (this.rightLimit || L.plotW) - 2, half = Math.max(2, Math.min(7, L.barW * 0.5)), pts = [];
     this._bigGroups.forEach(g => {
-      const x = this.timeX(g.t / 1000, L), y = this.series.priceToCoordinate(g.price);
-      if (x == null || y == null || x < 0 || x > L.plotW || y < 4 || y > h - 28) return;
-      const r = Math.max(7, Math.min(16, 7 + 3 * Math.log2(g.usd / minUsd))), col = g.side === 'buy' ? t.vpBuy : t.vpSell;
-      ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath();
-      ctx.fillStyle = 'rgba(12,12,12,0.6)'; ctx.fill();
-      ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = g.n > 1 ? 1.8 : 1.3; ctx.stroke();
-      ctx.font = `600 ${r >= 11 ? 9 : 8}px ${t.font}`; ctx.fillStyle = rgba(col, 1);
-      ctx.fillText(LT.fmtUsdShort(g.usd), x, y + 0.5);
-      this.bigHits.push({x, y, r: r + 2, html: `<b class="${g.side === 'buy' ? 'up' : 'dn'}">${g.n > 1 ? `${g.n} gros ordres` : 'Gros ordre'} ${g.side === 'buy' ? 'acheteur' + (g.n > 1 ? 's' : '') : 'vendeur' + (g.n > 1 ? 's' : '')} agressif${g.n > 1 ? 's' : ''}</b><br>` +
-        `${LT.fmtUsdShort(g.usd)} $ au total, ${LT.fmtQty(g.qty)} ${esc((L.d.symbol || '').replace(/USDT$/, ''))}, prix moyen ${LT.fmtP(g.price)}<br>` +
-        `<span class="muted">${g.n > 1 ? `de ${fmtT(g.t)} à ${fmtT(g.t1)}` : fmtT(g.t)} · affichés à partir de ${LT.fmtUsdShort(minUsd)} $ (réglage à côté de « Gros ordres »)</span>`});
+      const xc = this.timeX(g.bt / 1000, L), y = this.series.priceToCoordinate(g.price);
+      if (xc == null || y == null || xc < -12 || xc > xr || y < 4 || y > h - 28) return;
+      pts.push({...g, x: xc + (g.side === 'buy' ? half : -half), y, r: Panel.bubbleR(g.usd, minUsd)});
+    });
+    const bubbles = Panel.mergeBubbles(pts, minUsd).sort((a, b) => a.usd - b.usd);       // les plus gros dessines en dernier, au-dessus
+    const top = new Set(bubbles.slice(-3));                                                 // les 3 plus gros visibles : pleins ; les autres : discrets
+    const under = [];
+    bubbles.forEach(b => {
+      const c = Panel.FLOW[b.side], main = top.has(b);
+      if (this.under) under.push({time: b.bt / 1000, price: b.price, dx: b.side === 'buy' ? half : -half, r: b.r, c, fa: main ? 0.6 : 0.24, sa: main ? 1 : 0.85, lw: main ? 1.6 : 1});
+      else {                                                                                  // sans couche du dessous (ancienne bibliotheque) : par-dessus, transparent
+        ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fillStyle = rgba(c, main ? 0.35 : 0.1); ctx.fill();
+        ctx.lineWidth = 1.2; ctx.strokeStyle = rgba(c, 0.9); ctx.stroke();
+      }
+      const many = b.n > 1, who = b.side === 'buy' ? 'acheteur' : 'vendeur';
+      this.bigHits.push({x: b.x, y: b.y, r: b.r + 3, html: `<b class="${b.side === 'buy' ? 'up' : 'dn'}">${many ? `${b.n} gros ordres ${who}s agressifs` : `Gros ordre ${who} agressif`}</b><br>` +
+        `${LT.fmtUsdShort(b.usd)} $ au total, ${LT.fmtQty(b.qty)} ${unit}, prix moyen ${LT.fmtP(b.price)}` + (b.hi > b.lo ? ` (de ${LT.fmtP(b.lo)} à ${LT.fmtP(b.hi)})` : '') + '<br>' +
+        `<span class="muted">${many ? `de ${fmtT(b.t)} à ${fmtT(b.t1)}` : fmtT(b.t)}${b.merged ? ' · réunis en une bulle car trop proches à l\'écran' : ''} · affichés à partir de ${LT.fmtUsdShort(minUsd)} $</span>`});
+    });
+    if (this.under) this.under.set(under);
+    const nLab = Panel.LABELS[st.mainOpts.bigLabels || 'top'] ?? 3;
+    bubbles.slice().reverse().slice(0, nLab).forEach(b => {
+      const buy = b.side === 'buy';
+      this.placeTag(LT.fmtUsdShort(b.usd), buy ? b.x + b.r + 4 : b.x - b.r - 4, b.y, buy, Panel.FLOW[b.side], t);
     });
   }
   // ---- V21 : absorptions. Sur les bougies : delta fort CONTRE le sens de la bougie (triangle vert sous la bougie = vendeurs absorbes,
   // rouge au-dessus = acheteurs absorbes ; plein = forte ou au plus bas / haut ; anneau orange = sur une zone de confluence).
-  // En direct (ruban + carnet) : cercle au prix ou le volume agressif a ete absorbe (pointille = en cours, plein = confirmee,
-  // barre = cassee, losange = ordre passif reapprovisionne). Bulle au survol. ----
+  // En direct (ruban + carnet) : « mur » au prix ou le volume agressif a ete absorbe (V24.1, voir plus bas). Bulle au survol. ----
   drawAbsorb(L, h) {
     const st = LT.st, ctx = this.ctx, t = this.th(), rgba = LT.rgba, d = L.d, xr = (this.rightLimit || L.plotW) - 2;
     this.absHits = [];
@@ -774,28 +870,35 @@ class Panel {
     if (!f || f.symbol !== d.symbol || !f.absorb || !f.absorb.length) return;
     const live = Panel.absLiveShown(f.absorb, st);
     const thr = f.absorbThr || 1, ST = {'en cours': 'en cours', 'confirmée': 'confirmée : le prix s\'est éloigné dans son sens', 'cassée': 'cassée : le prix est passé au travers', 'tenue': 'tenue (5 minutes sans départ)'};
+    const per = (LT.TF_SEC[st.tf] || 3600) * 1000, nLab = Math.min(2, Panel.LABELS[st.mainOpts.bigLabels || 'top'] ?? 3), tags = [];
+    // V24.1 : absorption en direct = « mur » au prix (trait horizontal sur la largeur de la bougie, pattes vers le cote ou le prix est
+    // retenu : vers le haut = soutien, vers le bas = plafond) ; pointille = en cours, double trait = ordre reapprovisionne, pale et barre = cassee
     live.forEach(e => {
-      let x = this.timeX(e.t / 1000, L);
+      let x = this.timeX(Math.floor(e.t / per) * per / 1000, L);
       const y = this.series.priceToCoordinate(e.price + e.step / 2);
-      const bull = e.side === 'bull', col = bull ? UP : DN, r = Math.max(6, Math.min(14, 5 + 3 * Math.log2(1 + e.usd / thr))), broken = e.status === 'cassée';
-      if (x != null && x > xr && x <= L.plotW + 2) x = xr - r - 2;                // bougie en cours cachee par le carnet : cercle epingle au bord
-      if (x == null || y == null || x < 0 || x > xr || y < 6 || y > h - 30) return;
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
-      if (e.status === 'confirmée') { ctx.fillStyle = rgba(col, 0.28); ctx.fill(); }
-      ctx.strokeStyle = rgba(col, broken ? 0.4 : 1); ctx.lineWidth = 1.6;
-      if (e.status === 'en cours') ctx.setLineDash([3, 2]);
-      ctx.stroke(); ctx.setLineDash([]);
-      if (broken) { ctx.beginPath(); ctx.moveTo(x - r * 0.65, y + r * 0.65); ctx.lineTo(x + r * 0.65, y - r * 0.65); ctx.stroke(); }
-      if (e.refill) { ctx.fillStyle = rgba(col, 1); ctx.beginPath(); ctx.moveTo(x, y - 3.5); ctx.lineTo(x + 3.5, y); ctx.lineTo(x, y + 3.5); ctx.lineTo(x - 3.5, y); ctx.fill(); }
-      ctx.font = `600 9px ${t.font}`; ctx.fillStyle = rgba(col, broken ? 0.5 : 1); ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      ctx.fillText(`${bull ? '−' : '+'}${LT.fmtUsdShort(e.usd)}`, x + r + 3, y);
+      const bull = e.side === 'bull', col = bull ? UP : DN, broken = e.status === 'cassée';
+      const w = Math.max(10, Math.min(24, L.barW + 4 + 3 * Math.log2(1 + e.usd / thr))), cap = bull ? -5 : 5;   // a peine plus large que la bougie
+      if (x != null && x + w / 2 > xr && x <= L.plotW + 2) x = xr - w / 2 - 2;            // bougie en cours cachee par le carnet : mur epingle au bord
+      if (x == null || y == null || x < -w || x > xr || y < 6 || y > h - 30) return;
+      const x0 = x - w / 2, x1 = x + w / 2;
+      const wall = (dy) => { ctx.beginPath(); ctx.moveTo(x0, y + cap + dy); ctx.lineTo(x0, y + dy); ctx.lineTo(x1, y + dy); ctx.lineTo(x1, y + cap + dy); ctx.stroke(); };
+      ctx.lineJoin = 'miter'; ctx.lineCap = 'butt';
+      ctx.strokeStyle = 'rgba(0,0,0,0.65)'; ctx.lineWidth = 5; wall(0);                       // lisere sombre
+      ctx.strokeStyle = rgba(col, broken ? 0.35 : 1); ctx.lineWidth = 2.6;
+      if (e.status === 'en cours') ctx.setLineDash([4, 3]);
+      wall(0);
+      if (e.refill) { ctx.lineWidth = 1.4; wall(bull ? 3.5 : -3.5); }                        // ordre cache qui se recharge : double mur
+      ctx.setLineDash([]);
+      if (broken) { ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(x - 4, y + 4); ctx.lineTo(x + 4, y - 4); ctx.stroke(); }
+      if (!broken && ((e.ratio || 0) >= 2 || e.refill || e.status === 'confirmée')) tags.push({e, x1, y, col});
       const when = new Date(e.t).toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
-      this.absHits.push({x, y, r: r + 3, html: `<b class="${bull ? 'up' : 'dn'}">Absorption en direct · ${bull ? 'vendeurs absorbés' : 'acheteurs absorbés'}</b><br>` +
+      this.absHits.push({x, y: y + cap / 2, r: w / 2 + 2, ry: 9, html: `<b class="${bull ? 'up' : 'dn'}">Absorption en direct · ${bull ? 'vendeurs absorbés (mur qui soutient)' : 'acheteurs absorbés (mur qui bloque)'}</b><br>` +
         `<span class="muted">${esc(when)} · ${LT.fmtP(e.price)} – ${LT.fmtP(e.price + e.step)}</span><br>` +
         `${LT.fmtUsdShort(e.usd)} $ ${bull ? 'vendus' : 'achetés'} agressivement à ce prix en moins d'une minute (delta ${sgn(e.delta)} ${esc(unit)}), sans que le prix passe au travers.<br>` +
-        `Statut : <b>${esc(ST[e.status] || e.status)}</b>${e.refill ? '<br><b>Ordre réapprovisionné</b> : il s\'est exécuté au moins deux fois la taille encore affichée dans le carnet (ordre caché probable).' : ''}` +
+        `Statut : <b>${esc(ST[e.status] || e.status)}</b>${e.refill ? '<br><b>Ordre réapprovisionné</b> (double trait) : il s\'est exécuté au moins deux fois la taille encore affichée dans le carnet (ordre caché probable).' : ''}` +
         `<br><span class="muted">Non mesuré sur l'historique (il faudrait chaque transaction et le carnet).</span>`});
     });
+    tags.sort((a, b) => b.e.usd - a.e.usd).slice(0, nLab).forEach(g => this.placeTag(LT.fmtUsdShort(g.e.usd), g.x1 + 4, g.y, true, g.col, t));
   }
   // V21.1 : ce qui est affiche selon le reglage (« fortes » par defaut, « toutes »)
   static absShown(events, st) {
@@ -1065,7 +1168,8 @@ class Panel {
     const st = LT.st, H = st.heat, tip = this.tipEl;
     if (this.kind === 'main') {                                         // V21 : bulle des absorptions
       const r = this.body.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
-      const hit = (this.absHits || []).concat(this.bigHits || []).find(q => Math.abs(q.x - x) <= q.r && Math.abs(q.y - y) <= q.r);
+      const near = (this.absHits || []).concat(this.bigHits || []).filter(q => Math.abs(q.x - x) <= q.r && Math.abs(q.y - y) <= (q.ry || q.r));
+      const hit = near.sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0];   // la marque la plus proche du pointeur
       if (!hit) { tip.hidden = true; return; }
       tip.innerHTML = hit.html; tip.hidden = false;
       tip.style.left = Math.max(4, Math.min(r.width - 340, x + 14)) + 'px'; tip.style.top = Math.max(4, Math.min(r.height - 190, y - 40)) + 'px';
