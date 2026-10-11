@@ -6,7 +6,7 @@ import json
 import math
 import threading
 import time
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1615,6 +1615,33 @@ class Service:
             self._mw_save()
 
     # ---------- idees de trade ----------
+    def trade_candles(self, symbol: str, a: int, b: int):
+        """Bougies (t, ouverture, haut, bas, cloture) entre a et b pour la fiche d'une idee (page Historique) : 5 min si elles couvrent encore
+        la periode (70 jours gardes), sinon 1 h. Renvoie (resolution en ms, liste)."""
+        m = self.markets.get(symbol)
+        if m is None or not m.ready:
+            return 300_000, []
+        with self.lock:
+            fine = m.store.fine_m5()
+            if fine and fine[0].t <= a:
+                lo = bisect_left([k.t for k in fine], a)
+                return 300_000, [(k.t, k.o, k.h, k.l, k.c) for k in fine[lo:] if k.t <= b]
+            return 3_600_000, [(k.t, k.o, k.h, k.l, k.c) for k in m.store.h1 if a <= k.t <= b]
+
+    def last_price(self, symbol: str):
+        m = self.markets.get(symbol)
+        if m is None or not m.ready or not m.store.m5:
+            return None
+        return m.store.m5[-1].c
+
+    def all_m5(self, symbol: str) -> list:
+        """Toutes les bougies 5 min gardees [(t, haut, bas, cloture)] (journal detaille des idees d'avant V24)."""
+        m = self.markets.get(symbol)
+        if m is None or not m.ready:
+            return []
+        with self.lock:
+            return [(k.t, k.h, k.l, k.c) for k in m.store.fine_m5()]
+
     def recent_m5(self, symbol: str, since_ms: int) -> list:
         """Bougies 5 min [(t, haut, bas, cloture)] depuis since_ms (suivi des idees ouvertes)."""
         m = self.markets.get(symbol)

@@ -1,9 +1,10 @@
-# Liq Terminal (V23)
+# Liq Terminal (V24)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Un historique qui explique chaque idée** (V24, page **Historique**) : pour chaque idée envoyée, un **graphique du trajet du prix** (entrée, stop, objectifs, zone, moments clés), le récit en clair (pourquoi le terminal l'a proposée, le plan, ce qui s'est passé heure par heure, le résultat expliqué, le meilleur et le pire moment, ce que le prix a fait ensuite), les résultats **par catégorie** (paire, sens, qualité, tendance, mois), ce que le backtest **attendait** face à ce qui est **arrivé**, et les résultats **en dollars** selon la somme que tu risques par idée (voir « V24 » plus bas).
 - **Calculs au prix près, sur chaque transaction** (V23) : le terminal télécharge **chaque transaction** de Binance des 62 derniers jours (archives publiques, puis le flux en direct) : profils de volume, POC, VAH, VAL, nœuds, profil de séance, volume et delta du TPO, prix le plus échangé des zones et POC vierges sont calculés sur ce qui s'est **réellement échangé à chaque prix**, plus déduits des bougies ; le **VWAP** est exact (volume en dollars) et suit les bougies de 5 minutes en 5 et 15 minutes (voir « V23 » plus bas).
 - **Toutes les mesures refaites sur l'historique Binance** (V22) : SOL a enfin **ses propres mesures** (idées du terminal, ta stratégie VWAP, VWAP ancrés, poches, squeezes avec l'intérêt ouvert réel, TPO, absorptions), calculées sur le **perpétuel SOL** depuis septembre 2020 avec le **vrai volume acheteur agressif** ; le BTC est vérifié sur deux historiques (13 ans de Bitstamp et le perpétuel Binance depuis 2020), qui disent la même chose (voir « V22 » plus bas).
 - **Absorptions avec le delta** (V21) : sur le graphique principal, chaque bougie dont le delta (volume acheteur agressif − vendeur agressif, donnée réelle de Binance) va fortement CONTRE son sens est marquée (vendeurs absorbés : triangle vert ; acheteurs absorbés : triangle rouge), et en direct le terminal repère au prix près les gros volumes agressifs absorbés sans que le prix passe au travers (cercles, et repère dans le carnet). Le terminal **mesure lui-même** sur ton historique Binance si ces absorptions annoncent la suite (voir « V21 » plus bas).
@@ -116,6 +117,44 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V24 : comprendre chaque idée passée et ses résultats
+
+La page **Historique** est refaite pour répondre à trois questions : **que s'est-il passé** sur chaque idée, **pourquoi** ce résultat, et **est-ce que le terminal tient ses promesses**.
+
+### En haut de la page
+- **Le verdict en une phrase**, honnête sur la taille de l'échantillon : en dessous de 30 idées terminées, le terminal dit que c'est trop peu pour juger ; au-delà, il donne l'intervalle à 90 % de la moyenne (avantage démontré, perte démontrée, ou rien de démontré).
+- Idées envoyées et exécutées, part de gagnantes, **résultat total** et **moyenne par idée** en fois le risque, **pire passage** (la plus forte baisse de la courbe, du plus haut au plus bas) et plus longue série de pertes, durée moyenne en position et délai moyen d'exécution.
+- **Traduire en dollars** : indique la somme que tu risques par idée (ce que tu perds si le stop est touché) ; tous les résultats s'affichent aussi en dollars. Réglage gardé dans ton navigateur seulement.
+- La **courbe** du résultat cumulé, idée après idée.
+
+### Chaque idée, ligne par ligne
+- Filtres : idées ou alertes, paire, gagnantes / perdantes / sans résultat / en cours.
+- Colonne **Trajet** : jusqu'où le prix est allé **contre toi** (rouge) et **pour toi** (vert) pendant la position, en fois le risque, avec le stop (−1), l'entrée (0), les objectifs et le résultat (point). On voit d'un coup d'œil les idées qui ont presque atteint l'objectif avant de se retourner.
+- Une idée encore ouverte affiche sa valeur **au prix actuel** (pas encore comptée).
+
+### La fiche d'une idée (clique sur la ligne)
+- **Graphique du trajet du prix** autour de l'idée (bougies de 5 minutes à 4 heures selon la durée, heure de Paris) : zone de l'idée, entrée, stop, objectifs, période en position, et les **moments clés** (envoi, exécution, objectif 1, fin, meilleur et pire moment) à survoler.
+- **Ce qui s'est passé**, heure par heure : envoi, exécution (combien de temps après), objectif 1 (après combien de temps en position), fin.
+- **Résultat expliqué** : par exemple « +1,30 fois le risque = moitié à l'objectif 1 (½ × 1,50) + moitié à l'objectif 2 (½ × 1,10) », en % du prix et en % de la marge avec ton levier.
+- **Meilleur et pire moment** pendant la position ; pour un ordre jamais exécuté, le point le plus proche de l'entrée.
+- **À retenir** : des constats sur cette idée seulement (« le prix est allé jusqu'à +1,2 fois le risque, tout près de l'objectif 1, puis s'est retourné jusqu'au stop », « la zone n'a pas tenu »…), jamais une conclusion sur la règle à partir d'une seule idée.
+- **Et ensuite ?** ce que le prix a fait dans les 48 heures après la fin (après un stop, l'objectif 1 a-t-il été atteint ? après une sortie à l'équilibre, l'objectif 2 ? un ordre manqué, le prix est-il revenu ?).
+- **Le plan envoyé** et **pourquoi le terminal l'a proposée** : configuration, qualité de la zone, tendance de fond au moment de l'envoi, prudences signalées, et le détail du score en barres (liquidité, VWAP et niveaux, macro, flux d'ordres, tendance, biais). Le message Telegram complet reste disponible.
+
+### Ce qui marche, ce qui ne marche pas
+- Résultats **par catégorie** : paire, sens, configuration (rebond ou reprise), qualité à l'envoi, tendance de fond, type d'entrée, mois. Une catégorie avec moins de 10 idées terminées est signalée comme une anecdote.
+- **Ce que le terminal attendait, et ce qui est arrivé** : pour chaque paire, la part de gagnantes et le résultat moyen du **backtest** (mêmes règles rejouées sur l'historique, période récente à part) face aux idées **réelles** ; et les chances annoncées à l'envoi (objectif 1 avant le stop, exécution de l'ordre en 24 heures) face à ce qui est arrivé.
+
+### Le journal enregistre davantage
+- À l'envoi : prix du moment, détail du score, tendance de fond, qualité de la zone, prudences, levier, chances annoncées.
+- Pendant le suivi : l'**heure de la bougie** de chaque étape (avant : l'heure où le terminal le constatait, parfois bien plus tard après un arrêt), le meilleur et le pire prix pendant la position (dans la bougie qui ferme la position, ce qui va au-delà du prix de sortie n'est pas compté : c'est arrivé après), le point le plus proche de l'entrée tant que l'ordre attend, et le prix au moment où le suivi s'arrête après 7 jours.
+- Les idées **d'avant V24** sont complétées automatiquement : le terminal rejoue exactement les mêmes règles sur les bougies de 5 minutes encore gardées (70 jours), sans rien envoyer, et ne garde les moments clés que si le rejeu retrouve le même déroulé ; le résultat enregistré ne change jamais. Au-delà de 70 jours, la fiche le dit et montre le trajet en bougies d'1 heure.
+
+### Limites
+- Les résultats ne comptent pas les frais (le backtest, lui, les compte) : à résultat égal, le réel est un peu flatteur.
+- Les 300 dernières idées et alertes sont gardées dans le journal.
+- Vérifié sur des idées rejouées sur données simulées (navigateur, ordinateur et téléphone) et par des tests ; les premières vraies idées s'afficheront chez toi.
 
 ## Ce qui est nouveau en V23 : chaque transaction, des niveaux au prix près
 
@@ -783,16 +822,16 @@ engine/             calculs : profils de volume (auto et choisis), séries VWAP 
                     V14 : pocketrank.py (importance d'une poche : taille, confluences, fraîcheur), pocketstudy.py (mesure sur l'historique) ;
                     V15 : sessionvp.py (profil de volume de la séance avec part acheteuse)
 data/               sources : simulée et Binance ; V15 : orderflow.py (carnet Binance synchronisé, nombre d'ordres OKX, ruban, gros ordres) ; historique en mémoire et contexte (funding, L/S, spot, Coinbase) ; social.py (posts X, facultatif) ; V9 : derivs.py (options, DVOL, base, financement multi-bourses), opendata.py (jeux libres GitHub)
-alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées) ; assistant.py (discussion avec Claude, V12) ; readings.py (lecture quotidienne et ce que le prix a fait ensuite, V13)
+alerts/             règles d'alerte, envoi Telegram ; trades.py (quota hebdomadaire, suivi et journal des idées) ; journal.py (récit de chaque idée, statistiques par catégorie, trajet du prix, V24) ; assistant.py (discussion avec Claude, V12) ; readings.py (lecture quotidienne et ce que le prix a fait ensuite, V13)
 service.py          relie les données et les moteurs, fabrique l'état JSON
 server.py           serveur local : API, réglages, sécurité
 web/                interface : index.html + style.css ; app.js (Desk, état, alertes), panels.js (les trois graphiques),
-                    overview.js (vue d'ensemble), signals.js (idées de trade), analysis.js et charts.js (analyse, graphiques SVG) ;
+                    overview.js (vue d'ensemble), signals.js (idées de trade), history.js (historique des idées avec graphique et récit, V24), analysis.js et charts.js (analyse, graphiques SVG) ;
                     TradingView Lightweight Charts (vendor/)
 tools/              run_pocket_study.py (V14), run_rotation.py, run_squeeze_study.py (V10), run_indicators.py, run_derivs_study.py (V9), fetch_history.py (historique 1 min Binance), run_study.py (rapport de backtest des idées du terminal), run_strategy.py (rapport de ta stratégie VWAP / profil de volume) et run_avwap_swing.py (VWAP ancrés sur un mouvement de 5 % ou plus)
 reports/            rapports livrés (BTC) : backtest_BTC.json (idées du terminal), strategy_BTC.json (ta stratégie) et avwap_BTC.json (VWAP ancrés sur un mouvement) indicators_BTC.json (indicateurs en chaîne et macro), rotation_BTC.json (où va l'argent, or) et squeeze_BTC.json (delta, CVD, squeezes) ; les tiens vont dans data_local/reports/
 serveur/            installation sur un serveur 24 h/24 (script et guide)
-tests/              tests automatiques (plus de quatre cents)
+tests/              tests automatiques (plus de cinq cents)
 ```
 
 ## Limites connues

@@ -32,7 +32,8 @@ const parisAt = ms => PARIS_DT.format(new Date(ms)).replace(',', '');
 function biasHtml(b) {
   if (!b) return '<span class="lt">Biais du terminal</span> <b class="muted">AUCUN</b> <span class="muted small">pas d\'idée en cours ni de moins de 24 h : la prochaine peut être un achat ou une vente</span>';
   const buy = b.side === 'long', sym = s => s.replace('USDT', '');
-  const open = b.open.length ? `tant que ${b.open.length > 1 ? 'les idées' : 'l\'idée'} ${b.open.map(o => sym(o.symbol)).join(' et ')} ${b.open.length > 1 ? 'sont' : 'est'} en cours, et ` : '';
+  const syms = [...new Set(b.open.map(o => sym(o.symbol)))];
+  const open = b.open.length ? `tant que ${b.open.length > 1 ? 'les ' + b.open.length + ' idées' : 'l\'idée'} ${syms.join(' et ')} ${b.open.length > 1 ? 'sont' : 'est'} en cours, et ` : '';
   return `<span class="lt">Biais du terminal</span> <b class="${buy ? 'up' : 'dn'}">${buy ? 'ACHAT' : 'VENTE'}</b> <span class="muted small">depuis l'idée ${sym(b.symbol)} du ${parisAt(b.created)} · aucune idée ${buy ? 'de vente' : 'd\'achat'}, sur aucune paire, ${open}pas avant le ${parisAt(b.until)}</span>`;
 }
 const againstBias = (b, side) => !!b && !!side && b.side !== side;
@@ -614,7 +615,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 21;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions)
+const NEED_API = 22;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {

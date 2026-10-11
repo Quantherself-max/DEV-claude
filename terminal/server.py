@@ -30,8 +30,8 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "23"
-API_LEVEL = 21                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "24"
+API_LEVEL = 22                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -290,6 +290,9 @@ class App:
                 open_ = [t["checked"] for t in self.desk.trades if t["symbol"] == s and t["status"] in OPEN]
                 if open_:
                     m5s[s] = service.recent_m5(s, min(open_))
+            for s in symbols:                                       # journal d'avant V24 : moments cles retrouves sur les bougies 5 min gardees
+                if any(t["symbol"] == s and t.get("v", 1) < 2 for t in self.desk.trades):
+                    self.desk.backfill(s, service.all_m5(s), now)
             self.desk.run_cycle(sigs, m5s, now)
             service.errors.pop("idees", None)
         except Exception as e:
@@ -443,6 +446,34 @@ class App:
                 self.httpd.shutdown()
         threading.Thread(target=go, daemon=True).start()
         return True
+
+    # --- historique des idees (V24) ---
+    def history(self):
+        """Journal complet avec recit de chaque idee, statistiques par categorie et ce que le backtest attendait pour chaque paire."""
+        syms = sorted({t["symbol"] for t in self.desk.trades} | set(self.cfg.symbols))
+        expect = {}
+        for s in syms:
+            try:
+                expect[s] = reports_mod.terminal_expect(self.service.report_dirs, s)
+            except Exception:
+                expect[s] = None
+        prices = {s: self.service.last_price(s) for s in syms}
+        return self.desk.history(self.source.now_ms(), lev=self.cfg.signal_leverage, expect=expect, prices=prices)
+
+    def trade_detail(self, tid: str):
+        """Fiche d'une idee : bougies autour de l'idee (5 min tant qu'elles sont gardees, sinon 1 h), niveaux, moments cles, recit,
+        et ce que le prix a fait dans les 48 heures apres la fin."""
+        from alerts import journal
+        tr = next((t for t in self.desk.trades if t["id"] == tid), None)
+        if tr is None:
+            raise KeyError(f"idée introuvable : {tid}")
+        now = self.source.now_ms()
+        a, b, end = journal.window(tr, now)
+        finest, rows = self.service.trade_candles(tr["symbol"], a, max(b, min(now, end + journal.AFTER_H * 3_600_000)))
+        p = journal.path(tr, rows, finest, now)
+        pnow = self.service.last_price(tr["symbol"]) if tr["status"] in ("active", "tp1") else None
+        return {"id": tid, "symbol": tr["symbol"], **p, "story": journal.story(tr, lev=tr.get("lev") or self.cfg.signal_leverage, price_now=pnow),
+                "source": "5 minutes" if finest == 300_000 else "1 heure (bougies 5 minutes plus conservées pour cette période)"}
 
     # --- reglages ---
     def settings(self):
@@ -711,8 +742,10 @@ def make_handler(app: App):
                 if u.path == "/api/update":
                     return self._json(app.update_status())
                 if u.path == "/api/history":
-                    return self._json({**app.desk.history(app.source.now_ms()), "readings": app.readings.public(), "direction": app.cfg.signal_direction,
+                    return self._json({**app.history(), "readings": app.readings.public(), "direction": app.cfg.signal_direction,
                                        "since": int(app.started * 1000), "source": app.cfg.source, "symbols": list(app.cfg.symbols)})
+                if u.path == "/api/history/trade":
+                    return self._json(app.trade_detail((q.get("id") or [""])[0]))
                 if u.path == "/api/chat":
                     t = app.tgchat
                     return self._json({**app.assistant.status(), "history": app.assistant.history(),

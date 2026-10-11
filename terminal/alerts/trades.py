@@ -9,7 +9,10 @@ une « alerte pour tes longs » (hors quota, une par paire et par 24 h au plus) 
 Pas de biais contraires (V13.1), toutes paires confondues (BTC et SOL bougent ensemble) : aucune idee dans l'autre sens tant qu'une idee est en cours ou
 qu'elle a moins de 24 h. Entre 24 h et 72 h, une idee dans l'autre sens exige que la precedente soit terminee, 10 points de qualite en plus, et le message
 commence par « CHANGEMENT DE SENS » en disant clairement qu'elle REMPLACE la precedente.
-Le journal est le test le plus honnete : il enregistre ce qui s'est PASSE apres chaque idee envoyee."""
+Le journal est le test le plus honnete : il enregistre ce qui s'est PASSE apres chaque idee envoyee.
+Journal detaille (V24) : pour chaque idee, l'heure de chaque etape (execution, objectif 1, fin), le prix le plus favorable et le plus defavorable
+atteints pendant la position, le point le plus proche de l'entree pour un ordre jamais execute, et les raisons du score au moment de l'envoi.
+Les idees d'avant V24 sont completees en rejouant les memes regles sur les bougies 5 min encore disponibles (sans jamais changer leur resultat)."""
 import json
 import threading
 import time
@@ -27,6 +30,8 @@ LOCK_H = 24                  # aucune idee dans l'autre sens pendant 24 h (et ta
 FLIP_H = 72                  # fenetre de « changement de sens »
 FLIP_EXTRA = 10.0            # points de qualite en plus pour changer de sens
 ALERT_EVERY_H = 24           # une alerte de prudence par paire et par 24 h au plus
+FACT_KEYS = ("best", "worst", "near", "tp1At", "endAt", "exitPx")
+REPLAY_KEEP_MS = 70 * 24 * 3_600_000      # bougies 5 min gardees par le terminal (data/store.py M5_FINE_DAYS)
 RESULT_WORD = {"stop": "stop touché", "tp1_be": "objectif 1 atteint puis sortie à l'équilibre", "tp2": "objectif 2 atteint", "missed": "objectif atteint sans exécution",
                "expired": "expirée sans exécution", "expired_active": "suivi arrêté après 7 jours", None: "en cours"}
 
@@ -68,6 +73,7 @@ class TradeDesk:
         self.file = self.dir / "trades.json"
         self.trades: list[dict] = []
         self.waiting: dict = {}                  # raison pour laquelle la meilleure idee n'est pas envoyee (affichage)
+        self._quiet = False                      # rejeu du passe (journal d'avant V24) : aucun message
         self._load()
 
     # --- persistance ---
@@ -88,6 +94,8 @@ class TradeDesk:
                 pass
 
     def _send(self, trade, text, kind):
+        if self._quiet:
+            return True
         ok, detail = True, "envoye"
         for part in sg.split_message(text):                          # un long message part en plusieurs, sans rien perdre
             ok1, detail1 = self.notifier.send(part)
@@ -196,6 +204,8 @@ class TradeDesk:
         return sum(1 for t in self.trades if t["symbol"] == sym and t["status"] in OPEN and not is_alert(t)) >= 2
 
     def _record(self, sym, idea, now_ms, n):
+        desc, probs, st = idea.get("desc") or {}, idea.get("probs") or {}, idea.get("st") or {}
+        fill, plan = probs.get("fill") or {}, probs.get("plan") or {}
         return {"id": f"{sym}-{now_ms}", "key": idea["key"], "symbol": sym, "side": idea["side"], "kind": idea["kind"],
                 "created": now_ms, "score": idea["score"], "entry": idea["entry"], "entryType": idea["entryType"],
                 "stop": idea["stop"], "tp1": idea["tp1"], "tp2": idea.get("tp2"), "rr1": idea["rr1"], "rr2": idea.get("rr2"),
@@ -203,7 +213,14 @@ class TradeDesk:
                 "validUntil": now_ms + idea["validHours"] * 3_600_000,
                 "status": "active" if idea["entryType"] == "marché" else "pending", "result": None, "checked": now_ms,
                 "filledAt": now_ms if idea["entryType"] == "marché" else None, "closedAt": None, "n": n,
-                "title": idea["desc"]["headline"]}
+                "title": idea["desc"]["headline"],
+                # journal detaille (V24) : contexte au moment de l'envoi
+                "v": 2, "px0": idea.get("price"), "validHours": idea.get("validHours"), "align": idea.get("align"),
+                "tp1Kind": idea.get("tp1Kind"), "tp2Kind": idea.get("tp2Kind"), "zoneS": st.get("S"), "zoneN": st.get("n"),
+                "comps": [{"label": c.get("label"), "pts": round(float(c.get("pts") or 0.0), 1), "max": c.get("max"), "note": c.get("note") or ""}
+                          for c in idea.get("comps") or []],
+                "warn": [w for w in idea.get("warn") or [] if w][:6], "lev": (desc.get("leverage") or {}).get("lev"),
+                "pFill": fill.get("p24") if idea["entryType"] == "limite" else None, "pTp": (plan.get("tp") or {}).get("p")}
 
     def _create(self, sym, idea, now_ms, n, flip=None):
         text = sg.to_text(idea, idea["desc"], n, self.cfg.signal_max_week)
@@ -283,20 +300,27 @@ class TradeDesk:
         for tr in self.trades:
             if tr["symbol"] != sym or tr["status"] not in OPEN:
                 continue
+            last = None
             for t, h, l, c in candles5:
                 if t < tr["created"] or t < tr["checked"] - 300_000:
                     continue
                 self._step(tr, t, h, l, now_ms)
                 tr["checked"] = max(tr["checked"], t)
+                last = c
                 if tr["status"] not in OPEN:
                     break
-            if tr["status"] == "pending" and now_ms > tr["validUntil"]:
-                self._close(tr, "expired", now_ms)
-            elif tr["status"] in ("active", "tp1") and now_ms - tr["filledAt"] > MAX_HOLD_H * 3_600_000:
-                self._close(tr, "expired_active", now_ms)
+            self._expire(tr, now_ms, last)
             changed = True
         if changed:
             self._save()
+
+    def _expire(self, tr, now_ms, last_close=None):
+        if tr["status"] == "pending" and now_ms > tr["validUntil"]:
+            self._close(tr, "expired", now_ms, tr["validUntil"])
+        elif tr["status"] in ("active", "tp1") and now_ms - tr["filledAt"] > MAX_HOLD_H * 3_600_000:
+            if last_close is not None:
+                tr["exitPx"] = last_close                                   # prix au moment ou le suivi s'arrete (resultat latent, non compte)
+            self._close(tr, "expired_active", now_ms, tr["filledAt"] + MAX_HOLD_H * 3_600_000)
 
     def _step(self, tr, t, h, l, now_ms):
         long_ = tr["side"] == "long"
@@ -306,33 +330,130 @@ class TradeDesk:
         adverse = (lambda x: below(x)) if long_ else (lambda x: above(x))   # mouvement contre l'idee
         favour = (lambda x: above(x)) if long_ else (lambda x: below(x))    # mouvement dans le sens de l'idee
         if tr["status"] == "pending":
+            near = l if long_ else h                                        # point le plus proche de l'entree tant que l'ordre attend
+            nr = tr.get("near")
+            if nr is None or (near < nr["p"] if long_ else near > nr["p"]):
+                tr["near"] = {"p": near, "t": t}
             if adverse(e):                                                  # ordre limite execute
                 tr["status"], tr["filledAt"] = "active", t
                 self._notify(tr, "fill", now_ms)
                 if adverse(s):
-                    self._close(tr, "stop", now_ms)                         # execute puis stoppe dans la meme bougie
+                    self._extreme(tr, t, h, l, fav=False, cap=s)
+                    self._close(tr, "stop", now_ms, t)                      # execute puis stoppe dans la meme bougie
+                else:
+                    self._extreme(tr, t, h, l, fav=False)                   # dans la bougie d'execution, seul le mouvement contraire suit surement l'entree
             elif favour(t1):
-                self._close(tr, "missed", now_ms)                           # objectif atteint sans execution
+                self._close(tr, "missed", now_ms, t)                        # objectif atteint sans execution
             return
         if t <= tr["filledAt"]:
             return                                                          # bougie d'execution : on ne compte pas l'objectif
         if tr["status"] == "active":
             if adverse(s):
-                self._close(tr, "stop", now_ms)
+                self._extreme(tr, t, h, l, fav=False, cap=s)                # ordre inconnu dans la bougie : on retient le pire (comme le resultat)
+                self._close(tr, "stop", now_ms, t)
             elif favour(t1):
-                tr["status"] = "tp1"
+                tr["status"], tr["tp1At"] = "tp1", t
                 self._notify(tr, "tp1", now_ms)
                 if t2 and favour(t2):
-                    self._close(tr, "tp2", now_ms)
+                    self._extreme(tr, t, h, l, adv=False, cap=t2)
+                    self._close(tr, "tp2", now_ms, t)
+                else:
+                    self._extreme(tr, t, h, l)
+            else:
+                self._extreme(tr, t, h, l)
         elif tr["status"] == "tp1":
             if adverse(e):
-                self._close(tr, "tp1_be", now_ms)
+                self._extreme(tr, t, h, l, fav=False, cap=e)
+                self._close(tr, "tp1_be", now_ms, t)
             elif t2 and favour(t2):
-                self._close(tr, "tp2", now_ms)
+                self._extreme(tr, t, h, l, adv=False, cap=t2)
+                self._close(tr, "tp2", now_ms, t)
+            else:
+                self._extreme(tr, t, h, l)
 
-    def _close(self, tr, result, now_ms):
+    @staticmethod
+    def _extreme(tr, t, h, l, fav=True, adv=True, cap=None):
+        """Prix le plus favorable (« best ») et le plus defavorable (« worst ») atteints pendant la position, avec l'heure de la bougie.
+        cap : prix de sortie dans la bougie qui ferme la position (stop, entree, objectif 2) ; ce qui va au-dela s'est passe apres la sortie."""
+        long_ = tr["side"] == "long"
+        if adv:
+            p, w = (l if long_ else h), tr.get("worst")
+            if cap is not None:
+                p = max(p, cap) if long_ else min(p, cap)
+            if w is None or (p < w["p"] if long_ else p > w["p"]):
+                tr["worst"] = {"p": p, "t": t}
+        if fav:
+            p, b = (h if long_ else l), tr.get("best")
+            if cap is not None:
+                p = min(p, cap) if long_ else max(p, cap)
+            if b is None or (p > b["p"] if long_ else p < b["p"]):
+                tr["best"] = {"p": p, "t": t}
+
+    def _close(self, tr, result, now_ms, at=None):
+        """at : heure de la bougie ou c'est arrive (endAt) ; closedAt reste l'heure ou le terminal l'a constate."""
         tr["status"], tr["result"], tr["closedAt"] = "closed", result, now_ms
+        tr["endAt"] = at if at is not None else now_ms
         self._notify(tr, result, now_ms)
+
+    # --- journal d'avant V24 : moments cles retrouves en rejouant les memes regles ---
+    def backfill(self, sym: str, candles5: list, now_ms: int, limit: int = 60) -> int:
+        """candles5 : [(t, haut, bas, cloture)] toutes les bougies 5 min disponibles. Pour les idees sans journal detaille, rejoue les regles
+        de suivi sur une copie, sans aucun message, et ne garde les moments cles (heure de l'objectif 1, fin, meilleur et pire prix, point
+        le plus proche de l'entree) que si le rejeu retrouve exactement le deroule enregistre. Le resultat enregistre ne change jamais.
+        Renvoie le nombre d'idees completees."""
+        if not candles5:
+            return 0
+        first, done, changed = candles5[0][0], 0, False
+        for tr in self.trades:
+            if tr["symbol"] != sym or tr.get("v", 1) >= 2:
+                continue
+            if done >= limit:
+                break
+            if tr["created"] < first:
+                if now_ms - tr["created"] > REPLAY_KEEP_MS:                 # bougies 5 min plus disponibles : rien a recalculer
+                    tr["v"], tr["replay"] = 2, "absent"
+                    changed = True
+                continue                                                    # sinon les bougies plus anciennes peuvent encore arriver
+            end = tr.get("closedAt") if tr["status"] == "closed" else tr["checked"]
+            if end is None or candles5[-1][0] < min(end, now_ms) - 600_000:
+                continue                                                    # bougies pas encore a jour
+            tr.update(self._replay(tr, candles5, end, now_ms))
+            done += 1
+            changed = True
+        if changed:
+            self._save()
+        return done
+
+    def _replay(self, tr, candles5, end, now_ms):
+        cp = {k: v for k, v in tr.items() if k not in FACT_KEYS}
+        market = tr["entryType"] == "marché"
+        cp.update(status="active" if market else "pending", result=None, closedAt=None, endAt=None, checked=tr["created"],
+                  filledAt=tr["created"] if market else None)
+        self._quiet = True
+        try:
+            last = None
+            for t, h, l, c in candles5:
+                if t < cp["created"]:
+                    continue
+                if t > end:
+                    break
+                self._step(cp, t, h, l, now_ms)
+                last = c
+                if cp["status"] not in OPEN:
+                    break
+            if tr["status"] == "closed" and cp["status"] in OPEN and tr["result"] in ("expired", "expired_active"):
+                self._expire(cp, max(now_ms, tr.get("closedAt") or 0), last)
+        finally:
+            self._quiet = False
+        same = cp["status"] == tr["status"] and cp.get("result") == tr.get("result") and cp.get("filledAt") == tr.get("filledAt")
+        if not same:
+            return {"v": 2, "replay": "different"}                          # bougies differentes de celles du suivi en direct : on ne devine rien
+        out = {k: cp[k] for k in FACT_KEYS if cp.get(k) is not None and k not in ("exitPx",)}
+        if tr["status"] == "closed" and tr["result"] in ("expired", "expired_active"):
+            out["endAt"] = tr["validUntil"] if tr["result"] == "expired" else tr["filledAt"] + MAX_HOLD_H * 3_600_000
+        if tr.get("exitPx") is None and cp.get("exitPx") is not None:
+            out["exitPx"] = cp["exitPx"]
+        return {**out, "v": 2, "replay": "ok"}
 
     def _notify(self, tr, kind, now_ms):
         if is_alert(tr):
@@ -379,15 +500,30 @@ class TradeDesk:
         return {"week": self.week(now_ms), "waiting": self.waiting, "stats": self.stats(), "bias": self.bias(now_ms),
                 "trades": [{k: t.get(k) for k in keys} for t in self.trades[-40:][::-1]]}
 
-    def history(self, now_ms: int) -> dict:
-        """Tout le journal (texte compris) avec le resultat de chaque idee et de chaque alerte, du plus recent au plus ancien."""
+    def history(self, now_ms: int, lev=None, expect=None, prices=None) -> dict:
+        """Tout le journal (texte compris) avec le resultat de chaque idee et de chaque alerte, du plus recent au plus ancien.
+        V24 : recit en clair de chaque idee, meilleur et pire moment, statistiques par categorie (alerts/journal.py).
+        lev : levier des reglages (si l'idee ne l'a pas enregistre) ; expect : {symbole: attendu du backtest} ; prices : {symbole: prix actuel}."""
+        from alerts import journal                                          # (journal importe ce module)
+        prices = prices or {}
         out = []
         for t in self.trades[::-1]:
             row = {k: t.get(k) for k in ("id", "symbol", "side", "kind", "created", "score", "entry", "entryType", "stop", "tp1", "tp2", "rr1", "rr2",
-                                          "status", "result", "filledAt", "closedAt", "n", "title", "sent", "mode", "flipFrom", "text", "checked")}
+                                          "status", "result", "filledAt", "closedAt", "n", "title", "sent", "mode", "flipFrom", "text", "checked",
+                                          "validUntil", "zone", "align", "zoneS", "comps", "lev", "pFill", "pTp", "best", "worst", "near", "tp1At",
+                                          "endAt", "exitPx", "replay", "px0")}
             row["r"] = None if is_alert(t) else r_of(t)
             row["verdict"] = alert_verdict(t) if is_alert(t) else None
             row["resultText"] = RESULT_WORD.get(t.get("result"), t.get("result")) if t.get("status") == "closed" else {"pending": "ordre en attente", "active": "en position",
                                                                                                                         "tp1": "objectif 1 atteint, reste en cours"}.get(t["status"], t["status"])
+            pnow = prices.get(t["symbol"]) if t["status"] in ("active", "tp1") else None
+            row["outcome"] = journal.outcome(t)
+            row["rBest"] = journal.r_at(t, t["best"]["p"]) if t.get("best") else None
+            row["rWorst"] = journal.r_at(t, t["worst"]["p"]) if t.get("worst") else None
+            row["riskPct"] = journal.risk_pct(t)
+            row["rNow"] = journal.latent_r(t, pnow if pnow is not None else t.get("exitPx") if t.get("result") == "expired_active" else None)
+            end = journal.end_of(t)
+            row["held"] = (end if t["status"] == "closed" else now_ms) - t["filledAt"] if t.get("filledAt") and (end or t["status"] != "closed") else None
+            row["story"] = journal.story(t, lev=t.get("lev") or lev, price_now=pnow)
             out.append(row)
-        return {"trades": out, "stats": self.stats(), "week": self.week(now_ms), "bias": self.bias(now_ms)}
+        return {"trades": out, "stats": self.stats(), "summary": journal.summary(self.trades, expect), "week": self.week(now_ms), "bias": self.bias(now_ms)}

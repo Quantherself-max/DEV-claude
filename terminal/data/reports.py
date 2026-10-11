@@ -77,3 +77,22 @@ def evidence(dirs, symbol: str):
         return {"label": lab, "aligned": a["expR"], "counter": c["expR"], "n": a["n"], "proxy": proxy}
     except (KeyError, TypeError):
         return None
+
+
+def terminal_expect(dirs, symbol: str):
+    """Ce que le backtest attendait des idees du terminal (regle actuelle) pour ce symbole : part d'idees gagnantes et resultat moyen
+    par idee apres frais, sur tout l'historique et sur la periode la plus recente. Rapport du BTC a defaut (indique comme tel)."""
+    base = base_of(symbol).upper()
+    rep, proxy = load(dirs, base), False
+    if rep is None:
+        rep, proxy = load(dirs, "BTC"), True
+    try:
+        t = rep["terminal"]
+        a = t["all"]
+        y0 = __import__("time").gmtime(rep["period"]["start"] / 1000).tm_year
+        y1 = __import__("time").gmtime(rep["period"]["end"] / 1000).tm_year
+        last = (t.get("eras") or [None])[-1]
+        return {"label": f"{rep['label']} {y0}-{y1}", "proxy": proxy, "n": a["n"], "winRate": a["winRate"], "expR": a["expR"],
+                "recent": {"label": last["label"], "n": last["n"], "winRate": last["winRate"], "expR": last["expR"]} if last else None}
+    except (KeyError, TypeError, IndexError):
+        return None
