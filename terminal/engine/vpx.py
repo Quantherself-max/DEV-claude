@@ -143,20 +143,29 @@ def resolve(specs, tf: str, now_ms: int):
     return wins
 
 
-def build(candles, start: int, end: int, rows_cap: int = 100, hvn_n: int = 2):
-    """Profil des bougies dont l'ouverture est dans [start, end). Renvoie None si trop peu de donnees."""
+def build(candles, start: int, end: int, rows_cap: int = 100, hvn_n: int = 2, fp=None, span: int | None = None):
+    """Profil des bougies dont l'ouverture est dans [start, end). Renvoie None si trop peu de donnees.
+    V23 : `fp` (empreinte des transactions) remplace la repartition uniforme de chaque bougie qu'elle couvre entierement (volume au prix pres) ;
+    « exact » = part du volume qui en vient."""
     times = [k.t for k in candles]
     i0, i1 = bisect_left(times, start), bisect_left(times, end)
     sel = [k for k in candles[i0:i1] if k.v > 0]
     if len(sel) < 3:
         return None
+    if span is None:
+        span = min((b.t - a.t for a, b in zip(sel, sel[1:]) if b.t > a.t), default=3_600_000)
     p = vp.Profile()
+    ex_v = 0.0
     for k in sel:
-        p.add(k.l, k.h, k.v)
+        if fp is not None and fp.complete(k.t, k.t + span):
+            fp.add_profile(k.t, k.t + span, p)
+            ex_v += k.v
+        else:
+            p.add(k.l, k.h, k.v)
     n = len(sel)
     rows, b0, g = vp.agg_rows(p, min(vp.auto_rows(n), rows_cap))
     poc, vah, val = vp.stats(rows, b0, g)
     hv = vp.hvn(rows, b0, g, hvn_n)
     edges = [[vp.VP_GRID.price(b0 + i * g, 0.0), vp.VP_GRID.price(b0 + (i + 1) * g, 0.0), v] for i, v in enumerate(rows)]
     return {"poc": poc, "vah": vah, "val": val, "hvn": hv, "rows": edges, "bars": n, "volume": sum(rows),
-            "t0": sel[0].t, "t1": sel[-1].t + 1}
+            "t0": sel[0].t, "t1": sel[-1].t + 1, "exact": round(ex_v / max(1e-12, sum(k.v for k in sel)), 4)}

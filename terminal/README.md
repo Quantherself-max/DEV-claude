@@ -1,9 +1,10 @@
-# Liq Terminal (V22)
+# Liq Terminal (V23)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Calculs au prix près, sur chaque transaction** (V23) : le terminal télécharge **chaque transaction** de Binance des 62 derniers jours (archives publiques, puis le flux en direct) : profils de volume, POC, VAH, VAL, nœuds, profil de séance, volume et delta du TPO, prix le plus échangé des zones et POC vierges sont calculés sur ce qui s'est **réellement échangé à chaque prix**, plus déduits des bougies ; le **VWAP** est exact (volume en dollars) et suit les bougies de 5 minutes en 5 et 15 minutes (voir « V23 » plus bas).
 - **Toutes les mesures refaites sur l'historique Binance** (V22) : SOL a enfin **ses propres mesures** (idées du terminal, ta stratégie VWAP, VWAP ancrés, poches, squeezes avec l'intérêt ouvert réel, TPO, absorptions), calculées sur le **perpétuel SOL** depuis septembre 2020 avec le **vrai volume acheteur agressif** ; le BTC est vérifié sur deux historiques (13 ans de Bitstamp et le perpétuel Binance depuis 2020), qui disent la même chose (voir « V22 » plus bas).
 - **Absorptions avec le delta** (V21) : sur le graphique principal, chaque bougie dont le delta (volume acheteur agressif − vendeur agressif, donnée réelle de Binance) va fortement CONTRE son sens est marquée (vendeurs absorbés : triangle vert ; acheteurs absorbés : triangle rouge), et en direct le terminal repère au prix près les gros volumes agressifs absorbés sans que le prix passe au travers (cercles, et repère dans le carnet). Le terminal **mesure lui-même** sur ton historique Binance si ces absorptions annoncent la suite (voir « V21 » plus bas).
 - **TPO de la semaine et du mois** (V20) : la vue **▥ TPO** affiche maintenant les profils de marché **du mois** (une lettre par jour) et **de la semaine** (lundi 00 h UTC, une lettre par tranche de 4 heures, « première heure » = le lundi), et leurs **single prints** sont tracées en priorité sur les graphiques et dans les confluences ; mesure sur **14 ans de bitcoin** de ce qu'elles valent vraiment (voir « V20 » plus bas).
@@ -115,6 +116,35 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V23 : chaque transaction, des niveaux au prix près
+
+Jusqu'ici, le volume échangé à chaque prix était **déduit des bougies** (réparti entre leur plus bas et leur plus haut, ou le long de leur trajet probable), et le VWAP utilisait le prix typique des bougies d'1 heure. Mesuré sur 30 jours réels : le **POC du jour** ainsi déduit des bougies de 5 minutes s'écartait du POC exact de **0,23 % en moyenne sur SOL** (jusqu'à 2 %) et de **0,10 % sur le BTC** (jusqu'à 1,5 %), et tombait sur une autre ligne du profil **73 % des jours sur SOL, 53 % sur le BTC** ; la VAH et la VAL de 0,04 à 0,10 % ; le VWAP du jour de 0,02 à 0,03 % (jusqu'à 0,13 %).
+
+### Ce que fait le terminal (avec les vraies données Binance)
+- Il télécharge **chaque transaction** des derniers jours depuis les **archives publiques de Binance** (data.binance.vision, sans clé), du jour le plus récent au plus ancien, puis rattrape le reste par l'**API publique** (numéro de transaction par numéro de transaction) et suit le **flux en direct**. Les numéros consécutifs sont vérifiés : un trou (coupure du flux) est rattrapé, et rien n'est jamais compté deux fois, même après un redémarrage.
+- Il garde, par tranche de 5 minutes, le volume des **acheteurs agressifs** et des **vendeurs agressifs** à **chaque prix** : au pas de cotation pour SOL (0,01 $, chaque prix exact), par pas de 5 $ pour le BTC (≈ 0,006 %, pour garder des fichiers légers). Environ 40 Ko par jour sur le disque.
+- **Réglages → 1 → Transactions exactes** : 62 jours par défaut (le mois en cours et le précédent), de 7 à 400 jours, ou désactivé. Le premier téléchargement est le plus long : environ 5 Mo par jour pour SOL et 15 Mo par jour pour le BTC (≈ 300 Mo et 1 Go pour 62 jours), quelques minutes ; ensuite quelques Mo par jour. L'avancement s'affiche sous le réglage.
+
+### Ce qui est calculé au prix près
+- le **profil de séance** collé à l'échelle des prix (jour, semaine, mois), son POC / VAH / VAL évolutifs, ses nœuds HVN / LVN et le delta à chaque prix ;
+- les **profils choisis** (onglet VWAP · VP, colonne « Précision ») et les profils du jour, de la semaine et du mois qui entrent dans les **zones de confluence** (POC, VAH, VAL, HVN) ;
+- le **volume et le delta à chaque prix du TPO** ;
+- le **prix le plus échangé** de chaque zone ;
+- les **POC vierges** des jours et semaines couverts ;
+- l'**écart-type du VWAP** (bandes) du jour, de la semaine et du mois.
+
+Le **VWAP** lui-même (jour, semaine, mois, année, VWAP ancrés) est désormais **exact** partout : chaque bougie compte à son prix moyen réel (volume en dollars ÷ volume, donné par Binance), et sur les graphiques 5 et 15 minutes il suit les bougies de 5 minutes (avant : mis à jour une fois par heure).
+
+### À l'écran
+- **« ◆ au prix près »** sous l'en-tête du profil de séance : 100 % du volume vient des transactions ; **« ◆ 80 % »** : la part exacte, le reste déduit des bougies ; **« profil estimé (bougies) »** : transactions pas encore téléchargées pour cette période (ou données simulées).
+- La même précision dans la liste des profils (onglet VWAP · VP) et dans la bulle des séances de la vue TPO.
+
+### Limites
+- Le jour en cours n'est jamais dans les archives (publiées le lendemain) : il vient de l'API puis du flux en direct. Une tranche de 5 minutes qui n'est pas entièrement couverte garde l'ancienne méthode (jamais de mélange à l'intérieur d'une tranche).
+- Au-delà de la fenêtre choisie (62 jours), les profils longs (année, 90 ou 180 jours) restent en partie estimés : la colonne « Précision » donne la part exacte.
+- Binance uniquement : le volume de Bybit, OKX et Coinbase n'est pas encore additionné.
+- Vérifié sur les vraies archives de Binance (30 jours de SOL et de BTC) ; le rattrapage par l'API et le flux en direct l'ont été par des tests (l'environnement de développement, aux États-Unis, ne peut pas joindre l'API de Binance) : la première vraie mise en route se fera chez toi.
 
 ## Ce qui est nouveau en V22 : toutes les mesures refaites sur l'historique Binance (perpétuels SOL et BTC)
 

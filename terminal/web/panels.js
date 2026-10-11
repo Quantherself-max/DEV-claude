@@ -668,6 +668,13 @@ class Panel {
         ctx.fillStyle = 'rgba(10,10,10,.45)'; ctx.fillRect(d.x - tw - 2, it.ly - 7, tw, 14);
         ctx.fillStyle = t.label; ctx.fillText(it.text, d.x - 6, it.ly);
       });
+      if (s.exact != null) {                                   // V23 : precision du profil (chaque transaction ou bougies)
+        const ex = s.exact, tag = ex >= 0.995 ? '◆ au prix près' : ex > 0.005 ? `◆ ${Math.round(ex * 100)} % au prix près` : 'profil estimé (bougies)';
+        ctx.font = `500 9px ${t.font}`; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+        ctx.fillStyle = ex >= 0.995 ? rgba(t.vpBuy, 0.9) : t.label;
+        ctx.textAlign = 'left';
+        ctx.fillText(tag, d.x - W, 16);                        // sous l'en-tete de la colonne (« jour · forme »)
+      }
     }
     return r.cols.length ? r.used + 30 : 0;
   }

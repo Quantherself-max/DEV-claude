@@ -30,7 +30,7 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "22"
+VERSION = "23"
 API_LEVEL = 21                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
@@ -87,6 +87,18 @@ def default_flow(cfg, source, service, feed):
     return flow
 
 
+def default_trades(cfg, source, feed):
+    """V23 : transactions exactes de chaque paire (archives Binance Vision + API publique + flux en direct). Seulement avec Binance."""
+    if cfg.source != "binance" or getattr(cfg, "footprint_days", 0) <= 0 or not hasattr(source, "_get"):
+        return {}
+    from data.trades import TradeSync
+    get = lambda path, params: source._get(path, params, retries=2, timeout=20)
+    out = {s: TradeSync(s, Path(cfg.data_dir) / "footprint", cfg.footprint_days, get) for s in cfg.symbols}
+    if feed is not None:
+        feed.trades = out
+    return out
+
+
 def build_parts(cfg, make_source=default_source, make_feed=default_feed, make_hub=default_hub):
     source = make_source(cfg)
     notifier = TelegramNotifier(cfg.telegram_token, cfg.telegram_chat_id, cfg.telegram_api_base) \
@@ -98,6 +110,7 @@ def build_parts(cfg, make_source=default_source, make_feed=default_feed, make_hu
     hub = make_hub(cfg, source)
     if hub:
         service.attach_ext(hub)
+    service.attach_trades(default_trades(cfg, source, feed))
     return source, service, AlertEngine(cfg, notifier), notifier, feed, default_flow(cfg, source, service, feed)
 
 
@@ -138,14 +151,21 @@ class App:
         self.price_cache = {}
         self.assistant = Assistant(cfg, lambda: self.service, cfg.data_dir)
         self.readings = readings_mod.ReadingLog(cfg)
+        old_trades = getattr(self, "trades", {})
+        self.trades = service.trades
         if old:
             old.stop()
         if old_flow:
             old_flow.stop()
+        for ts in old_trades.values():
+            ts.stop()
         if feed and self.running:
             feed.start()
         if flow and self.running:
             flow.start()
+        if self.running:
+            for ts in self.trades.values():
+                ts.start()
         self._chat_restart()
 
     def _chat_restart(self):
@@ -166,6 +186,8 @@ class App:
             self.feed.start()
         if self.flow:
             self.flow.start()
+        for ts in self.trades.values():
+            ts.start()
         self._chat_restart()
 
     def shutdown(self):
@@ -175,6 +197,12 @@ class App:
             self.feed.stop()
         if self.flow:
             self.flow.stop()
+        for ts in self.trades.values():
+            ts.stop()
+            try:
+                ts.flush()                                   # le jour en cours est sauvegarde : rien a retelecharger au redemarrage
+            except Exception:
+                pass
         if self.tgchat:
             self.tgchat.close()
 
@@ -425,6 +453,7 @@ class App:
                              "chatId": c.telegram_chat_id},
                 "alertMinScore": c.alert_min_score, "alertTf": c.alert_tf, "alertCooldownHours": c.alert_cooldown_hours,
                 "alertMode": c.alert_mode, "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "alertZones": c.alert_zones, "historyYears": c.history_years,
+                "footprintDays": c.footprint_days, "trades": {s: t.status() for s, t in getattr(self, "trades", {}).items()},
                 "signalOn": c.signal_on, "signalMinScore": c.signal_min_score, "signalMaxWeek": c.signal_max_week, "signalMaxPerSymbol": c.signal_max_per_symbol,
                 "signalLeverage": c.signal_leverage, "signalTrendGate": c.signal_trend_gate, "signalDirection": c.signal_direction,
                 "macroWeekTelegram": c.macro_week_telegram,
@@ -463,6 +492,8 @@ class App:
             upd["TERMINAL_ALERT_SWEEP"] = "1" if body["alertSweep"] else "0"
         if body.get("historyYears") is not None:
             upd["TERMINAL_HISTORY_YEARS"] = str(max(0, min(10, int(body["historyYears"]))))
+        if body.get("footprintDays") is not None:
+            upd["TERMINAL_FOOTPRINT_DAYS"] = str(max(0, min(400, int(body["footprintDays"]))))
         if body.get("alertMode") in ("ideas", "all"):
             upd["TERMINAL_ALERT_MODE"] = body["alertMode"]
         if body.get("alertZones") is not None:
@@ -604,6 +635,7 @@ def make_handler(app: App):
                     o["alerts"] = [{"t": a["t"], "text": a["text"].split("\n")[0], "sent": a.get("sent")} for a in app.alerts.log[-6:][::-1]]
                     o["feed"] = app.feed.status() if app.feed else None
                     o["flow"] = app.flow.status() if app.flow else None
+                    o["trades"] = {s: t.status() for s, t in app.trades.items()}
                     o["errors"] = app.service.errors
                     d = app.desk.public(app.source.now_ms())
                     o["week"], o["tradeStats"], o["openTrades"] = d["week"], d["stats"], [t for t in d["trades"] if t["status"] in ("pending", "active", "tp1")]
@@ -693,7 +725,8 @@ def make_handler(app: App):
                                        "stale": app.code_stale,
                                        "ready": {s: m.ready for s, m in app.service.markets.items()},
                                        "errors": app.service.errors, "lastUpdate": app.service.last_update,
-                                       "feed": app.feed.status() if app.feed else None})
+                                       "feed": app.feed.status() if app.feed else None,
+                                       "trades": {s: t.status() for s, t in app.trades.items()}})
             except KeyError as e:
                 return self._json({"error": str(e)}, 404)
             except ValueError as e:

@@ -854,9 +854,11 @@ function renderVPList() {
   if (!V || !V.ready) { el.className = 'muted'; el.textContent = needs('vp') || st.tab === 'vp' ? 'Chargement…' : 'Ouvre le graphique VWAP · VP pour charger les profils.'; return; }
   el.className = '';
   const dt = t => new Date(t).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit', year: '2-digit'});
-  el.innerHTML = V.profiles.length ? `<table class="t"><tr><th>Profil</th><th>Fenêtre</th><th class="r">POC</th><th class="r">VAH</th><th class="r">VAL</th><th class="r">Barres</th></tr>` +
+  const exTxt = x => x == null ? '' : x >= 0.995 ? '<span class="up" title="Calculé sur chaque transaction de Binance : volume au prix près">◆ exact</span>'
+    : x > 0.005 ? `<span title="Part du volume calculée sur chaque transaction ; le reste est réparti d'après les bougies">◆ ${Math.round(x * 100)} %</span>` : '<span class="muted" title="Réparti d\'après les bougies (transactions pas encore téléchargées pour cette période)">estimé</span>';
+  el.innerHTML = V.profiles.length ? `<table class="t"><tr><th>Profil</th><th>Fenêtre</th><th class="r">POC</th><th class="r">VAH</th><th class="r">VAL</th><th class="r">Précision</th></tr>` +
     V.profiles.map(p => `<tr data-vpf="${esc(p.id)}" class="${p.id === st.vpFocus ? 'hl' : ''}" style="cursor:pointer" title="Afficher l'histogramme de ce profil"><td><span class="chip" style="background:#4c8dff"></span>${esc(p.label)}</td>` +
-      `<td class="muted small">${dt(p.t0)} → ${dt(p.t1)}</td><td class="r">${fmtP(p.poc)}</td><td class="r">${fmtP(p.vah)}</td><td class="r">${fmtP(p.val)}</td><td class="r muted">${p.bars}</td></tr>`).join('') + `</table>` :
+      `<td class="muted small">${dt(p.t0)} → ${dt(p.t1)}</td><td class="r">${fmtP(p.poc)}</td><td class="r">${fmtP(p.vah)}</td><td class="r">${fmtP(p.val)}</td><td class="r small">${exTxt(p.exact)}</td></tr>`).join('') + `</table>` :
     '<div class="muted">Aucun profil sur cette timeframe (pas assez de données).</div>';
   const hasAuto = V.specs.some(s => s.kind === 'auto');
   $('#vpAuto').checked = hasAuto;
@@ -992,6 +994,23 @@ function setPlan(key) {
 
 // ---------- reglages ----------
 const M = $('#modal');
+// V23 : etat des transactions exactes (une ligne par paire)
+function renderFpState(tr, source) {
+  const el = $('#fpState');
+  if (!el) return;
+  if (source !== 'binance') { el.textContent = 'Disponible avec les vraies données Binance.'; return; }
+  const rows = Object.values(tr || {});
+  if (!rows.length) { el.textContent = 'Désactivé.'; return; }
+  el.innerHTML = rows.map(t => {
+    const base = String(t.symbol || '').replace(/USDT$/, '');
+    const today = t.today != null ? Math.round(t.today * 100) + ' %' : '—';
+    const err = t.error ? ` · <span class="dn">${String(t.error).replace(/[<>&]/g, '')}</span>` : '';
+    return `<b>${base}</b> : ${t.complete}/${t.days} jours complets, aujourd'hui ${today}` +
+      (t.current ? ` · téléchargement du ${t.current}` : '') + (t.behindSec != null && t.behindSec > 120 ? ` · rattrapage (${Math.round(t.behindSec / 60)} min de retard)` : '') +
+      (t.step ? ` · pas de ${t.step} $${t.exactPrices ? ' (chaque prix exact)' : ''}` : '') + ` · ${t.mb || 0} Mo` + err;
+  }).join('<br>');
+}
+
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, 4500); }
 async function openSettings() {
   M.hidden = false;
@@ -1002,6 +1021,8 @@ async function openSettings() {
     document.querySelectorAll('input[name=source]').forEach(r => r.checked = r.value === s.source);
     $('#symbols').value = s.symbols.join(',');
     $('#histYears').value = String(s.historyYears || 0);
+    $('#fpDays').value = String(s.footprintDays ?? 62);
+    renderFpState(s.trades, s.source);
     $('#tgToken').value = '';
     $('#tgToken').placeholder = s.telegram.tokenHint ? `token enregistré (${s.telegram.tokenHint}) : laisse vide pour le garder` : '123456789:AA...';
     $('#tgChat').value = s.telegram.chatId || '';
@@ -1154,7 +1175,7 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
   const src = (document.querySelector('input[name=source]:checked') || {}).value;
   const before = st.cfg ? st.cfg.source + '|' + st.cfg.symbols.join(',') + '|' + (st.cfg.historyYears || 0) : '';
   const body = {source: src, symbols: $('#symbols').value.split(/[\s,;]+/).filter(Boolean), telegramChatId: $('#tgChat').value.trim(),
-    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMode: $('#aMode').value, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, macroWeekTelegram: $('#mwTg').checked, historyYears: +$('#histYears').value,
+    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMode: $('#aMode').value, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, macroWeekTelegram: $('#mwTg').checked, historyYears: +$('#histYears').value, footprintDays: +$('#fpDays').value,
     xOn: $('#xOn').checked, xAccounts: $('#xAccounts').value, xPosts: +$('#xPosts').value,
     signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalMaxPerSymbol: +$('#sMaxSym').value, signalLeverage: +$('#sLev').value, signalTrendGate: $('#sTrend').checked, signalDirection: $('#sDir').value};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();

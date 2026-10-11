@@ -25,6 +25,7 @@ class LiveFeed:
         self.ctx = ssl_context
         self.ticks = 0
         self.flow = None                                        # V15 : flux d'ordres (data/orderflow.py), recoit chaque transaction
+        self.trades = {}                                        # V23 : synchronisation des transactions exactes (data/trades.py), par paire
         self._load_liqs()
 
     # --- messages ---
@@ -39,6 +40,9 @@ class LiveFeed:
         self.ticks += 1
         if self.flow is not None:
             self.flow.on_trade(sym, x, now)
+        ts = self.trades.get(sym)
+        if ts is not None:
+            ts.on_live(x)
 
     def on_liq(self, text: str):
         m = json.loads(text)

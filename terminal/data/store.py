@@ -16,7 +16,7 @@ DAY = 86_400_000
 OI_DAYS = 29       # Binance ne donne l'OI 5 min que sur ~30 jours
 M5_FINE_DAYS = 70  # bougies 5 min gardees pour les profils de volume du jour, de la semaine et du mois (courants et precedents)
 EARLIEST = 1_567_296_000_000      # 2019-09-01 : debut des futures perpetuels Binance (BTC)
-CACHE_VERSION = 1
+CACHE_VERSION = 2       # V23 : volume en dollars de chaque bougie (VWAP exact) ; l'ancien cache est retelecharge une fois
 
 
 def merge(lst: list, new: list) -> None:
@@ -62,7 +62,7 @@ class DataStore:
             if d.get("v") != CACHE_VERSION or d.get("symbol") != self.symbol or not d["rows"] \
                     or d.get("start", 0) > self.history_start + 2 * DAY:
                 return                                       # autre version / paire, ou cache demande avec moins d'historique
-            self.h1 = [Candle(int(r[0]), r[1], r[2], r[3], r[4], r[5], r[6]) for r in d["rows"]]
+            self.h1 = [Candle(int(r[0]), r[1], r[2], r[3], r[4], r[5], r[6], r[7]) for r in d["rows"]]
             self._saved_n = len(self.h1)
         except (OSError, ValueError, KeyError, IndexError, EOFError):
             self.h1 = []
@@ -76,7 +76,7 @@ class DataStore:
         try:
             self.cache.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.cache.with_suffix(".tmp")
-            rows = [[k.t, k.o, k.h, k.l, k.c, k.v, k.tb] for k in closed]
+            rows = [[k.t, k.o, k.h, k.l, k.c, k.v, k.tb, k.q] for k in closed]
             with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=3) as f:
                 json.dump({"v": CACHE_VERSION, "symbol": self.symbol, "start": self.history_start, "rows": rows}, f)
             os.replace(tmp, self.cache)

@@ -21,7 +21,7 @@ import math
 from bisect import bisect_left
 from datetime import datetime, timezone
 
-from .sessionvp import nice_step, nodes, spread
+from .sessionvp import fill, nice_step, nodes, spread
 
 MIN = 60_000
 H = 60 * MIN
@@ -126,7 +126,8 @@ def _va(cnt, poc):
     return up, dn
 
 
-def profile(bars, start: int, end: int, bracket_ms: int, step: float, min_single: int = MIN_SINGLE, ib_ms: int | None = None):
+def profile(bars, start: int, end: int, bracket_ms: int, step: float, min_single: int = MIN_SINGLE, ib_ms: int | None = None,
+            fp=None, span: int = 300_000, now=None):
     """Profil TPO de la seance. None sans donnees. Lignes : [prix bas, nombre de lettres, lettres, volume, delta (None sans volume acheteur)]."""
     br = brackets(bars, start, end, bracket_ms)
     if not br or step <= 0:
@@ -143,8 +144,10 @@ def profile(bars, start: int, end: int, bracket_ms: int, step: float, min_single
     cnt = [len(x) for x in lets]
     vol, buy = [0.0] * n, [0.0] * n
     sel = [k for k in bars if start <= k.t < end]
+    ex_v = 0.0
     for k in sel:
-        spread(k, k0, n, step, vol, buy)
+        if fill(k, k0, n, step, vol, buy, True, fp, span, now):          # V23 : volume et delta au prix pres quand les transactions couvrent la bougie
+            ex_v += k.v
     has_tb = any(k.tb > 0 for k in sel)
     mid = (n - 1) / 2
     poc = max(range(n), key=lambda j: (cnt[j], -abs(j - mid)))
@@ -154,6 +157,7 @@ def profile(bars, start: int, end: int, bracket_ms: int, step: float, min_single
            "open": sel[0].o if sel else br[0][3], "close": sel[-1].c if sel else br[-1][4],
            "poc": (k0 + poc + 0.5) * step, "vah": (k0 + up + 1) * step, "val": (k0 + dn) * step,
            "vpoc": (k0 + vpoc + 0.5) * step if vpoc is not None else None, "volume": sum(vol),
+           "exact": round(ex_v / max(1e-12, sum(k.v for k in sel)), 4) if sel else 0.0,
            "delta": (2 * sum(buy) - sum(vol)) if has_tb else None,
            "rows": [[round((k0 + j) * step, 10), cnt[j], "".join(LETTERS[i % len(LETTERS)] for i in lets[j]), round(vol[j], 6),
                      round(2 * buy[j] - vol[j], 6) if has_tb else None] for j in range(n)],
@@ -344,7 +348,7 @@ def composite(profiles, step):
             "high": (k0 + n) * step, "low": k0 * step}
 
 
-def sessions(bars, kind: str, now_ms: int, n: int | None = None, rows: int | None = None, cache: dict | None = None):
+def sessions(bars, kind: str, now_ms: int, n: int | None = None, rows: int | None = None, cache: dict | None = None, fp=None):
     """Profils des n dernieres seances (en cours comprise), du plus ancien au plus recent, chacun avec ses marques ('marks') et son contexte
     (type de journee, migration de la valeur, ouverture, regle des 80 %). Pas commun a toutes les seances : la mediane de leurs amplitudes
     divisee par `rows`. `cache` garde les seances terminees. S'y ajoutent le profil composite et les POC vierges."""
@@ -374,12 +378,14 @@ def sessions(bars, kind: str, now_ms: int, n: int | None = None, rows: int | Non
     if cache is not None and len(cache) > 500:
         cache.clear()
     built = []
+    span = 3_600_000 if spec["bars"] == "h1" else 300_000
     for s, e, i0, i1, r in spans:
         current = s == cur
-        key = (kind, s, step, "v20")
+        exact = fp is not None and fp.complete(s, e)                      # V23 : une seance terminee devenue exacte est recalculee
+        key = (kind, s, step, "v23", exact)
         p = None if current or cache is None else cache.get(key)
         if p is None:
-            p = profile(bars[i0:i1], s, e, spec["bracket"], step, ib_ms=spec["ib"])
+            p = profile(bars[i0:i1], s, e, spec["bracket"], step, ib_ms=spec["ib"], fp=fp, span=span, now=now_ms if current else None)
             if p is None:
                 continue
             if cache is not None and not current:

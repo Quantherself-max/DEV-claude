@@ -208,6 +208,9 @@
         <label class="field">Paires <input id="symbols" placeholder="BTCUSDT,SOLUSDT" autocomplete="off"></label>
         <label class="field">Historique d'analyse (probabilités, biais, volume profiles)
           <select id="histYears"><option value="0">Le plus long possible (depuis 2019)</option><option value="5">5 ans</option><option value="3">3 ans</option><option value="2">2 ans</option><option value="1">1 an</option></select></label>
+        <label class="field" title="Chaque transaction de Binance (archives quotidiennes publiques, puis le flux en direct) : profils de volume, POC, VAH, VAL, profil de séance, TPO et zones calculés sur ce qui s'est vraiment échangé, au prix près, au lieu d'être déduits des bougies">Transactions exactes (profils au prix près)
+          <select id="fpDays"><option value="0">Désactivé (profils déduits des bougies)</option><option value="7">7 jours</option><option value="31">31 jours (mois en cours)</option><option value="62">62 jours (mois en cours et précédent, conseillé)</option><option value="120">120 jours</option><option value="400">400 jours (année entière : plusieurs Go à télécharger)</option></select></label>
+        <div id="fpState" class="muted small"></div>
       </section>
       <section>
         <h4><span class="step">2</span> Alertes Telegram <small id="tgState"></small></h4>

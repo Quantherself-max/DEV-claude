@@ -63,6 +63,19 @@ def spread(k, k0: int, n: int, step: float, vol, buy, path: bool = True) -> None
             buy[j] += tb * f
 
 
+def fill(k, k0: int, n: int, step: float, vol, buy, path: bool = True, fp=None, span: int = 300_000, now=None) -> bool:
+    """V23 : volume de la bougie k aux lignes. EXACT (chaque transaction, engine/footprint.py) quand l'empreinte couvre toute la bougie
+    (la bougie en cours : jusqu'a 5 s avant `now`), sinon reparti selon le trajet (spread). Renvoie True si le volume est exact."""
+    if fp is not None:
+        end = k.t + span
+        upto = end if now is None else max(k.t + 1, min(end, now - 5000))
+        if (upto >= end or now is not None) and fp.complete(k.t, upto):
+            fp.add_rows(k.t, end, k0, n, step, vol, buy)
+            return True
+    spread(k, k0, n, step, vol, buy, path)
+    return False
+
+
 def value_area(vol, poc: int):
     """(haut, bas) de la zone de valeur (70 % du volume) en indices de ligne, en ajoutant a chaque fois le cote le plus fourni."""
     n, tot = len(vol), sum(vol)
@@ -143,8 +156,11 @@ def shape(vol, poc: int):
     return "D"
 
 
-def build(bars, target_rows: int = 100, marks: int = 3, path: bool = True, developing: bool = True):
-    """bars : bougies (t, o, h, l, c, v, tb) de la seance. Renvoie None s'il n'y a pas de volume."""
+def build(bars, target_rows: int = 100, marks: int = 3, path: bool = True, developing: bool = True, fp=None, span: int = 300_000, now=None,
+          memo: dict | None = None, memo_sig=None):
+    """bars : bougies (t, o, h, l, c, v, tb) de la seance. Renvoie None s'il n'y a pas de volume. `fp` (V23) : empreinte des transactions,
+    utilisee pour chaque bougie qu'elle couvre (volume au prix pres) ; « exact » = part du volume qui en vient. `memo` : cumul des bougies
+    FERMEES garde d'un appel a l'autre (seules les nouvelles bougies sont ajoutees) tant que le pas, les lignes et `memo_sig` ne changent pas."""
     sel = [k for k in bars if k.v > 0]
     if not sel:
         return None
@@ -152,16 +168,24 @@ def build(bars, target_rows: int = 100, marks: int = 3, path: bool = True, devel
     step = nice_step(max(hi - lo, 1e-9) / max(4, target_rows))
     k0 = math.floor(lo / step + 1e-9)
     n = math.floor(hi / step + 1e-9) - k0 + 1
-    vol, buy = [0.0] * n, [0.0] * n
     has_tb = any(k.tb > 0 for k in sel)
-    dev = []
     every = max(1, len(sel) // 96)                           # POC / VAH / VAL evolutifs : au plus ~100 points par seance
-    for i, k in enumerate(sel):
-        spread(k, k0, n, step, vol, buy, path)
+    sig = (sel[0].t, step, k0, n, path, span, every, developing, memo_sig)
+    i0 = 0
+    if memo is not None and memo.get("sig") == sig and 0 < memo["done"] < len(sel) and sel[memo["done"] - 1].t == memo["last"]:
+        vol, buy, dev, ex_v, i0 = memo["vol"][:], memo["buy"][:], list(memo["dev"]), memo["ex"], memo["done"]
+    else:
+        vol, buy, dev, ex_v = [0.0] * n, [0.0] * n, [], 0.0
+    for i in range(i0, len(sel)):
+        k = sel[i]
+        if fill(k, k0, n, step, vol, buy, path, fp, span, now):
+            ex_v += k.v
         if developing and (i % every == every - 1 or i == len(sel) - 1):
             pj = max(range(n), key=lambda j: vol[j])
             up, dn = value_area(vol, pj)
             dev.append([k.t, (k0 + pj + 0.5) * step, (k0 + up + 1) * step, (k0 + dn) * step])
+        if memo is not None and i == len(sel) - 2:            # avant la derniere bougie (souvent en cours) : cumul garde pour le prochain appel
+            memo.update(sig=sig, done=len(sel) - 1, last=k.t, vol=vol[:], buy=buy[:], dev=list(dev), ex=ex_v)
     tot = sum(vol)
     poc = max(range(n), key=lambda j: vol[j])
     up, dn = value_area(vol, poc)
@@ -174,4 +198,5 @@ def build(bars, target_rows: int = 100, marks: int = 3, path: bool = True, devel
             "high": hi, "low": lo, "volume": tot, "buyShare": (sum(buy) / tot) if has_tb and tot else None,
             "delta": (2 * sum(buy) - tot) if has_tb else None,
             "marks": [[(k0 + j + 0.5) * step, 2 * buy[j] - vol[j]] for j in sorted(top)], "bars": len(sel),
-            "hvn": hvn, "lvn": lvn, "shape": shape(vol, poc), "developing": dev, "method": "trajet" if path else "uniforme"}
+            "hvn": hvn, "lvn": lvn, "shape": shape(vol, poc), "developing": dev, "method": "trajet" if path else "uniforme",
+            "exact": round(ex_v / max(1e-12, sum(k.v for k in sel)), 4)}

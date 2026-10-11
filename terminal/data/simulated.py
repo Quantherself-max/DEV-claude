@@ -61,7 +61,9 @@ class SimulatedSource(Source):
         qty = 85000.0 / TARGET.get(symbol, 85000.0)        # volumes en coin : plus nombreux quand le prix est bas
         out = []
         for k, (o, h, l, c, v, tb) in enumerate(raw):
-            out.append(Candle(SIM_START + k * M5, o * scale, h * scale, l * scale, c * scale, v * 40 * qty, tb * 40 * qty))
+            vv = v * 40 * qty
+            out.append(Candle(SIM_START + k * M5, o * scale, h * scale, l * scale, c * scale, vv, tb * 40 * qty,
+                              vv * (o + h + l + c) / 4 * scale))    # V23 : volume en dollars (prix moyen dans la bougie)
         self._m5[symbol] = out
         # Open Interest sur 30 jours (comme l'API Binance) : tendance + rafales de nouvelles positions + purges
         base = OI_BASE.get(symbol, 1e5)

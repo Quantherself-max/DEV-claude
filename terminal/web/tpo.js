@@ -406,6 +406,7 @@ const TPO = (() => {
           if (sp) html += `<br><span class="tipsp">single prints</span>${st ? ` : comblés dès ${u.next} ${pct(st.singles.rate)} du temps (témoin ${pct(st.singles.control)})` +
             (rc && rc.rate != null ? ` ; au retour du prix, tiennent ${pct(rc.rate)} (témoin ${pct(rc.control)})` : '') : ''}`;
           html += `<br><span class="muted">POC ${fmtP(s.poc)}${s.vpoc ? ` (volume ${fmtP(s.vpoc)})` : ''} · valeur ${fmtP(s.val)} – ${fmtP(s.vah)}${s.ib ? ` · ${esc(d.ibName || 'première heure')} ${fmtP(s.ib[0])} – ${fmtP(s.ib[1])}` : ''}</span>`;
+          if (s.exact != null) html += `<br><span class="muted">Volume et delta à chaque prix : ${s.exact >= 0.995 ? 'exacts (chaque transaction)' : s.exact > 0.005 ? `exacts pour ${Math.round(s.exact * 100)} % du volume, le reste réparti d'après les bougies` : 'répartis d\'après les bougies (transactions pas encore téléchargées)'}</span>`;
           if (mk.poc && mk.poc.naked) html += `<br><span class="muted">POC vierge${st ? ` : retraversé dès ${u.next} ${pct(st.poc.rate)} en moyenne (témoin ${pct(st.poc.control)})` : ''}</span>`;
           if (c.dayType) html += `<br><span class="muted">${esc(c.dayType.label)}${s.shapeText ? ' · ' + esc(s.shapeText) : ''}</span>`;
           tip.innerHTML = html;

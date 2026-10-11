@@ -5,7 +5,7 @@ import math
 from datetime import datetime, timezone
 
 from . import vp
-from .atr import Candle
+from .atr import Candle, avg_price
 
 KINDS = ("D", "W", "M", "Y")
 
@@ -36,7 +36,7 @@ class _Acc:
         self.high = max(self.high, k.h)
         self.low = min(self.low, k.l)
         self.close = k.c
-        tp = (k.h + k.l + k.c) / 3.0
+        tp = avg_price(k)                                   # V23 : prix moyen exact de la bougie (volume en dollars / volume)
         self.pv += tp * k.v
         self.v += k.v
         self.pv2 += tp * tp * k.v

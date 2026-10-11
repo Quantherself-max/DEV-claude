@@ -1,6 +1,6 @@
 """Source BINANCE (futures USDT-M, endpoints publics, sans cle). Ecrit d'apres la documentation de l'API ;
 a verifier sur ton PC avec :  python run.py --selftest
-Bougies : /fapi/v1/klines (index 9 = volume acheteur agressif) ; OI : /futures/data/openInterestHist
+Bougies : /fapi/v1/klines (index 9 = volume acheteur agressif, index 7 = volume en dollars : prix moyen exact, V23) ; OI : /futures/data/openInterestHist
 (5 min, limite a 30 jours par Binance)."""
 import json
 import time
@@ -51,7 +51,11 @@ class BinanceSource(Source):
     def parse_klines(rows):
         out = []
         for r in rows:
-            out.append(Candle(int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]), float(r[9])))
+            try:
+                q = float(r[7])                                   # volume en dollars : prix moyen exact de la bougie (V23)
+            except (TypeError, ValueError, IndexError):
+                q = 0.0
+            out.append(Candle(int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]), float(r[9]), q))
         return out
 
     @staticmethod

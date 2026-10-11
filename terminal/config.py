@@ -29,6 +29,7 @@ class Config:
     coinbase_ws: str = "wss://ws-feed.exchange.coinbase.com"   # prix Coinbase en direct (meme marche que ton TradingView)
     live_ws: bool = True                 # flux temps reel cote serveur (prix exact pour les alertes, liquidations reelles)
     orderflow_on: bool = True            # V15 : carnet d'ordres Binance (route /public) + nombre d'ordres OKX + ruban (vitesse, gros ordres)
+    footprint_days: int = 62              # V23 : jours de transactions exactes (archives Binance Vision + API + direct) ; 62 couvre le mois precedent ; 0 = desactive
     binance_ws_public: str = "wss://fstream.binance.com/public"   # flux a haute frequence de Binance futures (profondeur du carnet)
     okx_ws: str = "wss://ws.okx.com:8443/ws/v5/public"            # carnet OKX (nombre d'ordres par prix), public, sans cle
     anchor_date: str = "2024-01-01"      # VWAP ancree
@@ -119,6 +120,7 @@ def load_config(env_path: Path | None = None) -> Config:
     c.coinbase_ws = g("TERMINAL_COINBASE_WS", c.coinbase_ws).rstrip("/")
     c.live_ws = g("TERMINAL_LIVE_WS", "1").lower() not in ("0", "false", "non", "no")
     c.orderflow_on = g("TERMINAL_ORDERFLOW", "1").lower() not in ("0", "false", "non", "no")
+    c.footprint_days = max(0, min(400, int(float(g("TERMINAL_FOOTPRINT_DAYS", c.footprint_days)))))
     c.binance_ws_public = g("TERMINAL_BINANCE_WS_PUBLIC", c.binance_ws_public).rstrip("/")
     c.okx_ws = g("TERMINAL_OKX_WS", c.okx_ws)
     c.anchor_date = g("TERMINAL_ANCHOR_DATE", c.anchor_date)

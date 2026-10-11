@@ -5,6 +5,7 @@ import math
 from bisect import bisect_right
 from datetime import datetime, timezone
 
+from .atr import avg_price
 from .periods import period_key
 
 HOUR = 3_600_000
@@ -46,10 +47,12 @@ def swing_anchors(h1, now_ms):
     return out
 
 
-def series(h1, chart_times, tf_ms, anchors, kinds=("D", "W", "M", "Y")):
+def series(h1, chart_times, tf_ms, anchors, kinds=("D", "W", "M", "Y"), fine_from=None, fine_ms=300_000):
     """h1 : bougies 1h triees (la derniere peut etre en cours) ; chart_times : ouvertures des bougies du graphique (ms) ;
-    anchors : [(libelle, ms)]. Renvoie {vwap:{K:[v|None]}, sd:{K:[...]}, avwap:[{label, anchor, v:[...]}]}."""
-    ends = [k.t + HOUR for k in h1]
+    anchors : [(libelle, ms)]. Renvoie {vwap:{K:[v|None]}, sd:{K:[...]}, avwap:[{label, anchor, v:[...]}]}.
+    V23 : chaque bougie compte a son prix moyen EXACT (volume en dollars / volume) quand la bourse le donne ; `fine_from` : a partir de cet
+    instant les bougies sont de `fine_ms` (5 min) et non plus d'1 heure (graphiques 5 et 15 minutes : VWAP a jour toutes les 5 minutes)."""
+    ends = [k.t + (fine_ms if fine_from is not None and k.t >= fine_from else HOUR) for k in h1]
     out_v = {k: [None] * len(chart_times) for k in kinds if KIND_MS[k] > tf_ms}      # inutile si la periode <= une bougie
     out_s = {k: [None] * len(chart_times) for k in out_v}
     # etat apres chaque bougie 1h : (vwap, sd, cle de periode)
@@ -57,7 +60,7 @@ def series(h1, chart_times, tf_ms, anchors, kinds=("D", "W", "M", "Y")):
     snap = {k: [] for k in out_v}
     av = [{"label": lab, "anchor": a, "pv": 0.0, "v": 0.0, "vals": []} for lab, a in anchors]
     for k in h1:
-        tp = (k.h + k.l + k.c) / 3.0
+        tp = avg_price(k)
         for kind, s in st.items():
             key = period_key(kind, k.t)
             if key != s["key"]:

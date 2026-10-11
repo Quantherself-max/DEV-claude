@@ -13,7 +13,7 @@ from pathlib import Path
 from config import Config, ROOT
 from data import reports as reports_mod
 from data.store import DataStore, H1, M5, DAY, OI_DAYS
-from engine.atr import INTERVAL_MS, resample, rma_atr
+from engine.atr import INTERVAL_MS, avg_price, resample, rma_atr
 from engine import bias as bias_engine
 from engine import cvd as cvd_engine
 from engine import fine, liqsweep, pocketrank, sessionvp
@@ -101,6 +101,7 @@ class Market:
         self._fed_m5 = -1
         self.ready = False
         self.feed = None             # flux temps reel (prix exact, vraies liquidations), optionnel
+        self.trades = None           # V23 : transactions exactes (data/trades.py), empreinte au prix pres ; None sans Binance
         self.stats = None            # probabilites mesurees (calculees en tache de fond)
         self.reach = None
         self.stats_at = 0.0
@@ -116,6 +117,92 @@ class Market:
         self._fvp: dict = {}                    # profils de volume fins (bougies 5 min) : (type de periode, debut, derniere bougie) -> niveaux
         self._pl = (None, None)                 # poches visibles dans le prix : (nombre de bougies 1 h, PriceLiquidity)
         self._psw_cache = (None, [])
+
+    @property
+    def fp(self):
+        """V23 : empreinte exacte des transactions (engine/footprint.py), None tant qu'elle n'existe pas (ou sans Binance)."""
+        return self.trades.fp if self.trades is not None else None
+
+    def fp_sig(self, unit: int = H1):
+        """Signature de la couverture de l'empreinte (change quand elle grandit, au plus une fois par `unit`) : cle des caches des profils."""
+        fp = self.fp
+        if fp is None:
+            return None
+        with fp.lock:
+            cov = fp.cov
+            return (len(cov), cov[0][0] if cov else 0, cov[-1][1] // unit if cov else 0)
+
+    def vwap_exact(self, start: int, acc=None):
+        """(VWAP, ecart-type, exact) de [start, maintenant]. VWAP : chaque bougie a son prix moyen EXACT (volume en dollars / volume),
+        bougies 5 min quand elles couvrent la periode (sinon le cumul 1 h `acc`). Ecart-type : EXACT au pas pres par l'empreinte des transactions
+        quand elle couvre toute la periode (cumuls gardes, seule la tranche en cours est recalculee), sinon d'apres les prix moyens des bougies."""
+        vw, sd = acc.vwap() if acc is not None else (None, None)
+        fine = self.store.fine_m5()
+        if fine and fine[0].t <= start:
+            v = pv = p2v = 0.0
+            for k in fine[bisect_left_t(fine, start):]:
+                if k.v > 0:
+                    ap = avg_price(k)
+                    v += k.v
+                    pv += ap * k.v
+                    p2v += ap * ap * k.v
+            if v > 0:
+                vw = pv / v
+                sd = math.sqrt(max(p2v / v - vw * vw, 0.0))
+        fp, exact = self.fp, False
+        now = self.source.now_ms()
+        if fp is not None and vw is not None and fp.complete(start, now - 5000):
+            cut = now - now % M5
+            mom = getattr(self, "_mom", {})
+            c = mom.get(start)
+            if c is None or c[0] > cut:
+                c = (start, 0.0, 0.0, 0.0)
+            if c[0] < cut:
+                v, pv, p2v = fp.moments(c[0], cut)
+                c = (cut, c[1] + v, c[2] + pv, c[3] + p2v)
+            mom = {k2: v2 for k2, v2 in mom.items() if k2 >= start - 62 * DAY}
+            mom[start] = c
+            self._mom = mom
+            v, pv, p2v = fp.moments(cut, cut + M5)
+            V, PV, P2V = c[1] + v, c[2] + pv, c[3] + p2v
+            if V > 0:
+                m = PV / V
+                sd = math.sqrt(max(P2V / V - m * m, 0.0))
+                exact = True
+        return vw, sd, exact
+
+    def naked_list(self, kd: str):
+        """POC vierges (V23) : pour chaque periode passee que l'empreinte des transactions couvre entierement, POC recalcule sur ce qui s'est
+        reellement echange, puis « vierge » si aucune bougie 1 h fermee ne l'a retraverse depuis ; ailleurs, ceux des bougies 1 h."""
+        nk = self.naked[kd]
+        base = nk.active()
+        fp, tr = self.fp, self.trackers[kd]
+        if fp is None or tr.acc.start is None:
+            return base
+        h1 = self.store.closed_h1()
+        key = (kd, len(h1), self.fp_sig())
+        hit = getattr(self, "_naked_cache", {}).get(kd)
+        if hit and hit[0] == key:
+            return hit[1]
+        fine = self.store.fine_m5()
+        by_end = {x["t_end"]: x for x in base}
+        out = []
+        e = self._prev_start(kd, tr.acc.start)                  # la periode juste terminee est exclue (c'est le POC precedent)
+        for _ in range(nk.keep):
+            s0 = self._prev_start(kd, e)
+            if fine and fine[0].t <= s0 and fp.complete(s0, e):
+                r = vpx.build(fine, s0, e, rows_cap=160, hvn_n=1, fp=fp, span=M5)
+                poc = r["poc"] if r else None
+                if poc is not None and not any(k.l <= poc <= k.h for k in h1[bisect_left_t(h1, e):]):
+                    out.append({"poc": poc, "t_end": e, "exact": True})
+            elif e in by_end:
+                out.append(by_end[e])
+            e = s0
+        out.sort(key=lambda x: x["t_end"])
+        cache = getattr(self, "_naked_cache", {})
+        cache[kd] = (key, out)
+        self._naked_cache = cache
+        return out
 
     def update(self) -> None:
         self.store.refresh()
@@ -190,6 +277,13 @@ class Market:
                     s = {**s, "vp": fv["cur"]}
                 if fv["prev"] and s["prev"]:
                     s = {**s, "prev": {**s["prev"], "vp": fv["prev"]}}
+            if kind in ("D", "W", "M") and s.get("start"):
+                try:
+                    vw, sd, _ = self.vwap_exact(s["start"])          # V23 : bougies 5 min au prix moyen exact, ecart-type par les transactions
+                    if vw is not None:
+                        s = {**s, "vwap": vw, "sd": sd}
+                except Exception:
+                    pass
             add(f"{p}VWAP", s["vwap"], f"{p}VWAP", "vwap", sd=s["sd"])
             if kind != "Y" and s["vwap"] is not None and s["sd"]:
                 add(f"{p}VWAP+2σ", s["vwap"] + 2 * s["sd"], f"{p}VWAP", "band")
@@ -214,7 +308,11 @@ class Market:
         now = self.source.now_ms()
         for kd, nk in self.naked.items():
             unit, span = ("J", DAY) if kd == "D" else ("S", 7 * DAY)
-            for x in nk.active():
+            try:
+                items = self.naked_list(kd)
+            except Exception:
+                items = nk.active()
+            for x in items:
                 if abs(x["poc"] / self.price() - 1.0) > 0.15:      # trop loin pour compter
                     continue
                 age = max(2, math.ceil((now - x["t_end"]) / span) + 1)
@@ -433,20 +531,21 @@ class Market:
         if not m5:
             return None
         last = self.store.m5[-1].t if self.store.m5 else 0
-        key = (kind, snap["start"], last)
+        key = (kind, snap["start"], last, self.fp_sig(M5))
         hit = self._fvp.get(key)
         if hit is not None:
             return hit
         now = self.source.now_ms()
         closed = [k for k in m5 if k.t + M5 <= now]
         out = {"cur": None, "prev": None}
+        fp = self.fp
         if closed and closed[0].t <= snap["start"] + M5:
-            r = vpx.build(closed, snap["start"], now + M5, rows_cap=160, hvn_n=1)
+            r = vpx.build(closed, snap["start"], now + M5, rows_cap=160, hvn_n=1, fp=fp, span=M5)
             if r:
                 out["cur"] = {"poc": r["poc"], "vah": r["vah"], "val": r["val"], "hvn": r["hvn"][:1]}
         ps = self._prev_start(kind, snap["start"])
         if closed and closed[0].t <= ps + M5 and snap.get("prev"):
-            r = vpx.build(closed, ps, snap["start"], rows_cap=160, hvn_n=1)
+            r = vpx.build(closed, ps, snap["start"], rows_cap=160, hvn_n=1, fp=fp, span=M5)
             if r:
                 out["prev"] = {"poc": r["poc"], "vah": r["vah"], "val": r["val"], "hvn": r["hvn"][:1]}
         if len(self._fvp) > 60:
@@ -791,11 +890,11 @@ class Market:
         m5 = self.store.m5
         if not m5:
             return None
-        key = (len(m5), m5[-1].t)
+        key = (len(m5), m5[-1].t, self.fp_sig(M5))
         hit = getattr(self, "_zone_fine", None)
         if hit and hit[0] == key and abs(price / hit[1] - 1.0) < 0.06:
             return hit[2]
-        fp = zoneprec.FineProfile([k for k in m5[-288 * 14:] if k.v > 0], price)
+        fp = zoneprec.FineProfile([k for k in m5[-288 * 14:] if k.v > 0], price, fp=self.fp, now=self.source.now_ms())
         self._zone_fine = (key, price, fp)
         return fp
 
@@ -815,7 +914,7 @@ class Market:
         if not src:
             return None
         last = src[-1]
-        key = (start, len(src), last.t, last.v, last.c)
+        key = (start, len(src), last.t, last.v, last.c, self.fp_sig(M5))
         hit = self._sess.get(kind)
         if hit and hit[0] == key:
             return hit[1]
@@ -825,11 +924,12 @@ class Market:
             start -= DAY
             bars = [k for k in m5 if k.t >= start]
             label = "depuis hier 00 h UTC (la séance du jour vient de commencer)"
-        res = sessionvp.build(bars)
+        memo = self.__dict__.setdefault("_sess_memo", {}).setdefault((kind, src is m5), {})
+        res = sessionvp.build(bars, fp=self.fp, span=M5 if src is m5 else H1, now=now, memo=memo, memo_sig=self.fp_sig(M5))
         if res is not None:
             res["label"] = label
-            vw, sd = tr.acc.vwap()
-            res.update(kind=kind, start=start, open=tr.acc.open, prevClose=(tr.prev or {}).get("close"), vwap=vw, sd=sd,
+            vw, sd, sd_exact = self.vwap_exact(start, tr.acc)
+            res.update(kind=kind, start=start, open=tr.acc.open, prevClose=(tr.prev or {}).get("close"), vwap=vw, sd=sd, sdExact=sd_exact,
                        source="5 min" if src is m5 else "1 h")
         self._sess[kind] = (key, res)
         return res
@@ -850,7 +950,7 @@ class Market:
             bars = h1[bisect_left_t(h1, s):]
         else:
             bars = self.store.m5
-        return tpo_engine.sessions(bars, kind, now, n, rows, self._tpo_cache)
+        return tpo_engine.sessions(bars, kind, now, n, rows, self._tpo_cache, fp=self.fp)
 
     TPO_MARK_KINDS = ("D", "4h", "1h", "W", "M")
     # mesure affichee a cote des absorptions de chaque unite de temps (la plus proche disponible)
@@ -907,11 +1007,11 @@ class Market:
         out = []
         for w in wins:
             use_m5 = bool(m5) and (w["end"] - w["start"]) <= 5 * DAY and w["start"] >= m5[0].t
-            key = (w["id"], w["start"], w["end"], len(h1), len(m5) // 12 if use_m5 else 0)
+            key = (w["id"], w["start"], w["end"], len(h1), len(m5) // 12 if use_m5 else 0, self.fp_sig())
             if key not in self._vp_cache:
                 if len(self._vp_cache) > 120:
                     self._vp_cache.clear()
-                self._vp_cache[key] = vpx.build(m5 if use_m5 else h1, w["start"], w["end"])
+                self._vp_cache[key] = vpx.build(m5 if use_m5 else h1, w["start"], w["end"], fp=self.fp, span=M5 if use_m5 else H1)
             res = self._vp_cache[key]
             if res:
                 out.append({**w, **res})
@@ -941,12 +1041,18 @@ class Market:
             return {"ready": False}
         h1 = self.store.h1
         anchors = self.anchors()
-        key = (tf, len(h1), cs[-1].t, tuple(anchors), int(time.time() // 10))
+        key = (tf, len(h1), cs[-1].t, cs[-1].v, tuple(anchors), int(time.time() // 10))
         if key in self._ser_cache:
             return self._ser_cache[key]
         t0 = min([a for _, a in anchors] + [vwapx._start_of("Y", cs[0].t)])
-        sub = [k for k in h1 if k.t >= t0 - HOUR_MS]
-        res = vwapx.series(sub, [k.t for k in cs], INTERVAL_MS[tf], anchors)
+        fine = self.store.fine_m5() if tf in ("5m", "15m") else []
+        if fine:                                                   # V23 : bougies 1 h jusqu'aux bougies 5 min, puis 5 min (VWAP a jour toutes les 5 min)
+            cut = fine[0].t
+            sub = [k for k in h1 if t0 - HOUR_MS <= k.t < cut] + [k for k in fine if k.t >= t0 - HOUR_MS]
+            res = vwapx.series(sub, [k.t for k in cs], INTERVAL_MS[tf], anchors, fine_from=cut, fine_ms=M5)
+        else:
+            sub = [k for k in h1 if k.t >= t0 - HOUR_MS]
+            res = vwapx.series(sub, [k.t for k in cs], INTERVAL_MS[tf], anchors)
         res.update(ready=True, symbol=self.symbol, tf=tf, times=[k.t // 1000 for k in cs])
         if len(self._ser_cache) > 6:
             self._ser_cache.clear()
@@ -1005,6 +1111,7 @@ class Service:
         self.listeners = []            # fonctions appelees apres chaque rafraichissement : f(service)
         self._stats_running: set[str] = set()
         self.feed = None
+        self.trades: dict = {}
         self.ext = None                # donnees externes : calendrier, actifs de reference, dominance (V3)
         self._ext_running = False
         self.vp_state = {"specs": [{"kind": "auto"}], "anchors": []}
@@ -1156,6 +1263,12 @@ class Service:
         self.feed = feed
         for m in self.markets.values():
             m.feed = feed
+
+    def attach_trades(self, trades: dict) -> None:
+        """V23 : transactions exactes par paire (data/trades.py) ; chaque marche lit son empreinte (None tant qu'elle n'existe pas)."""
+        self.trades = trades or {}
+        for sym, m in self.markets.items():
+            m.trades = self.trades.get(sym)
 
     def refresh_all(self) -> None:
         for sym, m in self.markets.items():

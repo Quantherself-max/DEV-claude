@@ -9,7 +9,7 @@ de ses niveaux. Pour savoir OU agir dans la zone, on calcule :
 Les membres des zones ne changent pas : les idees de trade restent calculees exactement comme avant. Module PUR."""
 import math
 
-from .sessionvp import spread
+from .sessionvp import fill
 
 
 def wquantile(pts, q):
@@ -36,16 +36,21 @@ def wquantile(pts, q):
 class FineProfile:
     """Profil de volume fin des derniers jours, autour du prix (pas ~0,02 % du prix), recalcule quand une bougie 5 min se ferme."""
 
-    def __init__(self, bars, price: float, span_pct: float = 0.12, step_pct: float = 0.0002):
+    def __init__(self, bars, price: float, span_pct: float = 0.12, step_pct: float = 0.0002, fp=None, now=None):
         self.step = max(price * step_pct, 1e-12)
         lo, hi = price * (1 - span_pct), price * (1 + span_pct)
         self.k0 = math.floor(lo / self.step)
         self.n = max(1, math.floor(hi / self.step) - self.k0 + 1)
         self.vol, self.buy = [0.0] * self.n, [0.0] * self.n
+        self.exact = 0.0
+        tot = 0.0
         for k in bars:
             if k.h < lo or k.l > hi:
                 continue
-            spread(k, self.k0, self.n, self.step, self.vol, self.buy)
+            tot += k.v
+            if fill(k, self.k0, self.n, self.step, self.vol, self.buy, True, fp, 300_000, now):   # V23 : au prix pres quand c'est couvert
+                self.exact += k.v
+        self.exact = self.exact / tot if tot > 0 else 0.0
 
     def peak(self, a: float, b: float):
         """(prix le plus echange, part du volume de [a, b] a ce prix) entre a et b ; None sans volume."""

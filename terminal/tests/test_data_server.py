@@ -103,7 +103,9 @@ class BinanceAdapterTests(unittest.TestCase):
 
     def test_parse_kline_row_and_oi_row(self):
         k = BinanceSource.parse_klines([[1700000000000, "100.5", "101", "99", "100", "12.5", 1700003599999, "x", 5, "6.25", "y", "0"]])[0]
-        self.assertEqual((k.t, k.o, k.h, k.l, k.c, k.v, k.tb), (1700000000000, 100.5, 101.0, 99.0, 100.0, 12.5, 6.25))
+        self.assertEqual((k.t, k.o, k.h, k.l, k.c, k.v, k.tb, k.q), (1700000000000, 100.5, 101.0, 99.0, 100.0, 12.5, 6.25, 0.0))
+        k = BinanceSource.parse_klines([[1700000000000, "100.5", "101", "99", "100", "12.5", 1700003599999, "1251.25", 5, "6.25", "y", "0"]])[0]
+        self.assertEqual(k.q, 1251.25)                                          # V23 : volume en dollars (prix moyen exact 100,10)
         self.assertEqual(BinanceSource.parse_oi([{"sumOpenInterest": "81234.5", "timestamp": 1700000300000}]), [(1700000300000, 81234.5)])
 
     def test_pagination_is_contiguous_and_complete(self):
