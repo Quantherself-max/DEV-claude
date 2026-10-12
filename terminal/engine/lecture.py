@@ -161,8 +161,18 @@ def macro_chip(d: dict):
 
 
 def week_chip(d: dict):
-    """Bilan macro de la semaine (V18) : le vent macro et ses principaux soutiens et freins."""
+    """Bilan macro de la semaine (V18) : le vent macro et ses principaux soutiens et freins ; V25 : la vision d'ensemble quand elle existe."""
     w = d.get("macroWeek")
+    vw = (w or {}).get("view") or {}
+    if vw.get("label"):
+        reg = (vw.get("regime") or {}).get("label")
+        cuts = (vw.get("fed") or {}).get("cuts")
+        note = ((f"Régime : {reg.lower()}. " if reg else "") +
+                (f"Le marché anticipe {fr(abs(cuts), 1)} {'baisse' if cuts > 0 else 'hausse'}{'s' if round(abs(cuts), 1) >= 2 else ''} de taux d'ici un an. "
+                 if cuts is not None and abs(cuts) >= 0.4 else "") +
+                "Détail : Analyse → Macro de la semaine.")
+        sc = vw.get("score") or 0.0
+        return chip("macroweek", "Macro et liquidité", "Vision macro de la semaine", vw["label"].upper(), note, "up" if sc >= 0.4 else "dn" if sc <= -0.4 else "", "contexte")
     v = (w or {}).get("verdict") or {}
     if not v.get("label"):
         return None

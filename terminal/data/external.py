@@ -14,7 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .base import DataError
+from . import fed as fed_mod
 from . import fred as fred_mod
+from . import imf as imf_mod
 from .derivs import BYBIT, DERIBIT, HYPER, OKX, DerivMixin, SimDerivMixin, compare_view
 from .opendata import OpenData
 
@@ -53,6 +55,28 @@ def http_json(url: str, timeout: float = 15.0, retries: int = 2, headers: dict |
     raise DataError(f"injoignable : {url.split('?')[0]} ({last})")
 
 
+def http_text(url: str, timeout: float = 20.0, retries: int = 2) -> str:
+    """Page ou flux texte (site de la Fed) ; memes reprises que http_json."""
+    last = None
+    h = {"User-Agent": "Mozilla/5.0 (Liq Terminal)", "Accept": "text/html,application/xml,application/rss+xml,*/*"}
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=timeout) as r:
+                return r.read(3_000_000).decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            e.close()
+            if e.code in (429, 500, 502, 503, 504) and attempt < retries - 1:
+                time.sleep(1.5 * (attempt + 1))
+                last = f"HTTP {e.code}"
+                continue
+            raise DataError(f"HTTP {e.code} ({url.split('?')[0]})") from e
+        except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError) as e:
+            last = f"{type(e).__name__}: {e}"
+            if attempt < retries - 1:
+                time.sleep(0.8 * (attempt + 1))
+    raise DataError(f"injoignable : {url.split('?')[0]} ({last})")
+
+
 def parse_num(s):
     """'0.3%' -> (0.3, '%') ; '227K' -> (227.0, 'K') ; '<0.1%' -> (0.1, '%') ; '' -> (None, '')."""
     m = re.search(r"(-?\d+(?:\.\d+)?)\s*([%KMBT])?", "" if s is None else str(s))
@@ -76,10 +100,21 @@ def normalize_event(raw: dict):
 
 class RealProviders(DerivMixin):
     def __init__(self, ff=FF_URL, yahoo=YAHOO, coingecko=COINGECKO, paprika=PAPRIKA, alt=ALTERNATIVE, spot=SPOT, deribit=DERIBIT, bybit=BYBIT, okx=OKX, hyper=HYPER,
-                 fred=fred_mod.FRED):
+                 fred=fred_mod.FRED, fed=fed_mod.FED, imf=imf_mod.IMF):
         self.ff, self.yahoo, self.cg, self.pp, self.alt, self.spot = (u.rstrip("/") for u in (ff, yahoo, coingecko, paprika, alt, spot))
         self.deribit, self.bybit, self.okx, self.hyper = (u.rstrip("/") for u in (deribit, bybit, okx, hyper))
         self.fred_base = fred.rstrip("/")
+        self.fed_base, self.imf_base = fed.rstrip("/"), imf.rstrip("/")
+
+    def fed_text(self, path_or_url: str) -> str:
+        """Flux ou page du site de la Fed (V25). Seules les adresses de ce site sont lues (les liens viennent d'un flux externe)."""
+        url = path_or_url if path_or_url.startswith("http") else self.fed_base + path_or_url
+        if not url.startswith(self.fed_base + "/"):
+            raise DataError("adresse hors du site de la Fed : ignorée")
+        return http_text(url)
+
+    def imf(self, indicator: str, now_ms: int) -> dict:
+        return imf_mod.parse(http_json(imf_mod.url(self.imf_base, indicator, now_ms), timeout=20), indicator)
 
     def _get(self, url):
         return http_json(url, timeout=12, retries=2)
@@ -148,7 +183,7 @@ class RealProviders(DerivMixin):
 class ExternalHub:
     """Rafraichit les sources a leur propre rythme (appele regulierement) et garde un instantane lisible."""
     DUE = {"calendar": 1800, "cross5": 300, "crossD": 3600, "fng": 3600, "cg": 600, "alt": 900, "altD": 21600,
-           "options": 300, "dvol": 600, "futures": 300, "perps": 120, "opendata": 21600, "fred": 10800}
+           "options": 300, "dvol": 600, "futures": 300, "perps": 120, "opendata": 21600, "fred": 10800, "fed": 10800, "imf": 86400}
     DERIV_CURRENCIES = ("BTC", "ETH")                      # options et futures datees de Deribit
 
     def __init__(self, providers, now_ms=lambda: int(time.time() * 1000), data_dir: str | None = None, symbols=(), derivs: bool = False):
@@ -169,6 +204,9 @@ class ExternalHub:
         self.indicators: dict = {}                          # derniere valeur et rang percentile des indicateurs en chaine / macro (jeux libres)
         self.fred: dict[str, list] = {}                     # chiffres macro officiels americains (V18) : id FRED -> [(date d'observation, valeur)]
         self.fred_errors: dict[str, str] = {}
+        self.fed: dict = {"meetings": [], "items": [], "statements": {}, "calT": 0, "calSrc": "", "errors": []}   # V25 : communication de la Fed
+        self.imf: dict = {}                                 # V25 : projections du FMI, indicateur -> {zone: {annee: valeur}} (+ « t »)
+        self._side_dirty = False
         self.errors: dict[str, str] = {}
         self.updated: dict[str, float] = {}
         self._due: dict[str, float] = {}
@@ -194,6 +232,13 @@ class ExternalHub:
             self.fred = {k: [tuple(x) for x in v] for k, v in json.loads((self.dir / "fred.json").read_text(encoding="utf-8")).items()}
         except (OSError, ValueError, AttributeError):
             pass
+        for name in ("fed", "imf"):
+            try:
+                d = json.loads((self.dir / f"{name}.json").read_text(encoding="utf-8"))
+                if isinstance(d, dict):
+                    setattr(self, name, {**getattr(self, name), **d})
+            except (OSError, ValueError):
+                pass
 
     def save(self):
         if not self.dir:
@@ -210,6 +255,13 @@ class ExternalHub:
                     tmp.write_text(json.dumps(self.fred), encoding="utf-8")
                 tmp.replace(self.dir / "fred.json")
                 self._fred_dirty = False
+            if self._side_dirty:
+                for name in ("fed", "imf"):
+                    tmp = self.dir / f"{name}.json.tmp"
+                    with self.lock:
+                        tmp.write_text(json.dumps(getattr(self, name), ensure_ascii=False), encoding="utf-8")
+                    tmp.replace(self.dir / f"{name}.json")
+                self._side_dirty = False
         except OSError:
             pass
 
@@ -236,6 +288,10 @@ class ExternalHub:
         self._run("alt", self._alt, force)
         self._run("altD", self._altD, force)
         self._run("fred", self._fred, force or self._fred_after_event())
+        if hasattr(self.p, "fed_text"):
+            self._run("fed", self._fed, force or self._fed_after_meeting())
+        if hasattr(self.p, "imf"):
+            self._run("imf", self._imf, force)
         if self.derivs_on:
             self._run("options", self._options, force)
             self._run("dvol", self._dvol, force)
@@ -270,6 +326,71 @@ class ExternalHub:
         self._fred_dirty = self._fred_dirty or got > 0
         if not got:
             raise DataError("FRED : " + (next(iter(bad.values())) if bad else "aucune série"))
+
+    def _fed(self):
+        """Communication de la Fed : flux des communiques et des discours, texte des derniers communiques (une seule fois chacun),
+        calendrier des reunions (chaque semaine, ou des qu'aucune reunion a venir n'est connue). Repli : liste integree des reunions 2026."""
+        now = self.now_ms()
+        items, errs = [], []
+        for feed, path in fed_mod.FEEDS.items():
+            try:
+                items += fed_mod.parse_rss(self.p.fed_text(path), feed)
+            except Exception as e:
+                errs.append(f"flux {feed} : {str(e)[:120]}")
+        old = self.fed
+        meetings, cal_t, cal_src = old.get("meetings") or [], old.get("calT", 0), old.get("calSrc", "")
+        reachable = bool(items) or len(errs) < len(fed_mod.FEEDS)          # site injoignable : inutile de demander le calendrier
+        if reachable and (now - cal_t > 7 * 86_400_000 or not fed_mod.next_meeting(meetings, now)):
+            try:
+                got = fed_mod.parse_calendar(self.p.fed_text(fed_mod.CALENDAR))
+                if not got:
+                    raise DataError("calendrier des réunions illisible (format de la page changé ?)")
+                meetings, cal_t, cal_src = got, now, "page de la Fed"
+            except Exception as e:
+                errs.append(f"calendrier : {str(e)[:120]}")
+        if not fed_mod.next_meeting(meetings, now):
+            known = {m["start"] for m in meetings}
+            meetings = sorted(meetings + [m for m in fed_mod.fallback_meetings() if m["start"] not in known], key=lambda m: m["start"])
+            cal_src = cal_src or "liste intégrée (2026)"
+        merged = fed_mod.merge_items(old.get("items"), items, now)
+        stm = dict(old.get("statements") or {})
+        for it in [x for x in merged if x["kind"] == "statement"][:3]:
+            if it["link"] not in stm:
+                try:
+                    pars = fed_mod.statement_paragraphs(self.p.fed_text(it["link"]))
+                    if pars:
+                        stm[it["link"]] = {"t": it["t"], "pars": pars}
+                except Exception as e:
+                    errs.append(f"communiqué : {str(e)[:120]}")
+        stm = dict(sorted(stm.items(), key=lambda kv: kv[1]["t"], reverse=True)[:12])
+        with self.lock:
+            self.fed = {"meetings": meetings, "items": merged, "statements": stm, "calT": cal_t, "calSrc": cal_src, "errors": errs, "t": now}
+        self._side_dirty = True
+        if not items and len(errs) >= len(fed_mod.FEEDS):
+            raise DataError("site de la Fed : " + errs[0])
+
+    def _fed_after_meeting(self) -> bool:
+        """Decision de la Fed tombee il y a 20 min a 3 h et pas encore relue : le communique est lu tout de suite."""
+        now = self.now_ms()
+        m = fed_mod.last_meeting(self.fed.get("meetings") or [], now)
+        return bool(m and 20 * 60_000 <= now - m["decision"] <= 3 * 3_600_000 and self.fed.get("t", 0) < m["decision"] + 20 * 60_000)
+
+    def _imf(self):
+        now, out, bad = self.now_ms(), {}, []
+        for ind in imf_mod.INDICATORS:
+            if bad and not out:
+                break                                               # FMI injoignable : on reessaie plus tard
+            try:
+                v = self.p.imf(ind, now)
+                if v:
+                    out[ind] = v
+            except Exception as e:
+                bad.append(f"{ind} : {str(e)[:100]}")
+        if not out:
+            raise DataError("FMI : " + (bad[0] if bad else "aucune donnée"))
+        with self.lock:
+            self.imf = {**out, "t": now, "errors": bad}
+        self._side_dirty = True
 
     def _fred_after_event(self) -> bool:
         """Une annonce americaine importante vient de tomber (entre 40 min et 4 h) et FRED n'a pas ete relu depuis : on le relit."""
@@ -461,7 +582,7 @@ class ExternalHub:
     def snapshot(self) -> dict:
         with self.lock:
             return {"derivs": {k: dict(v) for k, v in self.derivs.items()}, "indicators": dict(self.indicators), "calendar": dict(self.calendar), "cross5": dict(self.cross5), "crossD": dict(self.crossD),
-                    "fred": dict(self.fred), "fredErrors": dict(self.fred_errors),
+                    "fred": dict(self.fred), "fredErrors": dict(self.fred_errors), "fed": dict(self.fed), "imf": dict(self.imf),
                     "fng": list(self.fng), "cg": self.cg, "cg_hist": list(self.cg_hist), "alt": dict(self.alt),
                     "altD": dict(self.altD),
                     "errors": dict(self.errors), "updated": dict(self.updated)}
@@ -495,13 +616,74 @@ class SimProviders(SimDerivMixin):
                 (20 * H, "FOMC Meeting Minutes", "USD", 3, "", ""), (30 * H, "Unemployment Claims", "USD", 2, "225K", "230K"),
                 (50 * H, "Non-Farm Employment Change", "USD", 3, "175K", "142K"), (50 * H, "Unemployment Rate", "USD", 3, "4.2%", "4.1%"),
                 (74 * H, "Retail Sales m/m", "USD", 2, "0.4%", "0.1%"), (98 * H, "ECB Press Conference", "EUR", 3, "", "")]
-        return [normalize_event({"title": t, "country": c, "date": datetime.fromtimestamp((now + dt) / 1000, timezone.utc).isoformat(),
-                                 "impact": {3: "High", 2: "Medium", 1: "Low"}[i], "forecast": f, "previous": p})
-                for dt, t, c, i, f, p in spec]
+        out = [normalize_event({"title": t, "country": c, "date": datetime.fromtimestamp((now + dt) / 1000, timezone.utc).isoformat(),
+                                "impact": {3: "High", 2: "Medium", 1: "Low"}[i], "forecast": f, "previous": p})
+               for dt, t, c, i, f, p in spec]
+        return out + self._sim_past(now)
+
+    def _sim_past(self, now):
+        """V25 : 8 semaines d'annonces passees, a dates fixes, avec le chiffre publie (surprises et mois en chiffres en mode simule)."""
+        import random
+        D = 86_400_000
+        out = []
+
+        def add(t, title, imp, fc, act, fmt, sid):
+            if not (now - 60 * D <= t <= now - 3_600_000):
+                return
+            r = normalize_event({"title": title, "country": "USD", "date": datetime.fromtimestamp(t / 1000, timezone.utc).isoformat(),
+                                 "impact": imp, "forecast": fmt(fc), "previous": fmt(fc)})
+            r["actual"] = {"value": act, "text": fmt(act), "period": "", "sid": sid}
+            out.append(r)
+        d0 = (now // D) * D
+        for k in range(0, 63):                                 # jeudis : inscriptions au chomage
+            t = d0 - k * D
+            if (t // D + 3) % 7 == 3:
+                rnd = random.Random(t)
+                fc = 225 + rnd.randint(-8, 8)
+                add(t + 12 * 3_600_000 + 1_800_000, "Unemployment Claims", "Medium", fc, fc + rnd.choice((-12, -6, 0, 5, 9, 15)), lambda v: f"{v:.0f}K", "ICSA")
+        dt = datetime.fromtimestamp(now / 1000, timezone.utc)
+        for back in (0, 1, 2):
+            y, m = dt.year, dt.month - back
+            if m <= 0:
+                y, m = y - 1, m + 12
+            rnd = random.Random(y * 100 + m)
+            at = lambda day: int(datetime(y, m, day, 12, 30, tzinfo=timezone.utc).timestamp() * 1000)
+            pct = lambda v: f"{v:.1f}%"
+            fri = next(dd for dd in range(1, 8) if datetime(y, m, dd).weekday() == 4)
+            add(at(fri), "Non-Farm Employment Change", "High", 150, 150 + rnd.choice((-80, -45, 10, 40, 95)), lambda v: f"{v:.0f}K", "PAYEMS")
+            add(at(fri), "Unemployment Rate", "High", 4.3, 4.3 + rnd.choice((-0.1, 0.0, 0.1)), pct, "UNRATE")
+            add(at(13), "CPI m/m", "High", 0.3, 0.3 + rnd.choice((-0.1, 0.0, 0.1)), pct, "CPIAUCSL")
+            add(at(13), "Core CPI m/m", "High", 0.3, 0.3 + rnd.choice((-0.1, 0.0, 0.0, 0.1)), pct, "CPILFESL")
+            add(at(16), "Retail Sales m/m", "High", 0.4, 0.4 + rnd.choice((-0.6, -0.2, 0.3, 0.5)), pct, "RSAFS")
+            add(at(27), "Core PCE Price Index m/m", "High", 0.2, 0.2 + rnd.choice((-0.1, 0.0, 0.1)), pct, "PCEPILFE")
+        return out
 
     def fred_series(self, sid, start):
         t = int(datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
         return fred_mod.simulated(sid, self.now_ms(), t)
+
+    def _sim_meetings(self):
+        y = datetime.fromtimestamp(self.now_ms() / 1000, timezone.utc).year
+        extra = [fed_mod.meeting(y + 1, 1, 26, 27, False), fed_mod.meeting(y + 1, 3, 16, 17, True)] if y >= 2026 else []
+        return fed_mod.fallback_meetings() + extra
+
+    def fed_text(self, path_or_url):
+        """Pages de la Fed fictives, au meme format que les vraies (memes analyseurs)."""
+        now = self.now_ms()
+        mts = self._sim_meetings()
+        if path_or_url == fed_mod.CALENDAR:
+            return fed_mod.sim_calendar_html(mts)
+        items = fed_mod.sim_items(now, mts)
+        if path_or_url in fed_mod.FEEDS.values():
+            feed = next(k for k, v in fed_mod.FEEDS.items() if v == path_or_url)
+            return fed_mod.sim_rss([x for x in items if x["feed"] == feed])
+        st = [x["link"] for x in items if x["kind"] == "statement"]
+        if path_or_url in st:
+            return fed_mod.sim_statement_html(fed_mod.SIM_STATEMENTS[1 if path_or_url == st[0] else 0])
+        raise DataError("page fictive inconnue")
+
+    def imf(self, indicator, now_ms):
+        return imf_mod.simulated(indicator, now_ms)
 
     def yahoo_chart(self, symbol, interval, rng):
         now = self.now_ms()

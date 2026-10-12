@@ -786,6 +786,9 @@ def summary_text(r: dict, max_events: int = 12) -> str:
     d0 = datetime.fromtimestamp(r["start"] / 1000, timezone.utc).strftime("%d/%m")
     d1 = datetime.fromtimestamp((r["end"] - DAY) / 1000, timezone.utc).strftime("%d/%m/%Y")
     L = [f"Bilan macro de la semaine du {d0} au {d1}" + (" (en cours)" if r["current"] else "")]
+    if r.get("view"):                                          # V25 : vision d'ensemble (engine/macroview.py) en tete
+        from .macroview import summary_lines
+        L += [""] + summary_lines(r["view"])
     v = r["verdict"]
     if v.get("lines"):
         L.append("")

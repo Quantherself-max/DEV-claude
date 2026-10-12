@@ -1,4 +1,4 @@
-// Bilan macro de la semaine (V18) : annonces avec chiffres publiés, tableau de bord par thème, marchés, crypto, ce que cela engendre,
+// Macro de la semaine : V25 vision d'ensemble en tête (régime, surprises, Fed, estimation du terminal) ; V18 bilan : annonces avec chiffres publiés, tableau de bord par thème, marchés, crypto, ce que cela engendre,
 // mesure sur l'historique du bitcoin, semaine prochaine et commentaire facultatif de Claude. Une version archivée par semaine.
 const MacroWeek = (() => {
   'use strict';
@@ -20,7 +20,11 @@ const MacroWeek = (() => {
       `<span class="spacer"></span><button id="mwReload" title="Recalculer avec les dernières données">↻ Actualiser</button></div><div id="mwBody" class="muted">Chargement du bilan…</div>`;
     root.querySelector('#mwWeek').onchange = e => { week = e.target.value; load(); };
     root.querySelector('#mwReload').onclick = () => load(true);
-    root.addEventListener('click', e => { if (e.target.closest('#mwAsk')) ask(); });
+    root.addEventListener('click', e => {
+      if (e.target.closest('#mwAsk')) ask();
+      const tr = e.target.closest('tr[data-up]');
+      if (tr && !e.target.closest('a')) { openUp = openUp === tr.dataset.up ? null : tr.dataset.up; render(); }
+    });
   }
   async function loadList() {
     try {
@@ -48,6 +52,103 @@ const MacroWeek = (() => {
     timer = setInterval(() => { if (data && data.current) load(); }, 300000);
   }
   function hide() { clearInterval(timer); timer = null; }
+
+  // ---------- V25 : vision de la semaine (en tête) ----------
+  const QL = {goldilocks: 'Croissance qui tient, inflation qui ralentit', reflation: 'Surchauffe', stagflation: 'Stagflation', slowdown: 'Ralentissement'};
+  const QS = {goldilocks: 'Boucles d\'or', reflation: 'Surchauffe', stagflation: 'Stagflation', slowdown: 'Ralentissement'};    // coins du quadrant (courts)
+  const cap = s => s ? s[0].toUpperCase() + s.slice(1) : '';
+  const fedUrl = u => /^https:\/\/www\.federalreserve\.gov\//.test(u || '');
+  const link = (u, txt) => fedUrl(u) ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(txt)}</a>` : esc(txt);
+  const date = t => paris(t, {day: 'numeric', month: 'long'});
+  function gauge2(v, span = 2, title = '') {
+    if (v == null) return '';
+    return `<div class="mwgauge" title="${esc(title)}"><i style="left:${50 + Math.max(-span, Math.min(span, v)) / span * 50}%"></i><u></u></div>`;
+  }
+  function viewHero(v) {
+    const parts = (v.parts || []).map(p => `<span class="pill ${tone(p.score)}">${esc(p.name)} ${p.score > 0.1 ? '▲' : p.score < -0.1 ? '▼' : '•'}</span>`).join(' ');
+    return `<div class="acard mwhero mwview"><h3>Vision de la semaine <small class="muted">— régime, surprises, Fed et annonces à venir, reliés à partir des chiffres ; lecture classique, pas une prévision</small></h3>` +
+      (v.label ? `<div class="mwvent ${tone(v.score)}">${esc(cap(v.label))} pour les actifs à risque</div>${gauge2(v.score, 2.5, 'somme des composantes ci-dessous')}` : '') +
+      `<div class="mwparts">${parts}</div>` + (v.lines || []).map(l => `<p><b>${esc(l.title)}.</b> ${esc(l.text)}</p>`).join('') + '</div>';
+  }
+  function studyRows(st) {
+    if (!st || !st.rows || !st.rows.length) return '';
+    return `<div class="sect">Le bitcoin le mois suivant, selon le régime <span class="muted small">(${esc(st.from || '')} → ${esc(st.to || '')})</span></div><div class="mwscroll"><table class="t">` +
+      `<tr><th>Régime</th><th class="r">Mois</th><th class="r">Moyenne</th><th class="r">En hausse</th><th>Verdict</th></tr>` +
+      st.rows.map(x => `<tr><td>${esc(QL[x.quad] || x.label)}</td><td class="r">${x.n}</td><td class="r ${x.mean > 0 ? 'up' : x.mean < 0 ? 'dn' : ''}">${x.mean == null ? '—' : sg(x.mean, 1) + ' %'}</td>` +
+        `<td class="r">${x.hit == null ? '—' : num(x.hit, 0) + ' %'}</td><td class="small ${/net/.test(x.verdict) ? 'amb' : 'muted'}">${esc(x.verdict)}</td></tr>`).join('') +
+      `</table></div><div class="note">${esc(st.note || '')}</div>`;
+  }
+  function regimeCard(v) {
+    const r = v.regime || {};
+    const comp = (list, title) => list.length ? `<div class="sect">${title}</div><table class="t">` + list.map(c =>
+      `<tr><td>${esc(c.name)}<div class="muted small">${esc(c.text)}</div></td><td style="width:32%" title="${sg(c.score, 2)} (de −2 à +2)">${Charts.dvBar(c.score, 2, '#9aa0ae', '#9aa0ae')}</td></tr>`).join('') + '</table>' : '';
+    return `<div class="acard"><h3>Régime : croissance et inflation <small class="muted">— élan sur 3 mois face à un an, trajet sur 12 mois</small></h3>` +
+      (r.label ? `<div class="mwregime">${esc(r.label)}</div><div class="muted small">${esc(r.text || '')}</div>` : '<div class="muted">Pas assez de chiffres officiels pour situer le régime.</div>') +
+      `<div id="mwQuad" class="mwq"></div>` + comp(r.growth || [], 'Croissance') + comp(r.inflation || [], 'Inflation') + studyRows(v.regimeStudy) + '</div>';
+  }
+  function fedCard(v) {
+    const f = v.fed || {}, c = f.cuts;
+    const a = c == null ? 0 : Math.round(Math.abs(c) * 10) / 10;
+    const big = c == null ? '' : `<div class="mwbig">${a < 0.4 ? 'pas de changement net' : `≈ ${num(a, 1)} ${c > 0 ? 'baisse' : 'hausse'}${a >= 2 ? 's' : ''} de 0,25 point`}</div>` +
+      `<div class="muted small">${a < 0.4 ? 'attendu' : 'attendue' + (a >= 2 ? 's' : '')} par le marché d'ici un an environ` +
+      (f.cutsChange != null && Math.abs(f.cutsChange) >= 0.1 ? ` · <span class="${f.cutsChange > 0 ? 'up' : 'dn'}">${sg(f.cutsChange, 1)}</span> ${esc((f.changeLabel || 'sur la semaine').toLowerCase())}` : '') + '</div>';
+    return `<div class="acard"><h3>Ce que le marché attend de la Fed</h3>${big}<div id="mwPath" class="mwpath"></div>` +
+      (f.text || []).map(x => `<p class="small">${esc(x)}</p>`).join('') +
+      `<div class="note">Chemin du marché déduit des taux d'État à 3 mois, 6 mois, 1 an et 2 ans : une approximation (la référence, les contrats à terme sur le taux de la Fed, n'est pas en accès libre). ` +
+      `Points orange : projections des membres de la Fed${f.sepDate ? ' publiées le ' + esc(date(f.sepDate)) : ''}.</div></div>`;
+  }
+  function surpCard(v) {
+    const s = v.surprises || {};
+    const one = (x, name, inflation) => !x ? '' : `<div class="mwsurp"><div><b>${name}</b> : <span class="${inflation && x.value != null ? (x.value >= 0.15 ? 'dn' : x.value <= -0.15 ? 'up' : '') : ''}">${esc(x.label)}</span></div>` +
+      (x.value != null ? gauge2(x.value, 2, 'moyenne des écarts au consensus, en écarts habituels (de −2 à +2)') : '') +
+      `<div class="muted small">${x.n} chiffre${x.n > 1 ? 's' : ''} : ${x.above} au-dessus, ${x.below} en dessous, ${x.inline} conforme${x.inline > 1 ? 's' : ''}</div></div>`;
+    const rows = (s.rows || []).slice(0, 10).map(r => `<tr><td class="nowrap">${esc(day(r.t))}</td><td>${esc(r.label)}</td><td class="r">${esc(r.actual)}</td><td class="r muted">${esc(r.forecast || '—')}</td>` +
+      `<td style="width:26%" title="${sg(r.z, 1)} écart habituel">${Charts.dvBar(r.z, 3, r.grp === 'inflation' ? '#ff6b6b' : '#9aa0ae', r.grp === 'inflation' ? '#3ddc97' : '#9aa0ae')}</td></tr>`).join('');
+    return `<div class="acard"><h3>Les chiffres face au consensus <small class="muted">— ${s.days || 56} derniers jours</small></h3>` +
+      one(s.activity, 'Activité et emploi', false) + one(s.inflation, 'Inflation', true) +
+      (rows ? `<div class="mwscroll"><table class="t"><tr><th>Quand</th><th>Chiffre</th><th class="r">Publié</th><th class="r">Consensus</th><th>Écart</th></tr>${rows}</table></div>` :
+        '<div class="muted small">Aucun chiffre publié retrouvé sur la période (le calendrier se remplit depuis l\'installation du terminal ; FRED couvre les grandes statistiques américaines).</div>') +
+      `<div class="note">Écart = (publié − consensus) rapporté à l'écart habituel de ce chiffre ; chômage et inscriptions au chômage comptés à l'envers (plus haut = activité plus faible). Les plus récents pèsent davantage (demi-vie de 3 semaines).</div></div>`;
+  }
+  let openUp = null;
+  function upcomingCard(v) {
+    const ups = v.upcoming || [];
+    if (!ups.length) return '';
+    const rows = ups.map(e => {
+      const ln = e.lean ? `<span class="${e.cat === 'inflation' ? (e.lean > 0 ? 'dn' : 'up') : 'amb'}" title="${esc(e.leanText)}">${e.lean > 0 ? '▲ au-dessus' : '▼ en dessous'}</span>` :
+        (e.estimateText ? '<span class="muted small">pas de signal</span>' : '');
+      const open = openUp === e.id;
+      return `<tr data-up="${esc(e.id)}" class="${(v.key || []).includes(e.id) ? 'hl' : ''}" style="cursor:pointer"><td class="nowrap">${esc(day(e.t))}<div class="muted small">${esc(hm(e.t))} Paris</div></td>` +
+        `<td><b>${esc(e.label)}</b> <span class="pill">${esc(e.country)}</span></td><td class="r">${esc(e.forecast || '—')}</td><td class="r">${esc(e.previous || '—')}</td>` +
+        `<td class="r">${e.estimateText ? `<b>${esc(e.estimateText)}</b><div class="muted small">${esc(e.errorText)}</div>` : '<span class="muted small">—</span>'}</td><td>${ln}</td></tr>` +
+        (open ? `<tr><td></td><td colspan="5" class="small">${e.how ? `<div><b>Estimation du terminal</b> : ${esc(e.how)}${e.errorText ? ` ; erreur habituelle de cette méthode sur 5 ans : ${esc(e.errorText)}` : ''}.</div>` : ''}` +
+          (e.leanText ? `<div>${esc(e.leanText)}</div>` : '') + (e.scenUp ? `<div class="muted">${esc(e.scenUp)}<br>${esc(e.scenDn)}</div>` : '') + '</td></tr>' : '');
+    }).join('');
+    return `<div class="acard wide"><h3>Annonces à venir : consensus et estimation du terminal <small class="muted">— 7 prochains jours ; clique une ligne pour le détail</small></h3>` +
+      `<div class="mwscroll"><table class="t mwtable"><tr><th>Quand</th><th>Annonce</th><th class="r">Consensus</th><th class="r">Précédent</th><th class="r">Estimation du terminal</th><th>Penchant</th></tr>${rows}</table></div>` +
+      `<div class="note">Estimation du terminal = tendance des derniers mois (inflation totale : tendance sous-jacente, alimentation et prix de l'essence ; croissance : GDPNow de la Fed d'Atlanta), avec son erreur habituelle mesurée sur 5 ans. ` +
+      `Un « penchant » n'apparaît que si l'écart avec le consensus dépasse la moitié de cette erreur. Les économistes connaissent aussi ces tendances : c'est un repère, pas une prévision.</div></div>`;
+  }
+  function commsCard(v) {
+    const c = v.comms || [];
+    if (!c.length) return '';
+    return `<div class="acard wide"><h3>Ce que la Fed a publié cette semaine</h3><ul class="mwnext">` +
+      c.map(x => `<li><b>${esc(day(x.t))}</b> — <span class="pill">${esc(x.kindLabel)}</span> ${link(x.link, x.title)}${x.speaker ? ` <span class="muted small">(${esc(x.speaker)})</span>` : ''}</li>`).join('') +
+      '</ul><div class="note">Textes en anglais sur le site de la Fed. Le commentaire de Claude (plus bas) peut les résumer.</div></div>';
+  }
+  function view(r) {
+    const v = r.view;
+    if (!v) return '';
+    return viewHero(v) + `<div class="mwgrid">${regimeCard(v)}${fedCard(v)}${surpCard(v)}</div>` + upcomingCard(v) + commsCard(v) +
+      '<h2 class="mwtitle mwsub">Bilan de la semaine</h2>';
+  }
+  function drawView(r) {
+    const v = r.view;
+    if (!v) return;
+    const q = root.querySelector('#mwQuad'), p = root.querySelector('#mwPath');
+    if (q) Charts.quadrant(q, (v.regime.trail || []).map(x => ({...x, label: x.t === v.regime.trail[v.regime.trail.length - 1].t ? 'maintenant' : paris(x.t, {month: 'long', year: 'numeric'})})), {quads: QS, long: QL});
+    if (p) Charts.ratePath(p, v.fed || {});
+  }
 
   // ---------- sections ----------
   function hero(r) {
@@ -143,11 +244,12 @@ const MacroWeek = (() => {
       (!r.hasFred ? '<div class="acard warnbox">Les chiffres officiels américains (base FRED de la Fed de Saint-Louis) ne sont pas encore arrivés ou sont injoignables : le tableau de bord est incomplet. Le terminal réessaie toutes les 3 heures.</div>' : '') +
       (errs.length || fe.length ? `<div class="note">Sources en difficulté : ${esc(errs.concat(fe.length ? [`FRED (${fe.length} série${fe.length > 1 ? 's' : ''} : ${fe.slice(0, 4).join(', ')})`] : []).join(' ; '))}</div>` : '') +
       `<h2 class="mwtitle">Semaine ${esc(range(r.start, r.end))}${r.current ? ' <span class="pill">en cours</span>' : ''}</h2>` +
-      hero(r) + eventsCard(r) +
+      view(r) + hero(r) + eventsCard(r) +
       `<div class="mwgrid">${(r.themes || []).map(themeCard).join('')}${marketsCard(r)}${cryptoCard(r)}</div>` +
       studyCard(r) + nextCard(r) + commentCard(r) +
       '<div class="note">Sources : base FRED de la Réserve fédérale de Saint-Louis (chiffres officiels, parfois révisés après coup), calendrier ForexFactory (consensus et chiffre précédent), Yahoo Finance (marchés), Binance (cryptos), CoinGecko et alternative.me (dominance, sentiment). ' +
       'Les lectures « favorable / défavorable » sont des règles classiques d\'économistes, pas des prévisions : la mesure ci-dessus dit lesquelles ont réellement fait une différence pour le bitcoin.</div>';
+    drawView(r);
   }
   async function ask() {
     const b = root.querySelector('#mwAsk'), out = root.querySelector('#mwAskOut');

@@ -119,6 +119,39 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V25 : la macro de la semaine et du mois, avec une vision d'ensemble
+
+Deux pages dans le menu de gauche (ANALYSE) : **Macro de la semaine** (la vision d'ensemble en tête, puis le bilan chiffré de la V18) et **Macro du mois**.
+
+### Macro de la semaine : la vision d'ensemble
+- **Un texte qui relie tout**, écrit à partir des chiffres : où en est l'économie américaine, ce que le marché attend de la Fed, les chiffres face au consensus, les annonces qui comptent, ce que la Fed a publié, et ce que cela veut dire pour le bitcoin et solana (avec l'amplification mesurée de solana face au bitcoin sur 90 jours, quand elle est nette).
+- **Régime : croissance et inflation.** Les deux accélèrent-elles ou ralentissent-elles (rythme des 3 derniers mois face à un an) ? Quatre cases (Boucles d'or, surchauffe, stagflation, ralentissement), le chemin des 12 derniers mois, et ce qu'a fait le bitcoin le mois suivant dans chaque case depuis 2019.
+- **Ce que le marché attend de la Fed** : nombre de baisses (ou de hausses) de 0,25 point d'ici un an environ, lu dans les taux d'État de 3 mois à 2 ans, le changement sur la semaine, et le graphique « marché contre Fed » (projections des membres de la Fed, médiane et fourchette).
+- **Les chiffres face au consensus** depuis 8 semaines : un indice pour l'activité et un pour l'inflation, en écarts habituels, avec la liste des chiffres.
+- **Annonces à venir : consensus et estimation du terminal.** Pour chaque grande annonce américaine des 7 prochains jours : le consensus, ce que donnent les tendances (inflation sous-jacente, alimentation et prix de l'essence pour l'inflation totale, emplois, chômage, ventes, inscriptions au chômage, GDPNow pour la croissance), l'erreur habituelle de cette estimation mesurée sur 5 ans, et un « penchant » seulement quand l'écart avec le consensus est net. Clique une ligne pour le détail et les deux scénarios.
+- **Ce que la Fed a publié cette semaine** : communiqués, comptes rendus et discours, avec les liens.
+- La vision part aussi dans le texte du bilan (Telegram si tu l'actives, et le commentaire de Claude), et la ligne « Vision macro de la semaine » apparaît dans Lecture.
+
+### Macro du mois
+- **Synthèse du mois** et ton à moyen terme pour les actifs à risque.
+- **La Fed** : taux, prochaine décision, chemin attendu par le marché face aux projections des membres, **projections médianes** (taux, inflation, chômage, croissance, taux neutre) et désaccord entre les membres (du plus bas au plus haut).
+- **Communiqué annoté** : le dernier communiqué comparé au précédent, mot à mot (ajouts en vert, retraits barrés en rouge), la décision, le ton (accommodant ou restrictif) et les votes contre.
+- **Communication de la Fed du mois** : communiqués, comptes rendus et discours, avec les liens.
+- **Projections à prendre en compte** : la Fed, le Fonds monétaire international (États-Unis, zone euro, Chine, Japon, monde), le marché (inflation anticipée, chemin des taux), les ménages (Michigan) et la Fed de Cleveland, face au dernier chiffre et au GDPNow. Les mesures diffèrent d'une source à l'autre : les notes sous le tableau le précisent.
+- **Vision à moyen terme (3 à 12 mois)** : probabilité de récession (pente des taux, modèle de la Fed de New York, avec son graphique sur 2 ans), règle de Sahm (et le chômage qu'il faudrait le mois prochain pour la déclencher), écarts de crédit, conditions financières, tendance de l'inflation, inflation anticipée à long terme, pente de la courbe (pentification ou aplatissement, par le haut ou par le bas), prime de terme, taux réel, liquidité nette, bilan de la Fed, masse monétaire, dollar ; et le régime sur 12 mois.
+- **Scénarios et déclencheurs** : le scénario central (ce que le marché anticipe), le scénario favorable (désinflation sans récession), et deux scénarios défavorables (l'inflation repart ; peur de récession), chacun avec des seuils chiffrés et la date où ils se vérifient (prochain chiffre, réunion de la Fed).
+- **Le mois en chiffres** : annonces face au consensus, tableau de bord avec la variation depuis le début du mois, marchés sur le mois.
+- **Rapports des banques et discussion de la Fed** (bouton, avec ta clé API Claude) : Claude cherche sur le web les perspectives récentes des grandes banques (Goldman Sachs, JPMorgan, Morgan Stanley, Bank of America, Citi, UBS…) et la discussion au sein de la Fed, puis range un **tableau par banque** (baisses de taux attendues, taux visé, taux à 10 ans, probabilité de récession, objectif du S&P 500, dollar, cryptos, source). Compte quelques dizaines de centimes par recherche ; le résultat est gardé avec le mois.
+- **Une version archivée par mois** (trois ans), comme les semaines.
+- **Telegram** : Réglages → 3 → « Analyse macro du mois, le 1er du mois suivant ». **Désactivé par défaut** : Telegram reste réservé aux idées de trade.
+
+### D'où viennent les chiffres, et les limites
+- **Base FRED** de la Fed de Saint-Louis (sans clé) : nouvelles séries pour les taux à 3 mois, 6 mois et 1 an, le taux effectif de la Fed, la pente 10 ans − 3 mois, l'inflation anticipée à 5 ans et dans 5 ans, la prime de terme, la règle de Sahm, les attentes d'inflation (Michigan, Fed de Cleveland), GDPNow, la production industrielle, le prix de l'essence, les prix de l'alimentation, et les **projections des membres de la Fed**.
+- **Site de la Fed** : flux publics des communiqués et des discours, texte des communiqués, calendrier des réunions (lu chaque semaine ; les dates de 2026 sont intégrées au terminal en secours).
+- **Fonds monétaire international** : perspectives de l'économie mondiale (avril et octobre), par son interface publique, une fois par jour.
+- **Pas encore vérifié avec les vraies sources** : l'environnement où le terminal est développé n'a pas accès au site de la Fed, à FRED ni au Fonds monétaire international. Les lecteurs ont été écrits pour leurs formats publiés et testés sur des copies de ces formats ; si une source change de format ou ne répond pas, la page le dit (« Sources en difficulté ») et la dernière copie reste utilisée. Dis-moi si une partie reste vide chez toi.
+- Le chemin attendu par le marché est une **approximation** (les contrats à terme sur le taux de la Fed ne sont pas en accès libre). L'estimation du terminal est volontairement simple : c'est un repère pour voir quand le consensus s'écarte des tendances, pas une prévision. Les lectures « favorable / défavorable » restent des règles classiques, non validées par le backtest.
+
 ## V24.2 : le bot Telegram ne reste plus « OFF » sans explication
 
 **Si le badge n'est pas sur ON** : clique dessus, corrige le premier point en rouge du diagnostic, puis clique sur « Envoyer un message de test ».

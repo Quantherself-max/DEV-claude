@@ -46,7 +46,35 @@ SERIES = {
     "VIXCLS": ("Volatilité implicite du S&P 500 (VIX)", "D", 1, "points"),
     "NFCI": ("Conditions financières (Fed de Chicago, > 0 = plus tendues que la moyenne)", "W", 5, "points"),
     "DCOILWTICO": ("Pétrole WTI (dollars le baril)", "D", 3, "$"),
+    # V25 : ce que le marche anticipe pour la Fed, moyen terme, projections de la Fed, estimation de l'inflation du mois
+    "DFF": ("Taux effectif des fonds fédéraux", "D", 1, "%"),
+    "DGS3MO": ("Taux d'État américain à 3 mois", "D", 1, "%"),
+    "DGS6MO": ("Taux d'État américain à 6 mois", "D", 1, "%"),
+    "DGS1": ("Taux d'État américain à 1 an", "D", 1, "%"),
+    "T10Y3M": ("Écart taux à 10 ans − taux à 3 mois", "D", 1, "point"),
+    "T5YIE": ("Inflation anticipée par le marché sur 5 ans", "D", 1, "%"),
+    "T5YIFR": ("Inflation anticipée par le marché dans 5 ans, pour 5 ans", "D", 1, "%"),
+    "THREEFYTP10": ("Prime de terme du taux à 10 ans (modèle Kim-Wright de la Fed)", "D", 7, "point"),
+    "SAHMREALTIME": ("Règle de Sahm en temps réel", "M", 31, "point"),
+    "MICH": ("Inflation attendue à un an par les ménages (université du Michigan)", "M", 45, "%"),
+    "EXPINF1YR": ("Inflation attendue à un an (modèle de la Fed de Cleveland)", "M", 15, "%"),
+    "EXPINF10YR": ("Inflation attendue à dix ans (modèle de la Fed de Cleveland)", "M", 15, "%"),
+    "GDPNOW": ("Estimation en temps réel de la croissance du trimestre (GDPNow, Fed d'Atlanta)", "Q", 28, "%"),
+    "INDPRO": ("Production industrielle (indice)", "M", 45, "indice"),
+    "GASREGW": ("Prix de l'essence ordinaire à la pompe (dollars le gallon)", "W", 2, "$"),
+    "CPIUFDSL": ("Prix à la consommation : alimentation (corrigé)", "M", 40, "indice"),
+    # projections des membres de la Fed (resume des projections economiques, 4 fois par an) : une observation par annee projetee
+    "FEDTARMD": ("Projection médiane de la Fed : taux directeur en fin d'année", "A", 0, "%"),
+    "FEDTARRH": ("Projection la plus haute d'un membre de la Fed : taux directeur en fin d'année", "A", 0, "%"),
+    "FEDTARRL": ("Projection la plus basse d'un membre de la Fed : taux directeur en fin d'année", "A", 0, "%"),
+    "FEDTARMDLR": ("Projection médiane de la Fed : taux directeur à long terme (taux « neutre »)", "X", 0, "%"),
+    "PCECTPIMD": ("Projection médiane de la Fed : inflation (prix des dépenses de consommation) sur l'année", "A", 0, "%"),
+    "JCXFEMD": ("Projection médiane de la Fed : inflation sous-jacente (prix des dépenses de consommation) sur l'année", "A", 0, "%"),
+    "UNRATEMD": ("Projection médiane de la Fed : chômage au quatrième trimestre", "A", 0, "%"),
+    "GDPC1MD": ("Projection médiane de la Fed : croissance du produit intérieur brut sur l'année", "A", 0, "%"),
 }
+# series datees par l'annee projetee (1er janvier de l'annee) : des dates DANS LE FUTUR, a ne jamais couper a « aujourd'hui »
+PROJECTIONS = ("FEDTARMD", "FEDTARRH", "FEDTARRL", "PCECTPIMD", "JCXFEMD", "UNRATEMD", "GDPC1MD")
 START = "2016-01-01"                                              # premier telechargement : de quoi mesurer sur ~10 ans
 RECENT_DAYS = 400                                                 # ensuite : seulement la derniere annee (revisions comprises)
 
@@ -106,8 +134,32 @@ def _month_starts(start_ms: int, end_ms: int):
         d = d.replace(year=d.year + (d.month == 12), month=d.month % 12 + 1)
 
 
+SEP_MONTHS = (3, 6, 9, 12)                                       # reunions de la Fed avec projections (mars, juin, septembre, decembre)
+SIM_PROJ = {"FEDTARMD": (3.6, 3.4, 3.1, 3.1), "FEDTARRH": (4.1, 4.1, 3.9, 3.9), "FEDTARRL": (3.4, 2.9, 2.6, 2.6),
+            "PCECTPIMD": (3.0, 2.6, 2.1, 2.0), "JCXFEMD": (3.1, 2.6, 2.1, 2.0), "UNRATEMD": (4.5, 4.4, 4.3, 4.2), "GDPC1MD": (1.6, 1.8, 1.9, 1.8)}
+
+
+def _last_sep(now_ms: int) -> int:
+    """Date (fictive) de la derniere reunion avec projections : le 17 du dernier mois de mars, juin, septembre ou decembre ecoule."""
+    d = datetime.fromtimestamp(now_ms / 1000, timezone.utc)
+    for back in range(0, 13):
+        y, m = d.year, d.month - back
+        while m <= 0:
+            m += 12
+            y -= 1
+        t = int(datetime(y, m, 17, 18, tzinfo=timezone.utc).timestamp() * 1000)
+        if m in SEP_MONTHS and t <= now_ms:
+            return int(datetime(y, m, 17, tzinfo=timezone.utc).timestamp() * 1000)
+    return now_ms
+
+
 def simulated(sid: str, now_ms: int, start_ms: int | None = None) -> list:
     """Serie fictive mais coherente (inflation ~3 %, chomage ~4 %, taux ~4 %...), deterministe pour un meme identifiant."""
+    if sid in SIM_PROJ:                                           # projections : annee en cours et les 3 suivantes
+        y = datetime.fromtimestamp(now_ms / 1000, timezone.utc).year
+        return [(int(datetime(y + k, 1, 1, tzinfo=timezone.utc).timestamp() * 1000), v) for k, v in enumerate(SIM_PROJ[sid])]
+    if sid == "FEDTARMDLR":
+        return [(_last_sep(now_ms), 3.0)]
     seed = sum(ord(c) * (i + 1) for i, c in enumerate(sid))
     wob = lambda i, a=1.0: a * (math.sin(i * 0.37 + seed) * 0.6 + math.sin(i * 0.11 + seed * 0.5) * 0.4)
     origin = int(datetime(2016, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)   # toujours depuis la meme origine : series identiques d'un appel a l'autre
@@ -115,7 +167,9 @@ def simulated(sid: str, now_ms: int, start_ms: int | None = None) -> list:
     start_ms = origin
     freq, lag = SERIES.get(sid, ("", "D", 1, ""))[1:3]
     end = now_ms - lag * DAY
-    if freq == "M":
+    if sid == "GDPNOW":                                            # estimation du trimestre en cours des son premier mois
+        ts = [t for t in _month_starts(start_ms, now_ms - 28 * DAY) if datetime.fromtimestamp(t / 1000, timezone.utc).month in (1, 4, 7, 10)]
+    elif freq == "M":
         ts = list(_month_starts(start_ms, end - 28 * DAY))
     elif freq == "Q":
         ts = [t for t in _month_starts(start_ms, end - 80 * DAY) if datetime.fromtimestamp(t / 1000, timezone.utc).month in (1, 4, 7, 10)]
@@ -139,13 +193,21 @@ def simulated(sid: str, now_ms: int, start_ms: int | None = None) -> list:
             lvl = (lvl or 12_500.0) * (1 + 0.004 + wob(i, 0.003))
         elif sid == "WALCL":
             lvl = (lvl or 4_500_000.0) * (1 + wob(i, 0.004))
+        elif sid == "CPIUFDSL":
+            lvl = (lvl or 280.0) * (1 + 0.0022 + wob(i, 0.001))
+        elif sid == "INDPRO":
+            lvl = (lvl or 102.0) * (1 + 0.0008 + wob(i, 0.004))
         else:
             base = {"UNRATE": 4.2, "ICSA": 225_000, "JTSJOL": 7_600, "A191RL1Q225SBEA": 2.2, "DFEDTARU": 4.5, "DFEDTARL": 4.25, "DGS2": 3.9,
                     "DGS10": 4.2, "DFII10": 1.9, "T10YIE": 2.3, "DTWEXBGS": 121.0, "WTREGEN": 750_000, "RRPONTSYD": 250.0, "BAMLH0A0HYM2": 3.3,
-                    "VIXCLS": 16.0, "NFCI": -0.5, "DCOILWTICO": 72.0}.get(sid, 100.0)
+                    "VIXCLS": 16.0, "NFCI": -0.5, "DCOILWTICO": 72.0, "DFF": 4.33, "DGS3MO": 4.2, "DGS6MO": 4.05, "DGS1": 3.85, "T10Y3M": 0.0,
+                    "T5YIE": 2.4, "T5YIFR": 2.25, "THREEFYTP10": 0.6, "SAHMREALTIME": 0.3, "MICH": 3.2, "EXPINF1YR": 2.6, "EXPINF10YR": 2.4,
+                    "GDPNOW": 2.0, "GASREGW": 3.2}.get(sid, 100.0)
             amp = {"UNRATE": 0.4, "ICSA": 20_000, "JTSJOL": 600, "A191RL1Q225SBEA": 1.5, "DFEDTARU": 0.0, "DFEDTARL": 0.0, "DGS2": 0.5, "DGS10": 0.4,
                    "DFII10": 0.3, "T10YIE": 0.15, "DTWEXBGS": 4.0, "WTREGEN": 120_000, "RRPONTSYD": 150.0, "BAMLH0A0HYM2": 0.6, "VIXCLS": 4.0,
-                   "NFCI": 0.15, "DCOILWTICO": 8.0}.get(sid, 5.0)
+                   "NFCI": 0.15, "DCOILWTICO": 8.0, "DFF": 0.0, "DGS3MO": 0.15, "DGS6MO": 0.25, "DGS1": 0.35, "T10Y3M": 0.5, "T5YIE": 0.2,
+                   "T5YIFR": 0.15, "THREEFYTP10": 0.25, "SAHMREALTIME": 0.15, "MICH": 0.5, "EXPINF1YR": 0.3, "EXPINF10YR": 0.15, "GDPNOW": 1.2,
+                   "GASREGW": 0.35}.get(sid, 5.0)
             lvl = base + wob(i * (0.2 if freq == "D" else 1.0), amp)
             if sid == "RRPONTSYD":
                 lvl = max(0.0, lvl)

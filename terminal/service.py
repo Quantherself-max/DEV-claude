@@ -23,7 +23,7 @@ from engine import tpostudy
 from engine import zoneprec
 from engine import dominance as dominance_engine
 from engine import macro as macro_engine
-from engine import macroweek
+from engine import macromonth, macroview, macroweek
 from engine import signals as signals_engine
 from engine import sigtest
 from engine import synth as synth_engine
@@ -1126,6 +1126,9 @@ class Service:
         self._mw_study = None                        # mesure historique des moteurs macro sur le bitcoin (recalculee toutes les 6 h)
         self._mw_lock = threading.Lock()
         self.mw_archive: dict = self._mw_load()
+        self._mm_cache: dict = {}                    # analyses macro du mois (V25) : mois -> (instant, analyse, empreinte des sources)
+        self._rg_study = None                        # mesure du bitcoin par regime macro (recalculee toutes les 6 h)
+        self.mm_archive: dict = self._mm_load()
         self.load_vp()
 
     def attach_ext(self, hub) -> None:
@@ -1502,6 +1505,27 @@ class Service:
         except OSError:
             pass
 
+    def _btc_long(self, snap) -> list:
+        """Clotures quotidiennes du bitcoin sur tout l'historique garde par le terminal (bougies 1 h depuis 2019), sinon Binance spot."""
+        m = self.markets.get("BTCUSDT")
+        if m is not None and m.ready:
+            with self.lock:
+                h1 = list(m.store.h1)
+            return self._daily(h1)
+        return [(t // DAY * DAY, c) for t, c in (snap.get("altD") or {}).get("BTCUSDT") or []]
+
+    def _regime_study(self, snap, now) -> dict:
+        """Ce qu'a fait le bitcoin le mois suivant dans chaque regime macro (V25), recalcule toutes les 6 h ou quand l'emploi est publie."""
+        n = len((snap.get("fred") or {}).get("PAYEMS") or [])
+        st = self._rg_study
+        if st is None or time.time() - st[0] > 6 * 3600 or st[1] != n:
+            try:
+                res = macroview.regime_study(macroview.Data(snap.get("fred") or {}), self._btc_long(snap), now)
+            except Exception as e:
+                res = {"ready": False, "rows": [], "note": f"mesure impossible : {type(e).__name__}"}
+            self._rg_study = st = (time.time(), n, res)
+        return st[2]
+
     def _crypto_daily(self, snap) -> dict:
         """Clotures quotidiennes du bitcoin, de l'ether et de solana : paires suivies par le terminal (a jour), sinon paires alt/BTC de Binance."""
         out = {}
@@ -1562,6 +1586,14 @@ class Service:
             rep = macroweek.build(ws, now, snap.get("fred") or {}, snap.get("calendar") or {}, snap.get("crossD") or {}, crypto,
                                   snap.get("cg_hist"), snap.get("fng"), rot, rtext, st[2],
                                   reconstructed=None if ws == cur or arch is None else bool(arch.get("reconstructed")))
+            try:                                     # V25 : vision d'ensemble (regime, surprises, Fed, semaine a venir), en tete du bilan
+                tv = min(now, ws + macroweek.WEEK)
+                rep["view"] = macroview.build(tv, snap.get("fred") or {}, snap.get("calendar") or {}, snap.get("fed") or {}, crypto, rep["verdict"],
+                                              st[2], self._regime_study(snap, now), lagged=ws != cur)
+                rep["summary"] = macroweek.summary_text(rep)
+            except Exception as e:
+                rep["view"] = None
+                self.errors["vision macro"] = f"{type(e).__name__}: {str(e)[:120]}"
             rep["sources"] = {"fredErrors": snap.get("fredErrors") or {}, "errors": {k2: v for k2, v in (snap.get("errors") or {}).items()
                                                                                       if k2 in ("fred", "calendar", "crossD", "cg", "fng")},
                               "fredUpdated": (snap.get("updated") or {}).get("fred")}
@@ -1584,6 +1616,111 @@ class Service:
             for e in rep["events"]:
                 if e.get("actual") and e["id"] in self.ext.calendar and not self.ext.calendar[e["id"]].get("actual"):
                     self.ext.calendar[e["id"]]["actual"] = e["actual"]
+
+    # ---------- analyse macro du mois (V25) ----------
+    MM_KEEP = 36                                     # mois gardes dans l'archive (trois ans)
+    MM_BACK = 3                                      # mois passes reconstruits a la demande quand ils ne sont pas archives
+
+    def _mm_file(self):
+        return Path(self.cfg.data_dir) / "macro_months.json" if getattr(self.source, "name", "") == "binance" else None
+
+    def _mm_load(self) -> dict:
+        f = self._mm_file()
+        try:
+            d = json.loads(f.read_text(encoding="utf-8")) if f else {}
+            return d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _mm_save(self) -> None:
+        f = self._mm_file()
+        if not f:
+            return
+        keep = dict(sorted(self.mm_archive.items())[-self.MM_KEEP:])
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".tmp")
+            tmp.write_text(json.dumps(keep, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(f)
+        except OSError:
+            pass
+
+    def macro_month(self, key: str | None = None) -> dict:
+        """Analyse d'un mois (cle « AAAA-MM », mois en cours par defaut) : recalculee au plus toutes les 10 minutes et archivee ;
+        mois passe : l'archive si elle est finale, sinon reconstruite apres coup (au plus MM_BACK mois)."""
+        now = self.source.now_ms()
+        cur = macromonth.month_start(now)
+        ms = macromonth.parse_month(key) if key else cur
+        if ms > cur:
+            raise ValueError("mois à venir : pas encore d'analyse")
+        k = macromonth.month_key(ms)
+        arch = self.mm_archive.get(k)
+        if arch and arch.get("final"):
+            return arch
+        back = cur
+        for _ in range(self.MM_BACK):
+            back = macromonth.parse_month(macromonth.month_key(back - DAY))
+        if ms < back and not arch:
+            raise KeyError(f"pas d'analyse archivée pour {macromonth.month_label(ms)}")
+        stamp = tuple(sorted((self.ext.updated or {}).items())) if self.ext else ()
+        hit = self._mm_cache.get(k)
+        if hit and time.time() - hit[0] < 600 and hit[2] == stamp:
+            return hit[1]
+        with self._mw_lock:
+            snap = self.ext.snapshot() if self.ext else {}
+            crypto = self._crypto_daily(snap)
+            st = self._mw_study
+            rep = macromonth.build(ms, now, snap.get("fred") or {}, snap.get("calendar") or {}, snap.get("fed") or {}, snap.get("imf") or {},
+                                   snap.get("crossD") or {}, crypto, st[2] if st else None, self._regime_study(snap, now),
+                                   reconstructed=None if ms == cur or arch is None else bool(arch.get("reconstructed")))
+            rep["sources"] = {"fredErrors": snap.get("fredErrors") or {}, "fedErrors": (snap.get("fed") or {}).get("errors") or [],
+                              "calendarSource": (snap.get("fed") or {}).get("calSrc") or "",
+                              "errors": {k2: v for k2, v in (snap.get("errors") or {}).items() if k2 in ("fred", "calendar", "crossD", "fed", "imf")},
+                              "updated": {k2: v for k2, v in (snap.get("updated") or {}).items() if k2 in ("fred", "calendar", "fed", "imf")}}
+            if arch:                                 # recherche de Claude (rapports des banques) et etat d'envoi deja enregistres
+                for f in ("banks", "sentAt"):
+                    if arch.get(f):
+                        rep[f] = arch[f]
+                if rep.get("banks"):
+                    rep["summary"] = macromonth.summary_text(rep)
+            self._mm_cache[k] = (time.time(), rep, stamp)
+            if not rep["reconstructed"] or arch:
+                self.mm_archive[k] = rep
+                self._mm_save()
+            return rep
+
+    def macro_months(self) -> dict:
+        """Mois disponibles : archives, plus les MM_BACK derniers (reconstructibles), du plus recent au plus ancien."""
+        now = self.source.now_ms()
+        cur = macromonth.month_start(now)
+        keys, m = set(self.mm_archive), cur
+        for _ in range(self.MM_BACK + 1):
+            keys.add(macromonth.month_key(m))
+            m = macromonth.parse_month(macromonth.month_key(m - DAY))
+        out = []
+        for k in sorted(keys, reverse=True):
+            a = self.mm_archive.get(k) or {}
+            out.append({"month": k, "label": macromonth.month_label(macromonth.parse_month(k)), "current": k == macromonth.month_key(cur),
+                        "archived": k in self.mm_archive, "final": bool(a.get("final")), "tone": (a.get("medium") or {}).get("label"), "banks": bool(a.get("banks"))})
+        return {"months": out, "current": macromonth.month_key(cur)}
+
+    def macro_month_banks(self, key: str, banks: dict) -> None:
+        """Recherche de Claude (rapports des banques, discussion de la Fed) rangee avec l'analyse du mois."""
+        rep = self.macro_month(key)
+        rep["banks"] = banks
+        rep["summary"] = macromonth.summary_text(rep)
+        k = rep["month"]
+        self.mm_archive[k] = rep
+        hit = self._mm_cache.get(k)
+        if hit:
+            hit[1]["banks"] = banks
+        self._mm_save()
+
+    def macro_month_mark_sent(self, key: str, t: float) -> None:
+        rep = self.mm_archive.get(key)
+        if rep is not None:
+            rep["sentAt"] = t
+            self._mm_save()
 
     def macro_weeks(self) -> dict:
         """Semaines disponibles : archivees, plus les MW_BACK dernieres (reconstructibles), de la plus recente a la plus ancienne."""

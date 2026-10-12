@@ -615,7 +615,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 23;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose)
+const NEED_API = 24;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -750,7 +750,7 @@ $('#stats').addEventListener('click', e => {
 
 // ---------- workspace : pages, menu lateral, mise en page ----------
 const PAGES = {desk: 'Desk', overview: 'Overview', history: 'Historique', backtest: 'Backtest', analysis: 'Analyse'};
-const SUBS = {synth: 'Biais & probabilités', macro: 'Macro & annonces', week: 'Bilan macro de la semaine', dom: 'Dominance BTC / alts', plan: 'Plan de trade', lex: 'Lexique du graphique'};
+const SUBS = {synth: 'Biais & probabilités', macro: 'Macro & annonces', week: 'Macro de la semaine', month: 'Macro du mois', dom: 'Dominance BTC / alts', plan: 'Plan de trade', lex: 'Lexique du graphique'};
 function navigate(page, sub) {
   if (!PAGES[page]) page = 'desk';
   st.page = page;
@@ -758,7 +758,7 @@ function navigate(page, sub) {
   document.querySelectorAll('.page').forEach(p => p.hidden = p.dataset.page !== page);
   document.querySelectorAll('#sidebar a[data-nav]').forEach(a => a.classList.toggle('on', a.dataset.nav === page && (page !== 'analysis' || a.dataset.sub === st.sub)));
   $('#crumb').textContent = page === 'analysis' ? SUBS[st.sub] : PAGES[page];
-  if (page === 'analysis') Analysis.show(st.sub); else MacroWeek.hide();
+  if (page === 'analysis') Analysis.show(st.sub); else { MacroWeek.hide(); MacroMonth.hide(); }
   if (page === 'desk') setTimeout(() => { syncRange(); refreshAll(); }, 60);
   if (page === 'desk' && st.layout === 'mtf') MTF.show(); else MTF.hide();
   if (page === 'desk' && st.layout === 'tpo') TPO.show(); else TPO.hide();
@@ -1038,6 +1038,7 @@ async function openSettings() {
     $('#aSweep').checked = !!s.alertSweep;
     $('#aZones').checked = s.alertZones !== false;
     $('#mwTg').checked = !!s.macroWeekTelegram;
+    $('#mmTg').checked = !!s.macroMonthTelegram;
     $('#aMode').value = s.alertMode === 'all' ? 'all' : 'ideas'; $('#aExtra').hidden = $('#aMode').value !== 'all';
     $('#aMacro').checked = s.alertMacro !== false;
     const x = s.x || {}; $('#xOn').checked = x.on !== false; $('#xAccounts').value = (x.accounts || []).join(', '); $('#xPosts').value = String(x.posts || 10);
@@ -1196,7 +1197,7 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
   const src = (document.querySelector('input[name=source]:checked') || {}).value;
   const before = st.cfg ? st.cfg.source + '|' + st.cfg.symbols.join(',') + '|' + (st.cfg.historyYears || 0) : '';
   const body = {source: src, symbols: $('#symbols').value.split(/[\s,;]+/).filter(Boolean), telegramChatId: $('#tgChat').value.trim(),
-    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMode: $('#aMode').value, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, macroWeekTelegram: $('#mwTg').checked, historyYears: +$('#histYears').value, footprintDays: +$('#fpDays').value,
+    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMode: $('#aMode').value, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, macroWeekTelegram: $('#mwTg').checked, macroMonthTelegram: $('#mmTg').checked, historyYears: +$('#histYears').value, footprintDays: +$('#fpDays').value,
     xOn: $('#xOn').checked, xAccounts: $('#xAccounts').value, xPosts: +$('#xPosts').value,
     signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalMaxPerSymbol: +$('#sMaxSym').value, signalLeverage: +$('#sLev').value, signalTrendGate: $('#sTrend').checked, signalDirection: $('#sDir').value};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();

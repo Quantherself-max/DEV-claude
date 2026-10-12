@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from data import fed as fed_mod, imf as imf_mod
 from data.external import ExternalHub, RealProviders, SimProviders, normalize_event, parse_num, CROSS, ALT_PAIRS
 from data.fred import SERIES as FRED_SERIES
 
@@ -19,6 +20,10 @@ class Fake(BaseHTTPRequestHandler):
     def _send(self, obj, code=200):
         b = json.dumps(obj).encode()
         self.send_response(code); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+
+    def _text(self, text):
+        b = text.encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
 
     def do_GET(self):
         u = urlparse(self.path); q = {k: v[0] for k, v in parse_qs(u.query).items()}
@@ -48,6 +53,18 @@ class Fake(BaseHTTPRequestHandler):
             body = f"observation_date,{q.get('id')}\n2026-07-01,4.2\n2026-08-01,.\n2026-09-01,4.3\n".encode()
             self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
             return
+        if u.path in fed_mod.FEEDS.values():                     # V25 : site de la Fed (flux, calendrier, communique)
+            base = f"http://{self.headers['Host']}"
+            items = ([{"t": NOW - 5 * 86_400_000, "title": "Federal Reserve issues FOMC statement", "link": base + "/newsevents/pressreleases/monetary20260916a.htm"}]
+                     if "monetary" in u.path else [{"t": NOW - 2 * 86_400_000, "title": "Speech by Governor Waller on the outlook", "link": base + "/newsevents/speech/w.htm"}])
+            return self._text(fed_mod.sim_rss(items))
+        if u.path == fed_mod.CALENDAR:
+            return self._text(fed_mod.sim_calendar_html(fed_mod.fallback_meetings()))
+        if u.path.startswith("/newsevents/pressreleases/"):
+            return self._text(fed_mod.sim_statement_html(fed_mod.SIM_STATEMENTS[1]))
+        if u.path.split("/")[1] in imf_mod.INDICATORS:            # V25 : projections du FMI
+            ind = u.path.split("/")[1]
+            return self._send({"values": {ind: {"USA": {"2026": 2.0, "2027": 2.1}, "WEOWORLD": {"2026": 3.1}}}})
         if u.path == "/api/v3/klines":
             n = int(q.get("limit", 720))
             return self._send([[NOW - (n - i) * 3600_000, "0.02", "0.02", "0.02", f"{0.02 + i * 1e-6}", "1", 0, "1", 1, "1", "1", "0"] for i in range(n)])
@@ -69,7 +86,7 @@ class ExternalTests(unittest.TestCase):
         Fake.fail = set(); Fake.hits = []
 
     def prov(self):
-        return RealProviders(self.b, self.b, self.b, self.b, self.b, self.b, fred=self.b)
+        return RealProviders(self.b, self.b, self.b, self.b, self.b, self.b, fred=self.b, fed=self.b, imf=self.b)
 
     def test_parse_and_normalize(self):
         self.assertEqual(parse_num("0.3%"), (0.3, "%"))
@@ -118,6 +135,10 @@ class ExternalTests(unittest.TestCase):
             self.assertEqual(len(snap["altD"]["SOLBTC"]), 1000)
             self.assertEqual(snap["cg"]["btc_d"], 58.5)
             self.assertEqual(len(snap["cg_hist"]), 1)
+            self.assertEqual(snap["fed"]["calSrc"], "page de la Fed")                              # V25 : lu par le reseau, comme en vrai
+            self.assertEqual([i["kind"] for i in snap["fed"]["items"]], ["speech", "statement"])
+            self.assertEqual(len(snap["fed"]["statements"]), 1)
+            self.assertEqual(snap["imf"]["NGDP_RPCH"]["USA"], {"2026": 2.0, "2027": 2.1})
             hub.calendar[next(iter(hub.calendar))]["reaction"] = {"btc15": 0.4}   # une valeur mesuree plus tard...
             hub._due.clear(); hub.refresh(force=True)
             self.assertTrue(any("reaction" in e for e in hub.calendar.values()))   # ... survit au rechargement du flux
@@ -127,6 +148,8 @@ class ExternalTests(unittest.TestCase):
             self.assertEqual(len(again.cg_hist), 1)
             self.assertEqual(again.fred["UNRATE"], [(1782864000000, 4.2), (1788220800000, 4.3)])     # chiffres officiels relus (valeur manquante « . » ignoree)
             self.assertEqual(set(again.fred), set(FRED_SERIES))
+            self.assertEqual(len(again.fed["statements"]), 1)                                       # communication de la Fed et FMI relus
+            self.assertIn("LUR", again.imf)
             Fake.fail = {"DX-Y.NYB", "/v1/global"}
             hub._due.clear(); hub.refresh(force=True)
             e = hub.snapshot()["errors"]
@@ -135,9 +158,10 @@ class ExternalTests(unittest.TestCase):
 
     def test_total_failure_is_reported_not_raised(self):
         hub = ExternalHub(RealProviders("http://127.0.0.1:9", "http://127.0.0.1:9", "http://127.0.0.1:9", "http://127.0.0.1:9", "http://127.0.0.1:9", "http://127.0.0.1:9",
-                                        fred="http://127.0.0.1:9"), lambda: NOW)
+                                        fred="http://127.0.0.1:9", fed="http://127.0.0.1:9", imf="http://127.0.0.1:9"), lambda: NOW)
         t0 = time.time(); hub.refresh(force=True)
-        self.assertEqual(set(hub.snapshot()["errors"]), {"calendar", "cg", "fng", "cross5", "crossD", "alt", "altD", "fred"})
+        self.assertEqual(set(hub.snapshot()["errors"]), {"calendar", "cg", "fng", "cross5", "crossD", "alt", "altD", "fred", "fed", "imf"})
+        self.assertEqual(hub.fed["calSrc"], "liste intégrée (2026)")                                    # reunions 2026 connues malgre la panne
         self.assertEqual(hub.snapshot()["calendar"], {})
 
     def test_simulated_providers_cover_every_item(self):

@@ -36,6 +36,7 @@ Comment répondre :
 - Si on te demande quoi faire : des scénarios avec leurs niveaux d'invalidation et ce qui ferait changer d'avis, le risque du levier en une phrase, sans moraliser. Ce n'est pas un conseil financier et tu ne passes aucun ordre."""
 
 WEEK_PROMPT = """Écris le commentaire macro de la semaine à partir du bilan chiffré joint (chiffres officiels américains, réactions mesurées des marchés, lecture du terminal).
+La « vision de la semaine » du terminal est en tête du bilan (régime de croissance et d'inflation, surprises face au consensus, ce que le marché anticipe pour la Fed, estimation du terminal pour chaque annonce à venir) : discute-la, confirme-la ou nuance-la avec ce que tu trouves.
 Cherche sur le web ce qui manque au bilan : communiqué, compte rendu ou discours de la Fed ; chiffres publiés hors des États-Unis (zone euro, Chine, Japon, Royaume-Uni) ; géopolitique (conflits, sanctions, droits de douane, élections) ; flux des fonds indiciels cotés (ETF) sur le bitcoin et l'ether ; annonces réglementaires et mouvements institutionnels marquants.
 Plan, en texte brut lisible sur un téléphone :
 1. L'essentiel de la semaine en trois phrases.
@@ -44,6 +45,22 @@ Plan, en texte brut lisible sur un téléphone :
 4. Ce que cela engendre : dollar, taux, liquidité, puis bitcoin et solana (scénarios, jamais de certitude).
 5. La semaine prochaine : quoi surveiller et pourquoi.
 Ne contredis pas les chiffres du bilan ; si une source donne un autre chiffre, signale l'écart. Cite tes sources."""
+
+MONTH_PROMPT = """Écris l'analyse macro du mois à partir de l'analyse chiffrée jointe (chiffres officiels américains, projections de la Fed et du FMI, ce que le marché anticipe, communiqué de la Fed et ce qui y a changé, vision à moyen terme et scénarios du terminal).
+Cherche sur le web ce qui manque :
+- les rapports et perspectives publiés récemment par les grandes banques (par exemple Goldman Sachs, JPMorgan, Morgan Stanley, Bank of America, Citi, UBS, Deutsche Bank, BNP Paribas, Barclays) : leur scénario pour la Fed (nombre et calendrier des baisses), la croissance, l'inflation, le taux à 10 ans, le dollar, les actions, et ce qu'elles disent du bitcoin et des cryptos ;
+- la discussion au sein de la Fed : compte rendu de la dernière réunion, discours récents des membres (qui veut baisser vite, qui freine, et pourquoi), désaccords ;
+- les projections à prendre en compte : consensus des économistes, FMI, OCDE, et ce que le marché anticipe.
+Plan, en texte brut lisible sur un téléphone :
+1. L'essentiel du mois en cinq phrases.
+2. La Fed : décision, discussion interne, ce qui a changé, ce qu'elle prépare.
+3. Ce que disent les banques : accords, désaccords, avec leurs chiffres.
+4. Vision à moyen terme (3 à 12 mois) : croissance, inflation, taux, dollar, liquidité.
+5. Ce que cela engendre pour le bitcoin et solana : scénarios avec leurs déclencheurs, jamais de certitude.
+6. Les dates clés du mois prochain.
+Termine par un tableau entre les balises <banques> et </banques>, une ligne par banque trouvée (au moins trois si possible), champs séparés par « | » dans cet ordre :
+banque | date du rapport (AAAA-MM-JJ) | baisses de taux de la Fed attendues d'ici 12 mois | taux de la Fed visé fin de l'année prochaine | taux à 10 ans visé en fin d'année | probabilité de récession à 12 mois | objectif du S&P 500 | vue sur le dollar | vue sur le bitcoin ou les cryptos | adresse de la source
+Mets « ? » quand une information n'est pas publiée : n'invente aucun chiffre. Ne contredis pas les chiffres de l'analyse jointe ; si une source donne un autre chiffre, signale l'écart. Cite tes sources."""
 
 HELP = ("Pose-moi n'importe quelle question sur le marché ou sur les analyses du terminal, par exemple :\n"
         "• pourquoi le BTC a perdu 2 % cet après-midi ?\n• les shorts s'accumulent sur SOL ?\n• qu'est-ce qui arrive cette semaine en macro ?\n\n"

@@ -265,6 +265,13 @@ const Analysis = (() => {
       <dt>Biais statistique « validé »</dt><dd>Régression logistique sur 10 variables (momentum, CVD réel, VWAP, volatilité, funding...), entraînée sur le passé et testée sur les 30 jours suivants, en avançant. Elle n'est affichée comme probabilité que si elle bat le hasard hors échantillon ; sinon le terminal le dit et s'en tient au taux de base.</dd></div>
       <div class="acard" style="margin-top:10px"><h3>Macro &amp; contexte</h3>
       <dt>Consensus et surprise</dt><dd>Le consensus (prévision moyenne) est connu avant l'annonce. Le flux gratuit ne donne pas le chiffre publié : la surprise est lue dans la réaction du <b>rendement 10 ans</b> et du <b>dollar</b> dans les 15 minutes (restrictive si ils montent, accommodante s'ils baissent), puis comparée à la réaction du BTC.</dd>
+      <dt>Régime macro (quadrant)</dt><dd>Page « Macro de la semaine » et « Macro du mois » : la croissance américaine (emplois, chômage, inscriptions au chômage, ventes au détail, production industrielle, GDPNow) et l'inflation (sous-jacente, préférée de la Fed, totale, prix à la production, inflation anticipée) <b>accélèrent-elles ou ralentissent-elles</b> ? Rythme des 3 derniers mois face à un an, ramené entre −2 et +2. Quatre cases : <b>Boucles d'or</b> (croissance qui tient, inflation qui ralentit : ni trop chaud ni trop froid, le meilleur cas pour les actifs à risque), <b>surchauffe</b>, <b>stagflation</b>, <b>ralentissement</b>. Le trait montre le chemin des 12 derniers mois (chiffres publiés à chaque date). Le tableau dessous dit ce qu'a fait le bitcoin le mois suivant dans chaque case : souvent « ≈ hasard », c'est un décor, pas un signal.</dd>
+      <dt>Surprises face au consensus</dt><dd>Chiffre publié moins consensus, rapporté à l'écart habituel de ce chiffre (0,1 point pour l'inflation mensuelle, 70 000 emplois, 15 000 inscriptions au chômage…). Moyenne des 8 dernières semaines, les plus récents pesant davantage. Activité : positif = plus solide que prévu (chômage et inscriptions comptés à l'envers). Inflation : positif = plus chaude que prévu, le principal risque pour les cryptos.</dd>
+      <dt>Estimation du terminal</dt><dd>Pour chaque grande annonce américaine à venir, ce que donneraient les tendances : moyenne des 3 derniers mois (inflation sous-jacente, emplois, ventes), tendance sous-jacente plus alimentation plus prix de l'essence corrigé des saisons (inflation totale), GDPNow de la Fed d'Atlanta (croissance), moyenne des 4 dernières semaines (inscriptions au chômage). « ± » = erreur habituelle de la méthode mesurée sur 5 ans. Un <b>penchant</b> n'apparaît que si l'écart avec le consensus dépasse la moitié de cette erreur. Les économistes connaissent aussi ces tendances : c'est un repère, pas une prévision.</dd>
+      <dt>Ce que le marché attend de la Fed</dt><dd>Chemin du taux directeur déduit des taux d'État à 3 mois, 6 mois, 1 an et 2 ans (taux moyens attendus sur chaque période) ; « ≈ 2 baisses » = écart entre le taux d'aujourd'hui et le taux attendu dans 6 à 12 mois, divisé par 0,25 point. Approximation : la référence (les contrats à terme sur le taux de la Fed) n'est pas en accès libre. Points orange : projections des membres de la Fed (médiane et fourchette du plus bas au plus haut), publiées 4 fois par an ; trait pointillé : le taux « neutre » qu'ils voient à long terme.</dd>
+      <dt>Probabilité de récession, règle de Sahm, prime de terme</dt><dd><b>Probabilité de récession</b> : modèle publié par la Fed de New York à partir de la pente des taux (10 ans moins 3 mois) ; il a annoncé les récessions passées mais s'est beaucoup trompé depuis 2022. <b>Règle de Sahm</b> : moyenne du chômage sur 3 mois moins son plus bas des 12 mois précédents ; à 0,5 point, une récession était en cours ou proche. <b>Prime de terme</b> : ce que les investisseurs exigent en plus pour prêter à 10 ans plutôt que de renouveler des prêts courts ; quand elle monte (dette publique, inflation incertaine), elle pèse sur les actifs à risque.</dd>
+      <dt>Pentification, aplatissement</dt><dd>Mouvement de l'écart entre le taux à 10 ans et le taux à 2 ans sur 3 mois. <b>Par le bas</b> (le 2 ans baisse plus) : le marché anticipe des baisses de la Fed. <b>Par le haut</b> (le 10 ans monte plus) : prime de risque ou inflation, souvent défavorable. Aplatissement par le haut : la Fed est vue plus restrictive ; par le bas : ralentissement anticipé.</dd>
+      <dt>Communiqué annoté</dt><dd>Page « Macro du mois » : le dernier communiqué de la Fed comparé au précédent, mot à mot (<ins>ajouté</ins>, <del>retiré</del>). C'est ce qui change d'une réunion à l'autre que le marché lit. Le ton (accommodant ou restrictif) est compté avec un petit lexique de formules typiques : indication grossière. Les votes contre la décision sont repris tels quels.</dd>
       <dt>Fenêtre de danger</dt><dd>Moins de 90 minutes avant une annonce majeure (CPI, NFP, Fed...). Les mèches de 30 secondes y balayent les stops : réduis le levier ou reste à plat.</dd>
       <dt>Dominance BTC &amp; panier d'alts</dt><dd>Part du BTC dans la capitalisation crypto. Le panier alts/BTC (8 alts cotées en BTC) monte quand les alts battent le BTC. Le régime croise ce panier et la direction du BTC : saison BTC, alt season, risk-off...</dd>
       <dt>CVD, funding, long/short, prime Coinbase</dt><dd>Voir l'onglet Lecture du panneau de droite (ou Détails ▾ → Contexte) : flux agressif réel, coût du levier, positionnement de la foule et des gros comptes, demande US.</dd></div>
@@ -292,13 +299,14 @@ const Analysis = (() => {
   }
 
   // ---------- interface ----------
-  const TITLES = {synth: 'Biais & probabilités', macro: 'Macro & annonces', week: 'Bilan macro de la semaine', dom: 'Dominance BTC / alts', plan: 'Plan de trade', lex: 'Lexique du graphique'};
+  const TITLES = {synth: 'Biais & probabilités', macro: 'Macro & annonces', week: 'Macro de la semaine', month: 'Macro du mois', dom: 'Dominance BTC / alts', plan: 'Plan de trade', lex: 'Lexique du graphique'};
   function show(name) {                                          // appele par le menu de gauche
     document.querySelectorAll('#anTabs button').forEach(x => x.classList.toggle('on', x.dataset.an === name));
     document.querySelectorAll('.anpane').forEach(p => p.hidden = p.dataset.anpane !== name);
     $('#anTitle').textContent = TITLES[name] || '';
     if (name === 'plan') runPlan();
     if (name === 'week') MacroWeek.show(); else MacroWeek.hide();
+    if (name === 'month') MacroMonth.show(); else MacroMonth.hide();
     if (S.an) render(S.an);
   }
   function init(lt) {
@@ -306,6 +314,7 @@ const Analysis = (() => {
     $('#anTabs').onclick = e => { const b = e.target.closest('button[data-an]'); if (b) show(b.dataset.an); };
     renderPlanForm(); renderLex();
     MacroWeek.init(lt, $('#anWeek'));
+    MacroMonth.init(lt, $('#anMonth'));
   }
   function render(an) {
     S.an = an;

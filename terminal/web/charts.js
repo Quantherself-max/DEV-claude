@@ -167,5 +167,104 @@ const Charts = (() => {
     const w = Math.min(50, Math.abs(v) / max * 50);
     return `<div class="dv"><u></u><i style="${v >= 0 ? 'left:50%' : `left:${50 - w}%`};width:${w}%;background:${v >= 0 ? up : dn}"></i></div>`;
   }
-  return {line, calib, timeline, spark, meter, dvBar, hideTip, esc, prose, ticks};
+  // ---- quadrant du regime macro (V25) : elan de la croissance (x) et de l'inflation (y), de -2 a +2, trajet des 12 derniers mois ----
+  // pts: [{t, g, i, label}] du plus ancien au plus recent ; opts.quads: {goldilocks, reflation, stagflation, slowdown} -> libelle court
+  const QUAD_TINT = {goldilocks: '#3ddc97', reflation: '#c98500', stagflation: '#ff6b6b', slowdown: '#3987e5'};
+  function quadrant(host, pts, opts = {}) {
+    host._q = [pts, opts];
+    if (!host._ro && window.ResizeObserver) { host._ro = new ResizeObserver(() => host._q && quadrant(host, ...host._q)); host._ro.observe(host); }
+    const W = Math.max(260, host.clientWidth || 360), H = opts.height || 250, m = {l: 18, r: 12, t: 12, b: 26};
+    host.innerHTML = '';
+    if (!pts || !pts.length) { host.innerHTML = '<div class="muted small">Pas assez de chiffres publiés.</div>'; return; }
+    const cl = v => Math.max(-2, Math.min(2, v));
+    const X = v => m.l + (cl(v) + 2) / 4 * (W - m.l - m.r), Y = v => m.t + (1 - (cl(v) + 2) / 4) * (H - m.t - m.b);
+    const svg = el('svg', {class: 'ch', viewBox: `0 0 ${W} ${H}`, height: H}, host);
+    const q = opts.quads || {};
+    [['stagflation', -2, 2], ['reflation', 0, 2], ['slowdown', -2, 0], ['goldilocks', 0, 0]].forEach(([k, x, y]) => {
+      el('rect', {x: X(x), y: Y(y), width: X(x + 2) - X(x), height: Y(y - 2) - Y(y), fill: QUAD_TINT[k], 'fill-opacity': 0.07}, svg);
+      const t = el('text', {x: x < 0 ? X(x) + 6 : X(x + 2) - 6, y: y > 0 ? Y(y) + 14 : Y(y - 2) - 6, 'text-anchor': x < 0 ? 'start' : 'end'}, svg);
+      t.textContent = q[k] || k;
+    });
+    el('line', {x1: X(-2), x2: X(2), y1: Y(0), y2: Y(0), class: 'ax'}, svg);
+    el('line', {x1: X(0), x2: X(0), y1: Y(-2), y2: Y(2), class: 'ax'}, svg);
+    el('text', {x: X(2), y: H - 6, 'text-anchor': 'end'}, svg).textContent = 'croissance qui accélère →';
+    el('text', {x: X(-2), y: H - 6}, svg).textContent = '← croissance qui ralentit';
+    const yl = el('text', {x: 10, y: Y(0), 'text-anchor': 'middle', transform: `rotate(-90 10 ${Y(0)})`}, svg);
+    yl.textContent = 'inflation qui ralentit ↓   ↑ accélère';
+    if (pts.length > 1) el('path', {d: pts.map((p, k) => (k ? 'L' : 'M') + X(p.g).toFixed(1) + ' ' + Y(p.i).toFixed(1)).join(''), fill: 'none', stroke: '#6a6e7a', 'stroke-width': 2, 'stroke-linejoin': 'round'}, svg);
+    pts.forEach((p, k) => {
+      const last = k === pts.length - 1;
+      el('circle', {cx: X(p.g), cy: Y(p.i), r: last ? 6 : 3.5, fill: last ? '#4c8dff' : '#9aa0ae', 'fill-opacity': last ? 1 : 0.35 + 0.6 * k / pts.length, stroke: SURFACE, 'stroke-width': 2}, svg);
+    });
+    const lp = pts[pts.length - 1];
+    el('text', {x: X(lp.g) + (lp.g > 1.2 ? -10 : 10), y: Y(lp.i) - 9, 'text-anchor': lp.g > 1.2 ? 'end' : 'start', style: 'fill:#d1d4dc;font-weight:600'}, svg).textContent = opts.nowLabel || 'maintenant';
+    const hit = el('rect', {x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: 'transparent'}, svg);
+    hit.addEventListener('mousemove', ev => {
+      const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * W / r.width, py = (ev.clientY - r.top) * H / r.height;
+      let best = pts[0], bd = 1e9;
+      pts.forEach(p => { const d = (X(p.g) - px) ** 2 + (Y(p.i) - py) ** 2; if (d < bd) { bd = d; best = p; } });
+      if (bd > 900) { hideTip(); return; }
+      const f = v => (v > 0 ? '+' : '') + v.toFixed(2).replace('.', ',');
+      tip(`<div class="muted">${esc(best.label || new Date(best.t).toLocaleDateString('fr-FR', {month: 'long', year: 'numeric'}))}</div>` +
+        `Croissance <b>${f(best.g)}</b> · inflation <b>${f(best.i)}</b>${best.quad && (opts.long || q)[best.quad] ? `<br>${esc((opts.long || q)[best.quad])}` : ''}`, ev.clientX, ev.clientY);
+    });
+    hit.addEventListener('mouseleave', hideTip);
+  }
+
+  // ---- chemin du taux directeur (V25) : ce que le marche anticipe (ligne) face aux projections des membres de la Fed (points + fourchette) ----
+  // f: {path:[{m, r, label}], dots:[{year, m, median, low, high}], longRun}
+  function ratePath(host, f) {
+    host._rp = f;
+    if (!host._ro && window.ResizeObserver) { host._ro = new ResizeObserver(() => host._rp && ratePath(host, host._rp)); host._ro.observe(host); }
+    const W = Math.max(260, host.clientWidth || 420), H = 200, m = {l: 40, r: 58, t: 10, b: 22};
+    host.innerHTML = '';
+    const path = (f.path || []).filter(p => p.r != null), dots = (f.dots || []).filter(d => d.median != null && d.m >= 0 && d.m <= 24);
+    if (path.length < 2) { host.innerHTML = '<div class="muted small">Taux du marché indisponibles (base FRED).</div>'; return; }
+    const ys = path.map(p => p.r).concat(dots.flatMap(d => [d.median, d.low ?? d.median, d.high ?? d.median]), f.longRun != null ? [f.longRun] : []);
+    let y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const pad = (y1 - y0) * 0.12 || 0.25; y0 -= pad; y1 += pad;
+    const x1 = 24;
+    const X = v => m.l + v / x1 * (W - m.l - m.r), Y = v => m.t + (1 - (v - y0) / (y1 - y0)) * (H - m.t - m.b);
+    const C1 = '#3987e5', C2 = '#d95926';
+    const lg = document.createElement('div');
+    lg.className = 'chlegend';
+    lg.innerHTML = `<span><i style="background:${C1}"></i>Marché (taux d'État de 3 mois à 2 ans)</span><span><i style="background:${C2}"></i>Fed : médiane et fourchette des membres</span>`;
+    host.appendChild(lg);
+    const svg = el('svg', {class: 'ch', viewBox: `0 0 ${W} ${H}`, height: H}, host);
+    const pf = v => v.toFixed(2).replace('.', ',') + ' %';
+    ticks(y0, y1, 4).forEach(v => {
+      el('line', {x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), class: 'grid'}, svg);
+      el('text', {x: m.l - 6, y: Y(v) + 3, 'text-anchor': 'end'}, svg).textContent = v.toFixed(2).replace('.', ',');
+    });
+    const step = X(6) - X(0) >= 92 ? 6 : 12;                       // « aujourd'hui » fait ~60 px : pas de chevauchement des etiquettes
+    for (let k = 0; k <= x1; k += step) el('text', {x: X(k), y: H - 5, 'text-anchor': k === 0 ? 'start' : k === x1 ? 'end' : 'middle'}, svg).textContent = k === 0 ? "aujourd'hui" : `+${k} mois`;
+    if (f.longRun != null) {
+      el('line', {x1: m.l, x2: W - m.r, y1: Y(f.longRun), y2: Y(f.longRun), stroke: '#4a4e5a', 'stroke-width': 1, 'stroke-dasharray': '3 3'}, svg);
+      el('text', {x: m.l + 4, y: Y(f.longRun) - 4}, svg).textContent = `taux neutre selon la Fed : ${pf(f.longRun)}`;
+    }
+    el('path', {d: path.map((p, k) => (k ? 'L' : 'M') + X(p.m).toFixed(1) + ' ' + Y(p.r).toFixed(1)).join(''), fill: 'none', stroke: C1, 'stroke-width': 2, 'stroke-linejoin': 'round'}, svg);
+    path.forEach(p => el('circle', {cx: X(p.m), cy: Y(p.r), r: 4, fill: C1, stroke: SURFACE, 'stroke-width': 2}, svg));
+    const lp = path[path.length - 1];
+    el('text', {x: X(lp.m) + 8, y: Y(lp.r) + 3, style: 'fill:#d1d4dc;font-weight:600'}, svg).textContent = pf(lp.r);
+    dots.forEach(d => {
+      if (d.low != null && d.high != null) {
+        el('line', {x1: X(d.m), x2: X(d.m), y1: Y(d.low), y2: Y(d.high), stroke: C2, 'stroke-width': 2, 'stroke-opacity': 0.45}, svg);
+        [d.low, d.high].forEach(v => el('line', {x1: X(d.m) - 4, x2: X(d.m) + 4, y1: Y(v), y2: Y(v), stroke: C2, 'stroke-width': 2, 'stroke-opacity': 0.45}, svg));
+      }
+      el('circle', {cx: X(d.m), cy: Y(d.median), r: 5, fill: C2, stroke: SURFACE, 'stroke-width': 2}, svg);
+      el('text', {x: X(d.m) + 9, y: Y(d.median) + 3}, svg).textContent = `fin ${d.year}`;
+    });
+    const all = path.map(p => ({x: X(p.m), y: Y(p.r), h: `<b>Marché</b> · ${esc(p.label || '')}<br>${pf(p.r)}`}))
+      .concat(dots.map(d => ({x: X(d.m), y: Y(d.median), h: `<b>Fed</b> · fin ${d.year}<br>médiane ${pf(d.median)}${d.low != null ? `<br>fourchette ${pf(d.low)} – ${pf(d.high)}` : ''}`})));
+    const hit = el('rect', {x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: 'transparent'}, svg);
+    hit.addEventListener('mousemove', ev => {
+      const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * W / r.width, py = (ev.clientY - r.top) * H / r.height;
+      let best = all[0], bd = 1e9;
+      all.forEach(a => { const d = (a.x - px) ** 2 + (a.y - py) ** 2; if (d < bd) { bd = d; best = a; } });
+      if (bd > 1600) { hideTip(); return; }
+      tip(best.h, ev.clientX, ev.clientY);
+    });
+    hit.addEventListener('mouseleave', hideTip);
+  }
+  return {line, calib, timeline, spark, meter, dvBar, hideTip, esc, prose, ticks, quadrant, ratePath};
 })();

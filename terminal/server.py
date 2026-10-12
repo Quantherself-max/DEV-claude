@@ -31,8 +31,8 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "24.2"
-API_LEVEL = 23                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "25"
+API_LEVEL = 24                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -417,6 +417,7 @@ class App:
             t0 = time.time()
             self.service.refresh_all()
             self.macro_week_tick()
+            self.macro_month_tick()
             self.wake.clear()
             self.wake.wait(max(1.0, self.cfg.refresh_seconds - (time.time() - t0)))
 
@@ -445,6 +446,53 @@ class App:
                 self.service.macro_week_mark_sent(rep["week"], now)
             except Exception as e:
                 self.service.errors["bilan macro Telegram"] = f"{type(e).__name__}: {str(e)[:120]}"
+
+    # --- analyse macro du mois (V25) ---
+    def macro_month_tick(self, force: bool = False) -> None:
+        """Toutes les 30 minutes : l'analyse du mois en cours est recalculee et archivee. Si l'option est cochee, l'analyse du mois ecoule
+        part sur Telegram le 1er du mois a partir de 8 h UTC (une seule fois)."""
+        from engine import macromonth
+        now = time.time()
+        ext = self.service.ext
+        src = tuple((ext.updated or {}).get(k) for k in ("fred", "fed", "imf")) if ext else None
+        if not force and now - getattr(self, "_mm_tick", 0) < 1800 and src == getattr(self, "_mm_src", None):
+            return
+        self._mm_tick, self._mm_src = now, src
+        try:
+            self.service.macro_month()
+        except Exception as e:
+            self.service.errors["analyse du mois"] = f"{type(e).__name__}: {str(e)[:120]}"
+            return
+        self.service.errors.pop("analyse du mois", None)
+        cur = macromonth.month_start(self.service.source.now_ms())
+        if not (self.cfg.macro_month_telegram and self.cfg.telegram_on) or self.service.source.now_ms() < cur + 8 * 3_600_000:
+            return
+        key = macromonth.month_key(cur - 86_400_000)
+        try:
+            rep = self.service.macro_month(key)
+        except (KeyError, ValueError):
+            return
+        if rep.get("sentAt"):
+            return
+        from alerts.assistant import split_text
+        try:
+            for part in split_text(rep["summary"]):
+                self.notifier.send(part)
+            self.service.macro_month_mark_sent(key, now)
+        except Exception as e:
+            self.service.errors["analyse du mois Telegram"] = f"{type(e).__name__}: {str(e)[:120]}"
+
+    def macro_month_research(self, key: str | None) -> dict:
+        """Recherche de Claude pour le mois : rapports des grandes banques, discussion au sein de la Fed, projections ; tableau des banques."""
+        from alerts.assistant import MONTH_PROMPT
+        from engine import macromonth
+        rep = self.service.macro_month(key)
+        res = self.assistant.ask(MONTH_PROMPT, src="mois", context=rep["summary"], web_uses=10)
+        if res.get("ok"):
+            text, rows = macromonth.parse_banks(res["answer"])
+            self.service.macro_month_banks(rep["month"], {"text": text, "rows": rows, "t": int(time.time() * 1000), "usd": round(res.get("usd", 0.0), 4),
+                                                          "model": res.get("model")})
+        return {**res, "month": rep["month"]}
 
     def macro_week_comment(self, key: str | None) -> dict:
         """Commentaire de Claude sur une semaine : rapports, geopolitique, institutionnels (recherche web), a partir du bilan chiffre."""
@@ -601,7 +649,7 @@ class App:
                 "footprintDays": c.footprint_days, "trades": {s: t.status() for s, t in getattr(self, "trades", {}).items()},
                 "signalOn": c.signal_on, "signalMinScore": c.signal_min_score, "signalMaxWeek": c.signal_max_week, "signalMaxPerSymbol": c.signal_max_per_symbol,
                 "signalLeverage": c.signal_leverage, "signalTrendGate": c.signal_trend_gate, "signalDirection": c.signal_direction,
-                "macroWeekTelegram": c.macro_week_telegram,
+                "macroWeekTelegram": c.macro_week_telegram, "macroMonthTelegram": c.macro_month_telegram,
                 "x": {"on": c.x_on, "configured": bool(c.x_token and c.x_accounts), "tokenHint": ("..." + c.x_token[-4:]) if c.x_token else "",
                       "accounts": list(c.x_accounts), "posts": c.x_posts},
                 "chat": {"configured": bool(c.chat_key), "keyHint": ("..." + c.chat_key[-4:]) if c.chat_key else "", "model": c.chat_model, "web": c.chat_web,
@@ -677,6 +725,8 @@ class App:
             upd["TERMINAL_X_ON"] = "1" if body["xOn"] else "0"
         if body.get("macroWeekTelegram") is not None:
             upd["TERMINAL_MACRO_WEEK_TELEGRAM"] = "1" if body["macroWeekTelegram"] else "0"
+        if body.get("macroMonthTelegram") is not None:
+            upd["TERMINAL_MACRO_MONTH_TELEGRAM"] = "1" if body["macroMonthTelegram"] else "0"
         if body.get("chatKey"):
             key = str(body["chatKey"]).strip()
             if not re.fullmatch(r"[A-Za-z0-9_\-]{20,300}", key):
@@ -768,6 +818,10 @@ def make_handler(app: App):
                     return self._json(app.service.macro_week((q.get("week") or [None])[0] or None))
                 if u.path == "/api/macroweeks":
                     return self._json(app.service.macro_weeks())
+                if u.path == "/api/macromonth":
+                    return self._json(app.service.macro_month((q.get("month") or [None])[0] or None))
+                if u.path == "/api/macromonths":
+                    return self._json(app.service.macro_months())
                 if u.path == "/api/tpo":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     gi = lambda k: int(float((q.get(k) or ["0"])[0] or 0)) or None
@@ -898,6 +952,8 @@ def make_handler(app: App):
                     return self._json(app.assistant.ask(str(body.get("question") or ""), src="web"))
                 if path == "/api/macroweek/comment":
                     return self._json(app.macro_week_comment(str(body.get("week") or "") or None))
+                if path == "/api/macromonth/research":
+                    return self._json(app.macro_month_research(str(body.get("month") or "") or None))
                 if path == "/api/chat/reset":
                     app.assistant.reset()
                     return self._json({"ok": True})
