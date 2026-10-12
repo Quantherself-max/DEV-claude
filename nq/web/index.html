@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NQ Scalp Terminal</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top">
+  <div class="brand">NQ<span> SCALP</span></div>
+  <div class="contract"><b id="contract">NQ</b><small id="roll"></small></div>
+  <div class="price"><b id="price">—</b><small id="atr"></small></div>
+  <div class="seg" id="tfs" role="group" aria-label="Unité de temps"></div>
+  <div class="clocks" title="Heure de Paris · heure de New York (ET)">
+    <span><i>Paris</i> <b id="clkParis">--:--:--</b></span>
+    <span><i>NY</i> <b id="clkEt">--:--:--</b></span>
+  </div>
+  <div class="phase"><b id="phase">—</b><small id="nextMark"></small></div>
+  <div class="spacer"></div>
+  <button id="acctChip" class="badge" title="État du compte Lucid : marge avant le plancher">Compte —</button>
+  <span id="srcBadge" class="badge">source —</span>
+  <button id="themeBtn" class="badge" title="Style des bougies : nuit (bleu et blanc) ou classique (vert et rouge)">☾ nuit</button>
+</header>
+<div id="banner" hidden></div>
+
+<main>
+  <section id="chartcol">
+    <div id="toolbar">
+      <span class="seg" id="lvlMode" title="Niveaux affichés sur le graphique">
+        <button data-m="off">Niveaux : non</button><button data-m="key">Clés</button><button data-m="all">Tous</button>
+      </span>
+      <span class="seg" id="vpMode" title="Profil de volume collé à l'échelle des prix">
+        <button data-m="off">Profil : non</button><button data-m="rth">Séance</button><button data-m="gx">Globex</button><button data-m="prev">Veille</button>
+      </span>
+      <label title="Zones où plusieurs niveaux se superposent"><input type="checkbox" id="optZones"> Zones</label>
+      <label title="Gros ordres agressifs (bulles)"><input type="checkbox" id="optBigs"> Gros ordres</label>
+      <label title="Absorptions : gros delta contre le sens de la barre"><input type="checkbox" id="optAbs"> Absorptions</label>
+      <span class="seg" id="cvdMode" title="Remise à zéro du CVD">
+        <button data-m="gx">CVD Globex</button><button data-m="rth">CVD séance</button>
+      </span>
+      <span class="seg" id="tzMode" title="Fuseau de l'axe du temps">
+        <button data-m="paris">Paris</button><button data-m="et">New York</button>
+      </span>
+    </div>
+    <div id="pricewrap">
+      <div id="price-chart"></div>
+      <canvas id="overlay"></canvas>
+      <div id="legend"></div>
+    </div>
+    <div id="cvd-chart"></div>
+    <div id="strip"><span class="muted">Gros ordres</span> <span id="bigstrip">—</span></div>
+  </section>
+
+  <aside id="side">
+    <nav id="tabs" class="tabs" role="tablist">
+      <button data-tab="lecture" class="on">Lecture</button>
+      <button data-tab="levels">Niveaux</button>
+      <button data-tab="account">Compte</button>
+      <button data-tab="plan">Plan</button>
+      <button data-tab="fp">Footprint</button>
+    </nav>
+    <div id="tab-lecture" class="tabpage"></div>
+    <div id="tab-levels" class="tabpage" hidden></div>
+    <div id="tab-account" class="tabpage" hidden></div>
+    <div id="tab-plan" class="tabpage" hidden></div>
+    <div id="tab-fp" class="tabpage" hidden></div>
+  </aside>
+</main>
+<div id="toast" hidden></div>
+
+<script src="vendor/lightweight-charts.standalone.production.js"></script>
+<script src="util.js"></script>
+<script src="chart.js"></script>
+<script src="panels.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

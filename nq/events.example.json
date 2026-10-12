@@ -1,0 +1,18 @@
+[
+  {
+    "t": "2026-10-14T12:30:00Z",
+    "name": "CPI (inflation US)",
+    "impact": 3,
+    "note": "Exemple : remplace par les vraies dates"
+  },
+  {
+    "t": "2026-10-14T18:00:00Z",
+    "name": "Compte rendu de la Fed",
+    "impact": 2
+  },
+  {
+    "t": "2026-10-16T12:30:00Z",
+    "name": "Ventes au détail US",
+    "impact": 2
+  }
+]
