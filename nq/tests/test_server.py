@@ -304,6 +304,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(u["undone"]["id"], r["id"])
         self.assertEqual(self.get("/api/account")[1]["todayPnl"], 0)
 
+    def test_zz_funded_and_payout_via_api(self):
+        self.post("/api/account/reset", {"confirm": True})
+        self.assertEqual(self.post("/api/account/payout", {"amount": 500})[0], 400)               # pas de retrait en evaluation
+        st, r = self.post("/api/account/funded", {})
+        self.assertEqual((st, r["stage"]), (200, "funded"))
+        self.assertEqual(self.post("/api/account/funded", {})[0], 400)
+        st, ac = self.get("/api/account")
+        self.assertEqual((ac["stage"], ac["caps"]["minis"], ac["payout"]["eligible"]), ("funded", 1, False))
+        self.assertIn("jour(s)", ac["payout"]["why"][0])
+        self.assertEqual(self.post("/api/account/payout", {"amount": -1})[0], 400)
+        st, p = self.post("/api/account/payout", {"amount": 500, "note": "test"})
+        self.assertEqual((st, p["amount"]), (200, 500.0))
+        self.assertEqual(self.get("/api/account")[1]["balance"], 24_500)
+        self.post("/api/account/undo", {})
+        self.post("/api/account/undo", {})
+        self.assertEqual(self.get("/api/account")[1]["stage"], "eval")
+
     def test_zz_reset_needs_confirmation_and_profile(self):
         self.post("/api/account/adjust", {"day": "2026-10-08", "net": 300, "note": "reprise"})
         self.assertEqual(self.post("/api/account/reset", {})[0], 400)

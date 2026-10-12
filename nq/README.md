@@ -1,4 +1,4 @@
-# NQ Scalp Terminal (V0.1 — la base)
+# NQ Scalp Terminal (V0.2)
 
 Un terminal **local** (il tourne uniquement sur ton PC) pour scalper le **Nasdaq-100 en futures (NQ / MNQ)** avec un compte prop firm **Lucid 25K**. Même esprit que le terminal crypto (VP, CVD, VWAP, niveaux, lecture honnête), refait pour le scalping : horloge de New York, séances du CME, order flow à la transaction près, et un moteur de risque qui connaît les règles du compte.
 
@@ -54,7 +54,22 @@ python run.py --source csv --csv C:\Trading\export\NQ_ticks.csv
 - Le fichier est lu **par blocs** (un export de ticks fait vite plusieurs Go) puis **suivi** : les lignes ajoutées arrivent à l'écran ; une ligne encore incomplète est attendue. On ne garde que les 6 derniers jours *du fichier*.
 - `python tools/make_sample_csv.py ticks.csv` écrit un fichier d'exemple (avec ou sans côté, `--no-side`, `--iso`) pour essayer la chaîne.
 
-**À décider ensemble** : quelle plateforme alimente ce fichier, et comment (export natif, petit script / indicateur à écrire pour NinjaTrader, Sierra Chart, ATAS…), ou un fournisseur de données par API (payant). Voir la feuille de route.
+### Et si tu trades sur TradingView ?
+
+**TradingView peut passer tes ordres** (Lucid le range avec NinjaTrader et Tradovate parmi les plateformes du flux CQG, via tes identifiants Tradovate), mais **il ne peut pas alimenter le terminal** : pas d'API de données, et ses conditions limitent les données à un usage « affichage seulement » (ni automatisation, ni collecte). Sur TradingView, à tester sur ton compte de simulation avant de t'y fier : ordres bracket (OCO), stop suiveuse (absente avec l'intégration Tradovate selon un article ancien), DOM plus limité, coupures signalées ; **une seule session TradingView à la fois**.
+
+Pour que le terminal ait ses ticks, quatre voies (recherche d'octobre 2026, la plupart des chiffres viennent d'extraits de pages : revérifie avant d'acheter) :
+
+| Voie | Coût | Remarques |
+|---|---|---|
+| **A. Tu exécutes dans NinjaTrader 8** (même flux CQG) avec un enregistreur de ticks, TradingView pour les graphiques | ≈ 0 $ | La plus simple. **Windows seulement.** Le côté de l'agresseur est *déduit* (prix ≥ ask = acheteur), pas fourni par le CME. NinjaTrader ne reconstitue pas l'historique des bid / ask : l'enregistrement doit tourner dès le premier jour |
+| **B. TradingView pour les ordres + Databento** pour le terminal | 199 $/mois + licences CME (≈ 210 à 240 $ au total, à confirmer) | La plus propre : vrai côté de l'agresseur du CME, indépendant de Lucid et de TradingView. Dans Databento, `side` = « Ask » désigne le vendeur agressif et « Bid » l'acheteur agressif (sens inverse du réflexe) : déclare-le avec `NQ_CSV_SELL_CODES=a` |
+| **C. TradingView + NinjaTrader en parallèle** pour les données | ≈ 0 $ | **Non confirmé** : Tradovate limite les sessions simultanées (1 à 2 selon les sources). À tester sur la simulation, et à demander à Lucid |
+| **D. Pine Script `request.footprint()` + alertes** | Premium (≈ 70 $/mois) | Par barre seulement (pas de CVD au tick), serveur public sur le port 80 / 443, 3 secondes pour répondre, au plus 15 déclenchements par 3 minutes, et **conditions de TradingView probablement violées** : à éviter |
+
+Écartés : l'API Tradovate (compte réel financé et frais CME, selon une source) et les API de CQG (non fournies aux comptes Lucid). Lucid autorise les systèmes automatiques (le trader reste responsable), mais ne dit rien d'un simple enregistreur de données : demande-lui une confirmation écrite.
+
+**À décider ensemble** : A, B ou C. L'indicateur NinjaScript d'enregistrement (voie A) n'est pas encore écrit.
 
 ## Compte Lucid 25K
 
@@ -82,6 +97,14 @@ Tout est modifiable dans **Compte → « Règles Lucid et limites personnelles �
 - la **consistance** : meilleur jour / profit total, le **profit total à atteindre pour valider** (plus que la cible si le meilleur jour est gros : un meilleur jour de 700 $ à 50 % exige 1 400 $, pas 1 250 $), et le **gain maximal d'aujourd'hui** qui ne casse pas la règle ;
 - le **micro-scalping** : part de tes gains issue de trades tenus 5 s ou moins (saisis la durée de chaque trade), avec un avertissement dès 35 % ; la **fermeture forcée** de 16 h 45 ET est annoncée 30 minutes avant ;
 - le **dimensionnement** : pour un stop et un risque donnés, combien de NQ **et** de MNQ (frais inclus), plafonnés par le compte, le rapport gain / risque de chaque objectif, et des avertissements (stop trop large, plafond atteint, > 25 % de la marge restante, stop quotidien, frais qui mangent l'objectif).
+
+**Compte financé et retraits** (règles de l'article [LucidFlex Payouts](https://support.lucidtrading.com/en/articles/12945796-lucidflex-payouts), reconstituées à partir d'extraits : le site n'était pas lisible depuis mon environnement) :
+- **Évaluation puis compte financé** : quand Lucid valide ton évaluation, bouton **« Évaluation validée → passer en compte financé »** (Compte → Étape). C'est un **nouveau compte** : solde et plancher repartent du départ (25 000 $ / 24 000 $, à confirmer), la consistance disparaît, le palier de taille et les retraits s'appliquent. Annulable avec « Annuler la dernière saisie ».
+- **Palier de taille** : 1 mini / 10 micros tant que le profit du compte est sous 1 000 $, puis 2 / 20 ; mesuré en fin de séance, il peut redescendre après un retrait. Le calculateur le respecte.
+- **Retrait** : 5 jours à ≥ 100 $ dans le cycle, profit du cycle positif, minimum 500 $, au plus 50 % du profit et 1 000 $ (le plafond ne monte pas avec les retraits suivants), 90 / 10, 5 retraits au plus puis passage en Live au choix de Lucid. Le premier retrait demande donc **au moins 1 000 $ de profit** : 5 jours à 100 $ ne suffisent pas.
+- **À la demande, le plancher saute à 25 100 $ et le solde baisse du montant retiré** : ta marge après retrait = solde − 25 100 $ (profit de 1 000 $, retrait de 500 $ → solde 25 500 $, marge **400 $**). La carte **Retraits** montre les jours qualifiants, l'éligibilité, le montant maximal, et la marge qu'il te resterait. Saisis le retrait dans la carte quand tu l'as demandé : le cycle repart de zéro.
+- **Hypothèses non tranchées par l'article** (retenues prudemment, modifiables dans le code) : un jour compte *net de frais* et *par séance* ; le « 50 % » porte sur le *profit du compte*.
+- **Limite de perte journalière** : option choisie à l'achat (moins chère si activée), non modifiable ensuite, **souple** : elle verrouille la séance (« atteinte ») mais ne fait pas échouer le compte. Seul le plancher le fait. Son montant pour Flex 25K n'est pas confirmé (600 $ cité pour Pro et Daily) : lis-le sur la page d'achat et saisis-le dans les règles.
 
 **Le terminal ne se connecte pas à ta plateforme** : le solde vient du **journal** que tu tiens (Compte → « Trade clôturé » : un trade, ou « Clôturer au dernier prix → » depuis la position suivie ; « Reprendre un compte entamé » pour un compte déjà commencé). Le **latent** vient de la **position ouverte** que tu saisis (ou que tu prends depuis le Plan). Il ne comprend pas les frais. Le journal est dans `data_local/compte.json` (écriture atomique ; un fichier illisible est mis de côté, jamais écrasé).
 
@@ -123,12 +146,12 @@ nq/
 
 Tests : `python -m unittest discover -s tests -t .` (depuis le dossier `nq`).
 
-## Limites connues (V0.1)
+## Limites connues (V0.2)
 
 - Données **simulées** par défaut ; pas de connexion directe à un courtier ni à un flux de données.
 - Barres de 1 minute au plus fin : pas encore de graphiques à la seconde, au tick ni au volume (il faut d'abord une vraie source de ticks).
 - Jours fériés de bourse non gérés (le terminal ne sait pas qu'un jour est férié) ; la **date de roll** du contrat est une estimation (8 jours avant l'échéance) : au moment du roll, regarde le volume réel de ta plateforme.
-- Compte : saisie manuelle ; règles de Lucid à confirmer (voir plus haut) ; règles du **compte financé** non incluses.
+- Compte : saisie manuelle ; règles de Lucid à confirmer (voir plus haut) ; le compte financé repart-il vraiment de 25 000 $ avec un plancher à 24 000 $ ? À confirmer. La phase **Live** (après 5 retraits) n'est pas modélisée.
 - Pas d'alertes (Telegram), pas de discussion avec Claude, pas de mise à jour automatique : ce sont des étapes suivantes.
 
 > Estimations et statistiques à titre informatif, ce n'est pas un conseil financier. Le trading de futures comporte un risque élevé de perte.

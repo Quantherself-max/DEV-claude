@@ -191,6 +191,26 @@ class ContextTests(unittest.TestCase):
         c = self.build(acct={"breached": False, "dailyStopHit": False, "dailyStop": 300, "status": "danger", "buffer": 180})
         self.assertTrue(any("Marge avant le plancher" in n["text"] for n in c["notes"]))
 
+    def test_funded_account_notes(self):
+        acct = {"breached": False, "dailyStopHit": False, "dllHit": False, "dailyStop": 300, "status": "ok", "buffer": 900, "stage": "funded",
+                "caps": {"minis": 1, "micros": 10, "next": 1000},
+                "payout": {"eligible": True, "max": {"amount": 550, "net": 495, "balance": 25_550, "floor": 25_100, "cushion": 450}}}
+        txt = " | ".join(n["text"] for n in self.build(acct=acct)["notes"])
+        self.assertIn("1 mini / 10 micros jusqu'à 1\u202f000 $", txt)
+        self.assertIn("Retrait possible : jusqu'à 550 $ (495 $ pour toi", txt)
+        self.assertIn("marge 450 $", txt)
+        acct["payout"] = {"eligible": False, "max": None}
+        acct["caps"] = {"minis": 2, "micros": 20, "next": None}
+        txt = " | ".join(n["text"] for n in self.build(acct=acct)["notes"])
+        self.assertNotIn("Retrait possible", txt)
+        self.assertNotIn("taille limitée", txt)
+
+    def test_soft_daily_loss_limit_note(self):
+        acct = {"breached": False, "dailyStopHit": True, "dllHit": True, "dll": 600, "dailyStop": 300, "status": "ok", "buffer": 700}
+        txt = " | ".join(n["text"] for n in self.build(acct=acct)["notes"])
+        self.assertIn("Limite de perte journalière atteinte (−600 $)", txt)
+        self.assertIn("le compte survit", txt)
+
     def test_empty_and_closed(self):
         self.assertFalse(context.build(Market(), {})["ready"])
         sat = utc(2026, 10, 10, 15)

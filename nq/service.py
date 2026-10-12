@@ -14,7 +14,7 @@ from engine.bars import TF_MS, resample
 from engine.instruments import INSTRUMENTS, front_contract
 from engine.market import Market
 
-VERSION = "0.1"
+VERSION = "0.2"
 log = logging.getLogger("nq")
 SIM_BASE = {"NQ": 25_000.0, "MNQ": 25_000.0, "ES": 6_700.0, "MES": 6_700.0}
 

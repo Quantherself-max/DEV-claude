@@ -103,6 +103,10 @@ def route_post(app: App, path: str, body: dict):
                                body.get("fees"), body.get("setup", ""), body.get("note", ""), body.get("hold_s"))
         if path == "/api/account/adjust":
             return a.add_adjust(body.get("day"), body.get("net"), body.get("note", ""))
+        if path == "/api/account/payout":
+            return a.add_payout(body.get("amount"), body.get("t"), body.get("note", ""))
+        if path == "/api/account/funded":
+            return a.start_funded(body.get("t"), body.get("note", ""))
         if path == "/api/account/undo":
             return {"undone": a.undo()}
         if path == "/api/account/delete":

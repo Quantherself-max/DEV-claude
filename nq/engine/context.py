@@ -180,10 +180,21 @@ def build(mk, lv: dict, events=None, acct: dict | None = None, source: dict | No
         if acct:
             if acct.get("breached"):
                 note("warn", "Plancher du compte atteint : plus aucun trade.")
+            elif acct.get("dllHit"):
+                note("warn", f"Limite de perte journalière atteinte (−{fr(acct['dll'], 0)} $) : verrouillé jusqu'à la séance suivante (le compte survit).")
             elif acct.get("dailyStopHit"):
                 note("warn", f"Stop quotidien atteint (−{fr(acct['dailyStop'], 0)} $) : fin de journée.")
             elif acct.get("status") in ("danger", "warn"):
                 note("warn", f"Marge avant le plancher : {fr(acct['buffer'], 0)} $ seulement. Réduis la taille.")
+            if acct.get("stage") == "funded":
+                caps, po = acct.get("caps") or {}, acct.get("payout") or {}
+                if caps.get("next"):
+                    note("info", f"Compte financé : taille limitée à {caps['minis']} mini / {caps['micros']} micros jusqu'à {fr(caps['next'], 0)} $ de profit "
+                                 "(le palier se met à jour en fin de séance).")
+                if po.get("eligible") and po.get("max"):
+                    m = po["max"]
+                    note("info", f"Retrait possible : jusqu'à {fr(m['amount'], 0)} $ ({fr(m['net'], 0)} $ pour toi après le 90 / 10). Après lui : solde {fr(m['balance'], 0)} $, "
+                                 f"plancher {fr(m['floor'], 0)} $, marge {fr(m['cushion'], 0)} $.")
         if not ph.get("open"):
             note("info", f"{ph['label']} : le marché est fermé, les données affichées sont celles de la dernière séance.")
         return out

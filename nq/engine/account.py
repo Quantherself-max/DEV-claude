@@ -1,5 +1,8 @@
 """Journal du compte prop firm : trades saisis, P&L par journee de trading, etat du compte. Persistant (un fichier JSON local).
 
+Etapes : l'EVALUATION, puis le COMPTE FINANCE (un nouveau compte de simulation : le solde repart du capital, la consistance disparait, le palier de
+taille et les retraits s'appliquent). Le passage est une saisie « etape » ; seules les saisies posterieures comptent pour le compte courant.
+
 Le journal est la SEULE source du solde : le terminal ne se connecte pas a ta plateforme. Il faut donc y saisir chaque trade (ou, pour un compte
 deja entame, un « ajustement » de P&L par journee). Plus tard, un import automatique depuis ta plateforme pourra le remplir.
 
@@ -128,6 +131,43 @@ class Account:
             self._save()
             return rec
 
+    def _current(self) -> tuple:
+        """(etape, saisies du compte courant, jour du passage en compte finance ou None) : seules les saisies apres le dernier marqueur d'etape comptent."""
+        idx = max((i for i, r in enumerate(self.records) if r["kind"] == "stage"), default=-1)
+        if idx < 0:
+            return "eval", self.records, None
+        return self.records[idx]["stage"], self.records[idx + 1:], self.records[idx]["day"]
+
+    def start_funded(self, t: int | None = None, note: str = "") -> dict:
+        """Evaluation validee : on passe au compte finance (nouveau compte, solde de depart, plancher de depart). Annulable avec `undo`."""
+        with self.lock:
+            if self._current()[0] == "funded":
+                raise AccountError("le compte est déjà un compte financé")
+            t = int(t) if t else self.now_ms()
+            rec = {"id": self.next_id, "kind": "stage", "stage": "funded", "t": t, "day": clock.trading_day(t), "note": str(note)[:300]}
+            self.next_id += 1
+            self.records.append(rec)
+            self._save()
+            return rec
+
+    def add_payout(self, amount, t: int | None = None, note: str = "") -> dict:
+        """Retrait DEMANDE (montant brut, avant le partage 90 / 10). Compte finance seulement. Le solde baisse et le plancher saute au niveau verrouille."""
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            raise AccountError("montant du retrait invalide") from None
+        if not amount > 0:
+            raise AccountError("le montant du retrait doit être positif")
+        with self.lock:
+            if self._current()[0] != "funded":
+                raise AccountError("les retraits n'existent que sur le compte financé : passe d'abord en compte financé")
+            t = int(t) if t else self.now_ms()
+            rec = {"id": self.next_id, "kind": "payout", "t": t, "day": clock.trading_day(t), "amount": round(amount, 2), "note": str(note)[:300]}
+            self.next_id += 1
+            self.records.append(rec)
+            self._save()
+            return rec
+
     def undo(self) -> dict | None:
         """Annule la derniere saisie."""
         with self.lock:
@@ -156,24 +196,32 @@ class Account:
             return n
 
     # ---------- lecture ----------
-    def day_pnls(self) -> dict:
+    def day_pnls(self, recs: list | None = None) -> dict:
+        """P&L net par journee de trading (trades et ajustements ; ni les retraits ni les marqueurs d'etape). Par defaut : le compte courant."""
         out: dict = {}
-        for r in self.records:
-            out[r["day"]] = round(out.get(r["day"], 0.0) + r["net"], 2)
+        for r in (self._current()[1] if recs is None else recs):
+            if r["kind"] in ("trade", "adjust"):
+                out[r["day"]] = round(out.get(r["day"], 0.0) + r["net"], 2)
         return dict(sorted(out.items()))
 
     def snapshot(self, today: str, open_pnl: float = 0.0) -> dict:
-        """Etat du compte pour la journee de trading `today` (voir risk.state)."""
+        """Etat du compte courant pour la journee de trading `today` (voir risk.state)."""
         with self.lock:
-            days = self.day_pnls()
+            stage, recs, since = self._current()
+            days = self.day_pnls(recs)
             closed = [(d, v) for d, v in days.items() if d < today]
-            st = risk.state(closed, days.get(today, 0.0), open_pnl, self.profile)
+            payouts = [(r["day"], r["amount"]) for r in recs if r["kind"] == "payout"]
+            st = risk.state(closed, days.get(today, 0.0), open_pnl, self.profile, stage, payouts, today)
             st["today"] = today
+            st["stageSince"] = since
+            if stage == "funded":
+                st["name"] = st["name"].replace("évaluation", "compte financé")
             st["days"] = [{"day": d, "pnl": v} for d, v in days.items()]
-            st["records"] = [r for r in self.records if r["day"] == today]
-            st["micro"] = self.micro()
+            st["records"] = [r for r in recs if r["day"] == today]
+            st["payouts"] = [r for r in recs if r["kind"] == "payout"]
             st["profile"] = self.profile.to_dict()
             st["toVerify"] = list(self.profile.to_verify)
+            st["micro"] = self.micro()
             return st
 
     def micro(self) -> dict:

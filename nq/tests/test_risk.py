@@ -128,10 +128,119 @@ class StateTests(unittest.TestCase):
         self.assertEqual(risk.state([], -100, 0, P)["dailyStopLeft"], 200)
         self.assertEqual(risk.state([], 150, 0, P)["dailyStopLeft"], 300)
 
-    def test_daily_loss_limit_breach_when_configured(self):
-        p = risk.PropProfile.from_dict({"daily_loss_limit": 500})
-        self.assertTrue(risk.state([], -500, 0, p)["breached"])
-        self.assertFalse(risk.state([], -499, 0, p)["breached"])
+    def test_daily_loss_limit_is_soft(self):
+        p = risk.PropProfile.from_dict({"daily_loss_limit": 600})
+        s = risk.state([], -650, 0, p)
+        self.assertTrue(s["dllHit"])                                  # verrouille jusqu'a la seance suivante...
+        self.assertFalse(s["breached"])                               # ... mais le compte survit : seul le plancher le fait echouer
+        self.assertFalse(risk.state([], -599, 0, p)["dllHit"])
+        self.assertFalse(risk.state([], -650, 0, P)["dllHit"])         # option desactivee par defaut
+        self.assertTrue(risk.state([], -900, -100, p)["breached"])     # equity au plancher : echec
+
+    def test_funded_stage_drops_consistency_and_never_passes(self):
+        days = [("2026-10-05", 1_300)]                                 # 100 % du profit en un jour : bloquant en evaluation, sans objet une fois finance
+        ev = risk.state(days, 0, 0, P)
+        self.assertFalse(ev["passed"])
+        fu = risk.state(days, 0, 0, P, stage="funded")
+        self.assertFalse(fu["consistency"]["rule"])
+        self.assertTrue(fu["consistency"]["ok"])
+        self.assertFalse(fu["passed"])
+        self.assertEqual(fu["stage"], "funded")
+
+
+class LedgerTests(unittest.TestCase):
+    def test_payout_snaps_floor_to_the_lock_and_lowers_balance(self):
+        led = risk.ledger([("2026-10-05", 600)], [("2026-10-06", 500)], P)
+        self.assertEqual((led["balance"], led["floor"], led["peak"], led["paid"], led["locked"]), (25_100, 25_100, 25_600, 500, True))
+        # sans retrait le plancher serait reste a 24 600
+        self.assertEqual(risk.ledger([("2026-10-05", 600)], [], P)["floor"], 24_600)
+        # ensuite il ne bouge plus, meme avec de nouveaux gains
+        led = risk.ledger([("2026-10-05", 600), ("2026-10-07", 700)], [("2026-10-06", 500)], P)
+        self.assertEqual((led["balance"], led["floor"]), (25_800, 25_100))
+
+    def test_payout_without_lock_or_static_does_not_snap(self):
+        self.assertEqual(risk.ledger([("a", 600)], [("b", 500)], risk.PropProfile.from_dict({"dd_mode": "static"}))["floor"], 24_000)
+        self.assertEqual(risk.ledger([("a", 600)], [("b", 500)], risk.PropProfile.from_dict({"lock_offset": None}))["floor"], 24_600)
+
+    def test_trailing_floor_wrapper_is_unchanged(self):
+        self.assertEqual(risk.trailing_floor([500, -200], P)["floor"], 24_500)
+
+    def test_scaling_tiers(self):
+        self.assertEqual(risk.scaling_caps(-300, P), (1, 10, 1_000))
+        self.assertEqual(risk.scaling_caps(999.99, P), (1, 10, 1_000))
+        self.assertEqual(risk.scaling_caps(1_000, P), (2, 20, None))
+        self.assertEqual(risk.scaling_caps(5_000, P), (2, 20, None))
+
+
+class PayoutTests(unittest.TestCase):
+    def cycle(self, *v):
+        return [(f"2026-10-0{i + 1}", x) for i, x in enumerate(v)]
+
+    def test_eligible_and_cushion_after_payout(self):
+        st = risk.payout_status(self.cycle(150, 200, 300, 250, 200), 26_100, 25_100, 0, P)       # 5 jours >= 100, profit 1 100
+        self.assertTrue(st["eligible"])
+        self.assertEqual(st["cap"], 550)                                                           # 50 % de 1 100
+        self.assertEqual(st["max"]["amount"], 550)
+        self.assertAlmostEqual(st["max"]["net"], 495)                                              # 90 %
+        self.assertEqual((st["max"]["balance"], st["max"]["floor"], st["max"]["cushion"]), (25_550, 25_100, 450))
+        self.assertEqual(st["min"]["cushion"], 26_100 - 500 - 25_100)
+
+    def test_cap_is_1000_and_needs_2000_of_profit(self):
+        st = risk.payout_status(self.cycle(400, 400, 400, 400, 400), 27_000, 25_100, 0, P)
+        self.assertEqual(st["cap"], 1_000)
+        self.assertEqual(risk.payout_status(self.cycle(400, 400, 400, 400, 400), 26_500, 25_100, 0, P)["cap"], 750)
+        self.assertEqual(st["profitForMin"], 1_000)
+
+    def test_five_hundred_profit_from_five_days_is_not_enough(self):
+        st = risk.payout_status(self.cycle(100, 100, 100, 100, 100), 25_500, 25_100, 0, P)
+        self.assertFalse(st["eligible"])                                                           # 5 jours valides mais plafond 250 $ < minimum 500 $
+        self.assertTrue(any("plafond" in w and "1000" in w.replace("\u202f", "") for w in st["why"]), st["why"])
+        self.assertIsNone(st["max"])
+        self.assertIsNone(st["min"])
+
+    def test_each_reason(self):
+        four = risk.payout_status(self.cycle(300, 300, 300, 300, 99), 26_300, 25_100, 0, P)
+        self.assertFalse(four["eligible"])
+        self.assertTrue(any("manque 1 jour" in w for w in four["why"]))                            # un jour a 99 $ ne compte pas
+        self.assertEqual(len(four["daysOk"]), 4)
+        neg = risk.payout_status(self.cycle(300, 300, 300, 300, 300, -2_000), 25_500, 25_100, 0, P)
+        self.assertTrue(any("pas positif" in w for w in neg["why"]))
+        done = risk.payout_status(self.cycle(400, 400, 400, 400, 400), 27_000, 25_100, 5, P)
+        self.assertFalse(done["eligible"])
+        self.assertTrue(any("5 retraits" in w for w in done["why"]))
+
+    def test_funded_state_end_to_end(self):
+        days = [("2026-10-05", 150), ("2026-10-06", 200), ("2026-10-07", 300), ("2026-10-08", 250), ("2026-10-09", 200)]
+        s = risk.state(days, 0, 0, P, "funded", [], "2026-10-12")
+        self.assertEqual((s["balance"], s["floor"], s["locked"]), (26_100, 25_100, True))
+        self.assertTrue(s["payout"]["eligible"])
+        self.assertEqual(s["payout"]["max"]["amount"], 550)
+        self.assertEqual((s["caps"]["minis"], s["caps"]["micros"]), (2, 20))                       # profit 1 100 : palier haut
+        # le retrait est demande aujourd'hui : solde en baisse, plancher verrouille, cycle vide
+        s2 = risk.state(days, 0, 0, P, "funded", [("2026-10-12", 550)], "2026-10-12")
+        self.assertEqual((s2["balance"], s2["floor"], s2["buffer"], s2["paid"]), (25_550, 25_100, 450, 550))
+        self.assertFalse(s2["payout"]["eligible"])
+        self.assertEqual(s2["payout"]["done"], 1)
+        self.assertEqual(s2["payout"]["left"], 4)
+        self.assertEqual(s2["payout"]["daysOk"], [])
+        # le palier redescend avec le solde : 25 550 -> profit 550 -> 1 mini / 10 micros
+        self.assertEqual((s2["caps"]["minis"], s2["caps"]["micros"], s2["caps"]["next"]), (1, 10, 1_000))
+
+    def test_cycle_restarts_after_a_payout(self):
+        days = [("2026-10-05", 300), ("2026-10-06", 300), ("2026-10-07", 300), ("2026-10-08", 300), ("2026-10-09", 300), ("2026-10-13", 120)]
+        s = risk.state(days, 0, 0, P, "funded", [("2026-10-12", 500)], "2026-10-14")
+        self.assertEqual(s["payout"]["daysOk"], ["2026-10-13"])                                    # seuls les jours APRES le retrait comptent
+        self.assertEqual(s["payout"]["cycleProfit"], 120)
+
+    def test_scaling_limits_the_plan_when_funded(self):
+        low = risk.state([("2026-10-05", 300)], 0, 0, P, "funded", [], "2026-10-12")
+        r = risk.plan("short", 25_000, 25_005, [24_990], "NQ", P, acct=low, risk_usd=500)
+        self.assertEqual(r["sizes"]["NQ"]["qty"], 1)                                               # 2 minis en evaluation, 1 seul sous 1 000 $ de profit
+        self.assertTrue(r["sizes"]["NQ"]["capped"])
+        self.assertTrue(any("palier" in w for w in r["warnings"]))
+        ev = risk.state([("2026-10-05", 300)], 0, 0, P, "eval", [], "2026-10-12")
+        self.assertEqual(risk.plan("short", 25_000, 25_005, [24_990], "NQ", P, acct=ev, risk_usd=500)["sizes"]["NQ"]["qty"], 2)
+        self.assertEqual(risk.max_qty("MNQ", P, None, (1, 10)), 10)
 
 
 class PlanTests(unittest.TestCase):
@@ -264,6 +373,47 @@ class AccountTests(unittest.TestCase):
         self.assertTrue(any("corrompu" in p.name for p in self.path.parent.iterdir()))
         acc.add_adjust("2026-10-12", 5)
         self.assertEqual(json.loads(self.path.read_text())["records"][0]["net"], 5)
+
+    def test_funded_stage_restarts_the_account(self):
+        self.acc.add_trade("NQ", "long", 1, 25_000, 25_070, t=utc(2026, 10, 8, 15), fees=0)       # 1 400 $ : l'evaluation est validee
+        self.assertEqual(self.acc.snapshot("2026-10-12")["stage"], "eval")
+        rec = self.acc.start_funded(t=self.now)
+        self.assertEqual(rec["stage"], "funded")
+        s = self.acc.snapshot("2026-10-12")
+        self.assertEqual((s["stage"], s["balance"], s["floor"], s["days"]), ("funded", 25_000, 24_000, []))   # nouveau compte : solde et plancher de depart
+        self.assertEqual(s["stageSince"], "2026-10-12")
+        self.assertEqual((s["caps"]["minis"], s["caps"]["micros"]), (1, 10))                         # palier de depart
+        with self.assertRaises(AccountError):
+            self.acc.start_funded()                                                                  # deja finance
+        self.acc.add_trade("NQ", "long", 1, 25_000, 25_010, t=self.now, fees=0)
+        self.assertEqual(self.acc.snapshot("2026-10-12")["balance"], 25_200)                         # l'ancien profit de l'evaluation ne compte plus
+        self.assertEqual(self.acc.perf()["all"]["n"], 2)                                             # mais les statistiques gardent tous les trades
+        self.acc.undo()
+        self.acc.undo()                                                                              # on annule le trade puis le passage
+        self.assertEqual(self.acc.snapshot("2026-10-12")["stage"], "eval")
+        self.assertEqual(self.acc.snapshot("2026-10-12")["profit"], 1_400)
+
+    def test_payout_flow_and_validation(self):
+        with self.assertRaises(AccountError):
+            self.acc.add_payout(500)                                                                 # pas de retrait en evaluation
+        self.acc.start_funded(t=utc(2026, 10, 5, 15))
+        for day, out in ((5, 25_030), (6, 25_040), (7, 25_050), (8, 25_040), (9, 25_050)):           # 5 jours : 600, 800, 1 000, 800, 1 000 $
+            self.acc.add_trade("NQ", "long", 1, 25_000, out, t=utc(2026, 10, day, 15), fees=0)
+        s = self.acc.snapshot("2026-10-12")
+        self.assertEqual(s["balance"], 25_000 + 600 + 800 + 1_000 + 800 + 1_000)
+        self.assertTrue(s["payout"]["eligible"])
+        for bad in (0, -5, "abc", None):
+            with self.assertRaises(AccountError):
+                self.acc.add_payout(bad)
+        rec = self.acc.add_payout(1_000, t=self.now, note="premier retrait")
+        self.assertEqual((rec["kind"], rec["amount"], rec["day"]), ("payout", 1_000.0, "2026-10-12"))
+        s = self.acc.snapshot("2026-10-12")
+        self.assertEqual((s["balance"], s["floor"], s["paid"]), (29_200 - 1_000, 25_100, 1_000))      # 4 200 $ de profit, 1 000 $ retires
+        self.assertEqual(s["payout"]["done"], 1)
+        self.assertEqual(len(s["payouts"]), 1)
+        self.assertEqual([r["kind"] for r in s["records"]], ["payout"])                              # le retrait du jour apparait dans le journal du jour
+        self.assertEqual(Account(self.path, now_ms=lambda: self.now).snapshot("2026-10-12")["balance"], 28_200)   # relu depuis le fichier
+        self.assertEqual(self.acc.day_pnls(), {"2026-10-05": 600.0, "2026-10-06": 800.0, "2026-10-07": 1000.0, "2026-10-08": 800.0, "2026-10-09": 1000.0})   # un retrait n'est pas un P&L
 
     def test_default_fees_are_lucids_table(self):
         self.assertEqual((P.fee_rt["NQ"], P.fee_rt["MNQ"]), (3.50, 1.00))                        # 1,75 $ et 0,50 $ par cote
