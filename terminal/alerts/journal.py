@@ -17,7 +17,8 @@ SIDE_WORD = {"long": "Achat", "short": "Vente"}
 CONF_WORD = {True: "d'achat", False: "de vente"}
 KIND_WORD = {"rebond": "rebond sur une zone", "reprise": "reprise d'une zone après une mèche ou un balayage"}
 MONTHS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre")
-DECIDED = ("stop", "tp1_be", "tp2")
+DECIDED = ("stop", "tp1_be", "tp2", "switch")    # switch (V25.1) : fermee au prix du moment, sur conseil, pour une idee plus forte dans l'autre sens
+UNFILLED = ("missed", "expired", "switch_cancel")
 BARS = (300_000, 900_000, 1_800_000, 3_600_000, 7_200_000, 14_400_000, 86_400_000)
 BAR_WORD = {300_000: "5 minutes", 900_000: "15 minutes", 1_800_000: "30 minutes", 3_600_000: "1 heure", 7_200_000: "2 heures",
             14_400_000: "4 heures", 86_400_000: "1 jour"}
@@ -117,7 +118,9 @@ def outcome(t):
         return "win"
     if res == "stop":
         return "loss"
-    if res in ("missed", "expired"):
+    if res == "switch":
+        return "win" if r_of(t) > 0 else "loss"
+    if res in UNFILLED:
         return "unfilled"
     return "uncounted"
 
@@ -156,6 +159,11 @@ def story(t, lev=None, price_now=None):
     if t.get("flipFrom"):
         f = t["flipFrom"]
         out["why"].append(f"Changement de sens : cette idée remplaçait {'l’achat' if f['side'] == 'long' else 'la vente'} {f['symbol'].replace('USDT', '')} {when(f['created'])}.")
+    for f in t.get("switchFrom") or []:
+        name = f"{'l’achat' if f['side'] == 'long' else 'la vente'} {f['symbol'].replace('USDT', '')} {when(f['created'])}"
+        out["why"].append(f"Changement de sens : idée jugée bien plus forte que {name}, encore en cours ; le message disait d'abord de "
+                          + ("l'annuler (ordre pas encore exécuté)." if f.get("state") == "pending" else
+                             f"le fermer au prix du marché (vers {fp(f.get('price'))}, {fr(f.get('r'))} fois le risque)."))
 
     # --- plan
     if alert:
@@ -239,7 +247,11 @@ def _events(ev, t, price_now):
                "tp2": f"Objectif 2 atteint ({fp(t2 or t1)})" + (f" après {dur(held)} en position" if held is not None else "") + ".",
                "missed": f"Objectif 1 ({fp(t1)}) atteint sans que l'ordre à {fp(e)} soit exécuté : idée manquée, ni gain ni perte.",
                "expired": f"Fin de validité : l'ordre à {fp(e)} n'a pas été exécuté ; idée expirée, ni gain ni perte.",
-               "expired_active": f"Suivi arrêté après {MAX_HOLD_H // 24} jours en position" + (f" (prix {fp(t['exitPx'])} à ce moment)" if t.get("exitPx") else "") + "."}.get(res, RESULT_WORD.get(res, res))
+               "expired_active": f"Suivi arrêté après {MAX_HOLD_H // 24} jours en position" + (f" (prix {fp(t['exitPx'])} à ce moment)" if t.get("exitPx") else "") + ".",
+               "switch": f"Fermée au prix du marché, vers {fp(t.get('exitPx'))}" + (f", après {dur(held)} en position" if held is not None else "")
+                         + f", sur mon conseil : une idée bien plus forte est arrivée dans l'autre sens ({fr(r_of(t))} fois le risque au total).",
+               "switch_cancel": f"Ordre à {fp(e)} annulé avant exécution, sur mon conseil : une idée bien plus forte est arrivée dans l'autre sens ; ni gain ni perte."
+               }.get(res, RESULT_WORD.get(res, res))
         ev.append({"t": end, "kind": "end", "text": txt})
     elif t["status"] == "pending":
         ev.append({"t": None, "kind": "now", "text": f"Ordre toujours en attente (valable jusqu'{when(t['validUntil']).replace('le ', 'au ', 1)})."})
@@ -266,6 +278,15 @@ def _finish(out, t, alert, res, fa, held, lev, price_now, rk_pct):
         out["result"].append(f"Résultat : {fr(r)} fois le risque = moitié à l'objectif 1 (½ × {fnum(rr1, 2)}) + moitié à l'objectif 2 (½ × {fnum(rr2, 2)}).")
     elif res in ("missed", "expired"):
         out["result"].append("Résultat : 0 (ordre jamais exécuté, aucune position).")
+    elif res == "switch_cancel":
+        out["result"].append("Résultat : 0 (ordre annulé avant exécution pour une idée plus forte dans l'autre sens, aucune position).")
+    elif res == "switch":
+        x = t.get("exitPx")
+        if t.get("switchState") == "tp1" or t.get("tp1At"):
+            out["result"].append(f"Résultat : {fr(r)} fois le risque = moitié à l'objectif 1 (½ × {fnum(rr1, 2)}) + moitié fermée vers {fp(x)} "
+                                 f"(½ × {fr(r_at(t, x))}), pour une idée plus forte dans l'autre sens.")
+        else:
+            out["result"].append(f"Résultat : {fr(r)} fois le risque : position fermée au prix du marché vers {fp(x)}, sur mon conseil, pour une idée plus forte dans l'autre sens.")
     elif res == "expired_active":
         lr = latent_r(t, t.get("exitPx"))
         out["result"].append("Résultat non compté : le terminal ne suit une position que 7 jours." +
@@ -325,6 +346,11 @@ def _finish(out, t, alert, res, fa, held, lev, price_now, rk_pct):
         les.append("Le terminal ne court jamais après le prix : une idée manquée ne compte ni en gain ni en perte.")
     elif res == "expired":
         les.append("Le prix n'est jamais revenu jusqu'à l'entrée pendant la validité de l'ordre.")
+    elif res == "switch":
+        les.append("Fermée avant son stop et ses objectifs pour une idée dans l'autre sens jugée bien plus forte : le résultat compte au prix de fermeture "
+                   "conseillé. « Et ensuite ? » dit si garder l'idée aurait mieux payé.")
+    elif res == "switch_cancel":
+        les.append("Ordre annulé avant exécution pour une idée dans l'autre sens jugée bien plus forte : ni gain ni perte.")
     elif res == "expired_active":
         les.append("Après 7 jours, la gestion de la position te revient : ce résultat n'entre pas dans les statistiques.")
     return out
@@ -401,7 +427,8 @@ def summary(trades, expect=None):
            "best": {"id": best["id"], "r": r_of(best)} if best else None, "worst": {"id": worst["id"], "r": r_of(worst)} if worst else None,
            "avgFill": sum(fills) / len(fills) if fills else None, "avgHold": sum(holds) / len(holds) if holds else None,
            "missed": sum(1 for t in ideas if t.get("result") == "missed"), "expired": sum(1 for t in ideas if t.get("result") == "expired"),
-           "uncounted": sum(1 for t in ideas if t.get("result") == "expired_active")}
+           "uncounted": sum(1 for t in ideas if t.get("result") == "expired_active"),
+           "switched": sum(1 for t in ideas if t.get("result") == "switch"), "cancelled": sum(1 for t in ideas if t.get("result") == "switch_cancel")}
     # moyenne et intervalle a 90 % (approximation normale) : honnete sur la taille de l'echantillon
     if len(rs) >= 2:
         m = sum(rs) / len(rs)
@@ -449,12 +476,15 @@ def verdict(s):
 def calibration(ideas):
     """Ce que le terminal annonçait a l'envoi (frequences historiques) face a ce qui est arrive."""
     out = {}
-    tp = [t for t in ideas if t.get("pTp") is not None and t.get("filledAt") and (t.get("result") in DECIDED or t["status"] == "tp1")]
+    # une idee fermee pour changer de sens avant l'objectif 1 n'a rien tranche : elle est laissee de cote (de meme un ordre annule avant 24 h)
+    tp = [t for t in ideas if t.get("pTp") is not None and t.get("filledAt") and (t.get("result") in DECIDED or t["status"] == "tp1")
+          and (t.get("result") != "switch" or t.get("tp1At"))]
     if tp:
-        hit = sum(1 for t in tp if t.get("result") in ("tp1_be", "tp2") or t["status"] == "tp1")
+        hit = sum(1 for t in tp if t.get("result") in ("tp1_be", "tp2") or t["status"] == "tp1" or t.get("tp1At"))
         out["tp1"] = {"n": len(tp), "announced": sum(t["pTp"] for t in tp) / len(tp), "real": hit / len(tp)}
-    fl = [t for t in ideas if t.get("pFill") is not None and t["entryType"] != "marché" and (t.get("filledAt") or t["status"] == "closed" or
-                                                                                            t["created"] + 24 * H <= (t.get("checked") or 0))]
+    fl = [t for t in ideas if t.get("pFill") is not None and t["entryType"] != "marché"
+          and (t.get("result") != "switch_cancel" or (end_of(t) or 0) >= t["created"] + 24 * H)
+          and (t.get("filledAt") or t["status"] == "closed" or t["created"] + 24 * H <= (t.get("checked") or 0))]
     if fl:
         hit = sum(1 for t in fl if t.get("filledAt") and t["filledAt"] - t["created"] <= 24 * H)
         out["fill"] = {"n": len(fl), "announced": sum(t["pFill"] for t in fl) / len(fl), "real": hit / len(fl)}
@@ -515,9 +545,10 @@ def path(t, rows, finest, now_ms):
         evs.append({"t": t["tp1At"], "p": t1, "kind": "tp1", "label": "objectif 1"})
     res = t.get("result")
     if t["status"] == "closed" and end_of(t):
-        p_end = {"stop": s, "tp1_be": e, "tp2": t2 or t1, "missed": t1, "expired_active": t.get("exitPx")}.get(res)
+        p_end = {"stop": s, "tp1_be": e, "tp2": t2 or t1, "missed": t1, "expired_active": t.get("exitPx"), "switch": t.get("exitPx")}.get(res)
         evs.append({"t": end_of(t), "p": p_end, "kind": "end", "label": {"stop": "stop", "tp1_be": "sortie à l'entrée", "tp2": "objectif 2", "missed": "objectif 1 sans exécution",
-                                                                       "expired": "fin de validité", "expired_active": "fin du suivi"}.get(res, "fin")})
+                                                                       "expired": "fin de validité", "expired_active": "fin du suivi",
+                                                                       "switch": "fermée (changement de sens)", "switch_cancel": "annulée (changement de sens)"}.get(res, "fin")})
     for k, lab in (("best", "meilleur moment"), ("worst", "pire moment")):
         if t.get(k) and t.get("filledAt"):
             evs.append({"t": t[k]["t"], "p": t[k]["p"], "kind": k, "label": lab})
@@ -561,7 +592,22 @@ def after(t, rows, now_ms):
         rr = r_at(t, ext)
         out.append(f"Après l'objectif 2, le prix est encore allé jusqu'à {fr(rr)} fois le risque ({fp(ext)}) {span}." if rr is not None and rr > (t.get("rr2") or t["rr1"]) + 0.05 else
                    f"Le prix s'est arrêté près de l'objectif 2 {span} : sortie bien placée.")
-    elif res in ("missed", "expired"):
+    elif res == "switch":
+        tp1_state = t.get("switchState") == "tp1" or bool(t.get("tp1At"))
+        lose, win = (e, t2) if tp1_state else (t["stop"], t1)
+        hl = first(adv(lose))
+        hw = first(fav(win)) if win else None
+        if hl and (not hw or hl[0] <= hw[0]):
+            out.append((f"Après la fermeture, le prix est revenu à l'entrée ({fp(e)}) {when(hl[0])}, {dur(hl[0] - end)} plus tard : le reste serait sorti à l'équilibre."
+                        if tp1_state else
+                        f"Après la fermeture, le prix a touché le stop prévu ({fp(lose)}) {when(hl[0])}, {dur(hl[0] - end)} plus tard : fermer a évité la perte complète."))
+        elif hw:
+            out.append(f"Après la fermeture, le prix a atteint l'objectif {'2' if tp1_state else '1'} prévu ({fp(win)}) {when(hw[0])}, {dur(hw[0] - end)} plus tard : "
+                       "garder l'idée aurait mieux payé cette fois.")
+        else:
+            low_word, tp_word = ("l'entrée", "2") if tp1_state else ("le stop", "1")
+            out.append(f"Après la fermeture, le prix n'a touché ni {low_word} ni l'objectif {tp_word} prévus {span}.")
+    elif res in UNFILLED:
         hit = first(adv(e))
         if hit:
             then_stop = next((r for r in nxt if r[0] >= hit[0] and adv(t["stop"])(r)), None)

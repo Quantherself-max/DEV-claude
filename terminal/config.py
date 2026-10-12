@@ -124,7 +124,8 @@ class Config:
     signal_leverage: float = 10.0         # levier utilise pour les calculs de liquidation affiches
     signal_valid_hours: int = 48          # duree de validite d'un ordre limite
     derivs_on: bool = True                # derives multi-bourses (Deribit, Bybit, OKX, Hyperliquid) et jeux libres en chaine : lecture seule, aucune cle
-    signal_direction: str = "both"        # both = achats et ventes (jamais deux biais opposes a moins de 24 h) | long = achat seulement : les ventes deviennent des « alertes pour tes longs » | short
+    signal_direction: str = "both"        # both = achats et ventes (une seule direction a la fois) | long = achat seulement : les ventes deviennent des « alertes pour tes longs » | short
+    signal_switch: str = "strong"         # V25.1 : idee dans l'autre sens pendant une idee en cours : strong = seulement si exceptionnelle (message « ferme d'abord ») | never
     macro_week_telegram: bool = False     # bilan macro de la semaine envoye sur Telegram le samedi matin (V18) : desactive par defaut (Telegram = idees de trade)
     macro_month_telegram: bool = False    # analyse macro du mois envoyee sur Telegram le 1er du mois suivant (V25) : desactive par defaut
     signal_trend_gate: bool = True        # n'envoyer que les idees dans le sens de la tendance de fond (moyennes 50 j / 200 j) : seul filtre valide par le backtest
@@ -200,6 +201,7 @@ def load_config(env_path: Path | None = None) -> Config:
     c.signal_valid_hours = max(4, min(168, int(float(g("TERMINAL_SIGNAL_VALID_HOURS", c.signal_valid_hours)))))
     c.signal_direction = {"long": "long", "short": "short", "both": "both"}.get(g("TERMINAL_SIGNAL_DIRECTION", c.signal_direction).strip().lower(), "both")
     c.signal_trend_gate = g("TERMINAL_SIGNAL_TREND_GATE", "1").lower() not in ("0", "false", "non", "no")
+    c.signal_switch = "never" if g("TERMINAL_SIGNAL_SWITCH", c.signal_switch).strip().lower() == "never" else "strong"
     c.derivs_on = g("TERMINAL_DERIVS", "1").lower() not in ("0", "false", "non", "no")
     c.x_on = g("TERMINAL_X_ON", "1").lower() not in ("0", "false", "non", "no")
     c.x_token = g("TERMINAL_X_BEARER_TOKEN", "").strip()

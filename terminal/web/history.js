@@ -189,7 +189,8 @@ const History = (() => {
     const on = openIds.has(t.id);
     const what = t.mode === 'alerte' ? `<b class="amb">Alerte</b><small class="muted">configuration ${t.side === 'short' ? 'de vente' : 'd\'achat'}</small>`
       : `<b class="${t.side === 'long' ? 'up' : 'dn'}">${SIDE[t.side]}</b><small class="muted">${esc(KIND[t.kind] || t.kind || '')}${t.entryType === 'marché' ? ' · au marché' : ''}</small>`;
-    const flip = t.flipFrom ? '<small class="amb">changement de sens</small>' : '';
+    const flip = t.flipFrom || (t.switchFrom || []).length ? '<small class="amb">changement de sens</small>'
+      : t.result === 'switch' || t.result === 'switch_cancel' ? '<small class="amb">remplacée par une idée plus forte</small>' : '';
     return `<tr class="hrow${on ? ' on' : ''}" data-tid="${esc(t.id)}"><td><span class="chev">${on ? '▾' : '▸'}</span> ${when(t.created)}</td><td><b>${esc(sym(t.symbol))}</b></td><td>${what}${flip}</td>
       <td class="r">${num(t.score, 0)}</td><td class="small">entrée ${px(t.entry)}<div class="muted">stop ${px(t.stop)} · objectifs ${px(t.tp1)}${t.tp2 ? ' / ' + px(t.tp2) : ''}</div></td>
       <td class="ladcell">${ladder(t)}</td><td>${resultCell(t)}</td><td class="small">${timeCell(t)}</td></tr>`
@@ -429,11 +430,13 @@ const History = (() => {
     return `<section class="card"><h2>Comment lire cette page</h2><ul class="btnotes">
       <li><b>« Fois le risque »</b> : l'unité de tous les résultats. Le risque, c'est la distance entre l'entrée et le stop. Un stop touché coûte 1 fois le risque ; +2 fois le risque veut dire que tu gagnes deux fois ce que tu aurais perdu au stop. Indique en haut la somme que tu risques par idée pour lire les résultats en dollars.</li>
       <li><b>Gestion suivie par le terminal</b> : la moitié de la position est encaissée à l'objectif 1 et le stop remonte à l'entrée ; l'autre moitié sort à l'objectif 2, ou à l'entrée si le prix revient. D'où « objectif 1 atteint puis sortie à l'équilibre » = la moitié de l'objectif 1 (gagnante, sans perte possible sur le reste).</li>
-      <li><b>Sans résultat</b> : « objectif atteint sans exécution » (l'ordre n'a jamais été touché, le terminal ne court pas après le prix) et « expirée » valent 0. « Suivi arrêté après 7 jours » n'est pas compté : la gestion te revient.</li>
+      <li><b>Sans résultat</b> : « objectif atteint sans exécution » (l'ordre n'a jamais été touché, le terminal ne court pas après le prix), « expirée » et « annulée pour changer de sens » valent 0. « Suivi arrêté après 7 jours » n'est pas compté : la gestion te revient.</li>
       <li><b>Trajet</b> : la barre montre jusqu'où le prix est allé contre toi (rouge) et pour toi (vert) pendant la position, en fois le risque. Traits : stop (−1), entrée (0), objectifs. Point : le résultat (bleu si la position est encore ouverte).</li>
       <li><b>Meilleur et pire moment</b> : le prix le plus favorable et le plus défavorable pendant la position, lus sur les bougies de 5 minutes. Dans une bougie qui touche le stop, l'ordre des mouvements est inconnu : on retient le pire, comme pour le résultat.</li>
       <li><b>Le terminal n'analyse que lorsqu'il tourne</b> (allumé depuis le ${when(d.since)}). Éteint, il n'envoie rien ; au redémarrage, il vérifie ce qui est arrivé aux idées ouvertes pendant son absence (stop, objectifs), sans fabriquer d'idées pour le passé. Pour qu'il tourne 24 heures sur 24 sans ton ordinateur : dossier <code>serveur/</code>.</li>
-      <li><b>Sens de tes trades</b> : ${dir} (Réglages → 4). Jamais deux biais opposés à moins de 24 heures, toutes paires confondues ; entre 24 et 72 heures, une idée dans l'autre sens exige que la précédente soit terminée et 10 points de qualité en plus.</li></ul></section>`;
+      <li><b>Sens de tes trades</b> : ${dir} (Réglages → 4). Une seule direction à la fois, toutes paires confondues : tant qu'une idée est en cours (ordre en attente, position, objectif 1 atteint), aucune idée dans l'autre sens, quel que soit le temps écoulé. ${d.switch === 'never'
+        ? 'Changement de sens désactivé : l\'autre sens attend toujours la fin de l\'idée en cours.'
+        : 'Seule exception : une idée exceptionnelle (au moins 80 sur 100 et 15 points de plus que l\'idée en cours). Son message dit d\'abord de fermer l\'idée en cours, avec le gain ou la perte du moment ; elle est alors comptée ici au prix de fermeture conseillé (« fermée pour changer de sens »).'} Si un ordre a expiré sans exécution d'après les données du terminal et que tu l'avais pris quand même, la prochaine idée dans l'autre sens te rappelle de le fermer.</li></ul></section>`;
   }
 
   function render() {

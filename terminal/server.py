@@ -31,8 +31,8 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "25"
-API_LEVEL = 24                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "25.1"
+API_LEVEL = 25                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -195,7 +195,8 @@ class App:
         d = self.desk.public(now)
         w, b = d["week"], d["bias"]
         L.append(f"Idées cette semaine : {w['sent']} sur {w['cap']} au maximum.")
-        L.append("Biais du terminal : " + (f"{'ACHAT' if b['side'] == 'long' else 'VENTE'} (idée {b['symbol'].replace('USDT', '')})" if b else "aucun (pas d'idée en cours ni de moins de 24 heures)."))
+        L.append("Biais du terminal : " + (f"{'ACHAT' if b['side'] == 'long' else 'VENTE'} (idée {b['symbol'].replace('USDT', '')} en cours : rien dans l'autre sens tant qu'elle n'est pas terminée)"
+                                            if b else "aucun (pas d'idée en cours : la prochaine peut être un achat ou une vente)."))
         return "\n".join(L)
 
     def bot_ideas(self) -> str:
@@ -648,7 +649,7 @@ class App:
                 "alertMode": c.alert_mode, "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "alertZones": c.alert_zones, "historyYears": c.history_years,
                 "footprintDays": c.footprint_days, "trades": {s: t.status() for s, t in getattr(self, "trades", {}).items()},
                 "signalOn": c.signal_on, "signalMinScore": c.signal_min_score, "signalMaxWeek": c.signal_max_week, "signalMaxPerSymbol": c.signal_max_per_symbol,
-                "signalLeverage": c.signal_leverage, "signalTrendGate": c.signal_trend_gate, "signalDirection": c.signal_direction,
+                "signalLeverage": c.signal_leverage, "signalTrendGate": c.signal_trend_gate, "signalDirection": c.signal_direction, "signalSwitch": c.signal_switch,
                 "macroWeekTelegram": c.macro_week_telegram, "macroMonthTelegram": c.macro_month_telegram,
                 "x": {"on": c.x_on, "configured": bool(c.x_token and c.x_accounts), "tokenHint": ("..." + c.x_token[-4:]) if c.x_token else "",
                       "accounts": list(c.x_accounts), "posts": c.x_posts},
@@ -708,6 +709,8 @@ class App:
             upd["TERMINAL_SIGNAL_LEVERAGE"] = str(max(1, min(125, float(body["signalLeverage"]))))
         if body.get("signalDirection") in ("long", "short", "both"):
             upd["TERMINAL_SIGNAL_DIRECTION"] = body["signalDirection"]
+        if body.get("signalSwitch") in ("strong", "never"):
+            upd["TERMINAL_SIGNAL_SWITCH"] = body["signalSwitch"]
         if body.get("signalTrendGate") is not None:
             upd["TERMINAL_SIGNAL_TREND_GATE"] = "1" if body["signalTrendGate"] else "0"
         if body.get("xToken"):
@@ -914,6 +917,7 @@ def make_handler(app: App):
                     return self._json(app.update_status())
                 if u.path == "/api/history":
                     return self._json({**app.history(), "readings": app.readings.public(), "direction": app.cfg.signal_direction,
+                                       "switch": getattr(app.cfg, "signal_switch", "strong"),
                                        "since": int(app.started * 1000), "source": app.cfg.source, "symbols": list(app.cfg.symbols)})
                 if u.path == "/api/history/trade":
                     return self._json(app.trade_detail((q.get("id") or [""])[0]))

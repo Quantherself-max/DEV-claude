@@ -140,8 +140,9 @@ def verdict(real, ctrl):
     return "none"
 
 
-def replay(candles, atrs=None, params=None, seed=5, step=2, ctrl_n=3, max_week=5):
-    """Rejoue `candles` (bougies 1h fermees). Renvoie les resultats par palier de qualite et la frequence par semaine."""
+def replay(candles, atrs=None, params=None, seed=5, step=2, ctrl_n=3, max_week=5, on_idea=None):
+    """Rejoue `candles` (bougies 1h fermees). Renvoie les resultats par palier de qualite et la frequence par semaine.
+    on_idea(i, idea, res) : appele pour chaque idee retenue (etude du changement de sens, switch_study)."""
     o = {**signals.DEFAULTS, **(params or {})}
     atrs = atrs or atr_series(candles)
     n = len(candles)
@@ -203,6 +204,8 @@ def replay(candles, atrs=None, params=None, seed=5, step=2, ctrl_n=3, max_week=5
             last_side[idea["side"]] = k.t
             market = idea["entryType"] == "marché"
             res = simulate(candles, i, idea["side"], idea["entry"], idea["stop"], idea["tp1"], market, o["valid_hours"])
+            if on_idea is not None:
+                on_idea(i, idea, res)
             # temoins : meme forme (en amplitudes d'heure) a des heures tirees au hasard
             sgn = 1 if idea["side"] == "long" else -1
             de = (price - idea["entry"]) / a * sgn if not market else 0.0
@@ -299,3 +302,125 @@ def validation_text(val, S, side=None):
         out += (f" Dans le sens de la tendance de fond (moyennes 50 et 200 jours) : {tr['real']['n']} idées, objectif 1 avant le stop dans {tr['real']['win']['p'] * 100:.0f} % des cas, "
                 f"contre {tr['ctrl']['win']['p'] * 100:.0f} % au hasard dans la même tendance.")
     return out
+
+
+# ---------- V25.1 : faut-il fermer une idee en cours quand une idee plus forte arrive dans l'autre sens ? ----------
+def timeline(candles, i0, side, entry, stop, tp1, market, valid_h=48, hold_h=72):
+    """Meme deroule que simulate(), avec les instants : {status, R, fill (indice ou None), end (indice de la bougie ou tout s'arrete)}."""
+    n = len(candles)
+    risk = abs(entry - stop)
+    if risk <= 0:
+        return {"status": "cancel", "R": 0.0, "fill": None, "end": i0}
+    long_ = side == "long"
+    fill = i0 if market else None
+    j = i0 + 1
+    if fill is None:
+        end = min(n, i0 + 1 + valid_h)
+        while j < end:
+            k = candles[j]
+            if (k.l <= entry) if long_ else (k.h >= entry):
+                fill = j
+                if (k.l <= stop) if long_ else (k.h >= stop):
+                    return {"status": "sl", "R": -1.0, "fill": j, "end": j}
+                break
+            if (k.l <= stop) if long_ else (k.h >= stop):
+                return {"status": "cancel", "R": 0.0, "fill": None, "end": j}
+            j += 1
+        if fill is None:
+            return {"status": "nofill" if i0 + 1 + valid_h <= n else "open", "R": 0.0, "fill": None, "end": min(n - 1, i0 + valid_h)}
+        j = fill + 1
+    end = min(n, j + hold_h)
+    if j >= n:
+        return {"status": "open", "R": 0.0, "fill": fill, "end": n - 1}
+    for q in range(j, end):
+        k = candles[q]
+        if (k.l <= stop) if long_ else (k.h >= stop):
+            return {"status": "sl", "R": -1.0, "fill": fill, "end": q}
+        if (k.h >= tp1) if long_ else (k.l <= tp1):
+            return {"status": "tp", "R": abs(tp1 - entry) / risk, "fill": fill, "end": q}
+    if end - j < hold_h:
+        return {"status": "open", "R": 0.0, "fill": fill, "end": n - 1}
+    c = candles[end - 1].c
+    return {"status": "timeout", "R": ((c - entry) if long_ else (entry - c)) / risk, "fill": fill, "end": end - 1}
+
+
+def switch_study(candles, ideas, min_s=7.0, max_week=5, deltas=(0.0, 1.0, 2.0, 3.0, 4.0, 6.0), fee=0.001, cooldown_h=12):
+    """ideas : [(i, side, S, entry, stop, tp1, market)] dans l'ordre du temps (rejeu). Rejoue ce que tu aurais recu avec les regles du
+    terminal (quota de la semaine, une idee par paire toutes les 12 h) et compare les politiques face a une idee dans l'autre sens
+    pendant qu'une idee est en cours : « never » (la bloquer), « both » (la prendre en gardant la premiere), et Δ (fermer la
+    premiere au prix du moment et prendre la nouvelle si sa qualite depasse de Δ celle de l'idee en cours). fee : frais d'un aller-retour
+    (0,1 %) ramenes en multiples du risque de chaque trade execute."""
+    tls = []
+    for i, side, S, e, s_, t1, mk in ideas:
+        tl = timeline(candles, i, side, e, s_, t1, mk)
+        if tl["status"] != "open":
+            tls.append((i, side, S, e, s_, t1, mk, tl))
+
+    def run(policy, ghost_h=0):
+        """ghost_h : un ordre expire sans execution compte encore comme « en cours » pendant ghost_h heures apres sa fin tant que le
+        prix reste entre son stop et son objectif 1 (cas ou tu l'aurais pris quand meme, au marche ou ailleurs)."""
+        used, recs, opened, sw, last_t, ghosts = {}, [], [], [], None, 0
+        for i, side, S, e, s_, t1, mk, tl in tls:
+            if S < min_s:
+                continue
+            wk = (candles[i].t // DAY_MS + 3) // 7
+            u = used.get(wk, 0)
+            if u >= max_week or (u == max_week - 1 and S < min_s + 1.5):
+                continue
+            if last_t is not None and candles[i].t - last_t < cooldown_h * 3_600_000:
+                continue
+            opened = [o for o in opened if o["end"] > i]
+            opp = [o for o in opened if o["side"] != side]
+            if ghost_h:
+                px = candles[i].c
+                gh = [o for o in recs if o["status"] == "nofill" and o["side"] != side and o["end"] <= i <= o["end"] + ghost_h
+                      and min(o["s"], o["t1"]) < px < max(o["s"], o["t1"])]
+                if gh and (policy == "never" or S < max(o["S"] for o in gh) + policy):
+                    ghosts += 1
+                    continue
+            if opp and policy == "never":
+                continue
+            if opp and policy != "both":
+                if S < max(o["S"] for o in opp) + policy:
+                    continue
+                for o in opp:
+                    full = o["R"]
+                    live = o["fill"] is not None and o["fill"] <= i
+                    sgn = 1 if o["side"] == "long" else -1
+                    o["R"] = (candles[i].c - o["e"]) * sgn / abs(o["e"] - o["s"]) if live else 0.0
+                    o["filled"], o["end"], o["switched"] = live, i, True
+                    sw.append({"before": full, "after": o["R"], "live": live, "o": o})
+                    opened.remove(o)
+            used[wk] = u + 1
+            last_t = candles[i].t
+            rec = {"i": i, "side": side, "S": S, "e": e, "s": s_, "t1": t1, "fill": tl["fill"], "end": tl["end"], "R": tl["R"], "filled": tl["fill"] is not None,
+                   "status": tl["status"], "switched": False}
+            opened.append(rec)
+            recs.append(rec)
+            for x in sw:
+                if x.get("o") is not None and x.get("new") is None and x["o"] is not rec:
+                    x["new"] = rec
+        cost = lambda r: fee / (abs(r["e"] - r["s"]) / r["e"]) if r["filled"] else 0.0
+        eq, peak, dd = 0.0, 0.0, 0.0
+        for r in sorted(recs, key=lambda r: r["end"]):
+            eq += r["R"] - cost(r)
+            peak = max(peak, eq)
+            dd = max(dd, peak - eq)
+        filled = [r for r in recs if r["filled"]]
+        gain = [x["after"] + x["new"]["R"] - x["before"] for x in sw if x.get("new")]
+
+        def split(cond):
+            g = [x["after"] + x["new"]["R"] - x["before"] for x in sw if x.get("new") and cond(x)]
+            return {"n": len(g), "gain": (sum(g) / len(g)) if g else None, "wins": sum(1 for v in g if v > 0)}
+        return {"sent": len(recs), "filled": len(filled), "R": sum(r["R"] for r in recs), "Rnet": sum(r["R"] - cost(r) for r in recs),
+                "perTrade": (sum(r["R"] - cost(r) for r in filled) / len(filled)) if filled else None, "maxDD": dd, "switches": len(sw),
+                "switchLive": sum(1 for x in sw if x["live"]), "switchGain": (sum(gain) / len(gain)) if gain else None, "switchN": len(gain),
+                "switchWins": sum(1 for g in gain if g > 0), "ghostBlocked": ghosts,
+                "byState": {"perte": split(lambda x: x["live"] and x["after"] < 0), "gain": split(lambda x: x["live"] and x["after"] >= 0),
+                            "attente": split(lambda x: not x["live"])}}
+    out = {"never": run("never"), "both": run("both")}
+    for d in deltas:
+        out[f"delta{d:g}"] = run(d)
+    out["never_exp72"] = run("never", ghost_h=72)                          # ordre expire : bloque 72 h tant que le prix reste entre stop et objectif 1
+    out[f"delta{deltas[-1]:g}_exp72"] = run(deltas[-1], ghost_h=72)          # idem, sauf idee bien plus forte
+    return {"ideas": len(tls), "policies": out, "params": {"minS": min_s, "maxWeek": max_week, "fee": fee, "cooldownH": cooldown_h, "deltas": list(deltas)}}

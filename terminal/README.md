@@ -1,9 +1,11 @@
-# Liq Terminal (V24.1)
+# Liq Terminal (V25.1)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Une seule direction à la fois, sans délai de 24 heures** (V25.1) : tant qu'une idée est en cours, aucune idée dans l'autre sens, quel que soit le temps écoulé ; seule une idée **exceptionnelle** peut passer, et son message te dit d'abord de **fermer la première**, avec son gain ou sa perte du moment (voir « V25.1 » plus bas).
+- **Macro de la semaine et du mois** (V25) : vision d'ensemble (régime, Fed, consensus, annonces à venir) et analyse mensuelle (projections, communiqué annoté, scénarios, rapports des banques) (voir « V25 » plus bas).
 - **Gros ordres et absorptions lisibles** (V24.1) : les gros ordres agressifs deviennent des **bulles vertes (achats) et rouges (ventes) dessinées derrière les bougies**, qui restent toujours entières ; les absorptions en direct deviennent des **murs** (trait horizontal au prix) ; seuls les 3 plus gros montants sont écrits (réglable), le reste au survol (voir « V24.1 » plus bas).
 - **Un historique qui explique chaque idée** (V24, page **Historique**) : pour chaque idée envoyée, un **graphique du trajet du prix** (entrée, stop, objectifs, zone, moments clés), le récit en clair (pourquoi le terminal l'a proposée, le plan, ce qui s'est passé heure par heure, le résultat expliqué, le meilleur et le pire moment, ce que le prix a fait ensuite), les résultats **par catégorie** (paire, sens, qualité, tendance, mois), ce que le backtest **attendait** face à ce qui est **arrivé**, et les résultats **en dollars** selon la somme que tu risques par idée (voir « V24 » plus bas).
 - **Calculs au prix près, sur chaque transaction** (V23) : le terminal télécharge **chaque transaction** de Binance des 62 derniers jours (archives publiques, puis le flux en direct) : profils de volume, POC, VAH, VAL, nœuds, profil de séance, volume et delta du TPO, prix le plus échangé des zones et POC vierges sont calculés sur ce qui s'est **réellement échangé à chaque prix**, plus déduits des bougies ; le **VWAP** est exact (volume en dollars) et suit les bougies de 5 minutes en 5 et 15 minutes (voir « V23 » plus bas).
@@ -16,7 +18,7 @@ Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 - **Plusieurs unités de temps à la fois** (V16) : bouton **⊞ Multi-unités** du Desk, 2 à 5 graphiques du même actif côte à côte (5 min, 15 min, 1 h, 4 h, 1 jour au choix pour chacun), bougie en direct, VWAP, profil de la séance, niveaux clés, **réticule synchronisé** et ligne d'**alignement** des unités (voir « V16 » plus bas).
 - **Écran d'order flow** (V15) : style « nuit » (fond noir, bougies bleues et blanches, prix en bleu avec le décompte dessous), **profil de volume de la séance collé à l'échelle des prix** (part des acheteurs et des vendeurs, POC / VAH / VAL, plus haut et bas de séance, clôture de la veille), VWAP du jour à ±1 écart-type, **carnet d'ordres en direct aligné sur les prix** (taille en attente, nombre d'ordres, volume échangé à chaque prix), **gros ordres exécutés** (bulles depuis V24.1), vitesse du ruban et latence (voir « V15 » plus bas).
 - **Poches de liquidité classées par importance** (V14) : chaque poche (estimée par l'intérêt ouvert ou visible dans le prix) affiche son **âge** (formée il y a…), un **score d'importance sur 100** (taille + confluences autour + fraîcheur) et son **rang** de son côté (N°1, N°2…), le même en 15 minutes, 1 heure ou 4 heures. Les poids viennent d'une **mesure sur 12 ans de BTC** (rapport « poches » dans la page **Backtest**, voir « V14 » plus bas).
-- **Historique et sens de tes trades** (V13) : page **Historique** (chaque idée et alerte envoyée avec son résultat, la lecture du terminal jour après jour et ce que le prix a fait ensuite), **jamais deux biais opposés à moins de 24 heures**, toutes paires confondues, et le **biais du terminal** affiché partout (voir « V13.1 » et « V13 » plus bas).
+- **Historique et sens de tes trades** (V13) : page **Historique** (chaque idée et alerte envoyée avec son résultat, la lecture du terminal jour après jour et ce que le prix a fait ensuite), **une seule direction à la fois**, toutes paires confondues (règle refaite en V25.1), et le **biais du terminal** affiché partout (voir « V25.1 », « V13.1 » et « V13 » plus bas).
 - **Discuter avec Claude** (V12) : pose tes questions sur Telegram (au même bot) ou dans l'onglet **Discussion** (« pourquoi le BTC a perdu 2 % ? ») ; Claude répond avec toutes les données du terminal à cet instant et l'actualité du web (voir « V12 » plus bas).
 - **Mise à jour automatique** (V11) : une nouvelle version publiée sur GitHub est vérifiée, sauvegardée et installée toute seule ; le terminal redémarre dans la même fenêtre et la page se recharge. Rien à configurer : le dépôt est public (Réglages → 6 pour suivre l'état, voir « V11 » plus bas).
 - **Où est l'argent, l'or, et les squeezes** (V10) : carte du capital (bitcoin, ETH, altcoins, stablecoins, or) et rotation, asymétrie bitcoin / or, **delta, divergences flux / prix / volume et short / long squeezes** (lecture en direct à la Velo dans la Lecture, mesure sur 12 ans), décompte de bougie sous le prix comme sur TradingView (voir « V10 » plus bas).
@@ -118,6 +120,40 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V25.1 : une seule direction à la fois, et « ferme d'abord » quand une idée bien plus forte arrive
+
+**Le problème** : une idée d'achat, puis environ 24 heures plus tard une idée de vente, alors que l'achat était toujours en cours (ni stop ni objectif touché). La règle de la V13.1 bloquait l'autre sens pendant 24 heures, puis se fiait à l'état de l'idée **d'après les données du terminal** : un ordre à cours limité « expiré sans exécution » pour le terminal, mais pris quand même (au prix du marché, ou sur une autre plateforme), laissait passer une vente à côté de ton achat.
+
+### La nouvelle règle (plus de délai de 24 heures)
+- **Une seule direction à la fois, toutes paires confondues** (BTC et SOL bougent ensemble) : tant qu'une idée est **en cours** (ordre en attente, position, objectif 1 atteint), **aucune idée dans l'autre sens**, quel que soit le temps écoulé (1 heure ou 5 jours). Dès qu'elle est terminée (stop, objectif 2, sortie à l'équilibre, ordre expiré), l'autre sens est de nouveau possible tout de suite.
+- **Seule exception : une idée exceptionnelle** dans l'autre sens, d'au moins **80 sur 100** et de **15 points de plus** que l'idée en cours (une idée en cours à 70 ne peut être remplacée que par une idée d'au moins 85). Son message commence par **« 🔁 CHANGEMENT DE SENS »** et te dit d'abord **quoi fermer** :
+  - position ouverte : « **FERME TON ACHAT SOL** » au prix du marché, avec le **gain ou la perte du moment** en pourcentage du prix, avec ton levier, et en fois le risque, et « clôture en gain » ou « clôture en perte » ;
+  - objectif 1 déjà atteint : ferme le reste (la moitié est déjà encaissée) ;
+  - ordre pas encore exécuté : « **ANNULE-LE** » (ni gain ni perte) ;
+  - puis pourquoi (qualité de la nouvelle idée face à celle en cours), et « ne garde jamais les deux en même temps ».
+- **Le journal suit le conseil** : l'idée remplacée est close **au prix du moment** (« fermée pour changer de sens », comptée dans les résultats) ou annulée (« annulée pour changer de sens », 0). Dans la page **Historique**, sa fiche dit ce que le prix a fait **ensuite** : stop touché (fermer a évité la perte complète) ou objectif atteint (garder aurait mieux payé).
+- **Un ordre expiré qui a pu être pris quand même** : le message « ⌛ Idée expirée » dit maintenant quoi faire si tu es entré quand même (garder le stop et l'objectif, le terminal ne suit plus la position). Et si une idée dans l'autre sens arrive dans les 3 jours alors que le prix est encore entre le stop et l'objectif 1 de cet ordre, son message commence par « **ℹ️ Rappel** : … si tu étais quand même entré, **ferme-le** avant de prendre cette idée », avec le gain ou la perte du moment.
+- **Réglages → 4 → « Idée dans l'autre sens pendant une idée en cours »** : « Seulement si elle est exceptionnelle » (par défaut) ou « **Jamais** » (l'autre sens attend toujours la fin de l'idée en cours).
+- **Biais du terminal** (Idées, Lecture, Vue d'ensemble, Historique) : « ACHAT · idée SOL en cours depuis le 07/10 14:00 · aucune idée de vente, sur aucune paire, tant qu'elle n'est pas terminée, sauf une vente exceptionnelle (au moins 85/100) ». Dans l'onglet Idées, une configuration opposée est marquée « bloquée », ou « changement de sens possible » si elle atteint ce seuil.
+
+### Mesuré sur l'historique avant de choisir
+Rejeu des idées du terminal sur les perpétuels Binance (septembre 2020 à octobre 2026), avec les règles d'envoi (5 idées par semaine au plus, une par paire toutes les 12 heures) et 0,1 % de frais par aller-retour. Résultats en fois le risque, sur toute la période :
+
+| Face à une idée opposée pendant une idée en cours | SOL (brut / après frais) | BTC (brut / après frais) |
+|---|---|---|
+| **La bloquer** (base de la règle) | **+97,6 / +50,4** (pire passage 46,9) | −44,2 / −144,7 |
+| La prendre en gardant la première (couverture) | −16,0 / −63,9 | +18,8 / −82,8 |
+| Fermer la première pour une idée un peu plus forte | −2,7 à +85,9 selon l'écart exigé | −38,1 à +25,3 |
+| Fermer seulement pour une idée **bien** plus forte | +88,9 / +41,6 (12 changements en 6 ans) | −41,6 / −141,8 (15 changements) |
+| Bloquer aussi 3 jours après un ordre **expiré** | +21,6 / −24,5 | −40,8 / −139,8 |
+
+- **Sur SOL, changer de sens a coûté à chaque seuil** : en moyenne 0,35 à 0,76 fois le risque perdu par changement, et presque toujours, que l'idée en cours soit en gain, en perte ou encore en attente. Garder les deux à la fois a été la **pire** façon de faire. D'où le blocage par défaut, et une exception **rare** (au plus quelques fois par an).
+- Les totaux dépendent des réglages du rejeu (toutes les idées rejouées, sans tous les filtres du terminal en direct) : c'est l'**écart entre les lignes** qui compte.
+- **Sur BTC, c'est l'inverse en petit** : changer a rapporté 0,2 à 0,6 fois le risque par changement, surtout quand l'idée en cours était en perte. Les échantillons sont petits (12 à 160 changements) : aucune des deux paires ne prouve qu'il faut changer souvent.
+- **Bloquer après un ordre expiré aurait coûté cher sur SOL** (environ 76 fois le risque de moins) : les idées opposées qui suivent un ordre jamais exécuté ont été bonnes. Le terminal ne bloque donc pas dans ce cas : il te **rappelle** seulement de fermer l'ordre si tu l'avais pris.
+- La qualité utilisée dans le rejeu est la force de la zone (le score sur 100 du terminal en dépend en grande partie) : le seuil « 80 sur 100 et 15 points de plus » en est la traduction prudente, pas une valeur optimisée.
+- Relancer la mesure : `python tools/run_switch_study.py SOLUSDT` (une vingtaine de secondes, après `python tools/fetch_history.py SOLUSDT`).
 
 ## Ce qui est nouveau en V25 : la macro de la semaine et du mois, avec une vision d'ensemble
 
@@ -537,6 +573,8 @@ BTC au comptant 2014 → octobre 2026, bougies 1 heure, uniquement avec ce qui �
 - Relancer la mesure, par exemple sur SOL : `python tools/fetch_history.py SOLUSDT` puis `python tools/run_pocket_study.py SOLUSDT` (quelques secondes).
 
 ## Ce qui est nouveau en V13.1 : un seul biais à la fois
+
+*Règle remplacée en V25.1 (plus de délai de 24 heures, voir plus haut) ; le texte ci-dessous décrit la V13.1.*
 
 - **Retour aux achats et aux ventes par défaut.** Le mode « achat seulement » de la V13 n'est plus le réglage par défaut (il reste disponible dans Réglages → 4). Si la V13 l'avait écrit dans ton `.env` en enregistrant les réglages, le terminal le remet **une seule fois** sur « achats et ventes » au démarrage ; si tu le choisis de nouveau ensuite, ton choix est respecté.
 - **Jamais deux biais opposés à moins de 24 heures, toutes paires confondues.** BTC et SOL bougent ensemble : une vente SOL juste après un achat BTC, c'est la même contradiction qu'une vente BTC. Tant qu'une idée est **en cours** (ordre en attente, en position, objectif 1 atteint) ou qu'elle a **moins de 24 heures**, aucune idée dans l'autre sens n'est envoyée, sur aucune paire. Dans le même sens, rien ne change (un achat BTC puis un achat SOL, c'est cohérent).

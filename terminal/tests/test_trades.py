@@ -128,32 +128,30 @@ class DeskTests(unittest.TestCase):
         out = self.desk.consider(sigs(a, b), MON)
         self.assertEqual([t["symbol"] for t in out], ["SOLUSDT"])
 
-    def test_one_idea_per_symbol_every_twelve_hours_and_no_opposite_bias_within_24_hours(self):
+    def test_one_direction_at_a_time_with_no_time_limit(self):
+        """V25.1 : plus de delai de 24 h. Tant que l'achat est en cours (meme 4 jours apres), pas de vente ; des qu'il est termine, la vente passe."""
         self.assertEqual(Config().signal_direction, "both")                                 # par defaut : achats et ventes
         self.assertIsNone(self.desk.bias(MON))
         self.desk.consider(sigs(idea(side="long", key="l")), MON)
         short = idea(side="short", entry=110.0, stop=112.0, tp1=106.0, tp2=102.0, key="s")
-        self.assertEqual(self.desk.consider(sigs(short), MON + H), [])
+        self.assertEqual(self.desk.consider(sigs(short), MON + H), [])                      # une idee par paire toutes les 12 h
         self.assertEqual(self.desk.consider(sigs(short), MON + 13 * H), [])                 # l'achat est encore ouvert : pas de vente qui le contredit
         self.assertIn("contredirait l'achat BTCUSDT", self.desk.waiting["why"])
         self.assertIn("encore en cours", self.desk.waiting["why"])
-        self.desk.trades[-1].update(status="closed", result="stop", closedAt=MON + 14 * H)
-        self.assertEqual(self.desk.consider(sigs(short), MON + 20 * H), [])                 # terminee, mais moins de 24 h : toujours pas de vente
-        self.assertIn("moins de 24 h", self.desk.waiting["why"])
-        b = self.desk.bias(MON + 20 * H)
-        self.assertEqual((b["side"], b["symbol"], b["until"], b["open"]), ("long", "BTCUSDT", MON + 24 * H, []))
-        self.assertIsNone(self.desk.bias(MON + 25 * H))                                     # plus de 24 h et terminee : plus de biais impose
-        weak = idea(side="short", entry=110.0, stop=112.0, tp1=106.0, tp2=102.0, key="s2", score=70.0)
-        self.assertEqual(self.desk.consider(sigs(weak), MON + 25 * H), [])                  # entre 24 h et 72 h, changer de sens exige 10 points de plus
-        self.assertIn("change de sens", self.desk.waiting["why"])
-        out = self.desk.consider(sigs(short), MON + 26 * H)
+        self.assertIn("sauf une idée exceptionnelle (au moins 95/100 ; celle-ci a 80/100)", self.desk.waiting["why"])
+        b = self.desk.bias(MON + 13 * H)
+        self.assertEqual((b["side"], b["symbol"], b["switchNeed"]), ("long", "BTCUSDT", 95.0))
+        self.assertNotIn("until", b)
+        self.desk.trades[-1].update(status="active", filledAt=MON + 2 * H)                 # position prise, ni stop ni objectif touche
+        self.assertEqual(self.desk.consider(sigs(short), MON + 100 * H), [])                # 4 jours plus tard : toujours en cours, toujours pas de vente
+        self.assertIn("encore en cours", self.desk.waiting["why"])
+        self.desk.trades[-1].update(status="closed", result="stop", closedAt=MON + 101 * H)
+        self.assertIsNone(self.desk.bias(MON + 101 * H))                                    # terminee : plus de biais impose, sans attendre
+        out = self.desk.consider(sigs(short), MON + 101 * H + 300_000)
         self.assertEqual(len(out), 1)
-        self.assertTrue(self.n.sent[-1].startswith("⚠️ CHANGEMENT DE SENS sur BTCUSDT"))
-        self.assertIn("un achat sur BTCUSDT", self.n.sent[-1])
-        self.assertIn("REMPLACE", self.n.sent[-1])
-        self.assertIn("stop touché", self.n.sent[-1])
-        self.assertEqual((out[0]["flipFrom"]["side"], out[0]["flipFrom"]["symbol"]), ("long", "BTCUSDT"))
-        self.assertEqual(self.desk.bias(MON + 27 * H)["side"], "short")
+        self.assertFalse(self.n.sent[-1].startswith("🔁"))                                  # pas de « ferme d'abord » : il n'y a plus rien a fermer
+        self.assertNotIn("Rappel", self.n.sent[-1])
+        self.assertEqual(self.desk.bias(MON + 102 * H)["side"], "short")
 
     def test_no_opposite_bias_across_pairs(self):
         self.desk.consider(sigs(idea(sym="BTCUSDT", side="long", key="l")), MON)
@@ -163,7 +161,7 @@ class DeskTests(unittest.TestCase):
         out = self.desk.consider(sigs(idea(sym="SOLUSDT", side="long", entry=50.0, stop=49.0, tp1=52.0, tp2=54.0, key="sl")), MON + 2 * H)
         self.assertEqual([(t["symbol"], t["side"]) for t in out], [("SOLUSDT", "long")])  # meme sens sur l'autre paire : permis
         b = self.desk.bias(MON + 3 * H)
-        self.assertEqual((b["side"], b["symbol"], b["until"]), ("long", "SOLUSDT", MON + 26 * H))
+        self.assertEqual((b["side"], b["symbol"], b["switchNeed"]), ("long", "SOLUSDT", 95.0))
         self.assertEqual({o["symbol"] for o in b["open"]}, {"BTCUSDT", "SOLUSDT"})
         self.assertFalse(b["mixed"])
         self.assertEqual(self.desk.public(MON + 3 * H)["bias"]["side"], "long")

@@ -10,7 +10,8 @@ const Signals = (() => {
   const KIND = {rebond: 'Rebond sur une zone (ordre à cours limité)', reprise: 'Retournement après balayage (entrée immédiate)'};
   const STATUS = {pending: ['Ordre en attente', 'warn'], active: ['Position ouverte', 'ok'], tp1: ['Objectif 1 atteint', 'ok']};
   const RESULT = {stop: ['Stop touché', 'dn'], tp1_be: ['Objectif 1 puis retour à l\'entrée', 'muted'], tp2: ['Objectif 2 atteint', 'up'],
-    missed: ['Objectif atteint sans exécution', 'muted'], expired: ['Expirée sans exécution', 'muted'], expired_active: ['Suivi terminé', 'muted']};
+    missed: ['Objectif atteint sans exécution', 'muted'], expired: ['Expirée sans exécution', 'muted'], expired_active: ['Suivi terminé', 'muted'],
+    switch: ['Fermée pour changer de sens', 'muted'], switch_cancel: ['Ordre annulé pour changer de sens', 'muted']};
   const VERDICT = {edge: ['Mieux que le hasard', 'up'], none: ['Pas mieux que le hasard', 'muted'], worse: ['Moins bien que le hasard', 'dn'], thin: ['Trop peu de cas', 'muted']};
   const pc = x => x == null ? '-' : Math.round(x * 100) + ' %';
   const tone = s => s >= 75 ? 'up' : s >= 65 ? 'amb' : 'muted';
@@ -74,8 +75,10 @@ const Signals = (() => {
     const sent = trade ? `<span class="pill ${status ? status[1] : ''}">${esc(status ? status[0] : '')}</span>` : '';
     const gate = (i.gates || [])[0];
     const d0 = (last && last.direction) || 'both', bias = last && last.desk && last.desk.bias;
-    const blocked = !trade && (d0 === 'both' || i.side === d0) && LT.againstBias(bias, i.side);
-    const state = trade ? sent : blocked ? `<span class="pill warn" title="Pas d'idée dans l'autre sens tant qu'une idée est en cours ou a moins de 24 h, toutes paires confondues">Bloquée : contredirait ${bias.side === 'long' ? 'l\'achat' : 'la vente'} ${esc(bias.symbol.replace('USDT', ''))} du ${LT.parisAt(bias.created)}</span>` : gate ? `<span class="pill warn" title="${esc(i.gates.join(' · '))}">Filtre : ${esc(shortGate(gate))}</span>` : i.hold.length ? `<span class="pill warn" title="${esc(i.hold.join(' · '))}">En attente : annonce</span>`
+    const against = !trade && (d0 === 'both' || i.side === d0) && LT.againstBias(bias, i.side);
+    const blocked = against && !(bias.switchNeed != null && i.eligible && i.score >= bias.switchNeed);   // exceptionnelle : elle passerait (« ferme d'abord »)
+    const state = trade ? sent : blocked ? `<span class="pill warn" title="Une seule direction à la fois, toutes paires confondues : pas d'idée dans l'autre sens tant qu'une idée est en cours${bias.switchNeed != null && bias.switchNeed <= 100 ? ', sauf une idée exceptionnelle (au moins ' + Math.round(bias.switchNeed) + '/100)' : ''}">Bloquée : contredirait ${bias.side === 'long' ? 'l\'achat' : 'la vente'} ${esc(bias.symbol.replace('USDT', ''))} en cours</span>`
+      : against && !gate && !i.hold.length ? `<span class="pill amb" title="Qualité d'au moins ${Math.round(bias.switchNeed)}/100 : si elle part, son message te dira d'abord de fermer l'idée en cours">Changement de sens possible</span>` : gate ? `<span class="pill warn" title="${esc(i.gates.join(' · '))}">Filtre : ${esc(shortGate(gate))}</span>` : i.hold.length ? `<span class="pill warn" title="${esc(i.hold.join(' · '))}">En attente : annonce</span>`
       : i.eligible ? '<span class="pill up">Au-dessus du seuil</span>' : `<span class="pill muted">Sous le seuil (${sg.minScore})</span>`;
     const al = i.align, tpill = al == null ? '' : al > 0 ? '<span class="pill up" title="Le cours est du même côté des moyennes de 50 et 200 jours que l\'idée : c\'est la seule catégorie qui a rapporté dans le backtest">Dans le sens de la tendance</span>'
       : al < 0 ? '<span class="pill dn" title="Idée à contre-courant : la catégorie qui a perdu dans le backtest">À contre-courant</span>' : '<span class="pill warn" title="Cours entre les moyennes de 50 et 200 jours : aucun avantage mesuré">Tendance indécise</span>';
@@ -140,7 +143,7 @@ const Signals = (() => {
       const alert = t.mode === 'alerte';
       const tag = alert ? `<b class="amb">ALERTE</b> <span class="muted small">(configuration de ${t.side === 'short' ? 'vente' : 'achat'})</span>` : `<b class="${t.side === 'long' ? 'up' : 'dn'}">${t.side === 'long' ? 'ACHAT' : 'VENTE'}</b>`;
       return `<li>${tag} ${esc(t.symbol)} · ${px(t.entry)} → ${px(t.tp1)} / stop ${px(t.stop)}
-        <span class="pill ${st[1]}">${esc(st[0])}</span><div class="muted small">${timeFr(t.created)} · qualité ${Math.round(t.score)}/100 · ${alert ? 'hors quota' : 'idée ' + t.n + ' de la semaine'}${t.flipFrom ? ' · changement de sens' : ''}${t.sent ? '' : ' · envoi Telegram non confirmé'}</div></li>`;
+        <span class="pill ${st[1]}">${esc(st[0])}</span><div class="muted small">${timeFr(t.created)} · qualité ${Math.round(t.score)}/100 · ${alert ? 'hors quota' : 'idée ' + t.n + ' de la semaine'}${t.flipFrom || t.switchFrom ? ' · changement de sens' : ''}${t.sent ? '' : ' · envoi Telegram non confirmé'}</div></li>`;
     }).join('')}</ul>`;
   }
 
