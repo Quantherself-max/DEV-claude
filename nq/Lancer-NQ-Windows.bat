@@ -11,7 +11,7 @@ if not exist "%~dp0run.py" (
   echo    1. Ferme cette fenetre.
   echo    2. Clic droit sur le fichier ZIP telecharge
   echo       puis "Extraire tout..." ^(ou WinRAR : "Extraire ici"^).
-  echo    3. Ouvre le dossier extrait, puis le dossier "nq".
+  echo    3. Ouvre le dossier extrait ^(NQ-Scalp-Terminal^).
   echo    4. Double-clique sur Lancer-NQ-Windows.bat
   echo  ============================================================
   echo.

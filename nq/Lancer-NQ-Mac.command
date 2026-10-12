@@ -3,7 +3,7 @@
 cd "$(dirname "$0")"
 if [ ! -f run.py ]; then
   echo "Le terminal a ete lance sans le reste du programme (fichier ZIP pas extrait ?)."
-  echo "Double-clique d'abord sur le ZIP pour l'extraire, puis ouvre le dossier nq et relance ce fichier."
+  echo "Double-clique d'abord sur le ZIP pour l'extraire, puis ouvre le dossier extrait (NQ-Scalp-Terminal) et relance ce fichier."
   read -r -p "Appuie sur Entree pour fermer..."
   exit 1
 fi

@@ -6,6 +6,8 @@ Un terminal **local** (il tourne uniquement sur ton PC) pour scalper le **Nasdaq
 
 ## Démarrage
 
+**Si tu as téléchargé le ZIP** (`NQ-Scalp-Terminal-V….zip`) : **extrais tout** (clic droit > « Extraire tout… », ou WinRAR > « Extraire ici »), ouvre le dossier extrait `NQ-Scalp-Terminal`, puis suis les étapes ci-dessous. Les lanceurs ne marchent pas si tu les ouvres depuis l'intérieur du ZIP. Ce dossier est **indépendant** du terminal crypto : il a son propre port (8766), son propre journal de compte et ses propres réglages.
+
 1. **Python 3.10 ou plus** (rien d'autre à installer : aucune bibliothèque externe). Windows : coche « Add Python to PATH » à l'installation.
 2. **Lancer** : double-clique sur `Lancer-NQ-Windows.bat` (Windows) ou `Lancer-NQ-Mac.command` (Mac, première fois : clic droit > Ouvrir). Ou, dans un terminal : `python run.py`.
 3. Le terminal s'ouvre dans ton navigateur sur **http://127.0.0.1:8766/**. La fenêtre noire reste ouverte : c'est le programme. Ferme-la pour arrêter. (Le terminal crypto est sur le port 8765 : les deux peuvent tourner ensemble.)
