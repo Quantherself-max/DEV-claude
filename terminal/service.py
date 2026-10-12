@@ -1923,7 +1923,8 @@ class Service:
         if not sg.get("ready") or not sg["ideas"]:
             return {"n": 0} if sg.get("ready") else None
         best = sg["ideas"][0]
-        return {"n": sum(1 for i in sg["ideas"] if i["eligible"]), "side": best["side"], "score": best["score"], "entry": best["entry"],
+        return {"n": sum(1 for i in sg["ideas"] if i["eligible"]), "key": best["key"], "atr": best.get("atr"), "warm": sg.get("warm"),
+                "side": best["side"], "score": best["score"], "entry": best["entry"],
                 "stop": best["stop"], "tp1": best["tp1"], "eligible": best["eligible"], "hold": best["hold"][:1], "gates": [str(g) for g in (best.get("gates") or [])][:2],
                 "align": best.get("align"), "minScore": sg["minScore"], "direction": getattr(self.cfg, "signal_direction", "both")}
 

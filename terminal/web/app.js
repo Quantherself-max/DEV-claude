@@ -28,7 +28,7 @@ function ciBar(s, b) {                                  // echelle 20 % -> 80 %
 }
 // Idées en cours (V25.2) : une idée dans l'autre sens arrive en couverture (la première reste ouverte), sauf réglage « une seule direction à la fois ».
 const PARIS_DT = new Intl.DateTimeFormat('fr-FR', {timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
-const parisAt = ms => PARIS_DT.format(new Date(ms)).replace(',', '');
+const parisAt = ms => ms == null || !isFinite(ms) ? '-' : PARIS_DT.format(new Date(ms)).replace(',', '');      // une date absente ne casse jamais l'affichage
 const sideName = o => `${o.side === 'long' ? 'achat' : 'vente'} ${o.symbol.replace('USDT', '')}`;
 function biasHtml(b) {
   if (!b) return '<span class="lt">Biais du terminal</span> <b class="muted">AUCUN</b> <span class="muted small">pas d\'idée en cours : la prochaine peut être un achat ou une vente</span>';
@@ -90,7 +90,7 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
   liqOpts: {hours: 168, pools: true, sweeps: true, real: true, profile: true},
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
   layout: window.innerWidth >= 1500 ? '3' : window.innerWidth >= 1100 ? '2' : '1', prevLayout: null, sideOpen: true, sbCollapsed: false,
-  page: 'desk', sub: 'synth', planOn: true, planKey: null, plan: null, planSig: '', sig: null,
+  page: 'desk', sub: 'synth', planOn: true, planKey: null, plans: [], planSig: '', sig: null,
   theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, nodes: true, dpoc: true, npoc: true, tpoM: true, tpoW: true, tpoD: true, tpo4: false, tpo1: false, vwap: true, dom: false, big: true, bigMin: 2, bigLabels: 'top', absorb: true, absorbMode: 'fortes'}, flow: null,
   mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {M: true, W: true, D: true, '4h': false, '1h': false},
   tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true}};
@@ -628,7 +628,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 26;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage)
+const NEED_API = 27;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -714,7 +714,7 @@ async function poll() {
 }
 function resetSymbolData() {
   st.flow = null;
-  st.sel = null; st.data = null; st.heat = null; st.liqs = null; st.an = null; st.series = null; st.vpd = null; st.key = null; st.sig = null; st.planKey = null; st.planSig = ''; st.plan = null;
+  st.sel = null; st.data = null; st.heat = null; st.liqs = null; st.an = null; st.series = null; st.vpd = null; st.key = null; st.sig = null; st.planKey = null; st.planSig = ''; st.plans = [];
 }
 function buildControls(cfg) {
   st.cfg = cfg;
@@ -965,30 +965,45 @@ $('#riskChip').onclick = () => { const b = document.querySelector('#anTabs butto
 
 // ---------- idees de trade ----------
 let sigTimer = null;
-function activePlan() {
-  const sg = st.sig && st.sig.symbols && st.sig.symbols[st.symbol];
-  if (!st.planOn || !sg || !sg.ready) return null;
-  let p = st.planKey ? sg.ideas.find(i => i.key === st.planKey) : sg.ideas.find(i => i.eligible);
-  if (!p && !st.planKey) {                                           // pas d'idee : on suit l'idee envoyee encore ouverte
-    const t = st.sig.desk.trades.find(x => x.symbol === st.symbol && ['pending', 'active', 'tp1'].includes(x.status));
-    if (t) p = {key: t.id, side: t.side, entry: t.entry, stop: t.stop, tp1: t.tp1, tp2: t.tp2, score: t.score, kind: t.kind};
+// V25.3 : sur le graphique, les idées ENVOYÉES (niveaux figés, à partir de la bougie où elles sont parties) ; la configuration du moment
+// (recalculée sans cesse, donc mobile) n'apparaît que si tu la demandes, marquée « pas envoyée ».
+const OPEN_ST = ['pending', 'active', 'tp1'], RECENT_MS = 48 * 3600e3;
+function activePlans() {
+  const sig = st.sig, sg = sig && sig.symbols && sig.symbols[st.symbol];
+  if (!st.planOn || !sig || !sig.desk) return [];
+  const now = Date.now();
+  const plans = (sig.desk.trades || []).filter(t => t.symbol === st.symbol && t.mode !== 'alerte' && (OPEN_ST.includes(t.status) || (t.endAt || t.closedAt || 0) > now - RECENT_MS))
+    .slice(0, 3).map(t => ({kind: 'sent', key: t.id, symbol: t.symbol, side: t.side, entry: t.entry, stop: t.stop, tp1: t.tp1, tp2: t.tp2, score: t.score,
+      created: t.created, n: t.n, status: t.status, result: t.result, end: t.status === 'closed' ? (t.endAt || t.closedAt) : null, sentOk: t.sent !== false}));
+  if (st.planKey && sg && sg.ready) {
+    const i = sg.ideas.find(x => x.key === st.planKey);
+    if (i && !(i.send && i.send.state === 'sent' && plans.some(p => p.key === i.send.id)))
+      plans.push({kind: 'live', key: i.key, symbol: st.symbol, side: i.side, entry: i.entry, stop: i.stop, tp1: i.tp1, tp2: i.tp2, score: i.score,
+        why: i.send && i.send.text, state: i.send && i.send.state});
   }
-  return p ? {symbol: st.symbol, side: p.side, entry: p.entry, stop: p.stop, tp1: p.tp1, tp2: p.tp2, score: p.score, key: p.key, kind: p.kind} : null;
+  return plans;
 }
 function updatePlan() {
-  const p = activePlan(), k = p ? [p.key, p.entry, p.stop, p.tp1, p.tp2].join() : '';
-  if (k !== st.planSig) { st.planSig = k; st.plan = p; st.version++; panels.forEach(x => x.sig = ''); }
+  const ps = activePlans(), k = ps.map(p => [p.key, p.kind, p.status, p.entry, p.stop, p.tp1, p.tp2].join()).join('|');
+  if (k !== st.planSig) { st.planSig = k; st.plans = ps; st.version++; panels.forEach(x => x.sig = ''); }
 }
 function sigChip() {
   const el = $('#sigChip'), sg = st.sig && st.sig.symbols && st.sig.symbols[st.symbol];
-  const best = sg && sg.ready && sg.ideas.find(i => i.eligible);
-  const open = st.sig && st.sig.desk && st.sig.desk.trades.find(t => t.symbol === st.symbol && ['pending', 'active', 'tp1'].includes(t.status));
+  const open = st.sig && st.sig.desk && st.sig.desk.trades.find(t => t.symbol === st.symbol && t.mode !== 'alerte' && OPEN_ST.includes(t.status));
+  const best = sg && sg.ready && sg.ideas.find(i => i.eligible && !(i.send && i.send.state === 'sent'));
   if (!best && !open) { el.hidden = true; return; }
   el.hidden = false;
-  const i = best || open, buy = i.side === 'long';
-  el.className = 'badge sig ' + (buy ? 'up' : 'dn');
-  el.textContent = best ? `🎯 ${buy ? 'ACHAT' : 'VENTE'} ${Math.round(best.score)}/100` : `🎯 ${buy ? 'Achat' : 'Vente'} en cours`;
-  el.title = best ? `Idée de trade ${buy ? "d'achat" : 'de vente'} : entrée ${fmtP(best.entry)}, stop ${fmtP(best.stop)}. Clique pour tout comprendre.` : 'Idée envoyée encore ouverte. Clique pour la suivre.';
+  if (open) {                                                         // une idee envoyee en cours passe d'abord : c'est elle qui compte
+    const buy = open.side === 'long';
+    el.className = 'badge sig ' + (buy ? 'up' : 'dn');
+    el.textContent = `🎯 ${buy ? 'Achat' : 'Vente'} envoyé${buy ? '' : 'e'} le ${parisAt(open.created)}`;
+    el.title = `Idée envoyée sur Telegram le ${parisAt(open.created)} : entrée ${fmtP(open.entry)}, stop ${fmtP(open.stop)} (niveaux figés). Clique pour la suivre.`;
+    return;
+  }
+  const buy = best.side === 'long', s = best.send || {};
+  el.className = 'badge sig muted';
+  el.textContent = `🔎 ${buy ? 'Achat' : 'Vente'} ${Math.round(best.score)}/100 · ${s.state === 'next' ? 'part dans un instant' : 'pas envoyée'}`;
+  el.title = `Configuration du moment (recalculée en continu, ses niveaux bougent) : ${s.text || 'pas envoyée'}. Clique pour tout comprendre.`;
 }
 $('#sigChip').onclick = () => { location.hash = '#/signals'; };
 async function pollSignals() {
@@ -1252,7 +1267,7 @@ function openSymbol(sym, page) {
   let cfg;
   try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
   window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
-    serverOld, LAUNCHER, shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, oppOf, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
+    serverOld, LAUNCHER, OPEN_ST, shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, oppOf, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
   Overview.init(window.LT);
   Signals.init(window.LT);
   Backtest.init(window.LT);

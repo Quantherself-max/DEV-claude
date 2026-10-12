@@ -6,7 +6,7 @@ const Signals = (() => {
   const esc = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const px = v => v == null ? '-' : LT.fmtP(v);
   const chg = (v, e) => LT.sPct((v / e - 1) * 100);
-  const timeFr = ms => new Date(ms).toLocaleString('fr-FR', {weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
+  const timeFr = ms => new Date(ms).toLocaleString('fr-FR', {timeZone: 'Europe/Paris', weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
   const KIND = {rebond: 'Rebond sur une zone (ordre à cours limité)', reprise: 'Retournement après balayage (entrée immédiate)'};
   const STATUS = {pending: ['Ordre en attente', 'warn'], active: ['Position ouverte', 'ok'], tp1: ['Objectif 1 atteint', 'ok']};
   const RESULT = {stop: ['Stop touché', 'dn'], tp1_be: ['Objectif 1 puis retour à l\'entrée', 'muted'], tp2: ['Objectif 2 atteint', 'up'],
@@ -23,7 +23,7 @@ const Signals = (() => {
       const xb = e.target.closest('button[data-x]');
       if (xb) { loadX(xb.dataset.x, xb.dataset.side); return; }
       const b = e.target.closest('button[data-plan]');
-      if (b) { LT.setPlan(b.dataset.plan); render(last); return; }
+      if (b) { LT.setPlan(b.dataset.plan || null); render(last); return; }
       if (e.target.closest('[data-plan-off]')) { LT.setPlan('off'); render(last); }
     });
     root.addEventListener('toggle', e => {
@@ -69,33 +69,58 @@ const Signals = (() => {
     if (d === 'both' || i.side === d) return '';
     return ` <span class="pill warn" title="Réglages → 4 : sens de tes trades">${d === 'long' ? 'alerte pour tes longs, pas une idée' : 'alerte pour tes shorts, pas une idée'}</span>`;
   }
-  function card(i, sg, trade) {
-    const buy = i.side === 'long', col = buy ? 'up' : 'dn', d = i.desc;
-    const status = trade ? (trade.status === 'closed' ? RESULT[trade.result] : STATUS[trade.status]) : null;
-    const sent = trade ? `<span class="pill ${status ? status[1] : ''}">${esc(status ? status[0] : '')}</span>` : '';
+  // V25.3 : ce qu'il advient de chaque configuration du moment (même logique que l'envoi, calculée par le terminal)
+  const BLOCK_SHORT = {quota: 'quota de la semaine atteint', pair: 'maximum par paire cette semaine', last: 'dernière place : qualité insuffisante',
+    cooldown: 'une idée par paire toutes les 12 heures', zone: 'même zone qu\'une idée en cours', same: 'déjà envoyée il y a moins de 48 heures',
+    full: '2 idées déjà en cours sur la paire', never: 'contredirait l\'idée en cours'};
+  const isSent = i => !!(i.send && (i.send.state === 'sent' || i.send.state === 'alert'));
+  function sendLine(i) {
+    const s = i.send;
+    if (!s) return '';
+    if (isSent(i)) {
+      const st = s.status === 'closed' ? (RESULT[s.result] || [s.result])[0] : (STATUS[s.status] || [s.status])[0];
+      const moved = s.moved ? ` Ses niveaux sont <b>figés</b> à l'envoi (entrée ${px(s.entry)}, stop ${px(s.stop)}, objectif 1 ${px(s.tp1)}) ; ceux du tableau ci-dessous sont recalculés en continu.` : ' Ses niveaux sont figés à l\'envoi.';
+      return `<div class="sendline ok">✅ ${s.state === 'alert' ? 'Alerte envoyée' : 'Envoyée sur Telegram'} le <b>${LT.parisAt(s.created)}</b>${s.n ? ` (idée ${s.n} de la semaine)` : ''} · ${esc(st)}${s.sent === false ? ' · <span class="dn">envoi Telegram non confirmé</span>' : ''}.${moved}</div>`;
+    }
+    if (s.state === 'next') return `<div class="sendline ok">⏳ ${esc(s.text)}.</div>`;
+    if (s.state === 'blocked' || s.state === 'warming') return `<div class="sendline no">⛔ <b>Pas envoyée</b> : ${esc(s.text)}.</div>`;
+    if (s.state === 'filtered') {
+      const why = (i.gates || []).length ? shortGate(i.gates[0]) : (i.hold || []).length ? 'annonce majeure imminente ou toute récente' : `qualité sous le seuil (${(last && last.symbols && last.symbols[LT.st.symbol] || {}).minScore || ''}/100)`;
+      return `<div class="sendline muted">Pas envoyée : ${esc(why)} (détail dans « Tout comprendre »).</div>`;
+    }
+    if (s.state === 'alertmode') return `<div class="sendline muted">${esc(s.text)}.</div>`;
+    return '';
+  }
+  function card(i, sg) {
+    const buy = i.side === 'long', col = buy ? 'up' : 'dn', d = i.desc, s = i.send || {};
+    const sentNow = isSent(i);
     const gate = (i.gates || [])[0];
     const d0 = (last && last.direction) || 'both', bias = last && last.desk && last.desk.bias;
-    const op = !trade && (d0 === 'both' || i.side === d0) ? LT.oppOf(bias, i.side) : null;
+    const op = !sentNow && (d0 === 'both' || i.side === d0) ? LT.oppOf(bias, i.side) : null;
     const hedge = op && !op.blocked ? ` <span class="pill amb" title="Elle partirait en couverture : ${esc(op.names)} reste ouvert, chaque idée garde son stop et ses objectifs">Couverture de ${esc(op.names)}</span>` : '';
-    const state = trade ? sent : op && op.blocked ? `<span class="pill warn" title="Réglage « une seule direction à la fois » : pas d'idée dans l'autre sens tant qu'une idée est en cours, toutes paires confondues">Bloquée : contredirait ${esc(op.names)} en cours</span>`
+    const state = sentNow ? `<span class="pill up" title="Partie sur Telegram : niveaux figés, dessinés sur le graphique à partir de l'heure d'envoi">${s.state === 'alert' ? 'Alerte envoyée' : 'Envoyée'} le ${LT.parisAt(s.created)}</span>`
+      : s.state === 'blocked' ? `<span class="pill warn" title="${esc(s.text)}">Pas envoyée : ${esc(BLOCK_SHORT[s.code] || s.code)}</span>`
+      : s.state === 'warming' ? '<span class="pill warn" title="Calculs de démarrage en cours">Pas encore : démarrage</span>'
+      : s.state === 'next' ? '<span class="pill up">Part dans un instant</span>' + hedge
       : gate ? `<span class="pill warn" title="${esc(i.gates.join(' · '))}">Filtre : ${esc(shortGate(gate))}</span>` : i.hold.length ? `<span class="pill warn" title="${esc(i.hold.join(' · '))}">En attente : annonce</span>`
       : i.eligible ? '<span class="pill up">Au-dessus du seuil</span>' + hedge : `<span class="pill muted">Sous le seuil (${sg.minScore})</span>`;
     const al = i.align, tpill = al == null ? '' : al > 0 ? '<span class="pill up" title="Le cours est du même côté des moyennes de 50 et 200 jours que l\'idée : c\'est la seule catégorie qui a rapporté dans le backtest">Dans le sens de la tendance</span>'
       : al < 0 ? '<span class="pill dn" title="Idée à contre-courant : la catégorie qui a perdu dans le backtest">À contre-courant</span>' : '<span class="pill warn" title="Cours entre les moyennes de 50 et 200 jours : aucun avantage mesuré">Tendance indécise</span>';
     const comps = i.comps.map(c => `<div class="cmp"><span>${esc(c.label)}</span><i><b style="width:${Math.round(100 * c.pts / c.max)}%"></b></i><em>${c.pts.toFixed(0)}/${c.max}</em></div>`).join('');
-    const best = sg.ideas.find(x => x.eligible);
-    const shown = LT.st.planOn && (LT.st.planKey === i.key || (LT.st.planKey == null && best && best.key === i.key));
+    const shown = LT.st.planOn && (sentNow || LT.st.planKey === i.key);
     return `<div class="idea ${col}">
       <div class="ihead"><b class="side ${col}">${buy ? 'ACHAT' : 'VENTE'}</b><span class="muted small">${esc(KIND[i.kind] || i.kind)}</span>${dirNote(i)}
         <span class="score ${tone(i.score)}" title="Qualité de l'idée sur 100">${i.score.toFixed(0)}<small>/100</small></span></div>
       <div class="irow">${state}${tpill}<span class="muted small">${esc(i.grade)} · niveaux : qualité ${String(i.st.S.toFixed(1)).replace('.', ',')}</span></div>
+      ${sendLine(i)}
       <table class="plan">
         <tr><td>Entrée</td><td><b>${px(i.entry)}</b></td><td class="muted">${i.entryType === 'marché' ? 'près du prix actuel' : `ordre limite, à ${LT.num(i.distAtr * i.atrPct)} % du prix`}</td></tr>
         <tr><td>Stop</td><td><b class="dn">${px(i.stop)}</b></td><td class="muted">${chg(i.stop, i.entry)} (sortie si l'idée est fausse)</td></tr>
         <tr><td>Objectif 1</td><td><b class="up">${px(i.tp1)}</b></td><td class="muted">${chg(i.tp1, i.entry)}${rr(i.rr1)}</td></tr>
         ${i.tp2 != null ? `<tr><td>Objectif 2</td><td><b class="up">${px(i.tp2)}</b></td><td class="muted">${chg(i.tp2, i.entry)}${rr(i.rr2)}</td></tr>` : ''}
       </table>
-      <div class="ibtns">${shown ? '<button data-plan-off="1">Masquer sur le graphique</button>' : `<button data-plan="${esc(i.key)}">Voir sur le graphique</button>`}</div>
+      <div class="ibtns">${sentNow ? (shown ? '<span class="muted small">Dessinée sur le graphique à partir de l\'heure d\'envoi (niveaux figés).</span>' : '<button data-plan="">Voir l\'idée envoyée sur le graphique</button>')
+        : shown ? '<button data-plan="">Retirer du graphique</button>' : `<button data-plan="${esc(i.key)}" title="Dessinée en gris au bord droit : pas envoyée, ses niveaux bougent avec le marché">Voir cette configuration sur le graphique</button>`}</div>
       <details data-key="${esc(i.key)}" ${open.has(i.key) ? 'open' : ''}><summary>Tout comprendre : pourquoi, contexte, probabilités</summary>
         <h5>Quoi faire</h5><ul>${lines(d.action)}</ul>
         ${d.trend && d.trend.length ? `<h5>Tendance de fond</h5><ul>${lines(d.trend)}</ul>` : ''}
@@ -143,7 +168,7 @@ const Signals = (() => {
       const alert = t.mode === 'alerte';
       const tag = alert ? `<b class="amb">ALERTE</b> <span class="muted small">(configuration de ${t.side === 'short' ? 'vente' : 'achat'})</span>` : `<b class="${t.side === 'long' ? 'up' : 'dn'}">${t.side === 'long' ? 'ACHAT' : 'VENTE'}</b>`;
       return `<li>${tag} ${esc(t.symbol)} · ${px(t.entry)} → ${px(t.tp1)} / stop ${px(t.stop)}
-        <span class="pill ${st[1]}">${esc(st[0])}</span><div class="muted small">${timeFr(t.created)} · qualité ${Math.round(t.score)}/100 · ${alert ? 'hors quota' : 'idée ' + t.n + ' de la semaine'}${t.hedgeOf ? ' · couverture' : t.flipFrom || t.switchFrom ? ' · changement de sens' : ''}${t.sent ? '' : ' · envoi Telegram non confirmé'}</div></li>`;
+        <span class="pill ${st[1]}">${esc(st[0])}</span><div class="muted small">envoyée ${timeFr(t.created)} · qualité ${Math.round(t.score)}/100 · ${alert ? 'hors quota' : 'idée ' + t.n + ' de la semaine'}${t.hedgeOf ? ' · couverture' : t.flipFrom || t.switchFrom ? ' · changement de sens' : ''}${t.sent ? '' : ' · envoi Telegram non confirmé'}</div></li>`;
     }).join('')}</ul>`;
   }
 
@@ -154,25 +179,25 @@ const Signals = (() => {
     const sym = LT.st.symbol, sg = (p.symbols || {})[sym], desk = p.desk;
     if (!sg || !sg.ready) { root.innerHTML = '<section class="card"><div class="muted">Calcul en cours… (les idées apparaissent quand les données et l\'historique sont chargés)</div></section>'; return; }
     const w = desk.week, dots = Array.from({length: w.cap}, (_, k) => `<i class="${k < w.sent ? 'on' : ''}"></i>`).join('');
-    const openTrades = desk.trades.filter(t => t.symbol === sym && ['pending', 'active', 'tp1'].includes(t.status));
-    const matchTrade = i => openTrades.find(t => t.side === i.side && Math.abs(t.entry - i.entry) < 1.5 * sg.atr);
     const ideas = sg.ideas.slice(0, 4);
-    const elig = sg.ideas.filter(i => i.eligible).length;
+    const elig = sg.ideas.filter(i => i.eligible).length, sentN = sg.ideas.filter(isSent).length;
+    const heldN = sg.ideas.filter(i => i.send && (i.send.state === 'blocked' || i.send.state === 'warming')).length;
     let html = `<section class="card"><h2>Cette semaine <small>lundi 00 h UTC → dimanche</small></h2>
       <div class="week"><span class="dots">${dots}</span><b>${w.sent}/${w.cap}</b> idées envoyées · seuil de qualité <b>${sg.minScore}/100</b> (la dernière place exige ${sg.minScore + 8})</div>
       <div class="biasline">${LT.biasHtml(desk.bias)}</div>
       ${desk.waiting && desk.waiting.why ? `<div class="muted small">${esc(desk.waiting.why)}</div>` : ''}
       <div class="muted small">Idées d'achat ou de vente fondées sur trois piliers : les <b>liquidités</b> (poches d'ordres d'arrêt), les <b>VWAP et VWAP ancrés</b> (de l'heure à l'année) et le <b>contexte macro</b>. Rien n'est envoyé sous le seuil ni sans liquidité ou avec une macro nettement contraire : mieux vaut aucune idée qu'une idée moyenne.</div></section>`;
-    html += `<section class="card"><h2>Idées du moment <small>${esc(sym)}</small></h2>${trendBox(sg)}${ideas.length
-      ? ideas.map(i => card(i, sg, matchTrade(i))).join('')
+    html += `<section class="card"><h2>Configurations du moment <small>${esc(sym)} · recalculées en continu</small></h2>${trendBox(sg)}
+      <div class="muted small">Ce que le terminal voit <b>maintenant</b> : ces niveaux bougent avec le marché. Seules les configurations marquées « Envoyée » sont parties sur Telegram, avec des niveaux <b>figés</b> à l'envoi, dessinés sur le graphique à partir de l'heure d'envoi. Pour les autres, la raison est écrite sur la carte.</div>${ideas.length
+      ? ideas.map(i => card(i, sg)).join('')
       : '<div class="muted">Aucune configuration ne passe les filtres pour l\'instant. C\'est normal : une bonne idée est rare.</div>'}`;
     if (sg.rejected && sg.rejected.length) {
       html += `<details class="rej"><summary>Zones repérées mais écartées (${sg.rejected.length})</summary><ul>${sg.rejected.map(r =>
         `<li>${r.side === 'long' ? 'Achat' : 'Vente'} vers ${px(r.entry)} : ${esc(r.why)}</li>`).join('')}</ul></details>`;
     }
-    html += `<div class="muted small">${elig ? `${elig} idée(s) au-dessus du seuil.` : 'Aucune idée au-dessus du seuil.'} Le détail de chaque score est dans « Tout comprendre ».</div></section>`;
+    html += `<div class="muted small">${elig ? `${elig} configuration(s) au-dessus du seuil : ${sentN} déjà envoyée(s), ${heldN} retenue(s) par les règles d'envoi (quota, une idée par paire toutes les 12 heures, doublons).` : 'Aucune configuration au-dessus du seuil.'} Le détail de chaque score est dans « Tout comprendre ».</div></section>`;
     html += `<section class="card"><h2>Validation historique <small>${esc(sym)}</small></h2>${validation(sg.validation, sg.minStruct)}</section>`;
-    html += `<section class="card"><h2>Journal des idées</h2>${journal(desk)}</section>`;
+    html += `<section class="card"><h2>Idées envoyées sur Telegram <small>niveaux figés à l'envoi</small></h2>${journal(desk)}</section>`;
     root.innerHTML = html;
   }
 

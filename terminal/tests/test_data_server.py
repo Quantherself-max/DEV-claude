@@ -601,6 +601,11 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(set(r["desk"]), {"week", "waiting", "stats", "trades", "bias"})
         self.assertEqual(r["desk"]["week"]["cap"], 5)
         sg = r["symbols"]["BTCUSDT"]
+        states = {"sent", "alert", "alertmode", "filtered", "warming", "blocked", "next", "unknown"}
+        for i in sg.get("ideas", []):                                                  # V25.3 : chaque configuration dit si elle est partie, sinon pourquoi
+            self.assertIn(i["send"]["state"], states)
+        lec = json.loads(self.get("/api/lecture?symbol=BTCUSDT")[1])
+        self.assertIn("ideaSend", lec)
         self.assertTrue(sg["ready"])
         for k in ("ideas", "rejected", "minScore", "maxWeek", "minStruct", "validation", "warm"):
             self.assertIn(k, sg)

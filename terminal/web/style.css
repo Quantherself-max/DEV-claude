@@ -470,3 +470,9 @@ body.theme-nuit .mmdiff li{color:#bdbdbd}
 .mmfoot{margin:6px 0 0;padding-left:18px;font-size:11.5px;color:var(--mut)}.mmfoot li{margin:2px 0}
 .mwgrid>*{min-width:0}
 @media (max-width:700px){.mwgrid{grid-template-columns:minmax(0,1fr)}.mmscen{grid-template-columns:minmax(0,1fr)}}
+/* V25.3 : idee envoyee ou pas, et pourquoi */
+.idea .sendline{font-size:12px;line-height:1.45;margin:6px 0 4px;padding:5px 8px;border-radius:6px;background:rgba(255,255,255,.03);border-left:3px solid var(--mut)}
+.idea .sendline.ok{border-left-color:var(--up)}
+.idea .sendline.no{border-left-color:var(--amb)}
+.idea .sendline.muted{color:var(--mut)}
+.badge.sig.muted{opacity:.85;border-style:dashed}

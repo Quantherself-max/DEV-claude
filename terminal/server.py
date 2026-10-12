@@ -31,8 +31,8 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "25.2"
-API_LEVEL = 26                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "25.3"
+API_LEVEL = 27                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -203,6 +203,22 @@ class App:
                                                     " (une idée dans l'autre sens peut arriver, en couverture)." if b["mode"] != "never" else
                                                     " (rien dans l'autre sens tant qu'elles ne sont pas terminées)."))
         return "\n".join(L)
+
+    # --- idees du moment : envoyee ou pas, et pourquoi (V25.3) ---
+    def idea_state(self, sym: str, idea: dict, warm=None) -> dict:
+        """Etat d'envoi d'une configuration du moment (meme logique que l'envoi, rien n'est envoye ici)."""
+        try:
+            return self.desk.send_state(sym, idea, self.source.now_ms(), nsyms=len(self.service.markets),
+                                        warm=idea.get("warm", True) if warm is None else warm)
+        except Exception as e:                                             # un etat illisible ne doit jamais casser l'affichage
+            return {"state": "unknown", "text": f"état indisponible ({type(e).__name__})"}
+
+    def signals_with_state(self, sym: str) -> dict:
+        """Signaux du moment, chaque configuration avec son etat d'envoi (copie : le cache du service n'est pas modifie)."""
+        sg = self.service.signals(sym)
+        if not sg.get("ready"):
+            return sg
+        return {**sg, "ideas": [{**i, "send": self.idea_state(sym, i, warm=bool(sg.get("warm")))} for i in sg["ideas"]]}
 
     def bot_ideas(self) -> str:
         """/idees : les idees encore ouvertes (ordre en attente ou position en cours)."""
@@ -850,13 +866,16 @@ def make_handler(app: App):
                     d = app.desk.public(app.source.now_ms())
                     o["week"], o["tradeStats"], o["openTrades"] = d["week"], d["stats"], [t for t in d["trades"] if t["status"] in ("pending", "active", "tp1")]
                     o["bias"] = d["bias"]
+                    for card in o.get("symbols") or []:                         # V25.3 : l'idee du moment est-elle partie ? sinon pourquoi
+                        if card.get("idea") and card["idea"].get("side"):
+                            card["idea"] = {**card["idea"], "send": app.idea_state(card["symbol"], card["idea"])}
                     return self._json(o)
                 if u.path == "/api/signals":
                     syms = [(q.get("symbol") or [""])[0].upper()] if (q.get("symbol") or [""])[0] else list(app.service.markets)
                     for sy in syms:
                         if sy not in app.service.markets:
                             raise KeyError(f"symbole inconnu : {sy}")
-                    return self._json({"symbols": {sy: app.service.signals(sy) for sy in syms}, "desk": app.desk.public(app.source.now_ms()),
+                    return self._json({"symbols": {sy: app.signals_with_state(sy) for sy in syms}, "desk": app.desk.public(app.source.now_ms()),
                                        "on": app.cfg.signal_on, "direction": app.cfg.signal_direction})
                 if u.path == "/api/backtest":
                     lab = (q.get("label") or [""])[0]
@@ -871,7 +890,10 @@ def make_handler(app: App):
                     return self._json(rep)
                 if u.path == "/api/lecture":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
-                    return self._json({**app.service.lecture(sym), "deskBias": app.desk.bias(app.source.now_ms())})
+                    lec = app.service.lecture(sym)
+                    idea = lec.get("idea")
+                    return self._json({**lec, "deskBias": app.desk.bias(app.source.now_ms()),
+                                       "ideaSend": app.idea_state(sym, idea) if idea and idea.get("side") else None})
                 if u.path == "/api/strategy":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.service.strategy(sym))

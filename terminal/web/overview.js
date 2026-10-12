@@ -16,9 +16,11 @@ const Overview = (() => {
     if (!i) return '';
     if (!i.n && !i.side) return '<div class="sect">Idée de trade</div><div class="muted small">Aucune configuration ne passe les filtres pour l\'instant.</div>';
     const buy = i.side === 'long', cls = buy ? 'up' : 'dn';
-    const d0 = i.direction || 'both', op = (d0 === 'both' || i.side === d0) ? LT.oppOf(last && last.bias, i.side) : null;
-    const state = op && op.blocked ? `<span class="tag warn">${esc(op.text)}</span>`
-      : i.eligible ? `<span class="tag ok">au-dessus du seuil</span>${op ? ` <span class="tag warn">${esc(op.text)}</span>` : ''}` : i.hold && i.hold.length ? `<span class="tag warn">en attente : annonce</span>` : `<span class="tag warn">sous le seuil (${i.minScore})</span>`;
+    const d0 = i.direction || 'both', op = (d0 === 'both' || i.side === d0) ? LT.oppOf(last && last.bias, i.side) : null, snd = i.send || {};
+    const state = snd.state === 'sent' || snd.state === 'alert' ? `<span class="tag ok" title="Partie sur Telegram : niveaux figés à l'envoi">envoyée le ${LT.parisAt(snd.created)}</span>`
+      : op && op.blocked ? `<span class="tag warn">${esc(op.text)}</span>`
+      : snd.state === 'blocked' || snd.state === 'warming' ? `<span class="tag warn" title="${esc(snd.text || '')}">pas envoyée : ${esc(snd.text || '')}</span>`
+      : i.eligible ? `<span class="tag ok">${snd.state === 'next' ? 'part dans un instant' : 'au-dessus du seuil'}</span>${op ? ` <span class="tag warn">${esc(op.text)}</span>` : ''}` : i.hold && i.hold.length ? `<span class="tag warn">en attente : annonce</span>` : `<span class="tag warn">sous le seuil (${i.minScore})</span>`;
     return `<div class="sect">Idée de trade</div><div class="hero" style="gap:10px"><div class="big ${cls}" style="font-size:18px">${buy ? 'ACHAT' : 'VENTE'}</div><div class="muted small">qualité <b>${Math.round(i.score)}/100</b> ${state}<br>entrée ${fmtP(i.entry)} · stop ${fmtP(i.stop)} · objectif ${fmtP(i.tp1)}</div></div>`;
   }
 

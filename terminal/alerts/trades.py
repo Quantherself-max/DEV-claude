@@ -134,31 +134,73 @@ class TradeDesk:
             if direction != "both" and idea["side"] != direction:
                 against.append((score, sym, idea))                       # pas une idee pour toi : une alerte de prudence, plus bas
                 continue
-            sent = w["sent"] + len(created)
-            if sent >= cfg.signal_max_week:
-                self.waiting = {"why": f"quota de la semaine atteint ({cfg.signal_max_week} idées) : la meilleure idée suivante est {sym} {SIDE_WORD[idea['side']]} ({score:.0f}/100)"}
-                break
-            per_sym = sum(1 for t in self.trades if t["created"] >= w["start"] and t["symbol"] == sym and not is_alert(t)) + sum(1 for c in created if c["symbol"] == sym)
-            if len(sigs) > 1 and per_sym >= min(cfg.signal_max_per_symbol, cfg.signal_max_week):
-                self.waiting = {"why": f"{per_sym} idées déjà envoyées cette semaine sur {sym} (maximum {cfg.signal_max_per_symbol} par paire pour laisser de la place aux autres paires)"}
+            blk = self._block(sym, idea, now_ms, w, created, len(sigs))
+            if blk:                                                      # la regle qui la retient (meme texte que dans l'onglet Idees)
+                self.waiting = {"why": f"{sym} {SIDE_WORD[idea['side']]} ({score:.0f}/100) : {blk[1]}"}
+                if blk[0] == "quota":
+                    break
                 continue
-            need = cfg.signal_min_score + (8.0 if cfg.signal_max_week > 1 and sent == cfg.signal_max_week - 1 else 0.0)
-            if score < need:
-                self.waiting = {"why": f"dernière place de la semaine : exige {need:.0f}/100, la meilleure idée ({sym} {SIDE_WORD[idea['side']]}) a {score:.0f}/100"}
-                continue
-            if self._duplicate(sym, idea, now_ms):
-                continue
-            opp = self._opposite_open(idea)
-            if opp and getattr(cfg, "signal_opposite", "hedge") == "never":     # reglage : une seule direction a la fois, toutes paires confondues
-                top = max(opp, key=lambda t: t["created"])
-                self.waiting = {"why": f"{sym} {SIDE_WORD[idea['side']]} contredirait {THE_SIDE[top['side']]} {top['symbol']} du {paris(top['created'])}, encore en cours : "
-                                       "pas d'idée dans l'autre sens tant qu'elle n'est pas terminée (réglage : une seule direction à la fois)"}
-                continue
-            created.append(self._create(sym, idea, now_ms, sent + 1, prices=prices, hedge=opp))
+            created.append(self._create(sym, idea, now_ms, w["sent"] + len(created) + 1, prices=prices, hedge=self._opposite_open(idea)))
         for score, sym, idea in against:
             if score >= cfg.signal_min_score and self._alert_ok(sym, idea, now_ms):
                 created.append(self._create_alert(sym, idea, now_ms))
         return created
+
+    def _block(self, sym, idea, now_ms, w, created, nsyms):
+        """Premiere regle d'envoi qui retient cette idee maintenant : (code, texte en clair), ou None si elle peut partir. Sert a l'envoi
+        (consider) ET a l'affichage (send_state) : l'onglet Idees dit exactement pourquoi une configuration du moment n'est pas partie."""
+        cfg = self.cfg
+        score, sent = idea["score"], w["sent"] + len(created)
+        if sent >= cfg.signal_max_week:
+            return "quota", f"quota de la semaine atteint ({cfg.signal_max_week} idées sur {cfg.signal_max_week}) ; il repart lundi à 00 h UTC"
+        per_sym = sum(1 for t in self.trades if t["created"] >= w["start"] and t["symbol"] == sym and not is_alert(t)) + sum(1 for c in created if c["symbol"] == sym)
+        if nsyms > 1 and per_sym >= min(cfg.signal_max_per_symbol, cfg.signal_max_week):
+            return "pair", f"{per_sym} idées déjà envoyées cette semaine sur {sym} (maximum {cfg.signal_max_per_symbol} par paire pour laisser de la place aux autres paires)"
+        need = cfg.signal_min_score + (8.0 if cfg.signal_max_week > 1 and sent == cfg.signal_max_week - 1 else 0.0)
+        if score < need:
+            return "last", f"dernière place de la semaine : il faut {need:.0f}/100, celle-ci a {score:.0f}/100"
+        dup = self._duplicate_reason(sym, idea, now_ms)
+        if dup:
+            return dup
+        opp = self._opposite_open(idea)
+        if opp and getattr(cfg, "signal_opposite", "hedge") == "never":
+            top = max(opp, key=lambda t: t["created"])
+            return "never", (f"elle contredirait {THE_SIDE[top['side']]} {top['symbol']} du {paris(top['created'])}, encore en cours : "
+                             "pas d'idée dans l'autre sens tant qu'elle n'est pas terminée (réglage : une seule direction à la fois)")
+        return None
+
+    def sent_for(self, sym, idea, now_ms):
+        """Idee deja envoyee qui correspond a cette configuration du moment (la plus recente) : meme paire et meme sens, encore en cours
+        avec la meme cle ou une entree a moins de 1,5 fois l'amplitude horaire, ou terminee depuis moins de 48 h avec la meme cle (elle
+        ne peut pas repartir avant). Ses niveaux sont ceux de l'envoi : ils ne bougent plus, contrairement a la configuration du moment."""
+        atr = idea.get("atr") or 0.0
+        hits = [t for t in self.trades if t["symbol"] == sym and t["side"] == idea["side"] and (
+            (t["status"] in OPEN and (t.get("key") == idea.get("key") or abs(t["entry"] - idea["entry"]) < 1.5 * atr))
+            or (t.get("key") == idea.get("key") and now_ms - t["created"] < 48 * 3_600_000))]
+        return max(hits, key=lambda t: t["created"], default=None)
+
+    def send_state(self, sym, idea, now_ms, nsyms=1, warm=True):
+        """Ce qu'il advient de cette configuration du moment, avec la meme logique que l'envoi (rien n'est envoye ici) :
+        sent / alert (deja envoyee, et quand), alertmode (sens que tu ne trades pas), filtered (filtres, seuil, annonce), warming
+        (calculs de demarrage), blocked (regle d'envoi, avec la raison), next (part au prochain passage, dans les secondes qui viennent)."""
+        t = self.sent_for(sym, idea, now_ms)
+        if t is not None:
+            return {"state": "alert" if is_alert(t) else "sent", "id": t["id"], "created": t["created"], "n": t.get("n"), "status": t["status"],
+                    "result": t.get("result"), "entry": t["entry"], "stop": t["stop"], "tp1": t["tp1"], "tp2": t.get("tp2"), "sent": t.get("sent"),
+                    "moved": any(abs((idea.get(k) or 0) - (t.get(k) or 0)) > 1e-9 * max(1.0, abs(t.get(k) or 0)) for k in ("entry", "stop", "tp1"))}
+        direction = getattr(self.cfg, "signal_direction", "both")
+        if direction != "both" and idea["side"] != direction:
+            mine = "longs" if direction == "long" else "shorts"
+            return {"state": "alertmode", "text": f"tu trades {'à l’achat' if direction == 'long' else 'à la vente'} seulement : si elle passe le seuil, elle part comme « alerte pour tes {mine} », hors quota"}
+        if not idea.get("eligible"):
+            why = (idea.get("gates") or idea.get("hold") or [None])[0]
+            return {"state": "filtered", "text": why or f"qualité sous le seuil ({getattr(self.cfg, 'signal_min_score', 0):.0f}/100)"}
+        if not warm:
+            return {"state": "warming", "text": "le terminal termine ses calculs de démarrage (statistiques et rejeu de l'historique) : rien ne part avant, quelques minutes après le lancement"}
+        blk = self._block(sym, idea, now_ms, self.week(now_ms), [], nsyms)
+        if blk:
+            return {"state": "blocked", "code": blk[0], "text": blk[1]}
+        return {"state": "next", "text": "elle passe toutes les règles : elle part sur Telegram au prochain passage du terminal (dans les secondes qui viennent)"}
 
     def _opposite_open(self, idea):
         """Idees dans l'autre sens encore en cours (ordre en attente, position, objectif 1 atteint), sur n'importe quelle paire."""
@@ -184,19 +226,28 @@ class TradeDesk:
                 return False
         return True
 
-    def _duplicate(self, sym, idea, now_ms):
+    def _duplicate_reason(self, sym, idea, now_ms):
+        """Regles anti-doublon : (code, raison en clair), ou None si aucune ne s'applique : une idee par paire toutes les 12 h (pas d'achat ET de vente
+        d'un coup) ; pas deux idees dans la meme zone et le meme sens tant que la premiere est en cours ; pas deux fois la meme
+        configuration en 48 h ; deux idees ouvertes par paire au plus."""
         for t in self.trades:
             if t["symbol"] != sym or is_alert(t):
                 continue
             if now_ms - t["created"] < COOLDOWN_H * 3_600_000:
-                return True                                              # une seule idee par symbole toutes les 12 h (pas d'achat ET de vente d'un coup)
+                return "cooldown", (f"une idée a déjà été envoyée sur {sym} le {paris(t['created'])} : une seule par paire toutes les {COOLDOWN_H} heures "
+                                    f"(prochaine possible à partir du {paris(t['created'] + COOLDOWN_H * 3_600_000)})")
             if t["side"] != idea["side"]:
                 continue
-            if t["status"] in OPEN and abs(t["entry"] - idea["entry"]) < 1.5 * idea["atr"]:
-                return True
-            if t["key"] == idea["key"] and now_ms - t["created"] < 48 * 3_600_000:
-                return True
-        return sum(1 for t in self.trades if t["symbol"] == sym and t["status"] in OPEN and not is_alert(t)) >= 2
+            if t["status"] in OPEN and abs(t["entry"] - idea["entry"]) < 1.5 * (idea.get("atr") or 0.0):
+                return "zone", f"même zone que {THE_SIDE[t['side']]} {sym} du {paris(t['created'])}, encore en cours (entrée {sg.fmt_price(t['entry'])})"
+            if t.get("key") == idea.get("key") and now_ms - t["created"] < 48 * 3_600_000:
+                return "same", f"même configuration déjà envoyée le {paris(t['created'])} : pas deux fois en 48 heures (de nouveau possible à partir du {paris(t['created'] + 48 * 3_600_000)})"
+        if sum(1 for t in self.trades if t["symbol"] == sym and t["status"] in OPEN and not is_alert(t)) >= 2:
+            return "full", f"déjà 2 idées en cours sur {sym} (2 au plus par paire)"
+        return None
+
+    def _duplicate(self, sym, idea, now_ms):
+        return self._duplicate_reason(sym, idea, now_ms) is not None
 
     def _record(self, sym, idea, now_ms, n):
         desc, probs, st = idea.get("desc") or {}, idea.get("probs") or {}, idea.get("st") or {}
@@ -219,6 +270,8 @@ class TradeDesk:
 
     def _create(self, sym, idea, now_ms, n, prices=None, hedge=None):
         text = sg.to_text(idea, idea["desc"], n, self.cfg.signal_max_week)
+        head, _, rest = text.partition("\n")                          # V25.3 : l'heure d'envoi, pour la retrouver sur le graphique
+        text = f"{head}\n🕒 Envoyée le {paris(now_ms)} (heure de Paris) : ces niveaux ne bougeront plus ; sur le graphique, ils partent de cette heure.\n{rest}"
         tr = self._record(sym, idea, now_ms, n)
         if hedge:                                                       # idee dans l'autre sens pendant une idee en cours : couverture
             text = self._hedge_text(sym, idea, hedge, prices or {}) + "\n\n" + text
@@ -552,7 +605,7 @@ class TradeDesk:
 
     def public(self, now_ms: int):
         keys = ("id", "symbol", "side", "kind", "created", "score", "entry", "entryType", "stop", "tp1", "tp2", "rr1", "rr2", "validUntil",
-                "status", "result", "filledAt", "closedAt", "n", "title", "sent", "x", "mode", "flipFrom", "switchFrom", "switchTo", "rSwitch", "hedgeOf")
+                "status", "result", "filledAt", "closedAt", "endAt", "tp1At", "n", "title", "sent", "x", "mode", "flipFrom", "switchFrom", "switchTo", "rSwitch", "hedgeOf")
         return {"week": self.week(now_ms), "waiting": self.waiting, "stats": self.stats(), "bias": self.bias(now_ms),
                 "trades": [{k: t.get(k) for k in keys} for t in self.trades[-40:][::-1]]}
 

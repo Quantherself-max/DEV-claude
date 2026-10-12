@@ -1,9 +1,10 @@
-# Liq Terminal (V25.2)
+# Liq Terminal (V25.3)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Idées envoyées figées et datées sur le graphique** (V25.3) : chaque idée partie sur Telegram est dessinée à ses niveaux d'envoi (ils ne bougent plus), à partir de la bougie où elle est partie (« vente envoyée ici · 12/10 11:36 ») ; chaque configuration du moment dit « envoyée le … » ou « pas envoyée : » et la raison exacte (voir « V25.3 » plus bas).
 - **Idées de couverture** (V25.2) : une idée dans l'autre sens peut arriver pendant une idée en cours, sur la même paire ou sur l'autre ; elle la **couvre sans l'annuler** (message « 🛡 COUVERTURE » avec l'idée en cours, son gain ou sa perte du moment, et comment les niveaux des deux idées se gênent). Plus de délai de 24 heures ni d'« idée exceptionnelle » (voir « V25.2 » plus bas).
 - **Macro de la semaine et du mois** (V25) : vision d'ensemble (régime, Fed, consensus, annonces à venir) et analyse mensuelle (projections, communiqué annoté, scénarios, rapports des banques) (voir « V25 » plus bas).
 - **Gros ordres et absorptions lisibles** (V24.1) : les gros ordres agressifs deviennent des **bulles vertes (achats) et rouges (ventes) dessinées derrière les bougies**, qui restent toujours entières ; les absorptions en direct deviennent des **murs** (trait horizontal au prix) ; seuls les 3 plus gros montants sont écrits (réglable), le reste au survol (voir « V24.1 » plus bas).
@@ -120,6 +121,28 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V25.3 : sur le graphique, les idées envoyées, figées et datées
+
+**Le problème** : par défaut, le graphique montrait la meilleure **configuration du moment**. Elle est recalculée en continu (ses niveaux bougent avec le marché) et n'a pas forcément été envoyée. Même pour une idée envoyée, le graphique suivait ses niveaux recalculés au lieu de ceux de l'envoi. Rien ne disait quand elle était partie. Et l'onglet Idées marquait « au-dessus du seuil » des configurations retenues par les règles d'envoi, sans dire pourquoi.
+
+### Ce qui change
+- **Graphique** : les **idées envoyées** sont dessinées à leurs **niveaux figés** (entrée, stop, objectifs), à partir de la bougie où elles sont parties, avec un trait vertical, l'étiquette « vente envoyée ici · 12/10 11:36 » et un triangle sur l'entrée. Celles en cours sont en couleur ; celles terminées depuis moins de 48 heures sont estompées, avec leur résultat (« terminée : stop touché »). Case **« Idées envoyées »** dans les options du graphique principal.
+- **La configuration du moment** n'est dessinée que si tu la demandes (bouton « Voir cette configuration sur le graphique » dans l'onglet Idées), **en gris**, collée au bord droit, marquée « pas envoyée, bouge ».
+- **Onglet Idées** : chaque configuration dit **« ✅ Envoyée sur Telegram le 12/10 11:36 »** (avec les niveaux figés de l'envoi s'ils diffèrent de ceux du moment) ou **« ⛔ Pas envoyée : »** et la raison exacte. C'est la **même fonction** qui décide de l'envoi et qui écrit la raison : l'écran dit exactement ce que fait le terminal.
+- **Badge en haut** : « 🎯 Vente envoyée le 12/10 11:36 » quand une idée est en cours ; sinon « 🔎 Vente 74/100 · pas envoyée ».
+- **Lecture et Vue d'ensemble** : la même mention (« envoyée le … » ou « pas envoyée : … »).
+- **Message Telegram** : deuxième ligne « 🕒 Envoyée le 12/10 11h36 (heure de Paris) : ces niveaux ne bougeront plus ; sur le graphique, ils partent de cette heure ».
+- **Heure de Paris partout** (la liste des idées envoyées suivait l'heure de l'ordinateur).
+
+### Pourquoi une configuration au-dessus du seuil ne part pas (règles inchangées, désormais affichées)
+- **Quota de la semaine** atteint (5 idées, il repart le lundi à 00 h UTC), ou **maximum par paire** (3 par semaine, pour laisser de la place à l'autre paire).
+- **Dernière place de la semaine** : elle demande 8 points de qualité de plus.
+- **Une idée par paire toutes les 12 heures** : la carte dit à partir de quelle heure une nouvelle idée sera possible.
+- **Même configuration déjà envoyée il y a moins de 48 heures**, ou **même zone** qu'une idée encore en cours.
+- **Deux idées déjà en cours sur la paire**.
+- **Calculs de démarrage** : après un lancement ou une mise à jour, rien ne part tant que les statistiques et le rejeu de l'historique ne sont pas prêts (quelques minutes).
+- Les filtres habituels : qualité sous le seuil, tendance de fond contraire, annonce majeure imminente.
 
 ## Ce qui est nouveau en V25.2 : une idée dans l'autre sens arrive en couverture, sans annuler la première
 

@@ -37,8 +37,13 @@ const Lecture = (() => {
       return `<div class="lidea"><b class="amb">ALERTE pour tes ${i.direction === 'long' ? 'longs' : 'shorts'}</b> <span class="muted small">configuration de ${i.side === 'long' ? 'achat' : 'vente'}, qualité ${Math.round(i.score)}/100 : ce n'est pas une idée pour toi, c'est un signal de prudence</span>
         <div class="small">fausse si le prix repasse ${i.side === 'short' ? 'au-dessus de' : 'sous'} ${px(i.stop)} · peut aller chercher ${px(i.tp1)}</div></div>`;
     }
-    const why = (i.gates || []).concat(i.hold || [])[0], op = LT.oppOf(last && last.deskBias, i.side);
-    const status = op && op.blocked ? ` · ${esc(op.text)}` : i.eligible ? (op ? ` · ${esc(op.text)}` : '') : i.align != null && i.align <= 0 ? ' · contre la tendance de fond : non retenue' : i.score < i.minScore ? ' · sous le seuil (' + i.minScore + ')' : ' · pas encore envoyée';
+    const why = (i.gates || []).concat(i.hold || [])[0], op = LT.oppOf(last && last.deskBias, i.side), s = last && last.ideaSend;
+    const sentNow = s && (s.state === 'sent' || s.state === 'alert');    // V25.3 : partie ou pas, et pourquoi (niveaux figés si partie)
+    const status = sentNow ? ` · <b class="up">envoyée le ${LT.parisAt(s.created)}</b>${s.moved ? ` (niveaux figés : entrée ${px(s.entry)}, stop ${px(s.stop)} ; ceux-ci sont ceux du moment)` : ''}`
+      : op && op.blocked ? ` · ${esc(op.text)}`
+      : s && (s.state === 'blocked' || s.state === 'warming') ? ` · <span class="amb">pas envoyée : ${esc(s.text)}</span>`
+      : s && s.state === 'next' ? ' · part dans un instant' + (op ? ` · ${esc(op.text)}` : '')
+      : i.eligible ? (op ? ` · ${esc(op.text)}` : '') : i.align != null && i.align <= 0 ? ' · contre la tendance de fond : non retenue' : i.score < i.minScore ? ' · sous le seuil (' + i.minScore + ')' : ' · pas encore envoyée';
     return `<div class="lidea"><b class="${cls}">${i.side === 'long' ? 'ACHAT' : 'VENTE'}</b> <span class="muted small">qualité ${Math.round(i.score)}/100${status}${why ? ' · ' + esc(why) : ''}</span>
       <div class="small">entrée ${px(i.entry)} · stop ${px(i.stop)} · objectif ${px(i.tp1)}</div></div>`;
   }

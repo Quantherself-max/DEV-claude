@@ -165,7 +165,7 @@ class DeskTests(unittest.TestCase):
         sol_short = idea(sym="SOLUSDT", side="short", entry=60.0, stop=61.0, tp1=57.0, tp2=55.0, key="ss", score=90.0)
         self.cfg.signal_opposite = "never"
         self.assertEqual(self.desk.consider(sigs(sol_short), MON + H), [])                 # reglage « une seule direction » : bloquee
-        self.assertIn("SOLUSDT vente contredirait l'achat BTCUSDT", self.desk.waiting["why"])
+        self.assertIn("SOLUSDT vente (90/100) : elle contredirait l'achat BTCUSDT", self.desk.waiting["why"])
         self.cfg.signal_opposite = "hedge"
         out = self.desk.consider(sigs(sol_short), MON + H)
         self.assertEqual([(t["symbol"], t["side"]) for t in out], [("SOLUSDT", "short")])  # par defaut : couverture sur l'autre paire
@@ -187,7 +187,7 @@ class DeskTests(unittest.TestCase):
         self.desk.trades.clear()
         out = self.desk.consider(both, MON + 30 * H)
         self.assertEqual([(t["symbol"], t["side"]) for t in out], [("BTCUSDT", "short")])
-        self.assertIn("SOLUSDT achat contredirait la vente BTCUSDT", self.desk.waiting["why"])
+        self.assertIn("SOLUSDT achat (75/100) : elle contredirait la vente BTCUSDT", self.desk.waiting["why"])
 
     # ---------- doublons ----------
     def test_cooldown_duplicates_and_open_limit(self):

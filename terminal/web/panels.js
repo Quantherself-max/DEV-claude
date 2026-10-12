@@ -256,7 +256,7 @@ class Panel {
       `<label title="Tous les niveaux de la fenêtre"><input type="radio" name="mode" value="all"> Tous</label>` +
       `<label title="Poches de liquidations estimées par l'Open Interest"><input type="checkbox" data-opt="pools"> Poches</label>` +
       `<label title="Ordres d'arrêt visibles dans le prix : plus haut / plus bas de la veille, de la semaine, du mois, creux et sommets récents"><input type="checkbox" data-opt="ppools"> Plus hauts / bas</label>` +
-      `<label title="Entrée, stop et objectifs de l'idée de trade du moment"><input type="checkbox" data-opt="plan"> Plan</label>` +
+      `<label title="Idées envoyées sur Telegram : entrée, stop et objectifs figés, à partir de l'heure d'envoi"><input type="checkbox" data-opt="plan"> Idées envoyées</label>` +
       `<label title="Profil de volume du jour (depuis 00 h UTC), collé à l'échelle des prix : volume par prix, part des acheteurs (bleu) ou des vendeurs (blanc), POC / VAH / VAL"><input type="checkbox" data-mo="sess"> Profil J</label>` +
       `<label title="Profil de volume de la semaine en cours (depuis lundi 00 h UTC), à gauche du profil du jour"><input type="checkbox" data-mo="sessW"> S</label>` +
       `<label title="Profil de volume du mois en cours (depuis le 1er, 00 h UTC)"><input type="checkbox" data-mo="sessM"> M</label>` +
@@ -339,8 +339,8 @@ class Panel {
     let ex = [];
     if (this.kind === 'main') {
       ex = d.liquidity.pools.map(p => p.price).concat(LT.shownZones(d).map(z => z.mid));
-      const pl = LT.st.plan;
-      if (pl && pl.symbol === LT.st.symbol) ex = ex.concat([pl.entry, pl.stop, pl.tp1].concat(pl.tp2 != null ? [pl.tp2] : []));
+      (LT.st.plans || []).filter(pl => pl.symbol === LT.st.symbol && pl.status !== 'closed')
+        .forEach(pl => { ex = ex.concat([pl.entry, pl.stop, pl.tp1].concat(pl.tp2 != null ? [pl.tp2] : [])); });
     }
     else if (this.kind === 'liq') ex = d.liquidity.pools.map(p => p.price);
     if (ex.length) {
@@ -588,26 +588,67 @@ class Panel {
     });
   }
   drawPlan(L, h) {
-    const p = LT.st.plan;
-    if (!p || p.symbol !== LT.st.symbol) return;
+    // V25.3 : les idées ENVOYÉES, à leurs niveaux figés, à partir de la bougie où elles sont parties (trait vertical et date) ; terminées
+    // depuis moins de 48 h : estompées avec leur résultat. La configuration du moment (pas envoyée, recalculée sans cesse) n'est dessinée
+    // que si tu la demandes, en gris, collée au bord droit.
+    const st = LT.st, plans = (st.plans || []).filter(p => p.symbol === st.symbol);
+    if (!plans.length) return;
     const ctx = this.ctx, plotW = this.kind === 'main' && this.rightLimit ? Math.max(200, this.rightLimit) : L.plotW, Y = v => this.series.priceToCoordinate(v);
-    const ye = Y(p.entry), ys = Y(p.stop), y1 = Y(p.tp1), y2 = p.tp2 != null ? Y(p.tp2) : null;
-    if (ye == null || ys == null || y1 == null) return;
-    const x0 = Math.max(40, plotW * 0.5);
-    ctx.fillStyle = 'rgba(255,107,107,.10)'; ctx.fillRect(x0, Math.min(ye, ys), plotW - x0, Math.abs(ys - ye));
-    ctx.fillStyle = 'rgba(61,220,151,.10)'; ctx.fillRect(x0, Math.min(ye, y1), plotW - x0, Math.abs(y1 - ye));
-    const pc = v => ((v / p.entry - 1) * 100), fmt = LT.fmtP, sp = v => (v > 0 ? '+' : '') + LT.num(v) + ' %';
-    const items = [
-      {y: ye, col: '#5ab0ff', dash: [6, 4], text: `${p.side === 'long' ? 'ACHAT' : 'VENTE'} · entrée ${fmt(p.entry)}`},
-      {y: ys, col: '#ff6b6b', dash: [3, 3], text: `Stop ${fmt(p.stop)} (${sp(pc(p.stop))})`},
-      {y: y1, col: '#3ddc97', dash: [3, 3], text: `Objectif 1 ${fmt(p.tp1)} (${sp(pc(p.tp1))})`}];
-    if (y2 != null) items.push({y: y2, col: '#3ddc97', dash: [2, 5], text: `Objectif 2 ${fmt(p.tp2)} (${sp(pc(p.tp2))})`});
-    items.forEach(it => { ctx.strokeStyle = it.col; ctx.lineWidth = 1.2; ctx.setLineDash(it.dash); ctx.beginPath(); ctx.moveTo(x0 - 30, it.y); ctx.lineTo(plotW, it.y); ctx.stroke(); });
-    ctx.setLineDash([]);
-    LT.placeLabels(items.map(it => ({...it})), 18, 12, h - 30).forEach(it => {
+    const fmt = LT.fmtP, sp = (v, e) => { const x = (v / e - 1) * 100; return (x > 0 ? '+' : '') + LT.num(x) + ' %'; };
+    const STATUS = {pending: 'ordre en attente', active: 'en position', tp1: 'objectif 1 atteint'};
+    const RES = {stop: 'stop touché', tp1_be: 'objectif 1 puis sortie à l\'entrée', tp2: 'objectif 2 atteint', missed: 'objectif atteint sans exécution',
+      expired: 'expirée sans exécution', expired_active: 'suivi arrêté', switch: 'fermée', switch_cancel: 'annulée'};
+    const labels = [];
+    plans.forEach(p => {
+      const ye = Y(p.entry), ys = Y(p.stop), y1 = Y(p.tp1), y2 = p.tp2 != null ? Y(p.tp2) : null;
+      if (ye == null || ys == null || y1 == null) return;
+      const live = p.kind === 'live', done = p.status === 'closed', buy = p.side === 'long';
+      let x0, x1 = plotW;
+      if (live) x0 = Math.max(40, plotW * 0.84);
+      else {
+        const xs = this.timeX(p.created / 1000, L);
+        x0 = xs == null ? 0 : Math.max(0, Math.min(plotW - 24, xs));
+        if (done && p.end) { const xe = this.timeX(p.end / 1000, L); if (xe != null) x1 = Math.max(x0 + 6, Math.min(plotW, xe)); }
+      }
+      if (x1 <= 0) return;                                            // terminée avant le début de la fenêtre affichée
+      const fade = done ? 0.45 : 1, a = done || live ? 0.05 : 0.10;
+      ctx.fillStyle = `rgba(255,107,107,${a})`; ctx.fillRect(x0, Math.min(ye, ys), x1 - x0, Math.abs(ys - ye));
+      ctx.fillStyle = `rgba(61,220,151,${a})`; ctx.fillRect(x0, Math.min(ye, y1), x1 - x0, Math.abs(y1 - ye));
+      ctx.globalAlpha = fade;
+      [[ye, '#5ab0ff', [6, 4]], [ys, '#ff6b6b', [3, 3]], [y1, '#3ddc97', [3, 3]]].concat(y2 != null ? [[y2, '#3ddc97', [2, 5]]] : []).forEach(([y, col, dash]) => {
+        ctx.strokeStyle = live ? '#aeb4c2' : col; ctx.lineWidth = live ? 1 : 1.3; ctx.setLineDash(live ? [2, 4] : dash);
+        ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+      });
+      ctx.setLineDash([]);
+      if (!live && x0 > 0) {                                          // repère d'envoi : trait vertical à l'heure où l'idée est partie
+        const top = Math.min(ye, ys, y1, y2 ?? ye) - 12, bot = Math.max(ye, ys, y1, y2 ?? ye) + 12, col = buy ? 'rgba(61,220,151,.95)' : 'rgba(255,107,107,.95)';
+        ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(x0, top); ctx.lineTo(x0, bot); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = col; ctx.beginPath();                          // triangle sur l'entrée, dans le sens de l'idée
+        if (buy) { ctx.moveTo(x0, ye - 7); ctx.lineTo(x0 - 6, ye + 4); ctx.lineTo(x0 + 6, ye + 4); } else { ctx.moveTo(x0, ye + 7); ctx.lineTo(x0 - 6, ye - 4); ctx.lineTo(x0 + 6, ye - 4); }
+        ctx.fill();
+        ctx.font = '700 10px sans-serif';
+        this.tag(x0 + 4, buy ? bot + 9 : top - 9, `${buy ? 'achat' : 'vente'} envoyé${buy ? '' : 'e'} ici · ${LT.parisAt(p.created)}`, '#fff', buy ? 'rgba(30,150,100,.9)' : 'rgba(200,60,60,.9)', true, true);
+      }
+      ctx.globalAlpha = 1;
+      const who = buy ? 'ACHAT' : 'VENTE', when = live ? '' : LT.parisAt(p.created);
+      const head = live ? `${who} DU MOMENT · pas envoyée, bouge` :
+        done ? `${who} ${when} · terminée : ${RES[p.result] || p.result}` :
+        `${who} ${when} · ${STATUS[p.status] || p.status}${p.sentOk ? '' : ' · Telegram non confirmé'}`;
+      const c = col => live ? '#8a90a0' : col;
+      labels.push({y: ye, col: c('#5ab0ff'), text: `${head} · entrée ${fmt(p.entry)}`, fade, live});
+      if (!done) {
+        labels.push({y: ys, col: c('#ff6b6b'), text: `Stop ${fmt(p.stop)} (${sp(p.stop, p.entry)})`, fade, live});
+        labels.push({y: y1, col: c('#3ddc97'), text: `Objectif 1 ${fmt(p.tp1)} (${sp(p.tp1, p.entry)})`, fade, live});
+        if (y2 != null) labels.push({y: y2, col: c('#3ddc97'), text: `Objectif 2 ${fmt(p.tp2)} (${sp(p.tp2, p.entry)})`, fade, live});
+      }
+    });
+    LT.placeLabels(labels.map(it => ({...it})), 18, 12, h - 30).forEach(it => {
       ctx.font = '600 11px sans-serif';
       const tw = ctx.measureText(it.text).width + 14, x = Math.max(8, plotW - tw - 10);
-      this.tag(x, it.ly, it.text, '#fff', it.col === '#5ab0ff' ? 'rgba(52,120,200,.85)' : it.col === '#ff6b6b' ? 'rgba(200,60,60,.85)' : 'rgba(30,150,100,.85)', true);
+      ctx.globalAlpha = it.fade;
+      this.tag(x, it.ly, it.text, '#fff', it.live ? 'rgba(90,96,112,.88)' : it.col === '#5ab0ff' ? 'rgba(52,120,200,.85)' : it.col === '#ff6b6b' ? 'rgba(200,60,60,.85)' : 'rgba(30,150,100,.85)', true);
+      ctx.globalAlpha = 1;
     });
   }
   drawMain(L, w, h) {
