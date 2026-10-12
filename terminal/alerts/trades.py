@@ -6,16 +6,14 @@ stop) et journal. Les idees viennent de Service.signals(). Une idee n'est envoye
   - aucune annonce majeure n'est imminente (verrou calcule dans le score).
 Sens de tes trades (V13, reglage « signal_direction ») : en « long » (achat seulement), une configuration de VENTE n'est pas envoyee comme une idee mais comme
 une « alerte pour tes longs » (hors quota, une par paire et par 24 h au plus) ; son resultat est suivi comme celui d'une idee pour savoir si elle avait raison.
-Une seule direction a la fois (V25.1, remplace la regle des 24 h de V13.1), toutes paires confondues (BTC et SOL bougent ensemble) : aucune idee
-dans l'autre sens tant qu'une idee est en cours (ordre en attente, position, objectif 1 atteint), quel que soit son age. Seule exception : une idee
-exceptionnelle (au moins SWITCH_MIN sur 100 et SWITCH_EXTRA points de plus que l'idee en cours) ; le message dit alors d'abord de FERMER l'idee en cours
-(gain ou perte du moment chiffre) ou d'annuler son ordre, et l'idee en cours est close dans le journal a ce prix. Mesure sur l'historique (V25.1,
-tools/run_switch_study.py, perpetuels 2020-2026) : sur SOL, changer de sens pour une idee plus forte a coute en moyenne 0,3 a 1 fois le risque par
-changement ; garder les deux a la fois a ete la pire facon de faire. D'ou une exception rare, desactivable (reglage « signal_switch »).
-Une fois l'idee terminee (stop, objectifs, ordre expire), l'autre sens est de nouveau possible tout de suite ; si un ordre dans l'autre sens a expire
-depuis peu sans que le prix ait touche son stop ni son objectif, le message rappelle de le fermer au cas ou il aurait ete pris quand meme (entree au
-marche, autre plateforme). Bloquer l'autre sens 72 h apres un tel ordre aurait coute cher sur SOL (rejeu : environ 76 fois le risque de moins sur
-2020-2026, sans difference nette sur BTC) : un ordre expire ne bloque donc rien, il est seulement rappele.
+Idees dans l'autre sens (V25.2, a la demande de l'utilisateur) : une idee dans l'autre sens PEUT etre envoyee pendant une idee en cours, sur
+n'importe quelle paire ; elle la COUVRE sans l'annuler (chaque idee garde son stop et ses objectifs, rien n'est ferme dans le journal). Son message
+commence par « 🛡 COUVERTURE » : l'idee en cours (etat, gain ou perte du moment), et sur la meme paire comment les niveaux des deux idees se genent,
+avec le rappel du mode couverture de la plateforme. Reglage « signal_opposite » : hedge (par defaut) | never (une seule direction a la fois : rien
+dans l'autre sens tant qu'une idee est en cours). Plus de delai de 24 h (V13.1) ni d'« idee exceptionnelle » (V25.1).
+Mesure (tools/run_hedge_study.py, BTC et SOL rejoues ensemble, perpetuels 2020-2026, frais compris) : avec le filtre de tendance de fond (defaut),
+ces idees de couverture sont rares (39 en 6 ans, toutes sur l'autre paire) et legerement negatives (-0,10 par trade apres frais) ; sans ce filtre,
+elles ont perdu (422 idees, -0,20 fois le risque par trade apres frais, contre -0,03 pour les idees envoyees seules).
 Le journal est le test le plus honnete : il enregistre ce qui s'est PASSE apres chaque idee envoyee.
 Journal detaille (V24) : pour chaque idee, l'heure de chaque etape (execution, objectif 1, fin), le prix le plus favorable et le plus defavorable
 atteints pendant la position, le point le plus proche de l'entree pour un ordre jamais execute, et les raisons du score au moment de l'envoi.
@@ -30,18 +28,15 @@ from engine.explain import paris
 
 SIDE_WORD = {"long": "achat", "short": "vente"}
 THE_SIDE = {"long": "l'achat", "short": "la vente"}
-YOUR = {"long": "TON ACHAT", "short": "TA VENTE"}
+YOUR = {"long": "Ton achat", "short": "Ta vente"}
 OPEN = ("pending", "active", "tp1")
 MAX_HOLD_H = 7 * 24
 COOLDOWN_H = 12
-SWITCH_MIN = 80.0            # V25.1 : une idee dans l'autre sens pendant une idee en cours doit etre exceptionnelle (au moins 80/100)...
-SWITCH_EXTRA = 15.0          # ... et depasser de 15 points l'idee en cours (mesure : changer de sens coute en general, voir l'en-tete)
-EXPIRED_NOTE_H = 72          # rappel « ferme-le si tu l'avais pris quand meme » pour un ordre expire dans l'autre sens depuis moins de 72 h
 ALERT_EVERY_H = 24           # une alerte de prudence par paire et par 24 h au plus
 FACT_KEYS = ("best", "worst", "near", "tp1At", "endAt", "exitPx")
 REPLAY_KEEP_MS = 70 * 24 * 3_600_000      # bougies 5 min gardees par le terminal (data/store.py M5_FINE_DAYS)
 RESULT_WORD = {"stop": "stop touché", "tp1_be": "objectif 1 atteint puis sortie à l'équilibre", "tp2": "objectif 2 atteint", "missed": "objectif atteint sans exécution",
-               "expired": "expirée sans exécution", "expired_active": "suivi arrêté après 7 jours", "switch": "fermée pour changer de sens",
+               "expired": "expirée sans exécution", "expired_active": "suivi arrêté après 7 jours", "switch": "fermée pour changer de sens",          # (V25.1, quelques heures : resultats encore lus)
                "switch_cancel": "annulée pour changer de sens", None: "en cours"}
 
 
@@ -154,25 +149,12 @@ class TradeDesk:
             if self._duplicate(sym, idea, now_ms):
                 continue
             opp = self._opposite_open(idea)
-            if opp:                                                      # une seule direction a la fois, toutes paires confondues
-                top = max(opp, key=lambda t: t["score"])
-                what = f"{sym} {SIDE_WORD[idea['side']]} contredirait {THE_SIDE[top['side']]} {top['symbol']} du {paris(top['created'])}, encore en cours"
-                need_sw = max(need, SWITCH_MIN, top["score"] + SWITCH_EXTRA)
-                if getattr(cfg, "signal_switch", "strong") == "never":
-                    self.waiting = {"why": f"{what} : pas d'idée dans l'autre sens tant qu'elle n'est pas terminée (réglage : jamais de changement de sens)"}
-                    continue
-                if score < need_sw:
-                    self.waiting = {"why": f"{what} : pas d'idée dans l'autre sens tant qu'elle n'est pas terminée, " + (
-                        f"sauf une idée exceptionnelle (au moins {need_sw:.0f}/100 ; celle-ci a {score:.0f}/100)" if need_sw <= 100 else
-                        f"et l'idée en cours ({top['score']:.0f}/100) est trop forte pour être remplacée (celle-ci a {score:.0f}/100)")}
-                    continue
-                blind = sorted({o["symbol"] for o in opp if o["status"] != "pending" and prices.get(o["symbol"]) is None})
-                if blind:                                                # jamais « ferme-le » sans chiffrer le gain ou la perte
-                    self.waiting = {"why": f"{what} : prix de {', '.join(blind)} inconnu en ce moment, pas de changement de sens sans chiffrer la fermeture"}
-                    continue
-                created.append(self._create(sym, idea, now_ms, sent + 1, prices=prices, switch=opp))
+            if opp and getattr(cfg, "signal_opposite", "hedge") == "never":     # reglage : une seule direction a la fois, toutes paires confondues
+                top = max(opp, key=lambda t: t["created"])
+                self.waiting = {"why": f"{sym} {SIDE_WORD[idea['side']]} contredirait {THE_SIDE[top['side']]} {top['symbol']} du {paris(top['created'])}, encore en cours : "
+                                       "pas d'idée dans l'autre sens tant qu'elle n'est pas terminée (réglage : une seule direction à la fois)"}
                 continue
-            created.append(self._create(sym, idea, now_ms, sent + 1, prices=prices))
+            created.append(self._create(sym, idea, now_ms, sent + 1, prices=prices, hedge=opp))
         for score, sym, idea in against:
             if score >= cfg.signal_min_score and self._alert_ok(sym, idea, now_ms):
                 created.append(self._create_alert(sym, idea, now_ms))
@@ -182,35 +164,19 @@ class TradeDesk:
         """Idees dans l'autre sens encore en cours (ordre en attente, position, objectif 1 atteint), sur n'importe quelle paire."""
         return [t for t in self.trades if not is_alert(t) and t["side"] != idea["side"] and t["status"] in OPEN]
 
-    def _expired_opposite(self, idea, now_ms, prices):
-        """Ordres dans l'autre sens expires depuis peu sans execution, dont le prix n'a touche ni le stop ni l'objectif 1 : ils ont pu etre
-        pris quand meme (entree au marche, autre plateforme) ; le message de la nouvelle idee rappelle de les fermer."""
-        out = []
-        for t in self.trades:
-            if is_alert(t) or t["side"] == idea["side"] or t.get("result") != "expired" or now_ms - (t.get("endAt") or t.get("closedAt") or 0) > EXPIRED_NOTE_H * 3_600_000:
-                continue
-            px = prices.get(t["symbol"])
-            if px is None:
-                continue
-            lo, hi = sorted((t["stop"], t["tp1"]))
-            if lo < px < hi:
-                out.append((t, px))
-        return out
-
     def bias(self, now_ms):
-        """Sens actuel du terminal, toutes paires confondues : celui des idees en cours (ordre en attente, position, objectif 1 atteint).
-        None s'il n'y en a pas : la prochaine idee peut aller dans les deux sens. switchNeed : qualite qu'il faudrait a une idee dans
-        l'autre sens pour remplacer celles en cours (None si le changement de sens est desactive)."""
+        """Idees en cours, toutes paires confondues (ordre en attente, position, objectif 1 atteint) : sens de la plus recente, liste de
+        toutes (avec leur sens) et « mixed » quand des achats et des ventes sont ouverts en meme temps (couverture). mode : hedge (une
+        idee dans l'autre sens peut arriver, elle couvre sans annuler) | never (rien dans l'autre sens tant qu'une idee est en cours).
+        None s'il n'y a rien en cours : la prochaine idee peut aller dans les deux sens."""
         live = [t for t in self.trades if not is_alert(t) and t["status"] in OPEN]
         if not live:
             return None
         last = max(live, key=lambda t: t["created"])
-        same = [t for t in live if t["side"] == last["side"]]
-        never = getattr(self.cfg, "signal_switch", "strong") == "never"
         return {"side": last["side"], "symbol": last["symbol"], "created": last["created"], "entry": last["entry"], "status": last["status"],
-                "open": [{"symbol": t["symbol"], "created": t["created"], "status": t["status"], "score": t["score"]} for t in same],
-                "switchNeed": None if never else max(SWITCH_MIN, max(t["score"] for t in same) + SWITCH_EXTRA, getattr(self.cfg, "signal_min_score", 0)),
-                "mixed": any(t["side"] != last["side"] for t in live)}
+                "open": [{"symbol": t["symbol"], "side": t["side"], "created": t["created"], "status": t["status"], "score": t["score"]}
+                         for t in sorted(live, key=lambda t: t["created"])],
+                "mode": getattr(self.cfg, "signal_opposite", "hedge"), "mixed": any(t["side"] != last["side"] for t in live)}
 
     def _alert_ok(self, sym, idea, now_ms):
         for t in self.trades:
@@ -251,20 +217,12 @@ class TradeDesk:
                 "warn": [w for w in idea.get("warn") or [] if w][:6], "lev": (desc.get("leverage") or {}).get("lev"),
                 "pFill": fill.get("p24") if idea["entryType"] == "limite" else None, "pTp": (plan.get("tp") or {}).get("p")}
 
-    def _create(self, sym, idea, now_ms, n, prices=None, switch=None):
-        prices = prices or {}
+    def _create(self, sym, idea, now_ms, n, prices=None, hedge=None):
         text = sg.to_text(idea, idea["desc"], n, self.cfg.signal_max_week)
         tr = self._record(sym, idea, now_ms, n)
-        pre = []
-        if switch:
-            pre.append(self._switch_text(sym, idea, switch, prices))
-            tr["switchFrom"] = [self._switch_close(o, prices.get(o["symbol"]), now_ms, tr["id"]) for o in switch]
-        notes = self._expired_opposite(idea, now_ms, prices)
-        if notes:
-            pre.append("\n".join(self._expired_note(t, px) for t, px in notes))
-            tr["expiredNote"] = [t["id"] for t, _ in notes]
-        if pre:
-            text = "\n\n".join(pre) + "\n\n" + text
+        if hedge:                                                       # idee dans l'autre sens pendant une idee en cours : couverture
+            text = self._hedge_text(sym, idea, hedge, prices or {}) + "\n\n" + text
+            tr["hedgeOf"] = [{"id": o["id"], "symbol": o["symbol"], "side": o["side"], "created": o["created"], "status": o["status"]} for o in hedge]
         tr["text"] = text
         tr["sent"] = self._send(tr, text, "trade")
         self.trades.append(tr)
@@ -272,64 +230,65 @@ class TradeDesk:
         self._send_opinions(tr)
         return tr
 
-    # --- changement de sens (V25.1) ---
+    # --- couverture (V25.2) ---
     def _lev(self, t):
         return t.get("lev") or getattr(self.cfg, "signal_leverage", None)
 
     def _pnl(self, t, px):
-        """Gain ou perte d'une idee executee si elle est fermee au prix px : (variation du prix en %, multiples du risque au total)."""
+        """Gain ou perte d'une idee executee au prix px : (variation du prix en %, multiples du risque au total)."""
         sgn = 1 if t["side"] == "long" else -1
         pct = (px / t["entry"] - 1) * 100 * sgn
         r_now = (px - t["entry"]) * sgn / abs(t["entry"] - t["stop"])
         return pct, (0.5 * t["rr1"] + 0.5 * r_now) if t["status"] == "tp1" else r_now
 
-    def _switch_text(self, sym, idea, opp, prices):
+    def _hedge_text(self, sym, idea, opp, prices):
+        """En-tete d'une idee envoyee pendant une ou plusieurs idees dans l'autre sens : elle les couvre, elle ne les annule pas."""
         px = sg.fmt_price
         word = SIDE_WORD[idea["side"]]
-        heads = sorted({YOUR[o["side"]] + " " + o["symbol"].replace("USDT", "") for o in opp})
-        L = [f"🔁 CHANGEMENT DE SENS · {sym} {word.upper()}", f"Avant de prendre cette {word}, FERME {' ET '.join(heads)} :"]
+        pair = sym.replace("USDT", "")
+        opp = sorted(opp, key=lambda t: t["created"])
+        L = [f"🛡 COUVERTURE · {sym} {word.upper()}"]
         for o in opp:
-            name = f"{SIDE_WORD[o['side']].capitalize()} {o['symbol'].replace('USDT', '')} du {paris(o['created'])}"
-            p_ = prices.get(o["symbol"])
+            name = f"{YOUR[o['side']]} {o['symbol'].replace('USDT', '')} du {paris(o['created'])}"
             if o["status"] == "pending":
-                L.append(f"• {name} : ordre à {px(o['entry'])} pas encore exécuté d'après mes données → ANNULE-LE (ni gain ni perte).")
+                L.append(f"{name} attend toujours son exécution (ordre à {px(o['entry'])}, stop {px(o['stop'])}) : {'il' if o['side'] == 'long' else 'elle'} reste valable.")
                 continue
-            pct, r = self._pnl(o, p_)
-            lev = self._lev(o)
-            how = "objectif 1 déjà atteint (la moitié encaissée) : ferme le reste" if o["status"] == "tp1" else "ferme-le"
-            verdict = "en gain" if r > 0.05 else "en perte" if r < -0.05 else "à l'équilibre"
-            L.append(f"• {name} (entrée {px(o['entry'])}, stop {px(o['stop'])}) : {how} maintenant au prix du marché, vers {px(p_)} : "
-                     f"{sg.fmt_pct(pct, 2, sign=True)} sur le prix" + (f" ({sg.fmt_pct(pct * lev, 1, sign=True)} avec ton levier ×{lev:g})" if lev else "")
-                     + f", soit {f'{r:+.2f}'.replace('.', ',')} fois le risque au total → clôture {verdict}.")
-        top = max(o["score"] for o in opp)
-        L.append(f"Pourquoi : cette {word} a une qualité de {idea['score']:.0f}/100, contre {top:.0f}/100 pour l'idée en cours. Je ne change de sens que pour une "
-                 f"idée exceptionnelle (au moins {SWITCH_MIN:.0f}/100 et {SWITCH_EXTRA:.0f} points de plus) : mesuré sur l'historique, changer de position coûte "
-                 "en général. Une fois fermé, prends l'idée ci-dessous ; ne garde jamais les deux en même temps.")
+            p_ = prices.get(o["symbol"])
+            now = ""
+            if p_ is not None:
+                pct, r = self._pnl(o, p_)
+                lev = self._lev(o)
+                now = (f" ; en ce moment {sg.fmt_pct(pct, 2, sign=True)} sur le prix" + (f", {sg.fmt_pct(pct * lev, 1, sign=True)} avec ton levier ×{lev:g}" if lev else "")
+                       + f", {f'{r:+.2f}'.replace('.', ',')} fois le risque")
+            state = " (objectif 1 atteint, le reste court)" if o["status"] == "tp1" else ""
+            L.append(f"{name} est toujours en cours{state} : entrée {px(o['entry'])}, stop {px(o['stop'])}{now}.")
+        if len(opp) == 1:
+            keep = "ne l'annule pas : garde-" + ("le" if opp[0]["side"] == "long" else "la") + " avec son stop et ses objectifs"
+        else:
+            keep = "ne les annule pas : garde-les avec leurs stops et leurs objectifs"
+        L.append(f"Cette {word} {keep} ; cette idée a les siens. Au pire, si tous les stops étaient touchés, la perte totale serait de "
+                 f"{len(opp) + 1} fois le risque.")
+        sgn_n = 1 if idea["side"] == "long" else -1
+        for o in opp:
+            if o["symbol"] != sym:
+                continue
+            ow = YOUR[o["side"]].lower()
+            lines = []
+            if (idea["tp1"] - o["stop"]) * sgn_n >= 0:
+                lines.append(f"si le prix va jusqu'à l'objectif 1 de cette {word} ({px(idea['tp1'])}), {ow} touche son stop ({px(o['stop'])}) en route")
+            if (o["tp1"] - idea["stop"]) * -sgn_n >= 0:
+                lines.append(f"s'il va jusqu'à l'objectif 1 de {ow} ({px(o['tp1'])}), cette {word} touche son stop ({px(idea['stop'])}) en route")
+            if lines:
+                L.append(f"Sur {pair}, les deux ne peuvent pas gagner ensemble : " + " ; ".join(lines) + ".")
+        if any(o["symbol"] == sym for o in opp):
+            L.append(f"Même paire : pour tenir un achat et une vente en même temps sur {pair}, ta plateforme doit être en mode couverture "
+                     "(Binance : « Mode de position » réglé sur couverture, « Hedge ») ; sinon cette idée réduit ou ferme la position en cours.")
+        away = [o for o in opp if o["symbol"] != sym]
+        if away:
+            others = sorted({o["symbol"].replace("USDT", "") for o in away})
+            what = f"{YOUR[away[0]['side']].lower()} {others[0]}" if len(away) == 1 else f"tes idées sur {' et '.join(others)}"
+            L.append(f"{' et '.join(others)} et {pair} bougent souvent ensemble : cette {word} {pair} compense en partie {what}.")
         return "\n".join(L)
-
-    def _switch_close(self, o, p_, now_ms, new_id):
-        """L'idee en cours est close dans le journal au prix du moment (ou son ordre annule), comme conseille dans le message."""
-        state = o["status"]
-        rec = {"id": o["id"], "symbol": o["symbol"], "side": o["side"], "created": o["created"], "state": state, "price": p_}
-        if state == "pending":
-            o["switchTo"], o["switchState"] = new_id, state
-            self._close(o, "switch_cancel", now_ms, now_ms)
-            rec["r"] = 0.0
-            return rec
-        if p_ is None:                                                  # (consider() refuse le changement de sens sans prix ; securite)
-            p_ = o["entry"]
-        pct, r = self._pnl(o, p_)
-        o["exitPx"], o["rSwitch"], o["pctSwitch"], o["switchTo"], o["switchState"] = p_, round(r, 4), round(pct, 4), new_id, state
-        self._close(o, "switch", now_ms, now_ms)
-        rec.update({"r": round(r, 4), "pct": round(pct, 4), "price": p_})
-        return rec
-
-    def _expired_note(self, t, p_):
-        px = sg.fmt_price
-        pct = (p_ / t["entry"] - 1) * 100 * (1 if t["side"] == "long" else -1)
-        kind = "d'achat" if t["side"] == "long" else "de vente"
-        return (f"ℹ️ Rappel : l'ordre {kind} {t['symbol'].replace('USDT', '')} à {px(t['entry'])} du {paris(t['created'])} a expiré sans être exécuté d'après mes données. "
-                f"Si tu étais quand même entré, ferme-le avant de prendre cette idée (en ce moment : {sg.fmt_pct(pct, 2, sign=True)} sur le prix depuis {px(t['entry'])}).")
 
     def _create_alert(self, sym, idea, now_ms):
         """Configuration dans l'autre sens que tes trades : message de prudence (hors quota), suivi pour savoir si elle avait raison."""
@@ -565,8 +524,7 @@ class TradeDesk:
             "stop": f"🛑 Stop touché · {head} ({px(tr['stop'])}). L'idée est fausse, perte prévue : 1 fois le risque. Pas de nouvelle entrée sur cette zone avant {COOLDOWN_H} h.",
             "missed": f"➖ {head} : l'objectif 1 ({px(tr['tp1'])}) a été atteint sans que l'ordre à {px(tr['entry'])} soit exécuté. Retire ton ordre : ne cours pas après le prix.",
             "expired": f"⌛ Idée expirée · {head} : l'ordre à {px(tr['entry'])} n'a pas été exécuté dans le délai d'après mes données. Retire-le.\n"
-                       f"Si tu es quand même entré (au marché ou ailleurs), je ne suis plus cette position : garde ton stop à {px(tr['stop'])} et ton objectif 1 à {px(tr['tp1'])}. "
-                       f"Si une idée dans l'autre sens arrive dans les {EXPIRED_NOTE_H // 24} jours, son message te rappellera de la fermer d'abord.",
+                       f"Si tu es quand même entré (au marché ou ailleurs), je ne suis plus cette position : garde ton stop à {px(tr['stop'])} et ton objectif 1 à {px(tr['tp1'])}.",
             "expired_active": f"⌛ {head} : plus de suivi après {MAX_HOLD_H // 24} jours. À toi de gérer la position.",
         }.get(kind)
         if msg:
@@ -594,7 +552,7 @@ class TradeDesk:
 
     def public(self, now_ms: int):
         keys = ("id", "symbol", "side", "kind", "created", "score", "entry", "entryType", "stop", "tp1", "tp2", "rr1", "rr2", "validUntil",
-                "status", "result", "filledAt", "closedAt", "n", "title", "sent", "x", "mode", "flipFrom", "switchFrom", "switchTo", "rSwitch")
+                "status", "result", "filledAt", "closedAt", "n", "title", "sent", "x", "mode", "flipFrom", "switchFrom", "switchTo", "rSwitch", "hedgeOf")
         return {"week": self.week(now_ms), "waiting": self.waiting, "stats": self.stats(), "bias": self.bias(now_ms),
                 "trades": [{k: t.get(k) for k in keys} for t in self.trades[-40:][::-1]]}
 
@@ -608,7 +566,7 @@ class TradeDesk:
         for t in self.trades[::-1]:
             row = {k: t.get(k) for k in ("id", "symbol", "side", "kind", "created", "score", "entry", "entryType", "stop", "tp1", "tp2", "rr1", "rr2",
                                           "status", "result", "filledAt", "closedAt", "n", "title", "sent", "mode", "flipFrom", "switchFrom", "switchTo",
-                                          "switchState", "rSwitch", "expiredNote", "text", "checked",
+                                          "switchState", "rSwitch", "expiredNote", "hedgeOf", "text", "checked",
                                           "validUntil", "zone", "align", "zoneS", "comps", "lev", "pFill", "pTp", "best", "worst", "near", "tp1At",
                                           "endAt", "exitPx", "replay", "px0")}
             row["r"] = None if is_alert(t) else r_of(t)

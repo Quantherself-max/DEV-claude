@@ -37,8 +37,8 @@ const Lecture = (() => {
       return `<div class="lidea"><b class="amb">ALERTE pour tes ${i.direction === 'long' ? 'longs' : 'shorts'}</b> <span class="muted small">configuration de ${i.side === 'long' ? 'achat' : 'vente'}, qualité ${Math.round(i.score)}/100 : ce n'est pas une idée pour toi, c'est un signal de prudence</span>
         <div class="small">fausse si le prix repasse ${i.side === 'short' ? 'au-dessus de' : 'sous'} ${px(i.stop)} · peut aller chercher ${px(i.tp1)}</div></div>`;
     }
-    const why = (i.gates || []).concat(i.hold || [])[0], b = last && last.deskBias;
-    const status = LT.againstBias(b, i.side) ? ` · bloquée : contredirait ${b.side === 'long' ? 'l\'achat' : 'la vente'} ${esc(b.symbol.replace('USDT', ''))} du ${LT.parisAt(b.created)} (pas de biais contraire sous 24 h)` : i.eligible ? '' : i.align != null && i.align <= 0 ? ' · contre la tendance de fond : non retenue' : i.score < i.minScore ? ' · sous le seuil (' + i.minScore + ')' : ' · pas encore envoyée';
+    const why = (i.gates || []).concat(i.hold || [])[0], op = LT.oppOf(last && last.deskBias, i.side);
+    const status = op && op.blocked ? ` · ${esc(op.text)}` : i.eligible ? (op ? ` · ${esc(op.text)}` : '') : i.align != null && i.align <= 0 ? ' · contre la tendance de fond : non retenue' : i.score < i.minScore ? ' · sous le seuil (' + i.minScore + ')' : ' · pas encore envoyée';
     return `<div class="lidea"><b class="${cls}">${i.side === 'long' ? 'ACHAT' : 'VENTE'}</b> <span class="muted small">qualité ${Math.round(i.score)}/100${status}${why ? ' · ' + esc(why) : ''}</span>
       <div class="small">entrée ${px(i.entry)} · stop ${px(i.stop)} · objectif ${px(i.tp1)}</div></div>`;
   }

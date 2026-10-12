@@ -204,10 +204,11 @@ def replay(candles, atrs=None, params=None, seed=5, step=2, ctrl_n=3, max_week=5
             last_side[idea["side"]] = k.t
             market = idea["entryType"] == "marché"
             res = simulate(candles, i, idea["side"], idea["entry"], idea["stop"], idea["tp1"], market, o["valid_hours"])
+            sgn = 1 if idea["side"] == "long" else -1
             if on_idea is not None:
+                idea["align"] = None if reg[i] is None else reg[i] * sgn          # sens de la tendance de fond (1 dans le sens, 0 indecise, -1 contre)
                 on_idea(i, idea, res)
             # temoins : meme forme (en amplitudes d'heure) a des heures tirees au hasard
-            sgn = 1 if idea["side"] == "long" else -1
             de = (price - idea["entry"]) / a * sgn if not market else 0.0
             sd_ = abs(idea["entry"] - idea["stop"]) / a
             td = abs(idea["tp1"] - idea["entry"]) / a
@@ -424,3 +425,64 @@ def switch_study(candles, ideas, min_s=7.0, max_week=5, deltas=(0.0, 1.0, 2.0, 3
     out["never_exp72"] = run("never", ghost_h=72)                          # ordre expire : bloque 72 h tant que le prix reste entre stop et objectif 1
     out[f"delta{deltas[-1]:g}_exp72"] = run(deltas[-1], ghost_h=72)          # idem, sauf idee bien plus forte
     return {"ideas": len(tls), "policies": out, "params": {"minS": min_s, "maxWeek": max_week, "fee": fee, "cooldownH": cooldown_h, "deltas": list(deltas)}}
+
+
+# ---------- V25.2 : idees de couverture (une idee dans l'autre sens pendant une idee en cours, sans la fermer) ----------
+def hedge_study(series, min_s=7.0, max_week=5, per_pair=3, fee=0.001, cooldown_h=12, gate=False):
+    """series : {symbole: (bougies 1h, [(i, side, S, entry, stop, tp1, market, align)])}. Rejoue les idees de toutes les paires sur
+    une seule ligne du temps, avec les regles d'envoi du terminal (quota de la semaine commun, au plus per_pair idees par paire et par
+    semaine, une idee par paire toutes les 12 h, deux idees ouvertes par paire au plus) et compare « never » (une seule direction a la
+    fois, toutes paires confondues) a « hedge » (l'idee dans l'autre sens est envoyee pendant l'idee en cours, sans la fermer).
+    gate : seulement les idees dans le sens de la tendance de fond (filtre du terminal, actif par defaut). Resultats en multiples du
+    risque ; frais d'un aller-retour (0,1 %) ramenes au risque de chaque trade execute."""
+    evs = []
+    for sym, (candles, ideas) in series.items():
+        for i, side, S, e, s_, t1, mk, al in ideas:
+            if gate and not (al is not None and al > 0):
+                continue
+            tl = timeline(candles, i, side, e, s_, t1, mk)
+            if tl["status"] == "open":
+                continue
+            evs.append({"t": candles[i].t, "end": candles[tl["end"]].t, "sym": sym, "side": side, "S": S, "R": tl["R"],
+                        "filled": tl["fill"] is not None, "riskPct": abs(e - s_) / e if e else 1.0})
+    evs.sort(key=lambda x: x["t"])
+
+    def run(policy):
+        used, per, last, opened, recs = {}, {}, {}, [], []
+        for x in evs:
+            if x["S"] < min_s:
+                continue
+            wk = (x["t"] // DAY_MS + 3) // 7
+            u = used.get(wk, 0)
+            if u >= max_week or (u == max_week - 1 and x["S"] < min_s + 1.5) or per.get((wk, x["sym"]), 0) >= per_pair:
+                continue
+            if x["t"] - last.get(x["sym"], -10 ** 15) < cooldown_h * 3_600_000:
+                continue
+            opened = [o for o in opened if o["end"] > x["t"]]
+            opp = [o for o in opened if o["side"] != x["side"]]
+            if (opp and policy == "never") or sum(1 for o in opened if o["sym"] == x["sym"]) >= 2:
+                continue
+            used[wk] = u + 1
+            per[(wk, x["sym"])] = per.get((wk, x["sym"]), 0) + 1
+            last[x["sym"]] = x["t"]
+            rec = {**x, "hedge": bool(opp), "same": any(o["sym"] == x["sym"] for o in opp)}
+            opened.append(rec)
+            recs.append(rec)
+
+        def net(r):
+            return r["R"] - (fee / r["riskPct"] if r["filled"] else 0.0)
+
+        def part(rs):
+            f = [r for r in rs if r["filled"]]
+            return {"n": len(rs), "filled": len(f), "R": sum(r["R"] for r in rs), "Rnet": sum(net(r) for r in rs),
+                    "perTrade": (sum(net(r) for r in f) / len(f)) if f else None, "wins": sum(1 for r in f if r["R"] > 0)}
+        eq, peak, dd = 0.0, 0.0, 0.0
+        for r in sorted(recs, key=lambda r: r["end"]):
+            eq += net(r)
+            peak = max(peak, eq)
+            dd = max(dd, peak - eq)
+        return {**part(recs), "maxDD": dd, "hedge": part([r for r in recs if r["hedge"]]), "samePair": part([r for r in recs if r["same"]]),
+                "otherPair": part([r for r in recs if r["hedge"] and not r["same"]]), "alone": part([r for r in recs if not r["hedge"]]),
+                "bySym": {s: part([r for r in recs if r["sym"] == s]) for s in series}}
+    return {"ideas": len(evs), "never": run("never"), "hedge": run("hedge"),
+            "params": {"minS": min_s, "maxWeek": max_week, "perPair": per_pair, "fee": fee, "cooldownH": cooldown_h, "gate": gate}}

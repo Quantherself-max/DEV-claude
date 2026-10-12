@@ -26,18 +26,30 @@ function ciBar(s, b) {                                  // echelle 20 % -> 80 %
     `<i style="left:${x(s.lo)}%;width:${Math.max(1, x(s.hi) - x(s.lo))}%"></i>` +
     (b && b.n ? `<u style="left:${x(b.p)}%"></u>` : '') + `<b style="left:${x(s.p)}%"></b></div>`;
 }
-// Biais du terminal (V25.1) : les idées en cours fixent le sens, toutes paires confondues (BTC et SOL bougent ensemble) ; plus de délai de 24 h.
+// Idées en cours (V25.2) : une idée dans l'autre sens arrive en couverture (la première reste ouverte), sauf réglage « une seule direction à la fois ».
 const PARIS_DT = new Intl.DateTimeFormat('fr-FR', {timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
 const parisAt = ms => PARIS_DT.format(new Date(ms)).replace(',', '');
+const sideName = o => `${o.side === 'long' ? 'achat' : 'vente'} ${o.symbol.replace('USDT', '')}`;
 function biasHtml(b) {
   if (!b) return '<span class="lt">Biais du terminal</span> <b class="muted">AUCUN</b> <span class="muted small">pas d\'idée en cours : la prochaine peut être un achat ou une vente</span>';
-  const buy = b.side === 'long', sym = s => s.replace('USDT', '');
-  const syms = [...new Set(b.open.map(o => sym(o.symbol)))];
-  const plural = b.open.length > 1;
-  const sw = b.switchNeed != null && b.switchNeed <= 100 ? `, sauf ${buy ? 'une vente' : 'un achat'} exceptionnel${buy ? 'le' : ''} (au moins ${Math.round(b.switchNeed)}/100) : je te dirai alors de fermer ${plural ? 'les idées en cours' : 'l\'idée en cours'}` : '';
-  return `<span class="lt">Biais du terminal</span> <b class="${buy ? 'up' : 'dn'}">${buy ? 'ACHAT' : 'VENTE'}</b> <span class="muted small">idée${plural ? 's' : ''} ${syms.join(' et ')} en cours depuis le ${parisAt(b.created)} · aucune idée ${buy ? 'de vente' : 'd\'achat'}, sur aucune paire, tant qu${plural ? '\'elles ne sont pas terminées' : '\'elle n\'est pas terminée'}${sw}</span>`;
+  const open = b.open || [], names = [...new Set(open.map(sideName))];
+  if (b.mixed) return `<span class="lt">Biais du terminal</span> <b class="amb">COUVERT</b> <span class="muted small">${names.join(', ')} en cours en même temps : chaque idée garde son stop et ses objectifs</span>`;
+  const buy = b.side === 'long', plural = open.length > 1;
+  const since = plural ? `(la plus récente depuis le ${parisAt(b.created)})` : `depuis le ${parisAt(b.created)}`;
+  const rest = b.mode === 'never'
+    ? `aucune idée ${buy ? 'de vente' : 'd\'achat'}, sur aucune paire, tant qu${plural ? '\'elles ne sont pas terminées' : '\'elle n\'est pas terminée'}`
+    : `${buy ? 'une vente' : 'un achat'} peut quand même arriver, en couverture, sans ${plural ? 'les ' : 'l\''}annuler`;
+  return `<span class="lt">Biais du terminal</span> <b class="${buy ? 'up' : 'dn'}">${buy ? 'ACHAT' : 'VENTE'}</b> <span class="muted small">${names.join(', ')} en cours ${since} · ${rest}</span>`;
 }
-const againstBias = (b, side) => !!b && !!side && b.side !== side;
+// Une idée face aux idées en cours : null si rien n'est en cours dans l'autre sens ; sinon bloquée (réglage) ou envoyée en couverture.
+function oppOf(b, side) {
+  if (!b || !side) return null;
+  const opp = (b.open || []).filter(o => o.side && o.side !== side);
+  if (!opp.length) return null;
+  const names = [...new Set(opp.map(o => (o.side === 'long' ? 'l\'achat ' : 'la vente ') + o.symbol.replace('USDT', '')))].join(' et ');
+  return b.mode === 'never' ? {blocked: true, names, text: `bloquée : contredirait ${names} en cours`}
+    : {blocked: false, names, text: `couverture de ${names} en cours, sans ${opp.length > 1 ? 'les ' : 'l\''}annuler`};
+}
 const usdFmt = v => v >= 1e9 ? (v / 1e9).toFixed(2).replace('.', ',') + ' Md$' : v >= 1e6 ? (v / 1e6).toFixed(1).replace('.', ',') + ' M$' : Math.round(v / 1e3) + ' k$';
 const ageFmt = ms => { const h = ms / 3.6e6; return h < 1 ? Math.round(ms / 6e4) + ' min' : h < 48 ? Math.round(h) + ' h' : Math.round(h / 24) + ' j'; };
 const timeFr = ms => new Date(ms).toLocaleString('fr-FR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
@@ -616,7 +628,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 25;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 : règle « une seule direction à la fois » et réglage du changement de sens)
+const NEED_API = 26;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -1044,7 +1056,7 @@ async function openSettings() {
     $('#aMacro').checked = s.alertMacro !== false;
     const x = s.x || {}; $('#xOn').checked = x.on !== false; $('#xAccounts').value = (x.accounts || []).join(', '); $('#xPosts').value = String(x.posts || 10);
     $('#xToken').value = ''; $('#xToken').placeholder = x.tokenHint ? `jeton enregistré (${x.tokenHint}) : laisse vide pour le garder` : 'Bearer token X (API officielle)'; $('#xRes').textContent = '';
-    $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sMaxSym').value = s.signalMaxPerSymbol; $('#sLev').value = s.signalLeverage; $('#sTrend').checked = s.signalTrendGate !== false; $('#sDir').value = s.signalDirection || 'both'; $('#sSwitch').value = s.signalSwitch || 'strong';
+    $('#sOn').checked = s.signalOn !== false; $('#sMin').value = s.signalMinScore; $('#sMax').value = s.signalMaxWeek; $('#sMaxSym').value = s.signalMaxPerSymbol; $('#sLev').value = s.signalLeverage; $('#sTrend').checked = s.signalTrendGate !== false; $('#sDir').value = s.signalDirection || 'both'; $('#sOpp').value = s.signalOpposite || 'hedge';
     const ch = s.chat || {}; $('#chatKey').value = ''; $('#chatKey').placeholder = ch.keyHint ? `clé enregistrée (${ch.keyHint}) : laisse vide pour la garder` : 'sk-ant-...';
     $('#chatWeb').checked = ch.web !== false; $('#chatTg').checked = ch.telegram !== false; $('#chatBudget').value = ch.budget != null ? ch.budget : 20; $('#chatInstallRes').textContent = '';
     try { const cs = await api('/api/chat'); $('#chatModel').innerHTML = cs.models.map(m => `<option value="${m.id}"${m.id === (ch.model || cs.model) ? ' selected' : ''}>${esc(m.name)} (${m.in} $ / ${m.out} $ par million de jetons)</option>`).join('');
@@ -1200,7 +1212,7 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
   const body = {source: src, symbols: $('#symbols').value.split(/[\s,;]+/).filter(Boolean), telegramChatId: $('#tgChat').value.trim(),
     alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMode: $('#aMode').value, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, macroWeekTelegram: $('#mwTg').checked, macroMonthTelegram: $('#mmTg').checked, historyYears: +$('#histYears').value, footprintDays: +$('#fpDays').value,
     xOn: $('#xOn').checked, xAccounts: $('#xAccounts').value, xPosts: +$('#xPosts').value,
-    signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalMaxPerSymbol: +$('#sMaxSym').value, signalLeverage: +$('#sLev').value, signalTrendGate: $('#sTrend').checked, signalDirection: $('#sDir').value, signalSwitch: $('#sSwitch').value};
+    signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalMaxPerSymbol: +$('#sMaxSym').value, signalLeverage: +$('#sLev').value, signalTrendGate: $('#sTrend').checked, signalDirection: $('#sDir').value, signalOpposite: $('#sOpp').value};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();
   if ($('#xToken').value.trim()) body.xToken = $('#xToken').value.trim();
   if ($('#chatModel').value) body.chatModel = $('#chatModel').value;
@@ -1240,7 +1252,7 @@ function openSymbol(sym, page) {
   let cfg;
   try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
   window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
-    serverOld, LAUNCHER, shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, againstBias, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
+    serverOld, LAUNCHER, shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, oppOf, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
   Overview.init(window.LT);
   Signals.init(window.LT);
   Backtest.init(window.LT);

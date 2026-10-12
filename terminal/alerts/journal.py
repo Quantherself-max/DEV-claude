@@ -159,6 +159,9 @@ def story(t, lev=None, price_now=None):
     if t.get("flipFrom"):
         f = t["flipFrom"]
         out["why"].append(f"Changement de sens : cette idée remplaçait {'l’achat' if f['side'] == 'long' else 'la vente'} {f['symbol'].replace('USDT', '')} {when(f['created'])}.")
+    for f in t.get("hedgeOf") or []:
+        out["why"].append(f"Couverture : envoyée pendant {'l’achat' if f['side'] == 'long' else 'la vente'} {f['symbol'].replace('USDT', '')} {when(f['created'])}, "
+                          "encore en cours, sans l'annuler (chaque idée garde son stop et ses objectifs).")
     for f in t.get("switchFrom") or []:
         name = f"{'l’achat' if f['side'] == 'long' else 'la vente'} {f['symbol'].replace('USDT', '')} {when(f['created'])}"
         out["why"].append(f"Changement de sens : idée jugée bien plus forte que {name}, encore en cours ; le message disait d'abord de "
@@ -444,6 +447,9 @@ def summary(trades, expect=None):
         {"key": "entry", "title": "Entrée", "rows": _group(ideas, lambda t: "au prix du marché" if t["entryType"] == "marché" else "ordre à cours limité")},
         {"key": "month", "title": "Mois", "rows": _group(ideas, _month, order=lambda k: -_month_index(k))},
     ]
+    if any(t.get("hedgeOf") for t in ideas):                             # V25.2 : les couvertures paient-elles en reel ?
+        out["groups"].insert(2, {"key": "hedge", "title": "Couverture", "rows": _group(ideas, lambda t: "envoyée en couverture d'une idée en cours" if t.get("hedgeOf")
+                                                                                        else "envoyée seule", order=lambda k: k != "envoyée seule")})
     out["calibration"] = calibration(ideas)
     out["expect"] = expect or {}
     al = [t for t in trades if is_alert(t)]

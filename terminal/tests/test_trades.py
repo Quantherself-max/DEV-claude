@@ -128,50 +128,65 @@ class DeskTests(unittest.TestCase):
         out = self.desk.consider(sigs(a, b), MON)
         self.assertEqual([t["symbol"] for t in out], ["SOLUSDT"])
 
-    def test_one_direction_at_a_time_with_no_time_limit(self):
-        """V25.1 : plus de delai de 24 h. Tant que l'achat est en cours (meme 4 jours apres), pas de vente ; des qu'il est termine, la vente passe."""
-        self.assertEqual(Config().signal_direction, "both")                                 # par defaut : achats et ventes
+    def test_opposite_idea_is_sent_as_a_hedge_and_the_first_stays_open(self):
+        """V25.2 (par defaut) : une vente peut arriver pendant un achat en cours ; elle le couvre, rien n'est ferme ni annule."""
+        self.assertEqual((Config().signal_direction, Config().signal_opposite), ("both", "hedge"))
         self.assertIsNone(self.desk.bias(MON))
         self.desk.consider(sigs(idea(side="long", key="l")), MON)
         short = idea(side="short", entry=110.0, stop=112.0, tp1=106.0, tp2=102.0, key="s")
         self.assertEqual(self.desk.consider(sigs(short), MON + H), [])                      # une idee par paire toutes les 12 h
-        self.assertEqual(self.desk.consider(sigs(short), MON + 13 * H), [])                 # l'achat est encore ouvert : pas de vente qui le contredit
-        self.assertIn("contredirait l'achat BTCUSDT", self.desk.waiting["why"])
-        self.assertIn("encore en cours", self.desk.waiting["why"])
-        self.assertIn("sauf une idée exceptionnelle (au moins 95/100 ; celle-ci a 80/100)", self.desk.waiting["why"])
-        b = self.desk.bias(MON + 13 * H)
-        self.assertEqual((b["side"], b["symbol"], b["switchNeed"]), ("long", "BTCUSDT", 95.0))
-        self.assertNotIn("until", b)
-        self.desk.trades[-1].update(status="active", filledAt=MON + 2 * H)                 # position prise, ni stop ni objectif touche
-        self.assertEqual(self.desk.consider(sigs(short), MON + 100 * H), [])                # 4 jours plus tard : toujours en cours, toujours pas de vente
-        self.assertIn("encore en cours", self.desk.waiting["why"])
-        self.desk.trades[-1].update(status="closed", result="stop", closedAt=MON + 101 * H)
-        self.assertIsNone(self.desk.bias(MON + 101 * H))                                    # terminee : plus de biais impose, sans attendre
-        out = self.desk.consider(sigs(short), MON + 101 * H + 300_000)
+        out = self.desk.consider(sigs(short), MON + 13 * H)
         self.assertEqual(len(out), 1)
-        self.assertFalse(self.n.sent[-1].startswith("🔁"))                                  # pas de « ferme d'abord » : il n'y a plus rien a fermer
-        self.assertNotIn("Rappel", self.n.sent[-1])
-        self.assertEqual(self.desk.bias(MON + 102 * H)["side"], "short")
+        self.assertTrue(self.n.sent[-1].startswith("🛡 COUVERTURE · BTCUSDT VENTE"))
+        self.assertIn("Ton achat BTC du", self.n.sent[-1])
+        self.assertIn("Cette vente ne l'annule pas", self.n.sent[-1])
+        self.assertEqual(self.desk.trades[0]["status"], "pending")                          # l'achat reste ouvert
+        self.assertEqual(out[0]["hedgeOf"][0]["id"], self.desk.trades[0]["id"])
+        b = self.desk.bias(MON + 14 * H)
+        self.assertEqual((b["side"], b["mixed"], b["mode"], len(b["open"])), ("short", True, "hedge", 2))
+        self.assertNotIn("switchNeed", b)
 
-    def test_no_opposite_bias_across_pairs(self):
+    def test_setting_never_keeps_one_direction_at_a_time_without_time_limit(self):
+        self.cfg.signal_opposite = "never"
+        self.desk.consider(sigs(idea(side="long", key="l")), MON)
+        short = idea(side="short", entry=110.0, stop=112.0, tp1=106.0, tp2=102.0, key="s", score=99.0)
+        self.desk.trades[-1].update(status="active", filledAt=MON + 2 * H)                 # position prise, ni stop ni objectif touche
+        self.assertEqual(self.desk.consider(sigs(short), MON + 100 * H), [])                # 4 jours plus tard : toujours pas de vente, meme a 99/100
+        self.assertIn("contredirait l'achat BTCUSDT", self.desk.waiting["why"])
+        self.assertIn("réglage : une seule direction à la fois", self.desk.waiting["why"])
+        self.assertEqual(self.desk.bias(MON + 100 * H)["mode"], "never")
+        self.desk.trades[-1].update(status="closed", result="stop", closedAt=MON + 101 * H)
+        self.assertIsNone(self.desk.bias(MON + 101 * H))                                    # terminee : l'autre sens passe tout de suite
+        self.assertEqual(len(self.desk.consider(sigs(short), MON + 101 * H + 300_000)), 1)
+        self.assertFalse(self.n.sent[-1].startswith("🛡"))
+
+    def test_opposite_ideas_across_pairs(self):
         self.desk.consider(sigs(idea(sym="BTCUSDT", side="long", key="l")), MON)
         sol_short = idea(sym="SOLUSDT", side="short", entry=60.0, stop=61.0, tp1=57.0, tp2=55.0, key="ss", score=90.0)
-        self.assertEqual(self.desk.consider(sigs(sol_short), MON + H), [])                 # BTC et SOL bougent ensemble : pas de vente SOL contre l'achat BTC
+        self.cfg.signal_opposite = "never"
+        self.assertEqual(self.desk.consider(sigs(sol_short), MON + H), [])                 # reglage « une seule direction » : bloquee
         self.assertIn("SOLUSDT vente contredirait l'achat BTCUSDT", self.desk.waiting["why"])
-        out = self.desk.consider(sigs(idea(sym="SOLUSDT", side="long", entry=50.0, stop=49.0, tp1=52.0, tp2=54.0, key="sl")), MON + 2 * H)
-        self.assertEqual([(t["symbol"], t["side"]) for t in out], [("SOLUSDT", "long")])  # meme sens sur l'autre paire : permis
+        self.cfg.signal_opposite = "hedge"
+        out = self.desk.consider(sigs(sol_short), MON + H)
+        self.assertEqual([(t["symbol"], t["side"]) for t in out], [("SOLUSDT", "short")])  # par defaut : couverture sur l'autre paire
+        self.assertIn("BTC et SOL bougent souvent ensemble : cette vente SOL compense en partie ton achat BTC.", self.n.sent[-1])
+        self.assertNotIn("Même paire", self.n.sent[-1])
         b = self.desk.bias(MON + 3 * H)
-        self.assertEqual((b["side"], b["symbol"], b["switchNeed"]), ("long", "SOLUSDT", 95.0))
-        self.assertEqual({o["symbol"] for o in b["open"]}, {"BTCUSDT", "SOLUSDT"})
-        self.assertFalse(b["mixed"])
-        self.assertEqual(self.desk.public(MON + 3 * H)["bias"]["side"], "long")
-        self.assertEqual(self.desk.history(MON + 3 * H)["bias"]["side"], "long")
+        self.assertEqual({(o["symbol"], o["side"]) for o in b["open"]}, {("BTCUSDT", "long"), ("SOLUSDT", "short")})
+        self.assertTrue(b["mixed"])
+        self.assertEqual(self.desk.public(MON + 3 * H)["bias"]["mixed"], True)
+        self.assertEqual(self.desk.history(MON + 3 * H)["bias"]["side"], "short")
 
-    def test_one_cycle_never_sends_two_opposite_ideas(self):
+    def test_one_cycle_with_two_opposite_ideas(self):
         both = sigs(idea(sym="SOLUSDT", side="long", entry=50.0, stop=49.0, tp1=52.0, tp2=54.0, key="a", score=75.0),
                     idea(sym="BTCUSDT", side="short", entry=110.0, stop=112.0, tp1=106.0, tp2=102.0, key="b", score=85.0))
         out = self.desk.consider(both, MON)
-        self.assertEqual([(t["symbol"], t["side"]) for t in out], [("BTCUSDT", "short")])  # la meilleure passe, l'autre sens attend
+        self.assertEqual([(t["symbol"], t["side"]) for t in out], [("BTCUSDT", "short"), ("SOLUSDT", "long")])   # la meilleure d'abord, l'autre en couverture
+        self.assertTrue(self.n.sent[-1].startswith("🛡 COUVERTURE · SOLUSDT ACHAT"))
+        self.cfg.signal_opposite = "never"
+        self.desk.trades.clear()
+        out = self.desk.consider(both, MON + 30 * H)
+        self.assertEqual([(t["symbol"], t["side"]) for t in out], [("BTCUSDT", "short")])
         self.assertIn("SOLUSDT achat contredirait la vente BTCUSDT", self.desk.waiting["why"])
 
     # ---------- doublons ----------

@@ -596,7 +596,8 @@ class ServerTests(unittest.TestCase):
         code, body, _ = self.get("/api/history")
         self.assertEqual(code, 200)
         h = json.loads(body)
-        self.assertTrue({"trades", "stats", "week", "readings", "direction", "since", "bias"} <= set(h))
+        self.assertTrue({"trades", "stats", "week", "readings", "direction", "since", "bias", "opposite"} <= set(h))
+        self.assertEqual(h["opposite"], "hedge")                                       # V25.2 : idee dans l'autre sens envoyee en couverture
         self.assertEqual(set(r["desk"]), {"week", "waiting", "stats", "trades", "bias"})
         self.assertEqual(r["desk"]["week"]["cap"], 5)
         sg = r["symbols"]["BTCUSDT"]

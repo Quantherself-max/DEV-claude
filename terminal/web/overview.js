@@ -16,9 +16,9 @@ const Overview = (() => {
     if (!i) return '';
     if (!i.n && !i.side) return '<div class="sect">Idée de trade</div><div class="muted small">Aucune configuration ne passe les filtres pour l\'instant.</div>';
     const buy = i.side === 'long', cls = buy ? 'up' : 'dn';
-    const b = last && last.bias, d0 = i.direction || 'both';
-    const state = (d0 === 'both' || i.side === d0) && LT.againstBias(b, i.side) ? `<span class="tag warn">bloquée : contredirait ${b.side === 'long' ? 'l\'achat' : 'la vente'} ${esc(b.symbol.replace('USDT', ''))} du ${LT.parisAt(b.created)}</span>`
-      : i.eligible ? `<span class="tag ok">au-dessus du seuil</span>` : i.hold && i.hold.length ? `<span class="tag warn">en attente : annonce</span>` : `<span class="tag warn">sous le seuil (${i.minScore})</span>`;
+    const d0 = i.direction || 'both', op = (d0 === 'both' || i.side === d0) ? LT.oppOf(last && last.bias, i.side) : null;
+    const state = op && op.blocked ? `<span class="tag warn">${esc(op.text)}</span>`
+      : i.eligible ? `<span class="tag ok">au-dessus du seuil</span>${op ? ` <span class="tag warn">${esc(op.text)}</span>` : ''}` : i.hold && i.hold.length ? `<span class="tag warn">en attente : annonce</span>` : `<span class="tag warn">sous le seuil (${i.minScore})</span>`;
     return `<div class="sect">Idée de trade</div><div class="hero" style="gap:10px"><div class="big ${cls}" style="font-size:18px">${buy ? 'ACHAT' : 'VENTE'}</div><div class="muted small">qualité <b>${Math.round(i.score)}/100</b> ${state}<br>entrée ${fmtP(i.entry)} · stop ${fmtP(i.stop)} · objectif ${fmtP(i.tp1)}</div></div>`;
   }
 

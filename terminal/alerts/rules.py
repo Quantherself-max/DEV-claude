@@ -272,8 +272,9 @@ class AlertEngine:
             d = getattr(cfg, "signal_direction", "both")
             sens = (" Sens : achat seulement ; une configuration de vente t'arrive comme « alerte pour tes longs » (hors quota)." if d == "long" else
                     " Sens : vente seulement ; une configuration d'achat t'arrive comme « alerte pour tes shorts » (hors quota)." if d == "short" else
-                    " Une seule direction à la fois, toutes paires confondues : pas d'idée dans l'autre sens tant qu'une idée est en cours"
-                    + ("." if getattr(cfg, "signal_switch", "strong") == "never" else " (sauf une idée exceptionnelle : je te dis alors de fermer la première)."))
+                    (" Une seule direction à la fois, toutes paires confondues : pas d'idée dans l'autre sens tant qu'une idée est en cours."
+                     if getattr(cfg, "signal_opposite", "hedge") == "never" else
+                     " Une idée dans l'autre sens peut arriver pendant une idée en cours : elle la couvre sans l'annuler (chaque idée garde son stop et ses objectifs)."))
             text = ("✅ Terminal démarré. Tu ne recevras que les idées de trade "
                     f"({cfg.signal_max_week} par semaine au maximum, qualité minimale {cfg.signal_min_score:.0f}/100) "
                     f"sur : {', '.join(cfg.symbols)}." + sens
