@@ -77,7 +77,7 @@ class Account:
             self._save()
             return prof
 
-    def add_trade(self, inst: str, side: str, qty, entry, exit, t: int | None = None, fees=None, setup: str = "", note: str = "") -> dict:
+    def add_trade(self, inst: str, side: str, qty, entry, exit, t: int | None = None, fees=None, setup: str = "", note: str = "", hold_s=None) -> dict:
         inst = str(inst).upper()
         side = str(side).lower()
         if inst not in INSTRUMENTS:
@@ -89,6 +89,12 @@ class Account:
             fees = None if fees in (None, "") else float(fees)
         except (TypeError, ValueError):
             raise AccountError("quantité, prix ou frais invalides") from None
+        try:
+            hold_s = None if hold_s in (None, "") else float(hold_s)
+        except (TypeError, ValueError):
+            raise AccountError("la durée du trade doit être un nombre de secondes") from None
+        if hold_s is not None and hold_s < 0:
+            raise AccountError("la durée du trade ne peut pas être négative")
         if qty <= 0 or qty != int(qty):
             raise AccountError("la quantité doit être un nombre entier de contrats")
         if entry <= 0 or exit <= 0:
@@ -102,7 +108,7 @@ class Account:
         with self.lock:
             rec = {"id": self.next_id, "kind": "trade", "t": t, "day": clock.trading_day(t), "inst": inst, "side": side, "qty": int(qty),
                    "entry": entry, "exit": exit, "gross": round(gross, 2), "fees": round(fee, 2), "net": round(gross - fee, 2),
-                   "pts": round((exit - entry) * sgn, 4), "setup": str(setup)[:60], "note": str(note)[:300]}
+                   "pts": round((exit - entry) * sgn, 4), "hold_s": hold_s, "setup": str(setup)[:60], "note": str(note)[:300]}
             self.next_id += 1
             self.records.append(rec)
             self._save()
@@ -165,9 +171,20 @@ class Account:
             st["today"] = today
             st["days"] = [{"day": d, "pnl": v} for d, v in days.items()]
             st["records"] = [r for r in self.records if r["day"] == today]
+            st["micro"] = self.micro()
             st["profile"] = self.profile.to_dict()
             st["toVerify"] = list(self.profile.to_verify)
             return st
+
+    def micro(self) -> dict:
+        """Part des gains venant de trades tenus MICRO_HOLD_SECONDS secondes ou moins. Lucid signale un compte au-dela de MICRO_PROFIT_SHARE (50 %).
+        `shareMin` est un MINIMUM : les trades dont la duree n'a pas ete saisie comptent au denominateur mais jamais au numerateur."""
+        tr = [r for r in self.records if r["kind"] == "trade"]
+        wins = sum(r["net"] for r in tr if r["net"] > 0)
+        known = [r for r in tr if r.get("hold_s") is not None]
+        short = sum(r["net"] for r in known if r["net"] > 0 and r["hold_s"] <= risk.MICRO_HOLD_SECONDS)
+        return {"trades": len(tr), "known": len(known), "unknown": len(tr) - len(known), "shortWins": round(short, 2), "wins": round(wins, 2),
+                "shareMin": (short / wins) if wins > 0 else None, "limit": risk.MICRO_PROFIT_SHARE, "seconds": risk.MICRO_HOLD_SECONDS}
 
     def perf(self) -> dict:
         """Statistiques des trades saisis (gagnants, perdants, esperance), globales et par setup : sert a juger la strategie sur le reel."""

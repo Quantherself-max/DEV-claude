@@ -141,10 +141,10 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(r["stopPts"], 10)
         self.assertEqual(r["stopTicks"], 40)
         self.assertEqual(nq["qty"], 0)                                           # 10 pts x 20 $ + frais = 204,5 $ > 100 $
-        self.assertEqual(mnq["qty"], 4)                                          # 10 x 2 + 1,5 = 21,5 $ -> 4 contrats
+        self.assertEqual(mnq["qty"], 4)                                          # 10 x 2 + 1,0 = 21,0 $ -> 4 contrats
         t = mnq["targets"][0]
-        self.assertAlmostEqual(t["net"], 20 * 2 * 4 - 1.5 * 4)
-        self.assertAlmostEqual(t["r"], t["net"] / (4 * 21.5))
+        self.assertAlmostEqual(t["net"], 20 * 2 * 4 - 1.0 * 4)                          # frais Lucid : 1,00 $ l'aller-retour par MNQ
+        self.assertAlmostEqual(t["r"], t["net"] / (4 * 21.0))
         self.assertTrue(any("MNQ" in w for w in r["warnings"]))
 
     def test_cap_and_short(self):
@@ -197,7 +197,7 @@ class AccountTests(unittest.TestCase):
 
     def test_trade_pnl_and_persistence(self):
         r = self.acc.add_trade("NQ", "long", 1, 25_000, 25_010, t=self.now)
-        self.assertEqual((r["gross"], r["fees"], r["net"], r["day"]), (200.0, 4.5, 195.5, "2026-10-12"))
+        self.assertEqual((r["gross"], r["fees"], r["net"], r["day"]), (200.0, 3.5, 196.5, "2026-10-12"))
         r2 = self.acc.add_trade("mnq", "short", 5, 25_010, 25_000.13, t=self.now)      # prix aligne sur le tick, MNQ en minuscules
         self.assertEqual(r2["exit"], 25_000.25)
         self.assertEqual(r2["gross"], round(9.75 * 2 * 5, 2))
@@ -223,7 +223,7 @@ class AccountTests(unittest.TestCase):
     def test_adjust_undo_delete_reset(self):
         self.acc.add_adjust("2026-10-08", 450, "depart")
         a = self.acc.add_trade("NQ", "long", 1, 25_000, 25_010, t=self.now)
-        self.assertEqual(self.acc.snapshot("2026-10-12")["start"] + 450 + 195.5, self.acc.snapshot("2026-10-12")["balance"])
+        self.assertEqual(self.acc.snapshot("2026-10-12")["start"] + 450 + 196.5, self.acc.snapshot("2026-10-12")["balance"])
         self.assertEqual(self.acc.undo()["id"], a["id"])
         self.assertEqual(len(self.acc.records), 1)
         self.assertTrue(self.acc.delete(1))
@@ -249,7 +249,7 @@ class AccountTests(unittest.TestCase):
         again = Account(self.path)
         self.assertEqual(again.profile.profit_target, 1_500)
         self.assertEqual(again.profile.fee_rt["NQ"], 3.0)
-        self.assertEqual(again.profile.fee_rt["MNQ"], 1.5)                          # les autres frais gardent leur valeur
+        self.assertEqual(again.profile.fee_rt["MNQ"], 1.0)                          # les autres frais gardent leur valeur
         self.assertIsNone(again.profile.consistency_pct)
         with self.assertRaises(AccountError):
             self.acc.set_profile({"nimportequoi": 1})
@@ -264,6 +264,30 @@ class AccountTests(unittest.TestCase):
         self.assertTrue(any("corrompu" in p.name for p in self.path.parent.iterdir()))
         acc.add_adjust("2026-10-12", 5)
         self.assertEqual(json.loads(self.path.read_text())["records"][0]["net"], 5)
+
+    def test_default_fees_are_lucids_table(self):
+        self.assertEqual((P.fee_rt["NQ"], P.fee_rt["MNQ"]), (3.50, 1.00))                        # 1,75 $ et 0,50 $ par cote
+
+    def test_micro_scalping_share(self):
+        for out, hold in ((25_010, 3), (25_020, 120), (24_995, 2), (25_005, None)):               # gains : 20 $ en 3 s, 40 $ en 120 s, 5 $ sans duree ; une perte
+            self.acc.add_trade("MNQ", "long", 1, 25_000, out, t=self.now, fees=0, hold_s=hold)
+        m = self.acc.micro()
+        self.assertEqual((m["trades"], m["known"], m["unknown"]), (4, 3, 1))
+        self.assertEqual(m["wins"], 20 + 40 + 10)
+        self.assertEqual(m["shortWins"], 20)                                                      # seul le trade gagnant de 3 s compte
+        self.assertAlmostEqual(m["shareMin"], 20 / 70)
+        self.assertEqual(self.acc.snapshot("2026-10-12")["micro"]["known"], 3)
+        self.assertEqual(self.acc.records[0]["hold_s"], 3.0)
+        self.assertIsNone(self.acc.records[3]["hold_s"])
+        self.assertEqual(Account(Path(self.dir.name) / "vide2.json").micro()["shareMin"], None)
+
+    def test_hold_seconds_are_validated(self):
+        for bad in ("abc", -1):
+            with self.assertRaises(AccountError):
+                self.acc.add_trade("NQ", "long", 1, 25_000, 25_001, hold_s=bad)
+        self.assertEqual(self.acc.records, [])
+        self.assertEqual(self.acc.add_trade("NQ", "long", 1, 25_000, 25_001, t=self.now, hold_s="")["hold_s"], None)
+        self.assertEqual(self.acc.add_trade("NQ", "long", 1, 25_000, 25_001, t=self.now, hold_s="7,5".replace(",", "."))["hold_s"], 7.5)
 
     def test_perf(self):
         for out, setup in ((25_010, "vwap"), (24_995, "vwap"), (25_020, "ib"), (24_990, "ib")):

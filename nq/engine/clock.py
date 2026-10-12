@@ -163,6 +163,15 @@ def window(day: str, name: str) -> tuple:
     return out[0], out[1]
 
 
+FORCED_FLAT = (16, 45)          # comptes de simulation Lucid : positions fermees d'office a 16 h 45 ET (avant, les jours de seance raccourcie)
+
+
+def forced_flat(day: str) -> int:
+    """Instant (ms UTC) de la fermeture forcee des positions Lucid pour la journee de trading `day`."""
+    y, m, d = (int(x) for x in day.split("-"))
+    return et_to_utc(y, m, d, *FORCED_FLAT)
+
+
 # ---------- phases de la journee (pour l'affichage et le contexte) ----------
 PHASES = (            # (debut en minutes ET, cle, libelle)
     (3 * 60, "london", "Londres"),
@@ -204,6 +213,7 @@ KEY_MARKS = (          # moments qui comptent pour un scalpeur NQ (heure ET)
     (14 * 60, "Annonces / Fed de 14 h"),
     (15 * 60, "Dernière heure"),
     (16 * 60, "Clôture de New York"),
+    (16 * 60 + 45, "Fermeture forcée des comptes Lucid (16 h 45 ET)"),
     (17 * 60, "Pause quotidienne"),
     (18 * 60, "Réouverture Globex"),
 )

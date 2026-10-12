@@ -157,6 +157,23 @@ class ContextTests(unittest.TestCase):
         c = self.build(events=[events.Event(NOW + 600 * MIN, "FOMC", 3)])
         self.assertFalse(any("FENÊTRE" in n["text"] for n in c["notes"]))
 
+    def test_forced_flat_warning_only_near_the_end_of_the_day(self):
+        near = sim_market(utc(2026, 10, 12, 20, 25), 2)                                           # 16 h 25 ET : 20 min avant la fermeture forcee
+        c = context.build(near, levels.build(near), source={"simulated": False})
+        txt = [n["text"] for n in c["notes"] if "Fermeture forcée" in n["text"]]
+        self.assertEqual(len(txt), 1)
+        self.assertIn("22:45", txt[0])
+        self.assertIn("dans 20 min", txt[0])
+        self.assertFalse(any("Fermeture forcée" in n["text"] for n in self.build()["notes"]))     # 12 h 40 ET : trop tot pour le dire
+
+    def test_micro_scalping_warning(self):
+        mic = {"shareMin": 0.62, "limit": 0.5, "seconds": 5, "known": 10, "unknown": 0}
+        c = self.build(acct={"breached": False, "dailyStopHit": False, "dailyStop": 300, "status": "ok", "buffer": 900, "micro": mic})
+        self.assertTrue(any("Micro-scalping" in n["text"] and "62 %" in n["text"] for n in c["notes"]))
+        mic["shareMin"] = 0.2
+        c = self.build(acct={"breached": False, "dailyStopHit": False, "dailyStop": 300, "status": "ok", "buffer": 900, "micro": mic})
+        self.assertFalse(any("Micro-scalping" in n["text"] for n in c["notes"]))
+
     def test_estimated_delta_warning(self):
         m = Market()
         t0 = clock.window("2026-10-12", "rth")[0]

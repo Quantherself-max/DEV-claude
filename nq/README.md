@@ -67,17 +67,20 @@ Règles retenues par défaut (**LucidFlex 25K, évaluation**), recoupées sur pl
 | Capital / cible de profit | 25 000 $ / 1 250 $ | sources concordantes |
 | Perte maximale | 1 000 $, **trailing sur le solde de fin de journée** : plancher = meilleur solde EOD − 1 000 $, il ne baisse jamais | concordantes |
 | Verrou du plancher | s'arrête à capital + 100 $ (25 100 $) | une source précise, les autres confirment « verrouillé » |
-| Limite de perte journalière imposée par Lucid | aucune | concordantes |
+| Limite de perte journalière | **optionnelle** : choisie au paiement (moins chère si activée), non modifiable ensuite, « souple » (blocage jusqu'à la séance suivante). Montant à lire sur la page d'achat (600 $ cité pour Pro et Daily ; non confirmé pour Flex 25K). Ce profil la laisse désactivée | centre d'aide Lucid, recoupé |
 | Contrats | 2 minis ou 20 micros (un mini = 10 micros, **l'ensemble compte** : hypothèse prudente) | concordantes sur 2 / 20 |
 | Consistance (évaluation) | meilleur jour ≤ 50 % du profit total | majorité ; une source isolée dit 20 % (jugée erronée) |
-| Jours de trading minimum | **sources contradictoires (0 ou 2)** | **à vérifier** |
-| Frais aller-retour | **estimations** (NQ 4,50 $, MNQ 1,50 $) | **à remplacer par tes frais réels** |
+| Jours de trading minimum | aucun minimum officiel trouvé ; **2 jours en pratique** (la consistance de 50 % rend un passage en 1 jour impossible avec une cible de 1 250 $) | moyenne |
+| Fermeture forcée | positions **à plat avant 16 h 45 ET** (22 h 45 à Paris), fermées d'office ; pas de position la nuit ni le week-end | centre d'aide Lucid, recoupé |
+| Micro-scalping | compte signalé si **plus de 50 % des gains** viennent de trades tenus **5 secondes ou moins** (revue manuelle, avertissement, puis perte de ces gains) | centre d'aide Lucid, recoupé |
+| Frais | commissions Lucid : **NQ 3,50 $ et MNQ 1,00 $ l'aller-retour** (1,75 $ et 0,50 $ par côté). Frais de bourse éventuels non inclus ; ES / MES : même valeur par défaut, non vérifiée | table du centre d'aide, à confirmer à l'achat |
 
 Tout est modifiable dans **Compte → « Règles Lucid et limites personnelles »** (un champ vide = pas de règle). Les valeurs **« risque par trade » (100 $) et « stop quotidien » (300 $)** ne sont **pas** des règles de Lucid : ce sont des valeurs de départ pour *ta* discipline, à régler ensemble.
 
 **Ce que calcule le moteur** (`engine/risk.py`, testé sur les cas limites) :
 - le **plancher** (il ne se met à jour qu'en fin de journée de trading) et la **marge** avant lui, mesurée sur l'**equity** (solde + latent), prudemment : la limite est considérée touchée dès que l'equity l'atteint ;
 - la **consistance** : meilleur jour / profit total, le **profit total à atteindre pour valider** (plus que la cible si le meilleur jour est gros : un meilleur jour de 700 $ à 50 % exige 1 400 $, pas 1 250 $), et le **gain maximal d'aujourd'hui** qui ne casse pas la règle ;
+- le **micro-scalping** : part de tes gains issue de trades tenus 5 s ou moins (saisis la durée de chaque trade), avec un avertissement dès 35 % ; la **fermeture forcée** de 16 h 45 ET est annoncée 30 minutes avant ;
 - le **dimensionnement** : pour un stop et un risque donnés, combien de NQ **et** de MNQ (frais inclus), plafonnés par le compte, le rapport gain / risque de chaque objectif, et des avertissements (stop trop large, plafond atteint, > 25 % de la marge restante, stop quotidien, frais qui mangent l'objectif).
 
 **Le terminal ne se connecte pas à ta plateforme** : le solde vient du **journal** que tu tiens (Compte → « Trade clôturé » : un trade, ou « Clôturer au dernier prix → » depuis la position suivie ; « Reprendre un compte entamé » pour un compte déjà commencé). Le **latent** vient de la **position ouverte** que tu saisis (ou que tu prends depuis le Plan). Il ne comprend pas les frais. Le journal est dans `data_local/compte.json` (écriture atomique ; un fichier illisible est mis de côté, jamais écrasé).

@@ -153,7 +153,13 @@ def build(mk, lv: dict, events=None, acct: dict | None = None, source: dict | No
         # ----- temps et annonces -----
         marks = clock.next_marks(now, 2)
         out["marks"] = [{"label": lab, "t": t, "paris": clock.fmt_hm(t, "paris"), "in": round((t - now) / 60_000)} for lab, t in marks]
-        if marks:
+        ff = clock.forced_flat(clock.trading_day(now))
+        to_flat = (ff - now) / 60_000
+        flat_soon = ph["open"] and 0 <= to_flat <= 30 and clock.et(now).weekday() < 5
+        if flat_soon:                                                  # remplace le simple « prochain repere » : meme information, en plus pressant
+            note("warn", f"Fermeture forcée des comptes Lucid à 16 h 45 ET ({clock.fmt_hm(ff, 'paris')} à Paris), dans {max(0, round(to_flat))} min : "
+                         "sois à plat avant, les positions encore ouvertes sont fermées d'office.")
+        elif marks:
             lab, t = marks[0]
             note("info", f"Prochain repère : {lab} dans {round((t - now) / 60_000)} min ({clock.fmt_hm(t, 'paris')} à Paris).")
         evs = events or []
@@ -167,6 +173,10 @@ def build(mk, lv: dict, events=None, acct: dict | None = None, source: dict | No
                 note("info", f"Annonce à venir : {e.name} à {clock.fmt_hm(e.t, 'paris')} (Paris), impact {e.to_dict()['impactLabel']}.")
 
         # ----- compte -----
+        mic = (acct or {}).get("micro")
+        if mic and mic.get("shareMin") is not None and mic["shareMin"] >= 0.35:
+            note("warn", f"Micro-scalping : au moins {mic['shareMin'] * 100:.0f} % de tes gains viennent de trades tenus {mic['seconds']} s ou moins "
+                         f"(Lucid signale un compte au-delà de {mic['limit'] * 100:.0f} %).")
         if acct:
             if acct.get("breached"):
                 note("warn", "Plancher du compte atteint : plus aucun trade.")

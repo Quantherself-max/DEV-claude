@@ -8,15 +8,21 @@ Regles LucidFlex 25K retenues par defaut (recoupees sur plusieurs sources publiq
   - capital de depart 25 000 $, cible de profit 1 250 $, perte maximale 1 000 $ ;
   - perte maximale « trailing » sur le SOLDE DE FIN DE JOURNEE (EOD) : le plancher monte avec le meilleur solde de fin de journee
     (plancher = meilleur solde EOD - 1 000 $) et s'arrete a capital + 100 $ (25 100 $) ; il ne descend jamais ;
-  - pas de limite de perte journaliere imposee par Lucid ; au plus 2 minis ou 20 micros (un mini = 10 micros, l'ensemble compte) ;
+  - limite de perte journaliere : une OPTION choisie au paiement (moins chere si elle est activee), non modifiable ensuite, « souple » (on est
+    bloque jusqu'a la seance suivante, le compte survit). Ce profil la laisse desactivee ; au plus 2 minis ou 20 micros (un mini = 10 micros,
+    l'ensemble compte : hypothese prudente, non confirmee) ;
   - consistance en evaluation : le meilleur jour ne doit pas depasser 50 % du profit total ;
-  - jours de trading minimum : sources contradictoires (0 ou 2) -> a verifier."""
+  - jours de trading minimum : sources contradictoires (0 ou 2) -> a verifier ;
+  - positions a plat avant 16 h 45 ET (fermees d'office) ; micro-scalping : compte signale si plus de 50 % des gains viennent de trades
+    tenus 5 secondes ou moins (voir `MICRO_*` plus bas)."""
 import math
 from dataclasses import asdict, dataclass, field, fields
 
 from .instruments import INSTRUMENTS
 
 MICRO_OF_ROOT = {"NQ": "MNQ", "ES": "MES"}           # micro correspondant a chaque mini
+MICRO_HOLD_SECONDS = 5                               # Lucid : un trade tenu 5 secondes ou moins est « micro »
+MICRO_PROFIT_SHARE = 0.5                             # ... et le compte est signale si plus de 50 % des gains en viennent
 
 
 @dataclass
@@ -35,9 +41,13 @@ class PropProfile:
     # --- discipline personnelle (PAS des regles de Lucid) : valeurs de depart, a regler ensemble ---
     risk_per_trade: float = 100.0           # risque maximal par trade, en dollars
     daily_stop: float = 300.0               # perte de la journee a partir de laquelle on s'arrete
-    # frais aller-retour par contrat, en dollars : ESTIMATIONS a remplacer par tes frais reels (commission + bourse + NFA)
-    fee_rt: dict = field(default_factory=lambda: {"NQ": 4.50, "MNQ": 1.50, "ES": 4.50, "MES": 1.50})
-    to_verify: tuple = ("jours de trading minimum (0 ou 2 selon les sources)", "frais aller-retour (estimation)", "règles du compte financé")
+    # frais ALLER-RETOUR par contrat, en dollars. NQ / MNQ : table du centre d'aide de Lucid (1,75 $ et 0,50 $ PAR COTE, soit 3,50 $ et 1,00 $ l'aller-retour).
+    # ES / MES : meme valeur par defaut, non verifiee. Frais de bourse / NFA eventuels non inclus : a remplacer par tes frais reels si tu les connais.
+    fee_rt: dict = field(default_factory=lambda: {"NQ": 3.50, "MNQ": 1.00, "ES": 3.50, "MES": 1.00})
+    to_verify: tuple = ("jours de trading minimum (0 ou 2 selon les sources)",
+                        "frais : commissions Lucid NQ 1,75 $ / MNQ 0,50 $ par côté (confirme à l'achat) ; frais de bourse éventuels non inclus",
+                        "limite de perte journalière : option du paiement, montant à lire sur la page d'achat",
+                        "règles du compte financé")
 
     @classmethod
     def from_dict(cls, d: dict) -> "PropProfile":

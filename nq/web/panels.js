@@ -88,7 +88,8 @@ const Panels = (() => {
           <label>Instrument<select name="inst"><option>NQ</option><option>MNQ</option><option>ES</option><option>MES</option></select></label>
           <label>Quantité<input name="qty" inputmode="numeric" value="1"></label><label>Setup (facultatif)<input name="setup" list="setups" maxlength="60"></label>
           <label>Entrée<input name="entry" inputmode="decimal"></label><label>Sortie<input name="exit" inputmode="decimal"></label>
-          <label class="wide">Note<input name="note" maxlength="300"></label><datalist id="setups"></datalist>
+          <label>Durée du trade (s)<input name="hold" inputmode="decimal" placeholder="facultatif" title="Lucid signale un compte dont plus de 50 % des gains viennent de trades tenus 5 secondes ou moins"></label>
+          <label>Note<input name="note" maxlength="300"></label><datalist id="setups"></datalist>
           <div class="row" style="grid-column:1/3"><button type="submit" class="primary">Enregistrer le trade</button><button type="button" id="tradeUndo">Annuler la dernière saisie</button></div></form>
         <div class="err" id="tradeErr"></div></div>
       <div class="card"><h2>Aujourd'hui</h2><div id="acctRecords"></div></div>
@@ -128,14 +129,15 @@ const Panels = (() => {
       const f = new FormData(tf), num = k => parseFloat(String(f.get(k)).replace(',', '.'));
       $('#tradeErr').textContent = '';
       try {
-        await api('/api/account/trade', {body: {inst: f.get('inst'), side: f.get('side'), qty: num('qty'), entry: num('entry'), exit: num('exit'), setup: f.get('setup'), note: f.get('note')}});
+        const hold = String(f.get('hold')).trim() === '' ? null : num('hold');
+        await api('/api/account/trade', {body: {inst: f.get('inst'), side: f.get('side'), qty: num('qty'), entry: num('entry'), exit: num('exit'), setup: f.get('setup'), note: f.get('note'), hold_s: hold}});
         const p = (cb.getPos() || '').split(',');
         if (p.length === 4 && p[1] === f.get('inst') && p[0] === f.get('side')) {                // meme position : elle diminue de la quantite sortie (ou se referme)
           const left = parseInt(p[2], 10) - num('qty');
           cb.setPos(left > 0 ? `${p[0]},${p[1]},${left},${p[3]}` : '');
           loadPos();
         }
-        tf.entry.value = ''; tf.exit.value = ''; tf.note.value = '';
+        tf.entry.value = ''; tf.exit.value = ''; tf.note.value = ''; tf.hold.value = '';
         toast('Trade enregistré'); cb.refreshAccount();
       } catch (err) { $('#tradeErr').textContent = err.message; }
     };
@@ -211,6 +213,13 @@ const Panels = (() => {
           html += `<table style="margin-top:6px"><tr><th>Setup</th><th>N</th><th>Gagn.</th><th>Espérance</th></tr>${setups.map(([k, st]) =>
             `<tr><td>${esc(k)}</td><td>${st.n}</td><td>${pct(st.winRate)}</td><td class="${cls(st.expectancy)}">${susd(st.expectancy, 2)}</td></tr>`).join('')}</table>`;
         }
+      }
+      const mi = a.micro;
+      if (mi && mi.trades) {
+        const sh = mi.shareMin;
+        html += `<div class="small" style="margin-top:8px">Gains issus de trades tenus ${mi.seconds} s ou moins : <b class="${sh != null && sh >= 0.4 ? 'neg' : ''}">${sh == null ? '—' : pct(sh)}</b> `
+          + `<small>(Lucid signale un compte au-delà de ${pct(mi.limit)})</small></div>` + gauge(sh || 0, sh >= 0.4 ? 'bad' : sh >= 0.3 ? 'warn' : 'acc', mi.limit)
+          + (mi.unknown ? `<div class="small amb">${mi.unknown} trade(s) sans durée saisie : cette part est un minimum.</div>` : '');
       }
       $('#acctPerf').innerHTML = html;
       const dl = $('#setups');

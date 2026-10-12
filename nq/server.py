@@ -100,7 +100,7 @@ def route_post(app: App, path: str, body: dict):
     try:
         if path == "/api/account/trade":
             return a.add_trade(body.get("inst", s.inst.root), body.get("side"), body.get("qty"), body.get("entry"), body.get("exit"), body.get("t"),
-                               body.get("fees"), body.get("setup", ""), body.get("note", ""))
+                               body.get("fees"), body.get("setup", ""), body.get("note", ""), body.get("hold_s"))
         if path == "/api/account/adjust":
             return a.add_adjust(body.get("day"), body.get("net"), body.get("note", ""))
         if path == "/api/account/undo":

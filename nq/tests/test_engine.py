@@ -82,6 +82,15 @@ class ClockTests(unittest.TestCase):
         self.assertEqual([m[0] for m in marks][:3], ["Ouverture de New York", "Annonces US de 10 h", "Fin de l'initial balance"])
 
 
+    def test_lucid_forced_flat_mark(self):
+        self.assertEqual(clock.forced_flat("2026-10-12"), utc(2026, 10, 12, 20, 45))             # 16 h 45 ET = 20 h 45 UTC = 22 h 45 a Paris
+        self.assertEqual(clock.fmt_hm(clock.forced_flat("2026-10-12"), "paris"), "22:45")
+        self.assertEqual(clock.fmt_hm(clock.forced_flat("2026-10-27"), "paris"), "21:45")        # semaine du decalage des changements d'heure
+        marks = clock.next_marks(utc(2026, 10, 12, 19, 0), 3)                                     # 15 h ET
+        self.assertEqual([m[0] for m in marks], ["Clôture de New York", "Fermeture forcée des comptes Lucid (16 h 45 ET)", "Pause quotidienne"])
+        self.assertEqual(marks[1][1], utc(2026, 10, 12, 20, 45))
+
+
 class InstrumentTests(unittest.TestCase):
     def test_specs(self):
         nq, mnq = instruments.NQ, instruments.MNQ
