@@ -90,7 +90,7 @@ Règles retenues par défaut (**LucidFlex 25K, évaluation**), recoupées sur pl
 | Micro-scalping | compte signalé si **plus de 50 % des gains** viennent de trades tenus **5 secondes ou moins** (revue manuelle, avertissement, puis perte de ces gains) | centre d'aide Lucid, recoupé |
 | Frais | commissions Lucid : **NQ 3,50 $ et MNQ 1,00 $ l'aller-retour** (1,75 $ et 0,50 $ par côté). Frais de bourse éventuels non inclus ; ES / MES : même valeur par défaut, non vérifiée | table du centre d'aide, à confirmer à l'achat |
 
-Tout est modifiable dans **Compte → « Règles Lucid et limites personnelles »** (un champ vide = pas de règle ; les valeurs inutilisables — nombre non fini, plafond nul, palier vide — sont refusées). Les valeurs **« risque par trade » (100 $) et « stop quotidien » (300 $)** ne sont **pas** des règles de Lucid : ce sont des valeurs de départ pour *ta* discipline, à régler ensemble.
+Tout est modifiable dans **Compte → « Règles Lucid et limites personnelles »** (un champ vide = pas de règle ; les valeurs inutilisables — nombre non fini, plafond nul, palier vide — sont refusées ; si un ancien fichier en contient une, elle est écartée et signalée, les autres réglages sont gardés et l'original est copié à côté dans `data_local`). Les valeurs **« risque par trade » (100 $) et « stop quotidien » (300 $)** ne sont **pas** des règles de Lucid : ce sont des valeurs de départ pour *ta* discipline, à régler ensemble.
 
 **Ce que calcule le moteur** (`engine/risk.py`, testé sur les cas limites) :
 - le **plancher** (il ne se met à jour qu'en fin de journée de trading) et la **marge** avant lui, mesurée sur l'**equity** (solde + latent), prudemment : la limite est considérée touchée dès que l'equity l'atteint ;
