@@ -6,6 +6,8 @@ const Panels = (() => {
   let cb = {};
   let lastField = 'entry';
   let showRounds = false;
+  let lastProfile = null;       // profil du dernier état reçu (pour les textes qui dépendent des règles)
+  const lockableNow = () => !!lastProfile && lastProfile.dd_mode === 'eod_trailing' && lastProfile.lock_offset != null;
   let replan = null;            // recalcule le plan affiché (posé par buildPlan) sans toucher aux champs
   const GROUP_COLOR = {veille: '#f5a97f', nuit: '#b794f6', seance: '#5eead4', rond: '#6b7280'};
 
@@ -81,7 +83,7 @@ const Panels = (() => {
       <div class="card" id="stageCard"><h2>Étape du compte</h2><div id="stageBox" class="small"></div>
         <div class="row" style="margin-top:6px"><button id="fundedBtn" type="button" title="L'évaluation est validée : le compte financé est un nouveau compte, il repart du capital de départ">Évaluation validée → passer en compte financé</button></div></div>
       <div class="card" id="payoutCard" hidden><h2>Retraits <small>compte financé</small></h2><div id="payoutBox"></div>
-        <form id="payoutForm" class="f" style="margin-top:8px"><label>Montant demandé ($, avant le 90 / 10)<input name="amount" inputmode="decimal"></label><label>Note<input name="note" maxlength="300"></label>
+        <form id="payoutForm" class="f" style="margin-top:8px"><label>Montant demandé ($, avant partage)<input name="amount" inputmode="decimal"></label><label>Note<input name="note" maxlength="300"></label>
           <div class="row" style="grid-column:1/3"><button type="submit" class="primary">Enregistrer le retrait demandé</button></div></form><div class="err" id="payoutErr"></div></div>
       <div class="card"><h2>Position ouverte <small>pour suivre le latent</small></h2><div id="posSummary" class="small"></div>
         <form id="posForm" class="f"><label>Sens<select name="side"><option value="long">Achat</option><option value="short">Vente</option></select></label>
@@ -187,7 +189,7 @@ const Panels = (() => {
       e.preventDefault(); $('#payoutErr').textContent = '';
       try {
         const r = await api('/api/account/payout', {body: {amount: parseNum(payf.amount.value), note: payf.note.value}});
-        payf.amount.value = ''; payf.note.value = ''; toast('Retrait enregistré : le plancher passe au niveau verrouillé'); cb.refreshAccount();
+        payf.amount.value = ''; payf.note.value = ''; toast(lockableNow() ? 'Retrait enregistré : le plancher passe au niveau verrouillé' : 'Retrait enregistré'); cb.refreshAccount();
         if (r && r.warnings && r.warnings.length) $('#payoutErr').textContent = 'Enregistré, mais d\'après ton journal : ' + r.warnings.join(' ; ') + '. Vérifie tes saisies si Lucid n\'est pas du même avis.';
       } catch (err) { $('#payoutErr').textContent = err.message; }
     };
@@ -199,6 +201,7 @@ const Panels = (() => {
 
   function account(a, perf) {
     if (!a) return;
+    lastProfile = a.profile;
     const capKey = a.stage + ':' + a.caps.minis + '/' + a.caps.micros;         // le palier ou l'étape change : le calcul du plan affiché (taille, bouton « Prendre la position ») doit suivre
     if (capKey !== account.capKey) {
       const first = account.capKey === undefined; account.capKey = capKey;
@@ -222,7 +225,8 @@ const Panels = (() => {
     $('#acctStatus').innerHTML = `<h2>${esc(a.name)} <span class="badge ${kind}">${label}</span></h2>`
       + kv('Solde réalisé', usd(a.balance, 2)) + kv('Equity (avec le latent)', usd(a.equity, 2), cls(a.openPnl))
       + kv('Plancher du compte', usd(a.floor, 2) + (a.locked ? ' <small>verrouillé</small>' : ''))
-      + (a.locked ? '' : '<div class="small">Le plancher suit ton meilleur solde de fin de journée' + (a.profile.lock_offset == null ? ' (aucun verrou dans ce profil).' : ' (jusqu\'à ' + usd(a.start + a.profile.lock_offset) + ').') + '</div>')
+      + (a.locked ? '' : a.profile.dd_mode === 'static' ? '<div class="small">Plancher fixe : il ne suit pas ton solde.</div>'
+         : '<div class="small">Le plancher suit ton meilleur solde de fin de journée' + (a.profile.lock_offset == null ? ' (aucun verrou dans ce profil).' : ' (jusqu\'à ' + usd(a.start + a.profile.lock_offset) + ').') + '</div>')
       + `<div style="margin-top:6px"><b>Marge avant le plancher : ${usd(a.buffer, 0)}</b> <small>${pct(buf)} de la perte maximale</small></div>`
       + gauge(buf, a.status === 'danger' || a.status === 'breached' ? 'bad' : a.status === 'warn' ? 'warn' : '')
       + (funded ? `<div style="margin-top:6px">Profit sur le compte : <b class="${cls(a.profit)}">${susd(a.profit)}</b> <small>retraits déjà pris : ${usd(a.paid)}</small></div>`
@@ -239,8 +243,9 @@ const Panels = (() => {
     $('#fundedBtn').hidden = funded;
     $('#payoutCard').hidden = !funded;
     if (funded && a.payout) {
-      const po = a.payout, chips = Array.from({length: po.daysNeeded}, (_, i) => `<span class="dot" style="background:${i < po.daysOk.length ? 'var(--up)' : '#3a4052'}" title="${po.daysOk[i] || 'à gagner'}"></span>`).join('');
-      const pr = a.profile, split = Math.round(pr.payout_split * 100), capPct = Math.round(pr.payout_cap_pct * 100);
+      const po = a.payout, chips = Array.from({length: Math.min(po.daysNeeded, 60)}, (_, i) => `<span class="dot" style="background:${i < po.daysOk.length ? 'var(--up)' : '#3a4052'}" title="${po.daysOk[i] || 'à gagner'}"></span>`).join('');
+      const pr = a.profile, pc = x => String(+(x * 100).toFixed(2)).replace('.', ','), split = pc(pr.payout_split), capPct = pc(pr.payout_cap_pct);
+      const lockable = pr.dd_mode === 'eod_trailing' && pr.lock_offset != null;
       let h = (po.left > 0 ? `<div class="small">Retrait n° <b>${po.done + 1}</b> · il en reste ${po.left} sur ${po.done + po.left} avant le Live</div>`
                            : `<div class="small"><b>${po.done} retraits faits</b> : le compte passe en Live au choix de Lucid (non modélisé ici).</div>`)
         + `<div style="margin-top:6px">Jours à ≥ ${usd(po.dayProfit)} dans ce cycle : ${chips} <b>${Math.min(po.daysOk.length, po.daysNeeded)} / ${po.daysNeeded}</b>${po.daysOk.length > po.daysNeeded ? ` <small>(${po.daysOk.length} jours qualifiants)</small>` : ''}</div>`
@@ -248,7 +253,7 @@ const Panels = (() => {
         + kv('Plafond actuel', `${usd(Math.floor(po.cap + 1e-9))} <small>${capPct} % du profit, ${usd(pr.payout_cap)} maximum</small>`);
       if (po.eligible) {
         h += `<div style="margin-top:6px"><span class="badge ok">RETRAIT POSSIBLE</span> jusqu'à <b>${usd(po.max.amount)}</b> <small>soit ${usd(po.max.net)} pour toi (${split} %)</small></div>`
-          + `<div class="small">Après ce retrait : solde ${usd(po.max.balance)}, plancher ${usd(po.max.floor)} <small>(il saute au niveau verrouillé dès la demande)</small>, <b>marge ${usd(po.max.cushion)}</b>.</div>`
+          + `<div class="small">Après ce retrait : solde ${usd(po.max.balance)}, plancher ${usd(po.max.floor)} ${lockable ? '<small>(il saute au niveau verrouillé dès la demande)</small>' : ''}, <b>marge ${usd(po.max.cushion)}</b>.</div>`
           + (po.min ? `<div class="small">Au minimum (${usd(po.minRequest)}) : marge ${usd(po.min.cushion)}.</div>` : '');
       } else {
         h += `<div style="margin-top:6px"><span class="badge warn">PAS ENCORE</span></div>` + po.why.map(w => `<div class="small">• ${esc(w)}</div>`).join('')

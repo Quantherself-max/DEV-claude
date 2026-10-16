@@ -644,6 +644,57 @@ class AccountTests(unittest.TestCase):
         self.acc.set_profile({"daily_loss_limit": 700})                                    # changer la limite oui
         self.assertFalse(self.acc.snapshot("2026-10-12", open_pnl=-100)["dllHit"])
 
+    def test_backdated_payout_is_checked_on_its_own_day_not_with_the_next_days_gains(self):
+        self.now = utc(2026, 5, 6, 16)
+        self.acc.start_funded(t=utc(2026, 4, 27, 13))
+        self.acc.add_adjust("2026-04-27", 400)                                       # clôture du lundi : 25 400 $
+        self.acc.add_adjust("2026-04-28", 1_000)                                     # déjà au journal quand le retrait est saisi
+        with self.assertRaises(AccountError) as e:
+            self.acc.add_payout(500, t=utc(2026, 4, 27, 21))                         # lundi 17 h ET : 25 400 - 500 = 24 900 < plancher 25 100
+        self.assertIn("plancher", str(e.exception))
+        self.assertEqual(self.acc.snapshot("2026-05-06")["payouts"], [])
+
+    def test_salvage_keeps_settings_that_are_only_valid_together(self):
+        old = {"version": 1, "next_id": 1, "profile": {"payout_min": 2_000, "payout_cap": 3_000, "bogus_numbers": "x", "scaling": []}, "records": []}
+        self.path.write_text(json.dumps(old), encoding="utf-8")
+        acc = Account(self.path, now_ms=lambda: self.now)
+        self.assertEqual((acc.profile.payout_min, acc.profile.payout_cap), (2_000, 3_000))     # l'ordre des clés dans le fichier ne compte pas
+        self.assertEqual(acc.profile_dropped, ["scaling"])
+
+    def test_json_floats_that_overflow_are_quarantined_and_writes_never_raise_bare_errors(self):
+        self.path.write_text('{"records": [], "profile": {"risk_per_trade": 1e999}}', encoding="utf-8")
+        acc = Account(self.path, now_ms=lambda: self.now)
+        self.assertEqual(acc.records, [])
+        self.assertTrue(list(Path(self.dir.name).glob("compte.json.corrompu-*")))
+        self.acc.overrides["junk"] = float("inf")                                    # même si une valeur non finie se glissait en mémoire
+        with self.assertRaises(AccountError):
+            self.acc.add_adjust("2026-10-08", 5)
+        self.assertEqual(self.acc.records, [])
+
+    def test_far_future_days_are_refused_and_do_not_break_payouts(self):
+        with self.assertRaises(AccountError):
+            self.acc.add_adjust("9999-12-31", 5)
+        with self.assertRaises(AccountError):
+            self.acc.add_adjust("1999-12-31", 5)
+
+    def test_failed_set_profile_keeps_the_dropped_settings_warning(self):
+        self.path.write_text(json.dumps({"version": 1, "next_id": 1, "profile": {"scaling": [], "risk_per_trade": 80}, "records": []}), encoding="utf-8")
+        acc = Account(self.path, now_ms=lambda: self.now)
+        self.assertEqual(acc.profile_dropped, ["scaling"])
+        (Path(self.dir.name) / "compte.json.tmp").mkdir()
+        with self.assertRaises(AccountError):
+            acc.set_profile({"daily_stop": 250})
+        self.assertEqual(acc.profile_dropped, ["scaling"])
+
+    def test_fees_merge_per_contract_and_profile_bounds(self):
+        self.acc.set_profile({"fee_rt": {"ES": 5.0, "MES": 1.5}})
+        self.acc.set_profile({"fee_rt": {"NQ": 4.0, "mnq": 1.25}})                   # le formulaire n'envoie que NQ / MNQ : ES / MES restent
+        self.assertEqual(self.acc.profile.fee_rt, {"NQ": 4.0, "MNQ": 1.25, "ES": 5.0, "MES": 1.5})
+        for bad in ({"payout_cap_pct": 1e-320}, {"payout_cap_pct": 0.0001}, {"payout_days": 5_000_000_000}, {"payout_days": 61}):
+            with self.assertRaises(AccountError, msg=str(bad)):
+                self.acc.set_profile(bad)
+        self.assertEqual(self.acc.set_profile({"payout_days": 3, "payout_cap_pct": 0.4, "payout_split": 0.8}).payout_days, 3)
+
     def test_failed_reset_keeps_the_journal_file(self):
         self.acc.add_adjust("2026-10-08", 100)
         (Path(self.dir.name) / "compte.json.tmp").mkdir()

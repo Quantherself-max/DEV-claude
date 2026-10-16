@@ -203,7 +203,8 @@ def build(mk, lv: dict, events=None, acct: dict | None = None, source: dict | No
                                  "(le palier se met à jour en fin de séance).")
                 if po.get("eligible") and po.get("max"):
                     m = po["max"]
-                    note("info", f"Retrait possible : jusqu'à {fr(m['amount'], 0)} $ ({fr(m['net'], 0)} $ pour toi après le 90 / 10). Après lui : solde {fr(m['balance'], 0)} $, "
+                    sp = round(((acct.get("profile") or {}).get("payout_split") or 0.9) * 100, 2)
+                    note("info", f"Retrait possible : jusqu'à {fr(m['amount'], 0)} $ ({fr(m['net'], 0)} $ pour toi après le partage {sp:g} / {100 - sp:g}). Après lui : solde {fr(m['balance'], 0)} $, "
                                  f"plancher {fr(m['floor'], 0)} $, marge {fr(m['cushion'], 0)} $.")
         if not ph.get("open"):
             note("info", f"{ph['label']} : le marché est fermé, les données affichées sont celles de la dernière séance.")

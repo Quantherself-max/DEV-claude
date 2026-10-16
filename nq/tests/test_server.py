@@ -330,6 +330,25 @@ class ApiTests(unittest.TestCase):
             self.post("/api/account/undo", {})
         self.assertEqual(self.get("/api/account")[1]["stage"], "eval")
 
+    def test_error_messages_with_lone_surrogates_still_get_a_reply(self):
+        import socket
+        for path, body in (("/api/account/trade", {"inst": "\ud800", "side": "long", "qty": 1, "entry": 1, "exit": 2}), ("/api/account/profile", {"changes": {"\ud800": 1}})):
+            raw = json.dumps(body).encode("utf-8")
+            req = (f"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\nX-NQ-Token: {self.token}\r\nContent-Type: application/json\r\n"
+                   f"Content-Length: {len(raw)}\r\nConnection: close\r\n\r\n").encode() + raw
+            with socket.create_connection(("127.0.0.1", self.port), timeout=10) as sck:
+                sck.sendall(req)
+                data = b""
+                while chunk := sck.recv(65536):
+                    data += chunk
+            self.assertTrue(data.startswith(b"HTTP/1.1 400"), data[:80])
+
+    def test_position_parameter_must_be_finite(self):
+        from service import parse_position
+        for bad in ("long,NQ,1,nan", "long,NQ,1,inf", "long,NQ,1,1e400", "long,NQ,1e9,25000", "long,NQ,0,25000", "long,NQ,1,-5", "buy,NQ,1,25000"):
+            self.assertIsNone(parse_position(bad), bad)
+        self.assertEqual(parse_position("long,NQ,2,25012.25")["qty"], 2)
+
     def test_zz_reset_needs_confirmation_and_profile(self):
         self.post("/api/account/adjust", {"day": "2026-10-08", "net": 300, "note": "reprise"})
         self.assertEqual(self.post("/api/account/reset", {})[0], 400)

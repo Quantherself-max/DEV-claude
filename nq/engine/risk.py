@@ -136,6 +136,10 @@ def validate_profile(p: "PropProfile") -> None:
     for k in ("payout_cap_pct", "payout_split"):
         if not 0 < getattr(p, k) <= 1:
             raise ValueError(f"{k} doit être compris entre 0 (exclu) et 1")
+    if p.payout_cap_pct < 0.001:
+        raise ValueError("payout_cap_pct doit être au moins 0,001")
+    if p.payout_days > 60:
+        raise ValueError("payout_days : 60 au maximum")
     if p.consistency_pct is not None and not 0 < p.consistency_pct <= 100:
         raise ValueError("consistency_pct doit être compris entre 0 (exclu) et 100")
     if p.daily_loss_limit is not None and p.daily_loss_limit <= 0:

@@ -171,7 +171,7 @@ def make_handler(app: App):
                 text = json.dumps(obj, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
             except ValueError:                                              # NaN / infini : jamais dans le JSON (l'interface le refuserait) -> null
                 text = json.dumps(_finite(obj), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
-            self._send(status, text.encode("utf-8"), "application/json; charset=utf-8")
+            self._send(status, text.encode("utf-8", "replace"), "application/json; charset=utf-8")
 
         def _static(self, path: str):
             rel = "index.html" if path in ("", "/") else path.lstrip("/")

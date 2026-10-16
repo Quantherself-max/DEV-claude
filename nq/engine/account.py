@@ -54,10 +54,22 @@ def _day(v) -> str:
     try:
         if not DAY_RE.match(d):
             raise ValueError
-        date.fromisoformat(d)
+        if not 2000 <= date.fromisoformat(d).year <= 2100:
+            raise ValueError
     except ValueError:
-        raise AccountError("jour invalide : écris AAAA-MM-JJ") from None
+        raise AccountError("jour invalide : écris AAAA-MM-JJ (années 2000 à 2100)") from None
     return d
+
+
+def _reject_constant(c):
+    raise ValueError(c)                                                     # NaN / Infinity / -Infinity dans le fichier
+
+
+def _finite_float(text: str) -> float:
+    x = float(text)
+    if not math.isfinite(x):                                                # « 1e999 » deborde en infini : meme traitement que le mot Infinity
+        raise ValueError(text)
+    return x
 
 
 def _text(v, n: int) -> str:
@@ -119,7 +131,7 @@ class Account:
         if not self.path.is_file():
             return
         try:
-            d = json.loads(self.path.read_text(encoding="utf-8"), parse_constant=lambda c: (_ for _ in ()).throw(ValueError(c)))
+            d = json.loads(self.path.read_text(encoding="utf-8"), parse_constant=_reject_constant, parse_float=_finite_float)
             records = list(d.get("records", []))
             for r in records:
                 _check_record(r)
@@ -142,13 +154,18 @@ class Account:
             return
         except errs:
             pass
-        kept, dropped = {}, []                                            # un seul réglage inutilisable ne doit pas faire perdre tous les autres
-        for k, v in overrides.items():
-            try:
-                risk.PropProfile.from_dict({**base, **kept, k: v})
-                kept[k] = v
-            except errs:
-                dropped.append(str(k))
+        kept, pending, progress = {}, dict(overrides), True                   # un seul réglage inutilisable ne doit pas faire perdre tous les autres
+        while pending and progress:                                          # point fixe : un réglage valable seulement avec son partenaire (payout_min / payout_cap) est repris au tour suivant
+            progress = False
+            for k, v in list(pending.items()):
+                try:
+                    risk.PropProfile.from_dict({**base, **kept, k: v})
+                    kept[k] = v
+                    del pending[k]
+                    progress = True
+                except errs:
+                    pass
+        dropped = [str(k) for k in pending]
         try:
             shutil.copy2(self.path, self.path.with_name(self.path.name + f".avant-reglages-{time.strftime('%Y%m%d-%H%M%S')}"))     # l'original reste lisible
         except OSError:
@@ -162,7 +179,7 @@ class Account:
             tmp.write_text(json.dumps({"version": VERSION, "profile": self.overrides, "next_id": self.next_id, "records": self.records},
                                       ensure_ascii=False, indent=1, allow_nan=False), encoding="utf-8")
             os.replace(tmp, self.path)
-        except (OSError, UnicodeError) as e:
+        except (OSError, UnicodeError, ValueError) as e:
             raise AccountError(f"écriture du journal impossible ({getattr(e, 'strerror', None) or e}) : la saisie n'a pas été enregistrée") from None
 
     @contextmanager
@@ -170,11 +187,11 @@ class Account:
         """Verrou + retour arrière : si l'écriture du journal échoue, la mémoire redevient identique au disque (sinon une saisie « refusée » compterait
         quand même, et le nouvel essai la doublerait)."""
         with self.lock:
-            before = (list(self.records), self.next_id, dict(self.overrides), self.profile, self._dll_day)
+            before = (list(self.records), self.next_id, dict(self.overrides), self.profile, self._dll_day, list(self.profile_dropped))
             try:
                 yield
             except BaseException:
-                self.records, self.next_id, self.overrides, self.profile, self._dll_day = before
+                self.records, self.next_id, self.overrides, self.profile, self._dll_day, self.profile_dropped = before
                 raise
 
     def _stamp(self, t) -> int:
@@ -196,6 +213,9 @@ class Account:
             bad = [k for k in changes if k not in known]
             if bad:
                 raise AccountError(f"réglage inconnu : {', '.join(bad)}")
+            if isinstance(changes.get("fee_rt"), dict):                              # les frais se fusionnent contrat par contrat (ES / MES gardés si le formulaire n'envoie que NQ / MNQ)
+                changes = {**changes, "fee_rt": {**{str(k).upper(): v for k, v in (self.overrides.get("fee_rt") or {}).items()},
+                                                 **{str(k).upper(): v for k, v in changes["fee_rt"].items()}}}
             merged = {**self.overrides, **changes}
             try:
                 prof = risk.PropProfile.from_dict({**risk.PropProfile().to_dict(), **merged})
@@ -292,18 +312,19 @@ class Account:
             if amount < p.payout_min - 1e-9 or amount > p.payout_cap + 1e-9:
                 raise AccountError(f"un retrait se demande entre {p.payout_min:.0f} $ et {p.payout_cap:.0f} $ (règle du compte {p.start_balance:.0f} $)")
             after = self._is_after_session(t, day, cur)                                               # même critère que celui qui range ensuite le retrait dans un cycle
-            st = self.snapshot(clock.next_day(day) if after else day, latch=False)
+            st = self.snapshot(clock.next_day(day) if after else day, latch=False, upto=day)         # les saisies POSTERIEURES ne doivent pas gonfler le solde du jour du retrait
             po = st["payout"]
             floor_after = max(st["floor"], risk.locked_level(p) or st["floor"])
             if st["balance"] - amount <= floor_after + 1e-9:
                 raise AccountError(f"après ce retrait le solde ({st['balance'] - amount:.0f} $) serait au plancher ({floor_after:.0f} $) ou dessous : montant impossible")
             warns = list(po["why"])
             if amount > po["cap"] + 1e-9:
-                warns.append(f"au-dessus du plafond de {math.floor(po['cap']):.0f} $ calculé d'après ton journal (la moitié du profit du compte, {p.payout_cap:.0f} $ au plus)")
+                warns.append(f"au-dessus du plafond de {math.floor(po['cap']):.0f} $ calculé d'après ton journal ({p.payout_cap_pct * 100:g} % du profit du compte, {p.payout_cap:.0f} $ au plus)")
             rec = {"id": self.next_id, "kind": "payout", "t": t, "day": day, "amount": amount, "note": _text(note, 300)}
             self.next_id += 1
             self.records.append(rec)
-            end = self.snapshot(clock.next_day(max(r["day"] for r in self._current()[1])), latch=False)     # avec les saisies POSTERIEURES déjà au journal
+            last = max(r["day"] for r in self._current()[1])
+            end = self.snapshot(clock.next_day(last), latch=False)                                      # avec les saisies POSTERIEURES déjà au journal
             if end["balance"] - end["floor"] <= 1e-9:
                 raise AccountError(f"avec les saisies postérieures de ton journal, ce retrait mettrait le solde ({end['balance']:.0f} $) au plancher ({end['floor']:.0f} $) ou dessous")
             self._save()
@@ -362,11 +383,13 @@ class Account:
         last = max((x["t"] for x in recs if x["kind"] == "trade" and x["day"] == day), default=None)
         return last is not None and t > last
 
-    def snapshot(self, today: str, open_pnl: float = 0.0, latch: bool = True) -> dict:
+    def snapshot(self, today: str, open_pnl: float = 0.0, latch: bool = True, upto: str | None = None) -> dict:
         """Etat du compte courant pour la journee de trading `today` (voir risk.state). `latch=False` : lecture sans toucher au verrou de la limite
-        journaliere (simulation d'un autre jour, par exemple pour valider un retrait)."""
+        journaliere (simulation d'un autre jour, par exemple pour valider un retrait). `upto` : ignore les saisies datees apres ce jour."""
         with self.lock:
             stage, recs, since = self._current()
+            if upto is not None:
+                recs = [r for r in recs if r["day"] <= upto]
             days = self.day_pnls(recs)
             closed = [(d, v) for d, v in days.items() if d < today]
             pays = sorted((r for r in recs if r["kind"] == "payout"), key=lambda r: (r["day"], r["t"], r["id"]))       # chronologique, pas dans l'ordre de saisie
