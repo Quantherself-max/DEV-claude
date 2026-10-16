@@ -1,9 +1,10 @@
-# Liq Terminal (V25.3)
+# Liq Terminal (V26)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
+- **Gamma des options BTC, croisé avec les VWAP** (V26) : mur de calls, mur de puts, bascule du gamma et strikes chargés, calculés sur le carnet public de Deribit, dessinés sur le graphique BTC avec leurs confluences avec les VWAP et VWAP ancrés ; et chaque trait d'idée se masque ou se réaffiche, un par un (voir « V26 » plus bas).
 - **Idées envoyées figées et datées sur le graphique** (V25.3) : chaque idée partie sur Telegram est dessinée à ses niveaux d'envoi (ils ne bougent plus), à partir de la bougie où elle est partie (« vente envoyée ici · 12/10 11:36 ») ; chaque configuration du moment dit « envoyée le … » ou « pas envoyée : » et la raison exacte (voir « V25.3 » plus bas).
 - **Idées de couverture** (V25.2) : une idée dans l'autre sens peut arriver pendant une idée en cours, sur la même paire ou sur l'autre ; elle la **couvre sans l'annuler** (message « 🛡 COUVERTURE » avec l'idée en cours, son gain ou sa perte du moment, et comment les niveaux des deux idées se gênent). Plus de délai de 24 heures ni d'« idée exceptionnelle » (voir « V25.2 » plus bas).
 - **Macro de la semaine et du mois** (V25) : vision d'ensemble (régime, Fed, consensus, annonces à venir) et analyse mensuelle (projections, communiqué annoté, scénarios, rapports des banques) (voir « V25 » plus bas).
@@ -121,6 +122,28 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V26 : gamma des options BTC, et les traits des idées sous ton contrôle
+
+### Les traits des idées : afficher, masquer, retirer
+- **Le bug** : une idée envoyée était toujours dessinée, sans bouton pour la masquer ; et une configuration du moment affichée pouvait rester sur le graphique alors que sa carte n'était plus visible dans l'onglet Idées (seules les 4 premières y sont), donc impossible à retirer.
+- **Onglet Idées → « Sur le graphique »** : la liste de tout ce qui est dessiné (« Vente du 16/10 05:02 ✕ », « Vente du moment (pas envoyée) ✕ »), chaque élément retirable d'un clic, « Tout masquer » / « Réafficher », et « Réafficher les idées masquées ».
+- **Sur chaque carte** : « Masquer l'idée envoyée du graphique » / « Afficher… » ; pour une configuration non envoyée : « Voir cette configuration sur le graphique » / « Retirer du graphique ».
+- **Dans la liste des idées envoyées** : un bouton par idée, y compris les anciennes (au-delà de 48 heures) que tu veux revoir sur le graphique.
+- Tes choix sont gardés d'une ouverture à l'autre. La case « Idées envoyées » des options du graphique masque ou réaffiche tout d'un coup.
+
+### Gamma des options BTC (GEX)
+- **Données** : aucune nouvelle source ni autorisation. Le terminal lisait déjà toutes les 5 minutes le carnet public des options BTC de Deribit (intérêt ouvert, volatilité implicite et prix à terme de chaque option). Le gamma est calculé dessus (formule de Black, taux nul, comme Deribit) : pour chaque strike, les dollars que les teneurs de marché devraient acheter ou vendre pour rester couverts si le prix bouge de 1 %.
+- **Sur le graphique BTC** (case « Gamma BTC ») : **mur de calls** (magenta, plus fort gamma des calls au-dessus du prix : résistance possible), **mur de puts** (cyan, en dessous : support possible), **bascule du gamma** (jaune, le prix où le total change de signe), les strikes les plus chargés, et des **barres de gamma par strike** au bord gauche (vert positif, rouge négatif).
+- **Croisé avec les VWAP** : chaque niveau de gamma qui tombe sur un VWAP (jour, semaine, mois, année) ou un VWAP ancré (moins de 0,35 fois l'amplitude d'une bougie d'une heure, ou 0,25 % du prix) l'affiche : « Γ mur de calls 87 000 · +3,1 M$ par 1 % ≈ VWAP de la semaine ». Deux mécanismes différents surveillent alors le même prix.
+- **Lecture** (BTC) : « Gamma des options BTC » : positif ou négatif au prix, montant, bascule, murs, confluences, et ce que cela veut dire (marché amorti et aimanté par les gros strikes, ou amplifié).
+- **SOL** : pas de gamma, comme tu l'as demandé : le marché des options sur SOL est trop petit pour peser.
+
+### Ce que j'en pense, et les limites
+- C'est un bon complément à tes VWAP : le gamma dit **où** les teneurs de marché doivent couvrir, les VWAP **où** le volume a été échangé. Un mur de calls ou de puts qui coïncide avec un VWAP mensuel ou un VWAP ancré est un niveau à surveiller. Un gamma négatif sous la bascule prévient que les cassures peuvent aller plus loin.
+- **Hypothèse sur le sens** : la convention suppose les teneurs de marché acheteurs des calls et vendeurs des puts du public. Sur BTC, les produits de rendement qui vendent des calls peuvent l'inverser en partie. Les murs et les strikes chargés restent valables, le signe est le plus incertain.
+- **Deribit seulement** : il porte l'essentiel des options BTC, mais pas celles du CME, d'OKX, de Bybit ni de Binance.
+- **Pas mesuré sur le passé** : il n'existe pas d'historique gratuit des options par strike. Le terminal **enregistre** désormais le gamma total, la bascule et les deux murs toutes les 15 minutes (`data_local/history/derivs/BTCUSDT.csv`) : dans quelques mois, on pourra mesurer si le prix réagit vraiment à ces niveaux. D'ici là : contexte, **hors score**.
 
 ## Ce qui est nouveau en V25.3 : sur le graphique, les idées envoyées, figées et datées
 

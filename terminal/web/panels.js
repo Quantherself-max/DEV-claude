@@ -269,6 +269,7 @@ class Panel {
       `<label title="TPO des séances de 4 heures"><input type="checkbox" data-mo="tpo4"> 4 h</label>` +
       `<label title="TPO des séances d'1 heure (beaucoup de marques : à utiliser en 5 ou 15 minutes)"><input type="checkbox" data-mo="tpo1"> 1 h</label>` +
       `<label title="VWAP du jour et bandes à ±1 écart-type"><input type="checkbox" data-mo="vwap"> VWAP</label>` +
+      `<label title="Gamma des options BTC (Deribit, BTC seulement) : mur de calls (magenta), mur de puts (cyan), bascule du gamma (jaune) et barres de gamma par strike à gauche ; « ≈ VWAP » = confluence avec un VWAP ou un VWAP ancré. Estimation : hypothèse sur le sens des teneurs de marché, effet non mesuré sur le passé"><input type="checkbox" data-mo="gex"> Gamma BTC</label>` +
       `<label title="Carnet d'ordres en direct aligné sur les prix : taille en attente (Binance), nombre d'ordres (OKX), volume échangé à chaque prix"><input type="checkbox" data-mo="dom"> Carnet</label>` +
       `<label title="Gros ordres agressifs exécutés (bulles) : vert = acheteurs agressifs (un peu à droite de la bougie), rouge = vendeurs agressifs (un peu à gauche). La taille de la bulle suit le montant ; les bulles d'une même bougie trop proches à l'écran sont réunies en une seule. Survole une bulle pour le détail"><input type="checkbox" data-mo="big"> Gros ordres <span class="lgd"><i class="lb buy"></i><i class="lb sell"></i></span></label>` +
       `<select class="mini" data-mosel="bigMin" title="Taille minimale d'une bulle (somme des gros ordres d'une même bougie au même prix) : au-dessous, rien n'est dessiné"></select>` +
@@ -587,6 +588,38 @@ class Panel {
       this.tag(8, it.ly, it.text, '#e6e8ee', LT.rgba(it.col, 0.38), false, true);
     });
   }
+  drawGex(L, h) {
+    // V26 : gamma des options BTC (Deribit). Barres de gamma par strike au bord gauche (vert : gamma positif, rouge : négatif), lignes du
+    // mur de calls, du mur de puts et de la bascule, avec les VWAP et VWAP ancrés tout proches (confluences).
+    const st = LT.st, g = L.d.gex;
+    if (!st.mainOpts.gex || st.symbol !== 'BTCUSDT' || !g || g.error || !g.levels) return;
+    const ctx = this.ctx, plotW = this.kind === 'main' && this.rightLimit ? Math.max(200, this.rightLimit) : L.plotW, Y = v => this.series.priceToCoordinate(v);
+    const fade = g.stale ? 0.45 : 1, strikes = (g.strikes || []).map(x => ({...x, y: Y(x.strike)})).filter(x => x.y != null && x.y > 0 && x.y < h - 24);
+    const mx = Math.max(1, ...strikes.map(x => Math.abs(x.net))), barMax = Math.min(90, plotW * 0.12);
+    ctx.globalAlpha = 0.55 * fade;
+    strikes.forEach(x => {
+      const w = Math.max(1, barMax * Math.abs(x.net) / mx);
+      ctx.fillStyle = x.net >= 0 ? '#3ddc97' : '#ff6b6b'; ctx.fillRect(0, x.y - 2, w, 4);
+    });
+    ctx.globalAlpha = fade;
+    const COL = {callwall: '#e879f9', putwall: '#22d3ee', flip: '#facc15', strike: '#a78bfa'};
+    const BG = {callwall: 'rgba(232,121,249,.88)', putwall: 'rgba(34,211,238,.88)', flip: 'rgba(250,204,21,.9)', strike: 'rgba(167,139,250,.88)'};
+    const fmt = LT.fmtP, musd = v => v == null ? '' : ` · ${v > 0 ? '+' : '−'}${LT.num(Math.abs(v) / 1e6, 1)} M$ par 1 %`;
+    const labels = [];
+    g.levels.forEach(k => {
+      const y = Y(k.price);
+      if (y == null || y < 0 || y > h - 24) return;
+      ctx.strokeStyle = COL[k.kind] || '#a78bfa'; ctx.lineWidth = k.kind === 'strike' ? 1 : 1.4; ctx.setLineDash(k.kind === 'flip' ? [7, 4] : k.kind === 'strike' ? [1, 4] : [10, 3]);
+      ctx.beginPath(); ctx.moveTo(barMax + 4, y); ctx.lineTo(plotW, y); ctx.stroke();
+      if (k.kind === 'strike' && !(k.vwap && k.vwap.length)) return;           // petits strikes : étiquette seulement s'ils tombent sur un VWAP
+      const conf = k.vwap && k.vwap.length ? ` ≈ ${k.vwap.map(v => v.name).slice(0, 2).join(', ')}` : '';
+      labels.push({y, col: COL[k.kind], bg: BG[k.kind] || BG.strike, text: `Γ ${k.label.toLowerCase()} ${fmt(k.price)}${k.kind === 'flip' ? '' : musd(k.gex)}${conf}`});
+    });
+    ctx.setLineDash([]);
+    LT.placeLabels(labels, 16, 12, h - 30).forEach(it => this.tag(barMax + 8, it.ly, it.text, '#0b0e11', it.bg, true, true));
+    if (g.stale) this.tag(barMax + 8, 14, 'Γ gamma : données de plus de 30 minutes', '#fff', 'rgba(90,96,112,.85)', false, true);
+    ctx.globalAlpha = 1;
+  }
   drawPlan(L, h) {
     // V25.3 : les idées ENVOYÉES, à leurs niveaux figés, à partir de la bougie où elles sont parties (trait vertical et date) ; terminées
     // depuis moins de 48 h : estompées avec leur résultat. La configuration du moment (pas envoyée, recalculée sans cesse) n'est dessinée
@@ -679,6 +712,7 @@ class Panel {
       if (st.mode === 'ess') zl.push({y: (z.key != null ? (this.series.priceToCoordinate(z.key) ?? y + hh / 2) : y + hh / 2), z});
     });
     this.drawPools(L, h);
+    this.drawGex(L, h);
     this.drawPlan(L, h);
     const lv = byId(d.levels);
     if (st.mode === 'ess') LT.placeLabels(zl, 17, 12, h - 30).forEach(it => {

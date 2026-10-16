@@ -117,6 +117,82 @@ def options_view(summaries: list[dict], now_ms: int, max_expiries: int = 4) -> d
     return {"spot": spot, "putCall": puts / calls if calls > 0 else None, "oiUsd": (calls + puts) * spot, "expiries": exps}
 
 
+# ---------- V26 : exposition gamma (GEX) des options, BTC ----------
+YEAR_MS = 365.0 * DAY
+SQRT2PI = math.sqrt(2.0 * math.pi)
+
+
+def bs_gamma(f: float, k: float, iv: float, t: float) -> float:
+    """Gamma de Black (option sur un sous-jacent a terme, taux nul, comme Deribit) : variation du delta pour 1 unite du prix."""
+    if f <= 0 or k <= 0 or iv <= 0 or t <= 0:
+        return 0.0
+    s = iv * math.sqrt(t)
+    d1 = (math.log(f / k) + 0.5 * s * s) / s
+    return math.exp(-0.5 * d1 * d1) / (SQRT2PI * f * s)
+
+
+def gex_view(summaries: list[dict], now_ms: int, band: float = 0.25, grid: int = 101) -> dict:
+    """Exposition gamma des options (get_book_summary_by_currency, kind=option : interet ouvert, volatilite implicite mark_iv en %, prix a terme
+    underlying_price par echeance). Pour chaque option : gamma de Black x interet ouvert x prix^2 x 1 %, soit les dollars que les teneurs de
+    marche devraient acheter ou vendre pour rester neutres si le prix bouge de 1 %.
+    Convention habituelle (non verifiable) : les teneurs de marche sont ACHETEURS des calls et VENDEURS des puts que le public detient,
+    donc calls +, puts -. Gamma total positif au prix : ils vendent les hausses et achetent les baisses (marche amorti, aimante par les gros
+    strikes) ; negatif : ils suivent le mouvement (marche amplifie). La bascule (« zero gamma ») est le prix ou le total change de signe.
+    Renvoie aussi le profil par strike (+/- band autour du prix), le mur de calls et le mur de puts, et la part des echeances a 7 jours."""
+    rows, ref = [], None
+    for s in summaries:
+        o = parse_option(s.get("instrument_name", ""))
+        oi, iv, f = num(s.get("open_interest")), num(s.get("mark_iv")), num(s.get("underlying_price"))
+        if not o or not oi or oi <= 0 or not iv or iv <= 0 or not f or f <= 0 or o["expiry"] <= now_ms:
+            continue
+        t = max((o["expiry"] - now_ms) / YEAR_MS, 1.0 / (365.0 * 24.0))           # au moins une heure : gamma fini a l'echeance
+        rows.append((o["strike"], o["kind"], oi, iv / 100.0, f, t, o["expiry"]))
+        if ref is None or o["expiry"] < ref[0]:
+            ref = (o["expiry"], f)
+    if not rows:
+        raise DataError("gamma : aucune option exploitable (volatilité implicite ou intérêt ouvert absents)")
+    spot = ref[1]                                                                     # prix a terme de la plus proche echeance ~ prix du moment
+
+    def contrib(row, scale):
+        k, kind, oi, iv, f, t, _ = row
+        ff = f * scale
+        v = bs_gamma(ff, k, iv, t) * oi * ff * ff * 0.01
+        return v if kind == "C" else -v
+
+    by_k: dict[float, list] = {}
+    near, tot_abs = 0.0, 0.0
+    for r in rows:
+        v = contrib(r, 1.0)
+        c = by_k.setdefault(r[0], [0.0, 0.0])
+        c[0 if r[1] == "C" else 1] += v
+        tot_abs += abs(v)
+        if r[6] - now_ms <= 7 * DAY:
+            near += abs(v)
+    lo, hi = spot * (1 - band), spot * (1 + band)
+    strikes = [{"strike": k, "calls": c, "puts": p, "net": c + p} for k, (c, p) in sorted(by_k.items()) if lo <= k <= hi]
+    curve = []
+    for i in range(grid):
+        sc = (1 - band) + 2 * band * i / (grid - 1)
+        curve.append((spot * sc, sum(contrib(r, sc) for r in rows)))
+    flip = None
+    for (p0, v0), (p1, v1) in zip(curve, curve[1:]):
+        if v0 == 0 or (v0 < 0) != (v1 < 0):
+            x = p0 if v0 == v1 else p0 + (p1 - p0) * (0 - v0) / (v1 - v0)
+            if flip is None or abs(x - spot) < abs(flip - spot):
+                flip = x
+    total = sum(contrib(r, 1.0) for r in rows)
+    # mur de calls : plus forte gamma des calls AU-DESSUS du prix (resistance) ; mur de puts : plus forte gamma des puts EN DESSOUS (support)
+    cw = max((x for x in strikes if x["calls"] > 0 and x["strike"] >= spot), key=lambda x: x["calls"], default=None)
+    pw = min((x for x in strikes if x["puts"] < 0 and x["strike"] <= spot), key=lambda x: x["puts"], default=None)
+    top = sorted(strikes, key=lambda x: -abs(x["net"]))[:6]
+    return {"spot": spot, "total": total, "calls": sum(x["calls"] for x in strikes), "puts": sum(x["puts"] for x in strikes), "flip": flip,
+            "callWall": cw["strike"] if cw else None, "callWallGex": cw["calls"] if cw else None,
+            "putWall": pw["strike"] if pw else None, "putWallGex": pw["puts"] if pw else None,
+            "top": [{"strike": x["strike"], "net": x["net"]} for x in sorted(top, key=lambda x: x["strike"])],
+            "strikes": strikes, "curve": [[round(p, 2), v] for p, v in curve], "nearShare": near / tot_abs if tot_abs else None,
+            "n": len(rows), "expiries": len({r[6] for r in rows})}
+
+
 def futures_basis(summaries: list[dict], now_ms: int) -> list[dict]:
     """Base annualisee des futures datees : (mark / index - 1) x 365 / jours restants. Le perpetuel est renvoye avec son financement."""
     out = []
@@ -172,6 +248,15 @@ def compare_view(rows: list[dict]) -> dict:
 # =====================================================================================================
 #  Reseau
 # =====================================================================================================
+def with_gex(view: dict, rows: list, now_ms: int) -> dict:
+    """Ajoute l'exposition gamma au resume des options ; un echec du calcul ne fait jamais perdre le resume."""
+    try:
+        view["gex"] = gex_view(rows, now_ms)
+    except (DataError, ValueError, ZeroDivisionError, OverflowError) as e:
+        view["gexError"] = str(e)
+    return view
+
+
 class DerivMixin:
     """Methodes ajoutees aux fournisseurs (RealProviders) ; _get(url) = http_json ; adresses de base : self.deribit, self.bybit, self.okx, self.hyper."""
 
@@ -183,7 +268,8 @@ class DerivMixin:
         return res
 
     def deribit_options(self, currency: str, now_ms: int) -> dict:
-        return options_view(self.deribit_summary(currency, "option"), now_ms)
+        rows = self.deribit_summary(currency, "option")
+        return with_gex(options_view(rows, now_ms), rows, now_ms)
 
     def deribit_futures(self, currency: str, now_ms: int) -> list:
         return futures_basis(self.deribit_summary(currency, "future"), now_ms)
@@ -266,8 +352,9 @@ class SimDerivMixin:
             for j in range(-8, 9):
                 strike = round(spot / step) * step + j * step * (k + 1)
                 for kind, w in (("C", 1.0 if j >= 0 else 0.4), ("P", 1.0 if j <= 0 else 0.4)):
-                    summ.append({"instrument_name": f"{currency}-{tag}-{int(strike)}-{kind}", "open_interest": w * (300 - 25 * abs(j)) * (1 + 0.1 * k), "underlying_price": spot})
-        return options_view(summ, now_ms)
+                    summ.append({"instrument_name": f"{currency}-{tag}-{int(strike)}-{kind}", "open_interest": w * (300 - 25 * abs(j)) * (1 + 0.1 * k),
+                                 "underlying_price": spot * (1 + 0.0004 * days), "mark_iv": 48.0 + 1.2 * abs(j) + (3.0 if kind == "P" and j < 0 else 0.0)})
+        return with_gex(options_view(summ, now_ms), summ, now_ms)
 
     def deribit_futures(self, currency: str, now_ms: int) -> list:
         spot = 85000.0

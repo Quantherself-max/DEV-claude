@@ -190,6 +190,9 @@ class HubTests(unittest.TestCase):
             head = lines[0].split(",")
             self.assertIn("meanFundingAnn", head)
             self.assertIn("putCall", head)
+            for k in ("gexTotal", "gexFlip", "gexCallWall", "gexPutWall"):                 # V26 : gamma des options BTC garde pour mesure
+                self.assertIn(k, head)
+            self.assertIn("gex", snap["derivs"]["options"]["BTC"])
             self.assertEqual(len(lines[1].split(",")), len(head))
             hub.refresh(force=True)                                       # moins de 15 min plus tard : pas de doublon
             self.assertEqual(len(f.read_text(encoding="utf-8").strip().split("\n")), 2)

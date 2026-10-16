@@ -30,6 +30,7 @@ from engine import synth as synth_engine
 from engine import trend as trend_engine
 from engine import vpx, vwapx
 from engine import lecture as lecture_engine
+from engine import gamma as gamma_engine
 from engine import squeeze as squeeze_engine
 from engine import swingavwap, vwapstrat
 from engine.confluence import Level, find_zones
@@ -1945,6 +1946,17 @@ class Service:
                             "base": symbol[:-4] if symbol.endswith("USDT") else symbol, "now": self.source.now_ms()}
         return {"real": True, "event": None}
 
+    def gex_brief(self, symbol: str, levels, price, atr):
+        """V26 : exposition gamma des options BTC (Deribit) et ses confluences avec les VWAP et VWAP ancres ; BTC seulement (le marche des
+        options sur SOL est trop petit pour peser)."""
+        if symbol != "BTCUSDT" or not self.ext:
+            return None
+        try:
+            opt = ((self.ext.snapshot().get("derivs") or {}).get("options") or {}).get("BTC")
+            return gamma_engine.brief(opt, levels or [], price, atr, self.source.now_ms())
+        except Exception as e:                                           # le gamma ne doit jamais empecher l'affichage du graphique
+            return {"error": f"{type(e).__name__}: {e}"}
+
     def lecture(self, symbol: str) -> dict:
         """L'essentiel du marche pour cette paire en une page (engine/lecture.py) : tendance, idee, ce qui arrive, positionnement, derives, macro, liquidite."""
         m = self.markets.get(symbol)
@@ -1968,6 +1980,8 @@ class Service:
              "futures": ((dv.get("futures") or {}).get(ocoin) or {}).get("rows"), "indicators": snap.get("indicators"), "indicatorLevels": levels, "rotationReport": reports_mod.load(self.report_dirs, "BTC", "rotation"),
              "squeezeReport": reports_mod.load(self.report_dirs, base, "squeeze") or reports_mod.load(self.report_dirs, "BTC", "squeeze"), "sources": an.get("sources"),
              "macroWeek": self.mw_archive.get(macroweek.week_key(macroweek.week_start(now))), "absorb": self._absorb_brief(symbol)}
+        ast = self._an_state.get(symbol)
+        d["gex"] = self.gex_brief(symbol, ast[1]["levels"] if ast else [], an["price"], ast[1]["atr"] if ast else None)
         out = lecture_engine.build(d)
         out["symbol"] = symbol
         return out
@@ -2069,5 +2083,6 @@ class Service:
             st = m.state(tf)
         st["ready"] = True
         st["error"] = self.errors.get(symbol)
+        st["gex"] = self.gex_brief(symbol, st.get("levels"), st.get("price"), st.get("atr"))
         st["lastUpdate"] = self.last_update
         return st

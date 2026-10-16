@@ -558,6 +558,9 @@ class ExternalHub:
                 o = self.derivs["options"][coin]
                 row["putCall"] = o.get("putCall")
                 row["maxPainNext"] = (o["expiries"][0] or {}).get("maxPain") if o.get("expiries") else None
+                g = o.get("gex")                                       # V26 : niveaux de gamma gardes pour mesurer plus tard leur effet sur le prix
+                if g:
+                    row["gexTotal"], row["gexFlip"], row["gexCallWall"], row["gexPutWall"] = g.get("total"), g.get("flip"), g.get("callWall"), g.get("putWall")
             if coin in self.derivs["dvol"]:
                 row["dvol"] = self.derivs["dvol"][coin]["value"]
             if coin in self.derivs["futures"]:

@@ -476,3 +476,9 @@ body.theme-nuit .mmdiff li{color:#bdbdbd}
 .idea .sendline.no{border-left-color:var(--amb)}
 .idea .sendline.muted{color:var(--mut)}
 .badge.sig.muted{opacity:.85;border-style:dashed}
+/* V26 : ce qui est dessine sur le graphique, retirable element par element */
+.onchart{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:6px 0}
+.onchart button{font-size:11px;padding:2px 8px}
+.pchip{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:2px 4px 2px 8px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.03)}
+.pchip.up{border-color:rgba(61,220,151,.5)}.pchip.dn{border-color:rgba(255,107,107,.5)}.pchip.live{border-style:dashed;color:var(--mut)}.pchip.done{opacity:.6}
+.pchip button{border:0;background:transparent;color:var(--mut);cursor:pointer;padding:0 4px;font-size:12px}.pchip button:hover{color:var(--text)}

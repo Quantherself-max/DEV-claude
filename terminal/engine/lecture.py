@@ -275,10 +275,25 @@ def squeeze_block(d: dict):
             "realDelta": sv.get("realDelta"), "t": sv["t"], "values": sv["values"], "spark": sp}
 
 
+def gamma_chips(d: dict):
+    """V26 : exposition gamma des options BTC (Deribit), croisee avec les VWAP et VWAP ancres. BTC seulement."""
+    from engine import gamma
+    b = d.get("gex")
+    if not b:
+        return []
+    if b.get("error"):
+        return [chip("gamma", "Dérivés", "Gamma des options BTC", "indisponible", b["error"], "", "contexte")]
+    val, note = gamma.chip_value(b)
+    return [chip("gamma", "Dérivés", "Gamma des options BTC (estimation)", val, note, "up" if b["sign"] > 0 else "dn" if b["sign"] < 0 else "", "contexte",
+                 detail={"levels": b["levels"], "curve": b["curve"], "strikes": b["strikes"], "spot": b["spot"], "flip": b.get("flip"), "total": b["total"],
+                         "nearShare": b.get("nearShare")})]
+
+
 def build(d: dict) -> dict:
     """Entrees : voir engine/lecture.py (en-tete) et Service.lecture."""
     chips = [c for c in (funding_chip(d), oi_chip(d), flow_chip(d), absorb_chip(d), liq_chip(d)) if c]
     chips += options_chips(d)
+    chips += gamma_chips(d)
     chips += [c for c in (macro_chip(d), week_chip(d), fng_chip(d), dom_chip(d)) if c]
     chips += indicator_chips(d)
     tr = d.get("trend")

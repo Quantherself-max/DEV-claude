@@ -24,6 +24,12 @@ const Signals = (() => {
       if (xb) { loadX(xb.dataset.x, xb.dataset.side); return; }
       const b = e.target.closest('button[data-plan]');
       if (b) { LT.setPlan(b.dataset.plan || null); render(last); return; }
+      const tg = e.target.closest('button[data-ptog]');                // V26 : idée envoyée, masquer / afficher
+      if (tg) { LT.togglePlan(tg.dataset.ptog); render(last); return; }
+      const lv = e.target.closest('button[data-plive]');               // configuration du moment : afficher / retirer
+      if (lv) { LT.setPlan(lv.dataset.plive || null); render(last); return; }
+      const al = e.target.closest('button[data-pall]');
+      if (al) { al.dataset.pall === 'reset' ? LT.planReset() : LT.setPlan(al.dataset.pall); render(last); return; }
       if (e.target.closest('[data-plan-off]')) { LT.setPlan('off'); render(last); }
     });
     root.addEventListener('toggle', e => {
@@ -107,7 +113,8 @@ const Signals = (() => {
     const al = i.align, tpill = al == null ? '' : al > 0 ? '<span class="pill up" title="Le cours est du même côté des moyennes de 50 et 200 jours que l\'idée : c\'est la seule catégorie qui a rapporté dans le backtest">Dans le sens de la tendance</span>'
       : al < 0 ? '<span class="pill dn" title="Idée à contre-courant : la catégorie qui a perdu dans le backtest">À contre-courant</span>' : '<span class="pill warn" title="Cours entre les moyennes de 50 et 200 jours : aucun avantage mesuré">Tendance indécise</span>';
     const comps = i.comps.map(c => `<div class="cmp"><span>${esc(c.label)}</span><i><b style="width:${Math.round(100 * c.pts / c.max)}%"></b></i><em>${c.pts.toFixed(0)}/${c.max}</em></div>`).join('');
-    const shown = LT.st.planOn && (sentNow || LT.st.planKey === i.key);
+    const st0 = sentNow && last && last.desk ? (last.desk.trades || []).find(t => t.id === s.id) : null;
+    const shown = LT.st.planOn && (sentNow ? !!(st0 && LT.planVisible(st0)) : LT.st.planKey === i.key);
     return `<div class="idea ${col}">
       <div class="ihead"><b class="side ${col}">${buy ? 'ACHAT' : 'VENTE'}</b><span class="muted small">${esc(KIND[i.kind] || i.kind)}</span>${dirNote(i)}
         <span class="score ${tone(i.score)}" title="Qualité de l'idée sur 100">${i.score.toFixed(0)}<small>/100</small></span></div>
@@ -119,8 +126,8 @@ const Signals = (() => {
         <tr><td>Objectif 1</td><td><b class="up">${px(i.tp1)}</b></td><td class="muted">${chg(i.tp1, i.entry)}${rr(i.rr1)}</td></tr>
         ${i.tp2 != null ? `<tr><td>Objectif 2</td><td><b class="up">${px(i.tp2)}</b></td><td class="muted">${chg(i.tp2, i.entry)}${rr(i.rr2)}</td></tr>` : ''}
       </table>
-      <div class="ibtns">${sentNow ? (shown ? '<span class="muted small">Dessinée sur le graphique à partir de l\'heure d\'envoi (niveaux figés).</span>' : '<button data-plan="">Voir l\'idée envoyée sur le graphique</button>')
-        : shown ? '<button data-plan="">Retirer du graphique</button>' : `<button data-plan="${esc(i.key)}" title="Dessinée en gris au bord droit : pas envoyée, ses niveaux bougent avec le marché">Voir cette configuration sur le graphique</button>`}</div>
+      <div class="ibtns">${sentNow ? (st0 ? `<button data-ptog="${esc(st0.id)}">${shown ? 'Masquer l\'idée envoyée du graphique' : 'Afficher l\'idée envoyée sur le graphique'}</button>` : '')
+        : shown ? '<button data-plive="">Retirer du graphique</button>' : `<button data-plive="${esc(i.key)}" title="Dessinée en gris au bord droit : pas envoyée, ses niveaux bougent avec le marché">Voir cette configuration sur le graphique</button>`}</div>
       <details data-key="${esc(i.key)}" ${open.has(i.key) ? 'open' : ''}><summary>Tout comprendre : pourquoi, contexte, probabilités</summary>
         <h5>Quoi faire</h5><ul>${lines(d.action)}</ul>
         ${d.trend && d.trend.length ? `<h5>Tendance de fond</h5><ul>${lines(d.trend)}</ul>` : ''}
@@ -167,9 +174,24 @@ const Signals = (() => {
       const st = t.status === 'closed' ? RESULT[t.result] || [t.result, 'muted'] : STATUS[t.status] || [t.status, 'muted'];
       const alert = t.mode === 'alerte';
       const tag = alert ? `<b class="amb">ALERTE</b> <span class="muted small">(configuration de ${t.side === 'short' ? 'vente' : 'achat'})</span>` : `<b class="${t.side === 'long' ? 'up' : 'dn'}">${t.side === 'long' ? 'ACHAT' : 'VENTE'}</b>`;
+      const vis = !alert && LT.st.planOn && LT.planVisible(t);
+      const tgl = alert ? '' : ` <button class="mini" data-ptog="${esc(t.id)}" title="${t.symbol === LT.st.symbol ? '' : 'Visible sur le graphique ' + esc(t.symbol.replace('USDT', '')) + ' · '}niveaux figés à l'envoi">${vis ? 'Masquer du graphique' : 'Afficher sur le graphique'}</button>`;
       return `<li>${tag} ${esc(t.symbol)} · ${px(t.entry)} → ${px(t.tp1)} / stop ${px(t.stop)}
-        <span class="pill ${st[1]}">${esc(st[0])}</span><div class="muted small">envoyée ${timeFr(t.created)} · qualité ${Math.round(t.score)}/100 · ${alert ? 'hors quota' : 'idée ' + t.n + ' de la semaine'}${t.hedgeOf ? ' · couverture' : t.flipFrom || t.switchFrom ? ' · changement de sens' : ''}${t.sent ? '' : ' · envoi Telegram non confirmé'}</div></li>`;
+        <span class="pill ${st[1]}">${esc(st[0])}</span>${tgl}<div class="muted small">envoyée ${timeFr(t.created)} · qualité ${Math.round(t.score)}/100 · ${alert ? 'hors quota' : 'idée ' + t.n + ' de la semaine'}${t.hedgeOf ? ' · couverture' : t.flipFrom || t.switchFrom ? ' · changement de sens' : ''}${t.sent ? '' : ' · envoi Telegram non confirmé'}</div></li>`;
     }).join('')}</ul>`;
+  }
+
+  // V26 : tout ce qui est dessiné sur le graphique, chaque élément retirable ; idées masquées réaffichables
+  function onChart(desk) {
+    const sym = LT.st.symbol, ps = (LT.st.plans || []).filter(x => x.symbol === sym);
+    const hidden = (desk.trades || []).filter(t => t.symbol === sym && LT.st.planHide.includes(t.id)).length;
+    const items = ps.map(x => x.kind === 'live'
+      ? `<span class="pchip live">${x.side === 'long' ? 'Achat' : 'Vente'} du moment (pas envoyée) <button data-plive="" title="Retirer du graphique">✕</button></span>`
+      : `<span class="pchip ${x.side === 'long' ? 'up' : 'dn'}${x.status === 'closed' ? ' done' : ''}">${x.side === 'long' ? 'Achat' : 'Vente'} du ${LT.parisAt(x.created)}${x.status === 'closed' ? ' (terminée)' : ''} <button data-ptog="${esc(x.key)}" title="Masquer du graphique">✕</button></span>`).join('');
+    const off = !LT.st.planOn;
+    return `<div class="onchart"><span class="lt">Sur le graphique</span> ${off ? '<span class="muted small">traits des idées masqués</span>' : items || '<span class="muted small">aucune idée dessinée</span>'}
+      ${off ? '<button data-pall="on">Réafficher</button>' : ps.length ? '<button data-pall="off" title="Masquer tous les traits (aussi : case « Idées envoyées » du graphique)">Tout masquer</button>' : ''}
+      ${hidden ? `<button data-pall="reset" title="Réafficher les idées que tu as masquées une par une">${hidden > 1 ? `Réafficher les ${hidden} idées masquées` : 'Réafficher l\'idée masquée'}</button>` : ''}</div>`;
   }
 
   function render(p) {
@@ -185,6 +207,7 @@ const Signals = (() => {
     let html = `<section class="card"><h2>Cette semaine <small>lundi 00 h UTC → dimanche</small></h2>
       <div class="week"><span class="dots">${dots}</span><b>${w.sent}/${w.cap}</b> idées envoyées · seuil de qualité <b>${sg.minScore}/100</b> (la dernière place exige ${sg.minScore + 8})</div>
       <div class="biasline">${LT.biasHtml(desk.bias)}</div>
+      ${onChart(desk)}
       ${desk.waiting && desk.waiting.why ? `<div class="muted small">${esc(desk.waiting.why)}</div>` : ''}
       <div class="muted small">Idées d'achat ou de vente fondées sur trois piliers : les <b>liquidités</b> (poches d'ordres d'arrêt), les <b>VWAP et VWAP ancrés</b> (de l'heure à l'année) et le <b>contexte macro</b>. Rien n'est envoyé sous le seuil ni sans liquidité ou avec une macro nettement contraire : mieux vaut aucune idée qu'une idée moyenne.</div></section>`;
     html += `<section class="card"><h2>Configurations du moment <small>${esc(sym)} · recalculées en continu</small></h2>${trendBox(sg)}

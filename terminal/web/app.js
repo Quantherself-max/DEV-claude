@@ -90,8 +90,8 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
   liqOpts: {hours: 168, pools: true, sweeps: true, real: true, profile: true},
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
   layout: window.innerWidth >= 1500 ? '3' : window.innerWidth >= 1100 ? '2' : '1', prevLayout: null, sideOpen: true, sbCollapsed: false,
-  page: 'desk', sub: 'synth', planOn: true, planKey: null, plans: [], planSig: '', sig: null,
-  theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, nodes: true, dpoc: true, npoc: true, tpoM: true, tpoW: true, tpoD: true, tpo4: false, tpo1: false, vwap: true, dom: false, big: true, bigMin: 2, bigLabels: 'top', absorb: true, absorbMode: 'fortes'}, flow: null,
+  page: 'desk', sub: 'synth', planOn: true, planKey: null, plans: [], planHide: [], planShow: [], planSig: '', sig: null,
+  theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, nodes: true, dpoc: true, npoc: true, tpoM: true, tpoW: true, tpoD: true, tpo4: false, tpo1: false, vwap: true, dom: false, big: true, bigMin: 2, bigLabels: 'top', absorb: true, absorbMode: 'fortes', gex: true}, flow: null,
   mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {M: true, W: true, D: true, '4h': false, '1h': false},
   tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true}};
 async function api(path, body) {
@@ -162,7 +162,7 @@ const panels = [];
 const LAYOUTS = {'1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: []};
 const needs = k => LAYOUTS[st.layout].includes(k) && st.page === 'desk';
 function savePrefs() {
-  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds, tpoOpts: st.tpoOpts})); } catch (e) { /* stockage indisponible */ }
+  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, planHide: st.planHide.slice(-80), planShow: st.planShow.slice(-80), expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds, tpoOpts: st.tpoOpts})); } catch (e) { /* stockage indisponible */ }
 }
 function loadPrefs() {
   try {
@@ -175,6 +175,8 @@ function loadPrefs() {
     if (typeof p.side === 'boolean') st.sideOpen = p.side;
     if (typeof p.sb === 'boolean') st.sbCollapsed = p.sb;
     if (typeof p.plan === 'boolean') st.planOn = p.plan;
+    if (Array.isArray(p.planHide)) st.planHide = p.planHide.filter(x => typeof x === 'string');
+    if (Array.isArray(p.planShow)) st.planShow = p.planShow.filter(x => typeof x === 'string');
     if (typeof p.expert === 'boolean') st.expert = p.expert;
     if (['nuit', 'classique'].includes(p.theme)) st.theme = p.theme;
     // V20 : TPO semaine et mois. Preferences enregistrees avant (sans semaine / mois) : semaine et mois affiches, 4 h et 1 h retires des
@@ -628,7 +630,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 27;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration)
+const NEED_API = 28;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -968,12 +970,18 @@ let sigTimer = null;
 // V25.3 : sur le graphique, les idées ENVOYÉES (niveaux figés, à partir de la bougie où elles sont parties) ; la configuration du moment
 // (recalculée sans cesse, donc mobile) n'apparaît que si tu la demandes, marquée « pas envoyée ».
 const OPEN_ST = ['pending', 'active', 'tp1'], RECENT_MS = 48 * 3600e3;
+// V26 : chaque trait se masque ou se réaffiche, idée par idée (choix gardé) ; par défaut, les idées en cours et celles terminées depuis
+// moins de 48 h. Une configuration du moment affichée reste toujours retirable (liste « Sur le graphique » de l'onglet Idées).
+function planVisible(t, now = Date.now()) {
+  if (st.planHide.includes(t.id)) return false;
+  return st.planShow.includes(t.id) || OPEN_ST.includes(t.status) || (t.endAt || t.closedAt || 0) > now - RECENT_MS;
+}
 function activePlans() {
   const sig = st.sig, sg = sig && sig.symbols && sig.symbols[st.symbol];
   if (!st.planOn || !sig || !sig.desk) return [];
   const now = Date.now();
-  const plans = (sig.desk.trades || []).filter(t => t.symbol === st.symbol && t.mode !== 'alerte' && (OPEN_ST.includes(t.status) || (t.endAt || t.closedAt || 0) > now - RECENT_MS))
-    .slice(0, 3).map(t => ({kind: 'sent', key: t.id, symbol: t.symbol, side: t.side, entry: t.entry, stop: t.stop, tp1: t.tp1, tp2: t.tp2, score: t.score,
+  const plans = (sig.desk.trades || []).filter(t => t.symbol === st.symbol && t.mode !== 'alerte' && planVisible(t, now))
+    .slice(0, 8).map(t => ({kind: 'sent', key: t.id, symbol: t.symbol, side: t.side, entry: t.entry, stop: t.stop, tp1: t.tp1, tp2: t.tp2, score: t.score,
       created: t.created, n: t.n, status: t.status, result: t.result, end: t.status === 'closed' ? (t.endAt || t.closedAt) : null, sentOk: t.sent !== false}));
   if (st.planKey && sg && sg.ready) {
     const i = sg.ideas.find(x => x.key === st.planKey);
@@ -987,6 +995,15 @@ function updatePlan() {
   const ps = activePlans(), k = ps.map(p => [p.key, p.kind, p.status, p.entry, p.stop, p.tp1, p.tp2].join()).join('|');
   if (k !== st.planSig) { st.planSig = k; st.plans = ps; st.version++; panels.forEach(x => x.sig = ''); }
 }
+function togglePlan(id) {                                              // idée envoyée : masquer si elle est dessinée, sinon l'afficher
+  const t = ((st.sig && st.sig.desk && st.sig.desk.trades) || []).find(x => x.id === id);
+  const shown = st.planOn && t && planVisible(t);
+  st.planHide = st.planHide.filter(x => x !== id); st.planShow = st.planShow.filter(x => x !== id);
+  (shown ? st.planHide : st.planShow).push(id);
+  if (!shown) st.planOn = true;
+  savePrefs(); syncAllTools(); updatePlan();
+}
+function planReset() { st.planHide = []; st.planShow = []; st.planOn = true; savePrefs(); syncAllTools(); updatePlan(); }
 function sigChip() {
   const el = $('#sigChip'), sg = st.sig && st.sig.symbols && st.sig.symbols[st.symbol];
   const open = st.sig && st.sig.desk && st.sig.desk.trades.find(t => t.symbol === st.symbol && t.mode !== 'alerte' && OPEN_ST.includes(t.status));
@@ -1017,8 +1034,10 @@ async function pollSignals() {
     if (st.page === 'desk' && st.tab === 'signals') Signals.render(r);
   } catch (e) { /* le prochain passage reessaiera */ }
 }
-function setPlan(key) {
-  if (key === 'off') st.planOn = false; else { st.planOn = true; st.planKey = key; }
+function setPlan(key) {                                               // 'off' : tout masquer ; 'on' : réafficher ; clé : configuration du moment ; null : la retirer
+  if (key === 'off') st.planOn = false;
+  else if (key === 'on') st.planOn = true;
+  else { st.planKey = key; if (key) st.planOn = true; }
   savePrefs(); syncAllTools(); updatePlan();
 }
 
@@ -1267,7 +1286,7 @@ function openSymbol(sym, page) {
   let cfg;
   try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
   window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
-    serverOld, LAUNCHER, OPEN_ST, shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, oppOf, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan};
+    serverOld, LAUNCHER, OPEN_ST, shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, oppOf, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan, togglePlan, planReset, planVisible};
   Overview.init(window.LT);
   Signals.init(window.LT);
   Backtest.init(window.LT);
