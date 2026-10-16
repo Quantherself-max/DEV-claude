@@ -1,0 +1,488 @@
+"""Rejeu historique des idees de trade : qu'aurait donne la STRUCTURE (niveaux + geometrie) depuis 2019 ?
+
+On rejoue les bougies 1h fermees dans l'ordre. A chaque instant (toutes les 2 h) on reconstruit les niveaux connus a
+ce moment-la (VWAP jour / semaine / mois / annee et bandes, ouvertures, plus hauts / plus bas precedents, profils de
+volume courants et precedents, POC nus), les zones de confluence, puis les idees avec EXACTEMENT les memes regles que
+le terminal en direct (signals.build_ideas). Chaque idee est jouee sur les bougies suivantes :
+  - ordre limite valable `valid_hours` ; annule si le stop est touche avant l'execution ;
+  - apres execution : stop, objectif 1 ou sortie au marche apres `hold_hours` ;
+  - si stop et objectif sont dans la meme bougie, le STOP est compte en premier (hypothese prudente).
+Comparaison : pour chaque idee, 3 « temoins » de meme forme (meme distance d'entree, meme stop, meme objectif en
+amplitudes d'heure) places a des heures tirees au hasard. Seul l'ecart au temoin mesure ce que la qualite du niveau apporte.
+
+Limites assumees : l'historique des poches de liquidation (29 jours), des annonces et du flux d'ordres n'existe pas sur
+7 ans : le rejeu mesure la structure seule. Les ordres sont supposes executes au prix limite, sans frais ni glissement."""
+import random
+import time
+
+from . import signals, trend
+from .confluence import Level, find_zones
+from .periods import NakedPocs, PeriodTracker
+from .stats import atr_series, wilson
+
+VERSION = 2
+TIERS = (7.0, 9.0, 11.0)
+WARMUP = 24 * 60
+DAY_MS = 86_400_000
+
+
+def _levels(tr, nd, nw, cur_vp, i, price, now):
+    """Niveaux connus a la cloture de la bougie i (memes noms et memes groupes que le terminal en direct)."""
+    out, seen = [], {}
+
+    def add(name, px, group, kind, **extra):
+        if px is None:
+            return
+        n = seen.get(group + name, 0)
+        seen[group + name] = n + 1
+        out.append(Level(f"{group}|{name}{n or ''}", name, float(px), group, kind, extra))
+
+    for kind in ("D", "W", "M", "Y"):
+        t = tr[kind]
+        p = kind.lower()
+        a = t.acc
+        vw, sd = a.vwap()
+        add(f"{p}VWAP", vw, f"{p}VWAP", "vwap")
+        if kind != "Y" and vw is not None and sd:
+            add(f"{p}VWAP+2σ", vw + 2 * sd, f"{p}VWAP", "band")
+            add(f"{p}VWAP-2σ", vw - 2 * sd, f"{p}VWAP", "band")
+        add(f"{p}Open", a.open, f"{p}Open", "open")
+        c = cur_vp.get(kind)
+        if c is None or c[0] != t.key or i - c[1] >= 6:
+            c = cur_vp[kind] = (t.key, i, t._cur_vp())
+        if c[2]:
+            add(f"{p}POC", c[2]["poc"], f"{p}VP", "vp")
+            for h in c[2]["hvn"]:
+                add(f"{p}HVN", h, f"{p}VP", "vp")
+        pv = t.prev
+        if pv:
+            add(f"P{kind}H", pv["high"], f"P{kind}HL", "hl")
+            add(f"P{kind}L", pv["low"], f"P{kind}HL", "hl")
+            if pv["vp"]:
+                g = f"p{p}VP"
+                add(f"p{p}POC", pv["vp"]["poc"], g, "vp")
+                add(f"p{p}VAH", pv["vp"]["vah"], g, "vp")
+                add(f"p{p}VAL", pv["vp"]["val"], g, "vp")
+                for h in pv["vp"]["hvn"]:
+                    add(f"p{p}HVN", h, g, "vp")
+    for unit, nk, span in (("J", nd, DAY_MS), ("S", nw, 7 * DAY_MS)):
+        for x in nk.active():
+            if abs(x["poc"] / price - 1.0) <= 0.15:
+                age = max(2, -(-(now - x["t_end"]) // span) + 1)
+                add(f"nPOC {unit}-{age}", x["poc"], "nPOC", "npoc")
+    return out
+
+
+def simulate(candles, i0, side, entry, stop, tp1, market, valid_h=48, hold_h=72):
+    """Joue une idee creee a la cloture de la bougie i0. Renvoie (statut, R, fill) ;
+    statut : 'nofill' | 'cancel' | 'tp' | 'sl' | 'timeout'."""
+    n = len(candles)
+    risk = abs(entry - stop)
+    if risk <= 0:
+        return "cancel", 0.0, False
+    long_ = side == "long"
+    fill = i0 if market else None
+    j = i0 + 1
+    if fill is None:
+        end = min(n, i0 + 1 + valid_h)
+        while j < end:
+            k = candles[j]
+            hit_entry = k.l <= entry if long_ else k.h >= entry
+            if hit_entry:
+                fill = j
+                if (k.l <= stop) if long_ else (k.h >= stop):
+                    return "sl", -1.0, True                           # execute puis stoppe dans la meme bougie
+                break
+            if (k.l <= stop) if long_ else (k.h >= stop):
+                return "cancel", 0.0, False                           # le stop est touche avant l'execution
+            j += 1
+        if fill is None:
+            return ("nofill" if i0 + 1 + valid_h <= n else "open"), 0.0, False
+        j = fill + 1
+    end = min(n, j + hold_h)
+    if j >= n:
+        return "open", 0.0, True
+    for q in range(j, end):
+        k = candles[q]
+        if (k.l <= stop) if long_ else (k.h >= stop):
+            return "sl", -1.0, True
+        if (k.h >= tp1) if long_ else (k.l <= tp1):
+            return "tp", abs(tp1 - entry) / risk, True
+    if end - j < hold_h:
+        return "open", 0.0, True                                      # periode de detention pas finie
+    c = candles[end - 1].c
+    return "timeout", ((c - entry) if long_ else (entry - c)) / risk, True
+
+
+def _agg(rows):
+    """rows : [(statut, R, fill)] -> comptes et taux."""
+    res = [r for r in rows if r[0] != "open"]
+    fl = [r for r in res if r[2]]
+    tp = sum(1 for r in fl if r[0] == "tp")
+    sl = sum(1 for r in fl if r[0] == "sl")
+    to = sum(1 for r in fl if r[0] == "timeout")
+    out = {"n": len(res), "filled": len(fl), "tp": tp, "sl": sl, "timeout": to,
+           "fillRate": len(fl) / len(res) if res else None,
+           "expR": sum(r[1] for r in fl) / len(fl) if fl else None}
+    p, lo, hi = wilson(tp, tp + sl) if tp + sl else (None, None, None)
+    out["win"] = {"p": p, "lo": lo, "hi": hi}
+    return out
+
+
+def verdict(real, ctrl):
+    a, b = real["win"], ctrl["win"]
+    if real["tp"] + real["sl"] < 30 or a["p"] is None or b["p"] is None:
+        return "thin"
+    if a["lo"] > b["hi"]:
+        return "edge"
+    if a["hi"] < b["lo"]:
+        return "worse"
+    return "none"
+
+
+def replay(candles, atrs=None, params=None, seed=5, step=2, ctrl_n=3, max_week=5, on_idea=None):
+    """Rejoue `candles` (bougies 1h fermees). Renvoie les resultats par palier de qualite et la frequence par semaine.
+    on_idea(i, idea, res) : appele pour chaque idee retenue (etude du changement de sens, switch_study)."""
+    o = {**signals.DEFAULTS, **(params or {})}
+    atrs = atrs or atr_series(candles)
+    n = len(candles)
+    if n < WARMUP + 24 * 30:
+        return {"ready": False, "bars": n}
+    rnd = random.Random(seed)
+    # tendance de fond a chaque bougie (moyennes 50 j / 200 j des clotures horaires) : None tant que 200 jours d'historique manquent
+    reg = [None] * n
+    nf, ns = trend.FAST_DAYS * 24, trend.SLOW_DAYS * 24
+    cs, run = [0.0], 0.0
+    for k_ in candles:
+        run += k_.c
+        cs.append(run)
+    for q in range(ns - 1, n):
+        px_, fa, sl = candles[q].c, (cs[q + 1] - cs[q + 1 - nf]) / nf, (cs[q + 1] - cs[q + 1 - ns]) / ns
+        reg[q] = 1 if px_ > fa and px_ > sl else -1 if px_ < fa and px_ < sl else 0
+    tr = {k: PeriodTracker(k) for k in ("D", "W", "M", "Y")}
+    nd, nw = NakedPocs(30), NakedPocs(12)
+    cur_vp: dict = {}
+    min_s = o["min_struct"]
+    ideas_all = []                               # idees acceptees sans quota : (t, semaine, S, cote, resultat, temoins)
+    last_zone: dict = {}
+    last_side: dict = {}
+    t0 = time.time()
+    for i in range(n - 1):
+        k = candles[i]
+        prev_d, prev_w = tr["D"].prev, tr["W"].prev
+        for t in tr.values():
+            t.feed(k)
+        if tr["D"].prev is not prev_d and tr["D"].prev:
+            nd.on_rollover(tr["D"].prev["vp"]["poc"] if tr["D"].prev["vp"] else None, k.t)
+        if tr["W"].prev is not prev_w and tr["W"].prev:
+            nw.on_rollover(tr["W"].prev["vp"]["poc"] if tr["W"].prev["vp"] else None, k.t)
+        nd.feed(k)
+        nw.feed(k)
+        if i < WARMUP or i % step or i + 1 + o["valid_hours"] + 72 >= n:
+            continue
+        a = atrs[i]
+        price = k.c
+        if not a or a <= 0:
+            continue
+        lvs = _levels(tr, nd, nw, cur_vp, i, price, k.t + 3_600_000)
+        tol = max(0.30 * a, 0.0015 * price)
+        zones = []
+        for z, zz in enumerate(find_zones(lvs, tol)):
+            inside = zz["lo"] <= price <= zz["hi"]
+            zones.append({"id": f"z{z}", "mid": zz["mid"], "lo": zz["lo"], "hi": zz["hi"],
+                          "side": "in" if inside else ("above" if zz["mid"] > price else "below"),
+                          "members": [m.id for m in zz["members"]], "groups": zz["groups"]})
+        levels = [{"id": l.id, "name": l.name, "price": l.price, "group": l.group, "kind": l.kind} for l in lvs]
+        ideas, _ = signals.build_ideas({"symbol": "x", "now": k.t + 3_600_000, "price": price, "atr": a, "levels": levels, "zones": zones,
+                                        "pools": [], "sweeps": [], "candles": candles[max(0, i - 11):i + 1], "opts": o})
+        for idea in sorted(ideas, key=lambda x: -x["st"]["S"]):
+            gkey = "+".join(sorted(it["group"] for it in idea["st"]["items"]))
+            if idea["st"]["S"] < min_s or k.t - last_zone.get((idea["side"], gkey), -10 ** 15) < 48 * 3_600_000 \
+                    or k.t - last_side.get(idea["side"], -10 ** 15) < 12 * 3_600_000:
+                continue
+            last_zone[(idea["side"], gkey)] = k.t
+            last_side[idea["side"]] = k.t
+            market = idea["entryType"] == "marché"
+            res = simulate(candles, i, idea["side"], idea["entry"], idea["stop"], idea["tp1"], market, o["valid_hours"])
+            sgn = 1 if idea["side"] == "long" else -1
+            if on_idea is not None:
+                idea["align"] = None if reg[i] is None else reg[i] * sgn          # sens de la tendance de fond (1 dans le sens, 0 indecise, -1 contre)
+                on_idea(i, idea, res)
+            # temoins : meme forme (en amplitudes d'heure) a des heures tirees au hasard
+            de = (price - idea["entry"]) / a * sgn if not market else 0.0
+            sd_ = abs(idea["entry"] - idea["stop"]) / a
+            td = abs(idea["tp1"] - idea["entry"]) / a
+            ctrl = []
+            align = None if reg[i] is None else reg[i] * sgn
+            for _ in range(ctrl_n):
+                j0 = rnd.randrange(WARMUP, n - o["valid_hours"] - 74)
+                if align is not None:                                  # temoin dans la MEME tendance (aligne / indecise / a contre-courant)
+                    for _try in range(60):
+                        if reg[j0] is not None and reg[j0] * sgn == align:
+                            break
+                        j0 = rnd.randrange(WARMUP, n - o["valid_hours"] - 74)
+                cp, ca = candles[j0].c, atrs[j0]
+                if not ca:
+                    continue
+                e = cp - sgn * de * ca if not market else cp
+                s_ = e - sgn * sd_ * ca
+                t_ = e + sgn * td * ca
+                ctrl.append(simulate(candles, j0, idea["side"], e, s_, t_, market, o["valid_hours"]))
+            ideas_all.append((k.t, (k.t // DAY_MS + 3) // 7, idea["st"]["S"], idea["side"], res, ctrl, align))
+    first_w = (candles[WARMUP].t // DAY_MS + 3) // 7
+    last_w = (candles[-1].t // DAY_MS + 3) // 7
+    total_w = max(1, last_w - first_w + 1)
+
+    def keep(ms):
+        """Ce que tu aurais recu avec ce seuil de qualite : au plus `max_week` idees par semaine, la derniere place exigeant mieux."""
+        used: dict[int, int] = {}
+        out = []
+        for it in ideas_all:
+            if it[2] < ms:
+                continue
+            u = used.get(it[1], 0)
+            if u >= max_week or (u == max_week - 1 and it[2] < ms + 1.5):
+                continue
+            used[it[1]] = u + 1
+            out.append(it)
+        return out, used
+
+    tiers = []
+    for ms in TIERS:
+        sel, used = keep(ms)
+        counts = sorted(used.get(w, 0) for w in range(first_w, last_w + 1))
+        real = _agg([t[4] for t in sel])
+        ctrl = _agg([c for t in sel for c in t[5]])
+        tiers.append({"minS": ms, "real": real, "ctrl": ctrl, "verdict": verdict(real, ctrl),
+                      "perWeek": {"mean": sum(counts) / total_w, "p90": counts[int(0.9 * (len(counts) - 1))],
+                                  "zeroShare": sum(1 for c in counts if c == 0) / total_w}})
+    sel, _ = keep(min_s)
+    sides = {}
+    for sd in ("long", "short"):
+        x = [t for t in sel if t[3] == sd]
+        real, ctrl = _agg([t[4] for t in x]), _agg([c for t in x for c in t[5]])
+        sides[sd] = {"real": real, "ctrl": ctrl, "verdict": verdict(real, ctrl)}
+    trend_split = {}
+    for name, a in (("aligned", 1), ("counter", -1), ("neutral", 0)):
+        x = [t for t in sel if t[6] == a]
+        real, ctrl = _agg([t[4] for t in x]), _agg([c for t in x for c in t[5]])
+        trend_split[name] = {"real": real, "ctrl": ctrl, "verdict": verdict(real, ctrl)}
+    return {"ready": True, "version": VERSION, "bars": n, "from": candles[WARMUP].t, "to": candles[-1].t,
+            "computedAt": int(time.time() * 1000), "seconds": round(time.time() - t0, 1), "ideas": len(ideas_all),
+            "weeks": total_w, "cap": max_week, "tiers": tiers, "sides": sides, "trend": trend_split,
+            "params": {"minStruct": min_s, "validHours": o["valid_hours"], "holdHours": 72, "step": step, "ctrl": ctrl_n}}
+
+
+def tier_for(val, S):
+    """Palier de qualite le plus eleve atteint par S (None si aucun)."""
+    if not val or not val.get("ready"):
+        return None
+    best = None
+    for t in val["tiers"]:
+        if S >= t["minS"]:
+            best = t
+    return best
+
+
+def validation_text(val, S, side=None):
+    """Phrase en clair sur ce que cette qualite de niveau a donne dans le passe, face aux temoins au hasard."""
+    t = tier_for(val, S)
+    if not t:
+        return None
+    r, c = t["real"], t["ctrl"]
+    if not r["tp"] + r["sl"]:
+        return None
+    since = time.strftime("%m/%Y", time.gmtime(val["from"] / 1000))
+    base = (f"Rejeu de la structure depuis {since} (zones de qualité ≥ {t['minS']:.0f}, sans poches ni annonces) : "
+            f"{r['n']} idées, {r['filled']} exécutées ; objectif 1 atteint avant le stop dans {r['win']['p'] * 100:.0f} % des cas résolus "
+            f"({r['win']['lo'] * 100:.0f}-{r['win']['hi'] * 100:.0f} %), contre {c['win']['p'] * 100:.0f} % pour des entrées au hasard de même forme dans la même tendance. ")
+    out = base + {"edge": "→ MIEUX que le hasard.", "none": "→ pas de différence prouvée avec le hasard : à prendre comme un scénario, pas comme un avantage démontré.",
+                  "worse": "→ moins bien que le hasard.", "thin": "→ trop peu de cas pour conclure."}[t["verdict"]]
+    tr = (val.get("trend") or {}).get("aligned")
+    if tr and tr["real"]["tp"] + tr["real"]["sl"] >= 20 and tr["real"]["win"]["p"] is not None and tr["ctrl"]["win"]["p"] is not None:
+        out += (f" Dans le sens de la tendance de fond (moyennes 50 et 200 jours) : {tr['real']['n']} idées, objectif 1 avant le stop dans {tr['real']['win']['p'] * 100:.0f} % des cas, "
+                f"contre {tr['ctrl']['win']['p'] * 100:.0f} % au hasard dans la même tendance.")
+    return out
+
+
+# ---------- V25.1 : faut-il fermer une idee en cours quand une idee plus forte arrive dans l'autre sens ? ----------
+def timeline(candles, i0, side, entry, stop, tp1, market, valid_h=48, hold_h=72):
+    """Meme deroule que simulate(), avec les instants : {status, R, fill (indice ou None), end (indice de la bougie ou tout s'arrete)}."""
+    n = len(candles)
+    risk = abs(entry - stop)
+    if risk <= 0:
+        return {"status": "cancel", "R": 0.0, "fill": None, "end": i0}
+    long_ = side == "long"
+    fill = i0 if market else None
+    j = i0 + 1
+    if fill is None:
+        end = min(n, i0 + 1 + valid_h)
+        while j < end:
+            k = candles[j]
+            if (k.l <= entry) if long_ else (k.h >= entry):
+                fill = j
+                if (k.l <= stop) if long_ else (k.h >= stop):
+                    return {"status": "sl", "R": -1.0, "fill": j, "end": j}
+                break
+            if (k.l <= stop) if long_ else (k.h >= stop):
+                return {"status": "cancel", "R": 0.0, "fill": None, "end": j}
+            j += 1
+        if fill is None:
+            return {"status": "nofill" if i0 + 1 + valid_h <= n else "open", "R": 0.0, "fill": None, "end": min(n - 1, i0 + valid_h)}
+        j = fill + 1
+    end = min(n, j + hold_h)
+    if j >= n:
+        return {"status": "open", "R": 0.0, "fill": fill, "end": n - 1}
+    for q in range(j, end):
+        k = candles[q]
+        if (k.l <= stop) if long_ else (k.h >= stop):
+            return {"status": "sl", "R": -1.0, "fill": fill, "end": q}
+        if (k.h >= tp1) if long_ else (k.l <= tp1):
+            return {"status": "tp", "R": abs(tp1 - entry) / risk, "fill": fill, "end": q}
+    if end - j < hold_h:
+        return {"status": "open", "R": 0.0, "fill": fill, "end": n - 1}
+    c = candles[end - 1].c
+    return {"status": "timeout", "R": ((c - entry) if long_ else (entry - c)) / risk, "fill": fill, "end": end - 1}
+
+
+def switch_study(candles, ideas, min_s=7.0, max_week=5, deltas=(0.0, 1.0, 2.0, 3.0, 4.0, 6.0), fee=0.001, cooldown_h=12):
+    """ideas : [(i, side, S, entry, stop, tp1, market)] dans l'ordre du temps (rejeu). Rejoue ce que tu aurais recu avec les regles du
+    terminal (quota de la semaine, une idee par paire toutes les 12 h) et compare les politiques face a une idee dans l'autre sens
+    pendant qu'une idee est en cours : « never » (la bloquer), « both » (la prendre en gardant la premiere), et Δ (fermer la
+    premiere au prix du moment et prendre la nouvelle si sa qualite depasse de Δ celle de l'idee en cours). fee : frais d'un aller-retour
+    (0,1 %) ramenes en multiples du risque de chaque trade execute."""
+    tls = []
+    for i, side, S, e, s_, t1, mk in ideas:
+        tl = timeline(candles, i, side, e, s_, t1, mk)
+        if tl["status"] != "open":
+            tls.append((i, side, S, e, s_, t1, mk, tl))
+
+    def run(policy, ghost_h=0):
+        """ghost_h : un ordre expire sans execution compte encore comme « en cours » pendant ghost_h heures apres sa fin tant que le
+        prix reste entre son stop et son objectif 1 (cas ou tu l'aurais pris quand meme, au marche ou ailleurs)."""
+        used, recs, opened, sw, last_t, ghosts = {}, [], [], [], None, 0
+        for i, side, S, e, s_, t1, mk, tl in tls:
+            if S < min_s:
+                continue
+            wk = (candles[i].t // DAY_MS + 3) // 7
+            u = used.get(wk, 0)
+            if u >= max_week or (u == max_week - 1 and S < min_s + 1.5):
+                continue
+            if last_t is not None and candles[i].t - last_t < cooldown_h * 3_600_000:
+                continue
+            opened = [o for o in opened if o["end"] > i]
+            opp = [o for o in opened if o["side"] != side]
+            if ghost_h:
+                px = candles[i].c
+                gh = [o for o in recs if o["status"] == "nofill" and o["side"] != side and o["end"] <= i <= o["end"] + ghost_h
+                      and min(o["s"], o["t1"]) < px < max(o["s"], o["t1"])]
+                if gh and (policy == "never" or S < max(o["S"] for o in gh) + policy):
+                    ghosts += 1
+                    continue
+            if opp and policy == "never":
+                continue
+            if opp and policy != "both":
+                if S < max(o["S"] for o in opp) + policy:
+                    continue
+                for o in opp:
+                    full = o["R"]
+                    live = o["fill"] is not None and o["fill"] <= i
+                    sgn = 1 if o["side"] == "long" else -1
+                    o["R"] = (candles[i].c - o["e"]) * sgn / abs(o["e"] - o["s"]) if live else 0.0
+                    o["filled"], o["end"], o["switched"] = live, i, True
+                    sw.append({"before": full, "after": o["R"], "live": live, "o": o})
+                    opened.remove(o)
+            used[wk] = u + 1
+            last_t = candles[i].t
+            rec = {"i": i, "side": side, "S": S, "e": e, "s": s_, "t1": t1, "fill": tl["fill"], "end": tl["end"], "R": tl["R"], "filled": tl["fill"] is not None,
+                   "status": tl["status"], "switched": False}
+            opened.append(rec)
+            recs.append(rec)
+            for x in sw:
+                if x.get("o") is not None and x.get("new") is None and x["o"] is not rec:
+                    x["new"] = rec
+        cost = lambda r: fee / (abs(r["e"] - r["s"]) / r["e"]) if r["filled"] else 0.0
+        eq, peak, dd = 0.0, 0.0, 0.0
+        for r in sorted(recs, key=lambda r: r["end"]):
+            eq += r["R"] - cost(r)
+            peak = max(peak, eq)
+            dd = max(dd, peak - eq)
+        filled = [r for r in recs if r["filled"]]
+        gain = [x["after"] + x["new"]["R"] - x["before"] for x in sw if x.get("new")]
+
+        def split(cond):
+            g = [x["after"] + x["new"]["R"] - x["before"] for x in sw if x.get("new") and cond(x)]
+            return {"n": len(g), "gain": (sum(g) / len(g)) if g else None, "wins": sum(1 for v in g if v > 0)}
+        return {"sent": len(recs), "filled": len(filled), "R": sum(r["R"] for r in recs), "Rnet": sum(r["R"] - cost(r) for r in recs),
+                "perTrade": (sum(r["R"] - cost(r) for r in filled) / len(filled)) if filled else None, "maxDD": dd, "switches": len(sw),
+                "switchLive": sum(1 for x in sw if x["live"]), "switchGain": (sum(gain) / len(gain)) if gain else None, "switchN": len(gain),
+                "switchWins": sum(1 for g in gain if g > 0), "ghostBlocked": ghosts,
+                "byState": {"perte": split(lambda x: x["live"] and x["after"] < 0), "gain": split(lambda x: x["live"] and x["after"] >= 0),
+                            "attente": split(lambda x: not x["live"])}}
+    out = {"never": run("never"), "both": run("both")}
+    for d in deltas:
+        out[f"delta{d:g}"] = run(d)
+    out["never_exp72"] = run("never", ghost_h=72)                          # ordre expire : bloque 72 h tant que le prix reste entre stop et objectif 1
+    out[f"delta{deltas[-1]:g}_exp72"] = run(deltas[-1], ghost_h=72)          # idem, sauf idee bien plus forte
+    return {"ideas": len(tls), "policies": out, "params": {"minS": min_s, "maxWeek": max_week, "fee": fee, "cooldownH": cooldown_h, "deltas": list(deltas)}}
+
+
+# ---------- V25.2 : idees de couverture (une idee dans l'autre sens pendant une idee en cours, sans la fermer) ----------
+def hedge_study(series, min_s=7.0, max_week=5, per_pair=3, fee=0.001, cooldown_h=12, gate=False):
+    """series : {symbole: (bougies 1h, [(i, side, S, entry, stop, tp1, market, align)])}. Rejoue les idees de toutes les paires sur
+    une seule ligne du temps, avec les regles d'envoi du terminal (quota de la semaine commun, au plus per_pair idees par paire et par
+    semaine, une idee par paire toutes les 12 h, deux idees ouvertes par paire au plus) et compare « never » (une seule direction a la
+    fois, toutes paires confondues) a « hedge » (l'idee dans l'autre sens est envoyee pendant l'idee en cours, sans la fermer).
+    gate : seulement les idees dans le sens de la tendance de fond (filtre du terminal, actif par defaut). Resultats en multiples du
+    risque ; frais d'un aller-retour (0,1 %) ramenes au risque de chaque trade execute."""
+    evs = []
+    for sym, (candles, ideas) in series.items():
+        for i, side, S, e, s_, t1, mk, al in ideas:
+            if gate and not (al is not None and al > 0):
+                continue
+            tl = timeline(candles, i, side, e, s_, t1, mk)
+            if tl["status"] == "open":
+                continue
+            evs.append({"t": candles[i].t, "end": candles[tl["end"]].t, "sym": sym, "side": side, "S": S, "R": tl["R"],
+                        "filled": tl["fill"] is not None, "riskPct": abs(e - s_) / e if e else 1.0})
+    evs.sort(key=lambda x: x["t"])
+
+    def run(policy):
+        used, per, last, opened, recs = {}, {}, {}, [], []
+        for x in evs:
+            if x["S"] < min_s:
+                continue
+            wk = (x["t"] // DAY_MS + 3) // 7
+            u = used.get(wk, 0)
+            if u >= max_week or (u == max_week - 1 and x["S"] < min_s + 1.5) or per.get((wk, x["sym"]), 0) >= per_pair:
+                continue
+            if x["t"] - last.get(x["sym"], -10 ** 15) < cooldown_h * 3_600_000:
+                continue
+            opened = [o for o in opened if o["end"] > x["t"]]
+            opp = [o for o in opened if o["side"] != x["side"]]
+            if (opp and policy == "never") or sum(1 for o in opened if o["sym"] == x["sym"]) >= 2:
+                continue
+            used[wk] = u + 1
+            per[(wk, x["sym"])] = per.get((wk, x["sym"]), 0) + 1
+            last[x["sym"]] = x["t"]
+            rec = {**x, "hedge": bool(opp), "same": any(o["sym"] == x["sym"] for o in opp)}
+            opened.append(rec)
+            recs.append(rec)
+
+        def net(r):
+            return r["R"] - (fee / r["riskPct"] if r["filled"] else 0.0)
+
+        def part(rs):
+            f = [r for r in rs if r["filled"]]
+            return {"n": len(rs), "filled": len(f), "R": sum(r["R"] for r in rs), "Rnet": sum(net(r) for r in rs),
+                    "perTrade": (sum(net(r) for r in f) / len(f)) if f else None, "wins": sum(1 for r in f if r["R"] > 0)}
+        eq, peak, dd = 0.0, 0.0, 0.0
+        for r in sorted(recs, key=lambda r: r["end"]):
+            eq += net(r)
+            peak = max(peak, eq)
+            dd = max(dd, peak - eq)
+        return {**part(recs), "maxDD": dd, "hedge": part([r for r in recs if r["hedge"]]), "samePair": part([r for r in recs if r["same"]]),
+                "otherPair": part([r for r in recs if r["hedge"] and not r["same"]]), "alone": part([r for r in recs if not r["hedge"]]),
+                "bySym": {s: part([r for r in recs if r["sym"] == s]) for s in series}}
+    return {"ideas": len(evs), "never": run("never"), "hedge": run("hedge"),
+            "params": {"minS": min_s, "maxWeek": max_week, "perPair": per_pair, "fee": fee, "cooldownH": cooldown_h, "gate": gate}}
