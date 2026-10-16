@@ -8,13 +8,14 @@ from pathlib import Path
 from data.base import DataError
 from data.filefeed import CsvSource, selftest_file
 from data.simulated import SimulatedSource
-from engine import clock, context, cvd, events, footprint, levels, risk, vp, vwap
+from engine import backtest as bt
+from engine import clock, context, cvd, events, footprint, levels, risk, signals, vp, vwap
 from engine.account import Account
 from engine.bars import TF_MS, resample
 from engine.instruments import INSTRUMENTS, front_contract
 from engine.market import Market
 
-VERSION = "0.2"
+VERSION = "0.3"
 log = logging.getLogger("nq")
 SIM_BASE = {"NQ": 25_000.0, "MNQ": 25_000.0, "ES": 6_700.0, "MES": 6_700.0}
 
@@ -247,6 +248,59 @@ class Service:
         return risk.plan(side, float(entry), float(stop), [float(x) for x in targets], (root or self.inst.root).upper(), self.account.profile,
                          self.account_view(pos_text), None if risk_usd in (None, "") else float(risk_usd), held)
 
+    def signals(self, tf: str = "1m", pos_text=None) -> dict:
+        """Setups de scalping sur la dernière barre : mêmes ingrédients que le backtest, avec les règles Lucid attachées (compte courant)."""
+        if tf not in TF_MS:
+            raise ValueError(f"unité de temps inconnue : {tf}")
+        step, mk = TF_MS[tf], self.market
+        sp = signals.PARAMS
+        win = max(sp.look + 20, 140)
+        with mk.lock:
+            if mk.last is None:
+                return {"ready": False, "setups": [], "blocked": ["en attente des premières transactions"], "ruleNotes": [], "tf": tf}
+            now = mk.last.t
+            base = mk.slice(mk.last.t - (win + 6) * step, mk.last.t + step)
+            sig = base if (tf == "1m") else resample(base, step, with_fp=True)
+            if len(sig) < 5:
+                return {"ready": False, "setups": [], "blocked": ["pas assez de barres"], "ruleNotes": [], "tf": tf}
+            cvd_vals, acc, key = [], 0.0, None
+            for b in sig:
+                k = clock.trading_day(b.t)
+                if k != key:
+                    key, acc = k, 0.0
+                acc += b.bv - b.sv
+                cvd_vals.append(acc)
+            day = clock.trading_day(now)
+            rth_started = now >= clock.window(day, "rth")[0]
+            lad = mk.ladder(day, "rth") if rth_started else mk.ladder(day, "gx")
+            prof = vp.stats(lad, min_row_ticks=4) if lad is not None and not lad.empty() else None
+            ph = clock.phase(now)
+            ff = clock.forced_flat(day)
+        lv = self.levels()
+        near = lv.get("near") or {"above": [], "below": []}
+        acct = self.account_view(pos_text)
+        res = signals.evaluate(sig, cvd_vals, prof, near, lv.get("zones", []), self.inst, now, ff, ph, rth_started, acct=acct)
+        res["tf"] = tf
+        return res
+
+    def backtest(self, tf: str = "1m", min_score: float = 40.0, slippage_ticks: float = 1.0, max_hold_min: int = 20,
+                 risk_usd: float = 100.0, one_per_session: bool = False, days: int | None = None) -> dict:
+        """Rejoue les setups sur l'historique chargé (barres de base) et confronte le résultat aux règles Lucid du profil courant."""
+        mk = self.market
+        with mk.lock:
+            bars = list(mk.series.bars)
+        if days:                                             # limite éventuelle au N dernières journées de trading
+            keep = set(sorted({clock.trading_day(b.t) for b in bars})[-int(days):])
+            bars = [b for b in bars if clock.trading_day(b.t) in keep]
+        params = bt.BtParams(tf=tf if tf in TF_MS else "1m", min_score=float(min_score), slippage_ticks=float(slippage_ticks),
+                             max_hold_min=int(max_hold_min), risk_usd=float(risk_usd), one_per_session=bool(one_per_session))
+        res = bt.run(bars, self.inst, self.account.profile, params)
+        res["params"] = {"tf": params.tf, "minScore": params.min_score, "slippageTicks": params.slippage_ticks,
+                         "maxHoldMin": params.max_hold_min, "riskUsd": params.risk_usd, "onePerSession": params.one_per_session}
+        res["profile"] = {"name": self.account.profile.name, "start": self.account.profile.start_balance,
+                          "target": self.account.profile.profit_target, "maxDd": self.account.profile.max_drawdown}
+        return res
+
     def test_file(self, path: str) -> dict:
         ok, msg = selftest_file(path)
         return {"ok": ok, "message": msg}
@@ -254,4 +308,8 @@ class Service:
     def config_view(self) -> dict:
         c = self.cfg
         return {"source": c.source, "instrument": c.instrument, "displayTz": c.display_tz, "zonePts": c.zone_pts, "csvPath": c.csv_path,
-                "tfs": list(TF_MS), "version": VERSION}
+                "tfs": list(TF_MS), "version": VERSION, "days": self.market_days()}
+
+    def market_days(self) -> int:
+        with self.market.lock:
+            return len({clock.trading_day(b.t) for b in self.market.series.bars}) if self.market.series.bars else 0

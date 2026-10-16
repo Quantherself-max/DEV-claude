@@ -85,12 +85,19 @@ def nodes(tot: list, min_share: float = 0.45) -> tuple:
     return peaks, lvn
 
 
-def stats(ladder, row_ticks: int | None = None, va_pct: float = 0.70, max_rows: int = 140, min_row_ticks: int = 1) -> dict | None:
+def stats(ladder, row_ticks: int | None = None, va_pct: float = 0.70, max_rows: int = 140, min_row_ticks: int = 1, cache: dict | None = None) -> dict | None:
     """Profil complet d'une Ladder, pret pour l'affichage : niveaux cles + lignes. None si vide.
 
-    prix des lignes : `lo` / `hi` = bornes de la ligne (bas = premier tick, haut = dernier tick de la ligne)."""
+    prix des lignes : `lo` / `hi` = bornes de la ligne (bas = premier tick, haut = dernier tick de la ligne).
+    `cache` (optionnel) : memorise le resultat par (identite de la ladder, volume) -- utile au backtest, ou le meme profil (veille) est relu a chaque
+    barre. Tant que le volume ne change pas, la ladder n'a pas change : on renvoie le resultat garde. (Le terminal en direct ne passe pas de cache.)"""
     if ladder.empty():
         return None
+    if cache is not None:
+        ck = (id(ladder), round(ladder.volume, 3), row_ticks, va_pct, max_rows, min_row_ticks)
+        hit = cache.get(ck)
+        if hit is not None:
+            return hit
     tick = ladder.tick
     span = max(ladder.rows) - min(ladder.rows) + 1
     rt = row_ticks or auto_row_ticks(span, max_rows, min_row_ticks)
@@ -108,7 +115,7 @@ def stats(ladder, row_ticks: int | None = None, va_pct: float = 0.70, max_rows: 
     def lo_p(i): return round((r0 + i) * rt * tick, 10)
     def hi_p(i): return round(((r0 + i + 1) * rt - 1) * tick, 10)
 
-    return {
+    out = {
         "rowTicks": rt, "rowPts": round(rt * tick, 10), "total": sum(tot), "delta": ladder.delta,
         "poc": round(poc_idx * tick, 10), "vah": hi_p(up), "val": lo_p(dn),
         "hi": ladder.hi, "lo": ladder.lo, "vwap": ladder.vwap, "sd": ladder.sd,
@@ -116,6 +123,11 @@ def stats(ladder, row_ticks: int | None = None, va_pct: float = 0.70, max_rows: 
         "lvn": [round((lo_p(i) + hi_p(i)) / 2.0, 10) for i in lvn],
         "rows": [{"lo": lo_p(i), "hi": hi_p(i), "s": rows[i][0], "b": rows[i][1], "va": dn <= i <= up, "poc": i == pi} for i in range(len(rows))],
     }
+    if cache is not None:
+        if len(cache) > 4000:
+            cache.clear()
+        cache[ck] = out
+    return out
 
 
 def levels(ladder, row_ticks: int | None = None) -> dict | None:

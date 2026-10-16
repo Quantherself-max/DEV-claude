@@ -381,6 +381,139 @@ const Panels = (() => {
     });
   }
 
+  // ======================================================= Setups (signaux de scalping)
+  const TAG_FR = {divergence: 'Divergence CVD', absorption: 'Absorption', stack: 'Pile de déséquilibres', va_edge: 'Bord de zone de valeur',
+    vwap_band: 'Bande VWAP', zone: 'Zone de confluence', ib_break: 'Cassure IB', cvd_trend: 'Flux cumulé', phase: 'Phase'};
+
+  function setups(d) {
+    const host = $('#tab-setups');
+    if (!d || !d.ready) {
+      host.innerHTML = `<div class="card muted">${esc(d && d.blocked && d.blocked[0] ? d.blocked[0] : 'En attente de barres suffisantes…')}</div>`;
+      return;
+    }
+    let html = `<div class="card"><h2>Setups <small>${esc(d.tf || '')} · ${esc(d.phase || '')}</small></h2>`
+      + kv('Prix', fmt(d.price, 2)) + kv('ATR (barre)', `${fmt(d.atr, 1)} pts`)
+      + (d.phaseFactor != null && d.phaseFactor < 1 ? `<div class="small">Phase peu active : convictions réduites (× ${fmt(d.phaseFactor, 2)}).</div>` : '');
+    if (d.blocked && d.blocked.length) html += d.blocked.map(b => `<div class="note warn"><i></i><div>${esc(b)}</div></div>`).join('');
+    html += '</div>';
+
+    if (!d.setups || !d.setups.length) {
+      html += '<div class="card muted">Aucun setup au-dessus du score minimal pour l\'instant. Les ingrédients lus sont en bas.</div>';
+    } else {
+      for (const s of d.setups) {
+        const longS = s.side === 'long';
+        const dim = s.suppressed ? ' style="opacity:.55"' : '';
+        html += `<div class="card"${dim}><h2><span class="badge ${longS ? 'ok' : 'bad'}">${longS ? 'ACHAT' : 'VENTE'}</span> ${s.kind === 'momentum' ? 'Momentum' : 'Retournement'}`
+          + ` <small>score ${fmt(s.score, 0)}/100</small>${s.conflict ? ' <small class="amb">(signal inverse aussi présent)</small>' : ''}</h2>`
+          + gauge(s.score / 100, s.score >= 60 ? '' : s.score >= 45 ? 'acc' : 'warn')
+          + kv('Entrée', fmt(s.entry, 2)) + kv('Stop', `${fmt(s.stop, 2)} <small>${fmt(s.stopPts, 1)} pts</small>`, 'neg')
+          + kv('Objectifs', s.targets.map(t => fmt(t, 2)).join(' · '))
+          + kv('Gain / risque (1er objectif)', `${fmt(s.rr, 2)} R`, s.rr >= 1.5 ? 'pos' : s.rr >= 1 ? '' : 'neg');
+        html += '<div class="small" style="margin-top:6px"><b>Pourquoi :</b></div>'
+          + s.reasons.map(r => `<div class="note ${r.dir > 0 ? 'bull' : 'bear'}"><i></i><div>${esc(r.text)} <small>(${TAG_FR[r.tag] || r.tag}, force ${fmt(r.strength, 2)})</small></div></div>`).join('');
+        if (s.against && s.against.length) html += `<div class="small amb">Contre : ${s.against.map(a => esc(a.text)).join(' ; ')}.</div>`;
+        if (s.ruleNotes && s.ruleNotes.length) html += s.ruleNotes.map(n => `<div class="note info"><i></i><div>${esc(n)}</div></div>`).join('');
+        html += `<div class="row" style="margin-top:8px"><button data-setup='${esc(JSON.stringify({side: s.side, entry: s.entry, stop: s.stop, targets: s.targets}))}'${s.suppressed ? ' disabled' : ''}>→ Calculer la taille (Plan)</button></div>`;
+        html += `<div class="small" style="margin-top:4px">Ce n'est pas un ordre : un setup est une configuration mesurée. Vérifie-la, dimensionne-la, décide.</div></div>`;
+      }
+    }
+    html += `<div class="card"><h2>Ingrédients lus <small>le flux brut, avant score</small></h2>`
+      + ((d.ingredients && d.ingredients.length) ? d.ingredients.map(i =>
+          `<div class="kv"><span>${i.dir > 0 ? '▲' : '▼'} ${esc(TAG_FR[i.tag] || i.tag)}</span><b class="${i.dir > 0 ? 'pos' : 'neg'}">${fmt(i.strength, 2)}</b></div>`).join('')
+        : '<div class="muted">Rien de notable.</div>')
+      + (d.ruleNotes && d.ruleNotes.length ? d.ruleNotes.map(n => `<div class="small">${esc(n)}</div>`).join('') : '') + '</div>';
+    host.innerHTML = html;
+    $$('#tab-setups [data-setup]').forEach(b => b.onclick = () => {
+      try { const s = JSON.parse(b.dataset.setup); fillPlan(s.side, s.entry, s.stop, s.targets); } catch (e) { /* ignore */ }
+    });
+  }
+
+  function fillPlan(side, entry, stop, targets) {
+    const f = $('#planForm');
+    if (!f) return;
+    f.side.value = side;
+    f.root.value = 'NQ';
+    f.entry.value = Number(entry).toFixed(2);
+    f.stop.value = Number(stop).toFixed(2);
+    f.sp.value = '';
+    if (targets && targets[0] != null) f.t1.value = Number(targets[0]).toFixed(2);
+    if (targets && targets[1] != null) f.t2.value = Number(targets[1]).toFixed(2); else f.t2.value = '';
+    f.entry.dispatchEvent(new Event('input', {bubbles: true}));
+    if (cb.showTab) cb.showTab('plan');
+    toast('Setup copié dans le calculateur : vérifie la taille et le risque');
+  }
+
+  // ======================================================= Backtest
+  function buildBacktest() {
+    $('#tab-backtest').innerHTML = `<div class="card"><h2>Backtest <small>sur l'historique chargé</small></h2>
+      <form id="btForm" class="f" autocomplete="off">
+        <label>Unité de temps<select name="tf"></select></label>
+        <label>Score minimal<input name="minScore" inputmode="decimal" value="40"></label>
+        <label>Glissement (ticks)<input name="slippage" inputmode="decimal" value="1"></label>
+        <label>Stop de temps (min)<input name="maxHold" inputmode="decimal" value="20"></label>
+        <label>Risque par trade ($)<input name="risk" inputmode="decimal" value="100"></label>
+        <label>Jours (vide = tous)<input name="days" inputmode="decimal" placeholder="tous"></label>
+        <label class="wide" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="one" style="width:auto"> Au plus 1 trade par séance régulière</label>
+        <div class="row" style="grid-column:1/3"><button type="button" id="btRun" class="primary">Lancer le backtest</button></div>
+      </form>
+      <div class="small" style="margin-top:6px">On rejoue les setups barre par barre, sans regarder le futur (décision à la clôture, entrée à l'ouverture suivante), avec frais et glissement. Puis le résultat passe dans les règles Lucid.</div>
+      <div id="btErr" class="err"></div></div>
+      <div id="btOut"></div>`;
+    const f = $('#btForm');
+    f.tf.innerHTML = (cb.tfs() || ['1m']).map(t => `<option${t === '1m' ? ' selected' : ''}>${t}</option>`).join('');
+    $('#btRun').onclick = async () => {
+      $('#btErr').textContent = '';
+      const q = new URLSearchParams({tf: f.tf.value, minScore: parseNum(f.minScore.value) || 40, slippage: parseNum(f.slippage.value) || 0,
+        maxHold: parseNum(f.maxHold.value) || 20, risk: parseNum(f.risk.value) || 100, onePerSession: f.one.checked ? '1' : '0'});
+      const dv = parseNum(f.days.value); if (!isNaN(dv) && dv > 0) q.set('days', Math.round(dv));
+      $('#btOut').innerHTML = '<div class="card muted">Backtest en cours… (quelques secondes selon le nombre de jours)</div>';
+      $('#btRun').disabled = true;
+      try { backtestResult(await api('/api/backtest?' + q)); }
+      catch (err) { $('#btErr').textContent = err.message; $('#btOut').innerHTML = ''; }
+      finally { $('#btRun').disabled = false; }
+    };
+  }
+
+  function backtestResult(r) {
+    if (!r || !r.ok) { $('#btOut').innerHTML = `<div class="card muted">${esc(r && r.msg ? r.msg : 'Pas de résultat.')}</div>`; return; }
+    const ru = r.rules, cons = ru.consistency;
+    const pass = ru.evalPassed;
+    let html = `<div class="card"><h2>Conformité aux règles Lucid <span class="badge ${pass ? 'ok' : 'bad'}">ÉVAL. ${pass ? 'VALIDÉE' : 'NON VALIDÉE'}</span></h2>`
+      + kv('Profit simulé', `${susd(ru.profit)} <small>sur ${usd(ru.target)}</small>`, cls(ru.profit))
+      + kv('Solde final', usd(ru.finalBalance, 0))
+      + kv('Plancher touché', ru.floorBreach ? `<b class="neg">OUI le ${esc(ru.floorBreach.day)} (${usd(ru.floorBreach.balance, 0)})</b>` : '<b class="pos">non</b>')
+      + kv('Consistance (meilleur jour ≤ 50 %)', cons.ratio == null ? '—' : `${pct(cons.ratio)} ${cons.ok ? '✓' : '✗ il faudrait ' + usd(cons.needed) + ' de profit'}`, cons.ok ? 'pos' : 'neg')
+      + kv('Jours tradés', ru.daysTraded)
+      + `<div class="small" style="margin-top:6px">${pass ? 'Sur cet historique et avec ces réglages, la stratégie aurait passé l\'évaluation.' : 'Ces réglages ne passent pas encore : ajuste le score minimal, le stop de temps ou le risque, et relance.'}</div></div>`;
+
+    html += `<div class="card"><h2>Résultats <small>${r.nTrades} trade(s)</small></h2>`
+      + kv('Résultat net (frais déduits)', susd(r.net), cls(r.net))
+      + kv('Frais payés', usd(r.fees))
+      + kv('Taux de réussite', pct(r.winRate))
+      + kv('Gain moyen · perte moyenne', `${susd(r.avgWin)} · ${susd(r.avgLoss)}`)
+      + kv('Espérance par trade', susd(r.expectancy), cls(r.expectancy))
+      + kv('Facteur de profit', r.profitFactor == null ? '—' : fmt(r.profitFactor, 2))
+      + (r.microShare != null ? kv('Part micro-scalping (≤ 5 s)', `${pct(r.microShare)} <small>limite ${pct(r.microLimit)}</small>`, r.microShare >= r.microLimit ? 'neg' : '') : '')
+      + '</div>';
+
+    const kinds = Object.entries(r.byKind || {});
+    if (kinds.length) html += `<div class="card"><h2>Par type de setup</h2><table><tr><th>Type</th><th>N</th><th>Réussite</th><th>Net</th></tr>`
+      + kinds.map(([k, a]) => `<tr><td>${k === 'momentum' ? 'Momentum' : 'Retournement'}</td><td>${a.n}</td><td>${pct(a.winRate)}</td><td class="${cls(a.net)}">${susd(a.net)}</td></tr>`).join('')
+      + `</table>` + (r.byReason ? `<div class="small" style="margin-top:6px">Sorties : ${Object.entries(r.byReason).map(([k, v]) => `${k} ${v}`).join(' · ')}</div>` : '') + '</div>';
+
+    if (r.equity && r.equity.length) {
+      const bals = r.equity.map(e => e.balance), lo = Math.min(...bals, r.rules.finalBalance), hi = Math.max(...bals);
+      const w = 260, h = 48, n = bals.length;
+      const pts = bals.map((b, i) => `${(n < 2 ? 0 : i / (n - 1)) * w},${h - (hi === lo ? h / 2 : (b - lo) / (hi - lo) * (h - 4) + 2)}`).join(' ');
+      html += `<div class="card"><h2>Courbe de solde (fin de journée)</h2><svg viewBox="0 0 ${w} ${h}" style="width:100%;height:60px"><polyline points="${pts}" fill="none" stroke="var(--acc)" stroke-width="1.5"/></svg>`
+        + `<table style="margin-top:6px"><tr><th>Jour</th><th>P&amp;L</th><th>Solde</th></tr>`
+        + r.days.map((d, i) => `<tr><td>${esc(d.day)}</td><td class="${cls(d.pnl)}">${susd(d.pnl)}</td><td>${usd(r.equity[i].balance, 0)}</td></tr>`).join('') + '</table></div>';
+    }
+    if (r.profile && r.profile.name && r.profile.name.toLowerCase().indexOf('simul') < 0) { /* reserved */ }
+    html += `<div class="card small muted">Un backtest sur-estime toujours un peu (pas de file d'attente réelle, glissement supposé constant). Il sert à comparer des réglages, pas à promettre un résultat. Sur données simulées, les prix sont fictifs : seuls comptent la mécanique et la conformité aux règles.</div>`;
+    $('#btOut').innerHTML = html;
+  }
+
   // ======================================================= Footprint
   function buildFp() {
     $('#tab-fp').innerHTML = '<div class="card"><h2>Footprint <small id="fpTf"></small></h2><div id="fpOut" class="grid2" style="align-items:start"></div>'
@@ -402,6 +535,6 @@ const Panels = (() => {
       `<tr><td>${U.hm(t.t / 1000, cb.tz())}</td><td class="${t.s > 0 ? 'pos' : 'neg'}">${t.s > 0 ? '▲' : '▼'} ${t.q}</td><td>${fmt(t.p, 2)}</td></tr>`).join('')}</table>`;
   }
 
-  function init(callbacks) { cb = callbacks; buildAccount(); buildPlan(); buildFp(); }
-  return {init, lecture, levels, account, footprint, planResult};
+  function init(callbacks) { cb = callbacks; buildAccount(); buildPlan(); buildBacktest(); buildFp(); }
+  return {init, lecture, levels, account, footprint, planResult, setups, backtestResult};
 })();

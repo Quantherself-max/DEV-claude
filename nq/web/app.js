@@ -105,6 +105,11 @@
     Panels.footprint(S.fp, S.state ? S.state.tape : [], S.tf);
   }
 
+  async function pollSignals() {
+    if (S.tab !== 'setups') return;
+    Panels.setups(await api(`/api/signals?tf=${S.tf}` + (S.pos ? '&pos=' + encodeURIComponent(S.pos) : '')));
+  }
+
   // ---------- interface ----------
   function legend(r, hover) {
     const el = $('#legend');
@@ -126,6 +131,7 @@
     $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
     $$('.tabpage').forEach(p => { p.hidden = p.id !== 'tab-' + name; });
     if (name === 'fp') pollFp().catch(() => {});
+    if (name === 'setups') pollSignals().catch(() => {});
   }
 
   async function start() {
@@ -154,7 +160,8 @@
     $$('#tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
     $('#acctChip').onclick = () => showTab('account');
 
-    Panels.init({getLast, getPos, setPos, tz: tzNow, refreshAccount: () => pollAccount().catch(e => U.toast(e.message, true))});
+    Panels.init({getLast, getPos, setPos, tz: tzNow, showTab, tfs: () => (cfg.tfs || ['1m']),
+      refreshAccount: () => pollAccount().catch(e => U.toast(e.message, true))});
     showTab(S.tab);
     every(pollState, 1000, 'state');
     every(pollBars, 1000, 'bars');
@@ -162,6 +169,7 @@
     every(pollLevels, 5000, 'levels');
     every(pollContext, 4000, 'context');
     every(pollAccount, 3000, 'account');
+    every(pollSignals, 2500, 'signals');
     every(pollFp, 2000, 'fp');
   }
 

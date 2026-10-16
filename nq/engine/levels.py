@@ -33,8 +33,9 @@ def _round_levels(price: float, span: float = 200.0) -> list:
     return out
 
 
-def build(mk, zone_pts: float = 6.0, min_zone_score: float = 4.0, round_span: float = 200.0) -> dict:
-    """Niveaux et zones autour du prix. `mk` : Market. Renvoie {"price", "levels": [...], "zones": [...]} (niveaux tries du haut vers le bas)."""
+def build(mk, zone_pts: float = 6.0, min_zone_score: float = 4.0, round_span: float = 200.0, stats_cache: dict | None = None) -> dict:
+    """Niveaux et zones autour du prix. `mk` : Market. Renvoie {"price", "levels": [...], "zones": [...]} (niveaux tries du haut vers le bas).
+    `stats_cache` : passe au calcul de profil (vp.stats) pour eviter de recalculer le profil de la veille a chaque appel (backtest)."""
     with mk.lock:
         price = mk.price
         if price is None:
@@ -56,7 +57,7 @@ def build(mk, zone_pts: float = 6.0, min_zone_score: float = 4.0, round_span: fl
                 add("Low veille", o["l"], "pdl", "veille")
                 add("Clôture veille", o["c"], "pdc", "veille")
             lad = mk.ladder(prev, "rth")
-            st = vp.stats(lad, min_row_ticks=4) if lad else None
+            st = vp.stats(lad, min_row_ticks=4, cache=stats_cache) if lad else None
             if st:
                 add("POC veille", st["poc"], "ppoc", "veille")
                 add("VAH veille", st["vah"], "pvah", "veille")
@@ -88,7 +89,7 @@ def build(mk, zone_pts: float = 6.0, min_zone_score: float = 4.0, round_span: fl
                 add("VWAP −1σ", m - sd, "vm1", "seance")
                 add("VWAP +2σ", m + 2 * sd, "vp2", "seance")
                 add("VWAP −2σ", m - 2 * sd, "vm2", "seance")
-            st = vp.stats(lad, min_row_ticks=4)
+            st = vp.stats(lad, min_row_ticks=4, cache=stats_cache)
             if st:
                 suffix = "séance" if in_rth_or_after else "Globex"
                 add(f"POC {suffix}", st["poc"], "poc", "seance")

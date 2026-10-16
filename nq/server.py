@@ -79,6 +79,17 @@ def route_get(app: App, path: str, q: dict):
             raise ApiError(400, str(e)) from None
     if path == "/api/levels":
         return s.levels()
+    if path == "/api/signals":
+        try:
+            return s.signals(one("tf", "1m"), one("pos"))
+        except ValueError as e:
+            raise ApiError(400, str(e)) from None
+    if path == "/api/backtest":
+        try:
+            return s.backtest(one("tf", "1m"), _num(q, "minScore", 40.0), _num(q, "slippage", 1.0), _num(q, "maxHold", 20, int),
+                              _num(q, "risk", 100.0), str(one("onePerSession", "")).lower() in ("1", "true", "on"), _num(q, "days", None, int))
+        except ValueError as e:
+            raise ApiError(400, str(e)) from None
     if path == "/api/context":
         return s.context(one("pos"))
     if path == "/api/account":
