@@ -2,7 +2,7 @@
 // Les formulaires sont construits UNE fois (sinon un rafraichissement effacerait ce que tu es en train de taper) ; seules les zones dynamiques sont redessinees.
 const Panels = (() => {
   'use strict';
-  const {fmt, sign, usd, susd, pct, esc, cls, $, $$, api, toast, debounce} = U;
+  const {fmt, sign, usd, susd, pct, esc, cls, $, $$, api, toast, debounce, parseNum} = U;
   let cb = {};
   let lastField = 'entry';
   let showRounds = false;
@@ -117,7 +117,7 @@ const Panels = (() => {
     loadPos();
     pf.onsubmit = e => {
       e.preventDefault();
-      const q = parseInt(pf.qty.value, 10), en = parseFloat(String(pf.entry.value).replace(',', '.'));
+      const q = parseInt(pf.qty.value, 10), en = parseNum(pf.entry.value);
       if (!(q > 0) || !(en > 0)) { toast('Quantité et prix d\'entrée requis', true); return; }
       cb.setPos(`${pf.side.value},${pf.root.value},${q},${en}`); cb.refreshAccount(); toast('Position enregistrée');
     };
@@ -131,10 +131,11 @@ const Panels = (() => {
     // trade
     tf.onsubmit = async e => {
       e.preventDefault();
-      const f = new FormData(tf), num = k => parseFloat(String(f.get(k)).replace(',', '.'));
+      const f = new FormData(tf), num = k => parseNum(f.get(k));
       $('#tradeErr').textContent = '';
       try {
         const hold = String(f.get('hold')).trim() === '' ? null : num('hold');
+        if (hold !== null && isNaN(hold)) throw new Error('durée du trade invalide : un nombre de secondes est attendu');
         await api('/api/account/trade', {body: {inst: f.get('inst'), side: f.get('side'), qty: num('qty'), entry: num('entry'), exit: num('exit'), setup: f.get('setup'), note: f.get('note'), hold_s: hold}});
         const p = (cb.getPos() || '').split(',');
         if (p.length === 4 && p[1] === f.get('inst') && p[0] === f.get('side')) {                // meme position : elle diminue de la quantite sortie (ou se referme)
@@ -152,10 +153,14 @@ const Panels = (() => {
     // regles
     $('#rulesForm').innerHTML = RULE_FIELDS.map(([k, l]) => `<label>${l}<input name="${k}" inputmode="decimal"></label>`).join('');
     $('#rulesSave').onclick = async () => {
-      const f = $('#rulesForm'), ch = {fee_rt: {}}, val = k => String(f[k].value).trim().replace(',', '.');
+      const f = $('#rulesForm'), ch = {fee_rt: {}};
+      $('#rulesNote').textContent = '';
       for (const [k] of RULE_FIELDS) {
-        if (k.startsWith('fee_')) { if (val(k) !== '') ch.fee_rt[k.slice(4)] = parseFloat(val(k)); continue; }
-        ch[k] = val(k) === '' ? null : parseFloat(val(k));
+        const raw = String(f[k].value).trim(), fee = k.startsWith('fee_');
+        if (raw === '') { if (!fee) ch[k] = null; continue; }
+        const n = parseNum(raw);
+        if (isNaN(n)) { $('#rulesNote').textContent = `${k} : « ${raw} » n'est pas un nombre`; return; }
+        if (fee) ch.fee_rt[k.slice(4)] = n; else ch[k] = n;
       }
       for (const k of ['profit_target', 'max_drawdown', 'max_minis', 'max_micros', 'risk_per_trade', 'daily_stop']) if (ch[k] == null || isNaN(ch[k])) { delete ch[k]; }
       try { await api('/api/account/profile', {body: {changes: ch}}); toast('Règles enregistrées'); cb.refreshAccount(true); } catch (err) { $('#rulesNote').textContent = err.message; }
@@ -163,7 +168,7 @@ const Panels = (() => {
     const af = $('#adjForm');
     af.onsubmit = async e => {
       e.preventDefault(); $('#adjErr').textContent = '';
-      try { await api('/api/account/adjust', {body: {day: af.day.value.trim(), net: parseFloat(String(af.net.value).replace(',', '.')), note: af.note.value}}); af.net.value = ''; toast('Ajouté'); cb.refreshAccount(); }
+      try { await api('/api/account/adjust', {body: {day: af.day.value.trim(), net: parseNum(af.net.value), note: af.note.value}}); af.net.value = ''; toast('Ajouté'); cb.refreshAccount(); }
       catch (err) { $('#adjErr').textContent = err.message; }
     };
     $('#fundedBtn').onclick = async () => {
@@ -174,8 +179,9 @@ const Panels = (() => {
     payf.onsubmit = async e => {
       e.preventDefault(); $('#payoutErr').textContent = '';
       try {
-        await api('/api/account/payout', {body: {amount: parseFloat(String(payf.amount.value).replace(',', '.')), note: payf.note.value}});
+        const r = await api('/api/account/payout', {body: {amount: parseNum(payf.amount.value), note: payf.note.value}});
         payf.amount.value = ''; payf.note.value = ''; toast('Retrait enregistré : le plancher passe au niveau verrouillé'); cb.refreshAccount();
+        if (r && r.warnings && r.warnings.length) $('#payoutErr').textContent = 'Enregistré, mais d\'après ton journal : ' + r.warnings.join(' ; ') + '. Vérifie tes saisies si Lucid n\'est pas du même avis.';
       } catch (err) { $('#payoutErr').textContent = err.message; }
     };
     $('#resetBtn').onclick = async () => {
@@ -186,6 +192,12 @@ const Panels = (() => {
 
   function account(a, perf) {
     if (!a) return;
+    const capKey = a.stage + ':' + a.caps.minis + '/' + a.caps.micros;         // le palier ou l'étape change : le calcul du plan affiché (taille, bouton « Prendre la position ») doit suivre
+    if (capKey !== account.capKey) {
+      const first = account.capKey === undefined; account.capKey = capKey;
+      const pf = $('#planForm');
+      if (!first && pf && pf.entry.value && pf.stop.value) pf.entry.dispatchEvent(new Event('input', {bubbles: true}));
+    }
     const [label, kind] = STATUS[a.status] || ['—', ''];
     const c = a.consistency, buf = a.bufferFrac;
     let cons = '';
@@ -224,7 +236,7 @@ const Panels = (() => {
       let h = `<div class="small">Retrait n° <b>${Math.min(po.done + 1, 99)}</b> · il en reste ${po.left} sur ${po.done + po.left} avant le Live</div>`
         + `<div style="margin-top:6px">Jours à ≥ ${usd(po.dayProfit)} dans ce cycle : ${chips} <b>${po.daysOk.length} / ${po.daysNeeded}</b></div>`
         + kv('Profit du cycle', susd(po.cycleProfit), cls(po.cycleProfit)) + kv('Profit sur le compte', usd(po.profitBasis))
-        + kv('Plafond actuel', `${usd(po.cap)} <small>50 % du profit, 1 000 $ maximum</small>`);
+        + kv('Plafond actuel', `${usd(Math.floor(po.cap + 1e-9))} <small>50 % du profit, 1 000 $ maximum</small>`);
       if (po.eligible) {
         h += `<div style="margin-top:6px"><span class="badge ok">RETRAIT POSSIBLE</span> jusqu'à <b>${usd(po.max.amount)}</b> <small>soit ${usd(po.max.net)} pour toi (90 %)</small></div>`
           + `<div class="small">Après ce retrait : solde ${usd(po.max.balance)}, plancher ${usd(po.max.floor)} <small>(il saute au niveau verrouillé dès la demande)</small>, <b>marge ${usd(po.max.cushion)}</b>.</div>`
@@ -295,7 +307,7 @@ const Panels = (() => {
       <div class="small" style="margin-top:6px">Saisis le stop en prix <i>ou</i> en points (l'autre se remplit). Le risque inclut les frais aller-retour. Tu peux aussi cliquer un niveau dans l'onglet Niveaux.</div></div>
       <div id="planOut"></div>`;
     const f = $('#planForm');
-    const num = k => { const v = parseFloat(String(f[k].value).replace(',', '.')); return isNaN(v) ? null : v; };
+    const num = k => { const v = parseNum(f[k].value); return isNaN(v) ? null : v; };
     const sgn = () => f.side.value === 'long' ? 1 : -1;
     const set = (k, v) => { f[k].value = v == null ? '' : (Math.round(v * 100) / 100).toString(); };
     const pairs = [['stop', 'sp', -1], ['t1', 'p1', 1], ['t2', 'p2', 1]];

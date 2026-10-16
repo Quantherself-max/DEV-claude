@@ -64,15 +64,31 @@ class PropProfile:
 
     @classmethod
     def from_dict(cls, d: dict) -> "PropProfile":
-        """Profil par defaut dont on remplace les champs presents dans `d` (les champs inconnus sont ignores)."""
+        """Profil par defaut dont on remplace les champs presents dans `d` (les champs inconnus sont ignores). Leve ValueError si une valeur est
+        inutilisable (nombre attendu, palier mal forme, ...) : ce profil sert de base a tous les calculs, il doit etre sain une fois construit."""
         base = cls()
         optional = {"consistency_pct", "daily_loss_limit", "min_trading_days", "lock_offset"}      # None est une valeur valide
         for k in {f.name for f in fields(cls)}:
             if k in (d or {}) and (d[k] is not None or k in optional):
                 setattr(base, k, d[k])
+        for k in _FLOAT_FIELDS:
+            v = getattr(base, k)
+            setattr(base, k, None if v is None and k in optional else _number(v, k))
+        for k in _INT_FIELDS:
+            v = getattr(base, k)
+            setattr(base, k, None if v is None and k in optional else int(_number(v, k)))
+        if base.daily_loss_limit == 0:                         # 0 = « pas de limite » (champ vide), pas une limite a 0 $ qui verrouillerait chaque seance
+            base.daily_loss_limit = None
         base.to_verify = tuple(base.to_verify)
-        base.scaling = tuple((float(t[0]), int(t[1]), int(t[2])) for t in base.scaling)
-        base.fee_rt = {**PropProfile().fee_rt, **{str(k).upper(): float(v) for k, v in (base.fee_rt or {}).items()}}
+        try:
+            base.scaling = tuple(sorted((_number(t[0], "scaling"), int(_number(t[1], "scaling")), int(_number(t[2], "scaling"))) for t in base.scaling))
+        except (IndexError, TypeError) as e:
+            raise ValueError("scaling : une liste de paliers [profit, minis, micros] est attendue") from e
+        try:
+            base.fee_rt = {**PropProfile().fee_rt, **{str(k).upper(): _number(v, "fee_rt") for k, v in (base.fee_rt or {}).items()}}
+        except AttributeError as e:
+            raise ValueError("fee_rt : un dictionnaire {contrat: frais} est attendu") from e
+        validate_profile(base)
         return base
 
     def to_dict(self) -> dict:
@@ -80,6 +96,55 @@ class PropProfile:
         d["to_verify"] = list(self.to_verify)
         d["scaling"] = [list(t) for t in self.scaling]
         return d
+
+
+_FLOAT_FIELDS = ("start_balance", "profit_target", "max_drawdown", "lock_offset", "consistency_pct", "daily_loss_limit", "payout_day_profit", "payout_min",
+                 "payout_cap", "payout_cap_pct", "payout_split", "risk_per_trade", "daily_stop")
+_INT_FIELDS = ("max_minis", "max_micros", "min_trading_days", "payout_days", "max_payouts")
+
+
+def _number(v, name: str) -> float:
+    """Nombre FINI (ni booleen, ni NaN, ni infini) ou ValueError : une valeur non finie empoisonnerait tous les soldes et le JSON envoye a l'interface."""
+    if isinstance(v, bool) or v is None:
+        raise ValueError(f"{name} : un nombre est attendu")
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} : un nombre est attendu") from None
+    if not math.isfinite(x):
+        raise ValueError(f"{name} : un nombre fini est attendu")
+    return x
+
+
+def validate_profile(p: "PropProfile") -> None:
+    """Refuse (ValueError, message en francais) un profil qui ferait planter ou fausser les calculs : plafonds nuls, paliers vides, parts hors de ]0 ; 1]."""
+    if p.dd_mode not in ("eod_trailing", "static"):
+        raise ValueError("dd_mode : eod_trailing ou static")
+    for k in ("start_balance", "profit_target", "max_drawdown", "risk_per_trade", "daily_stop", "payout_min", "payout_cap"):
+        if getattr(p, k) <= 0:
+            raise ValueError(f"{k} doit être positif")
+    if p.payout_cap < p.payout_min:
+        raise ValueError("payout_cap doit être au moins égal à payout_min")
+    if p.payout_day_profit < 0 or (p.lock_offset is not None and p.lock_offset < 0):
+        raise ValueError("payout_day_profit et lock_offset ne peuvent pas être négatifs")
+    for k in ("payout_cap_pct", "payout_split"):
+        if not 0 < getattr(p, k) <= 1:
+            raise ValueError(f"{k} doit être compris entre 0 (exclu) et 1")
+    if p.consistency_pct is not None and not 0 < p.consistency_pct <= 100:
+        raise ValueError("consistency_pct doit être compris entre 0 (exclu) et 100")
+    if p.daily_loss_limit is not None and p.daily_loss_limit <= 0:
+        raise ValueError("daily_loss_limit doit être positif (laisse vide pour aucune limite)")
+    for k in ("max_minis", "max_micros", "payout_days", "max_payouts"):
+        if getattr(p, k) < 1:
+            raise ValueError(f"{k} doit être au moins 1")
+    if p.min_trading_days is not None and p.min_trading_days < 0:
+        raise ValueError("min_trading_days ne peut pas être négatif")
+    if not p.scaling:
+        raise ValueError("scaling : au moins un palier est nécessaire")
+    if len({t[0] for t in p.scaling}) != len(p.scaling) or any(t[1] < 1 or t[2] < 1 for t in p.scaling):
+        raise ValueError("scaling : seuils de profit distincts et au moins 1 mini / 1 micro par palier")
+    if any(v < 0 for v in p.fee_rt.values()):
+        raise ValueError("fee_rt : des frais négatifs ne sont pas acceptés")
 
 
 def locked_level(p: PropProfile):
@@ -105,12 +170,12 @@ def ledger(days: list, payouts: list, p: PropProfile) -> dict:
     paid = 0.0
     for d in sorted(set(pnl_by_day) | set(pay_by_day)):
         if d in pay_by_day:
-            bal -= pay_by_day[d]
+            bal = round(bal - pay_by_day[d], 2)
             paid += pay_by_day[d]
             if lock is not None:
                 floor = max(floor, lock)
         if d in pnl_by_day:
-            bal += pnl_by_day[d]
+            bal = round(bal + pnl_by_day[d], 2)                # au centime : sans cela 999,9999999999964 $ de profit n'atteint pas le palier de 1 000 $
             if p.dd_mode == "eod_trailing":
                 peak = max(peak, bal)
                 nf = peak - p.max_drawdown
@@ -130,15 +195,17 @@ def scaling_caps(profit: float, p: PropProfile) -> tuple:
     """(minis, micros, prochain seuil de profit ou None) du compte finance pour ce profit simule (mesure en FIN de seance, jamais en cours de seance)."""
     cur = p.scaling[0]
     for t in p.scaling:
-        if profit >= t[0]:
+        if profit >= t[0] - 1e-6:
             cur = t
-    nxt = next((t[0] for t in p.scaling if t[0] > max(profit, cur[0])), None)      # un profit negatif reste dans le 1er palier : le prochain est le 2e
+    nxt = next((t[0] for t in p.scaling if t[0] > max(profit, cur[0]) + 1e-6), None)      # un profit negatif reste dans le 1er palier : le prochain est le 2e
     return int(cur[1]), int(cur[2]), nxt
 
 
-def payout_status(cycle_days: list, balance: float, floor: float, done: int, p: PropProfile) -> dict:
-    """Ou en est le prochain retrait (compte finance). cycle_days : [(jour, P&L net)] des journees TERMINEES depuis le dernier retrait ; balance : solde
-    a la derniere cloture ; floor : plancher a cette date ; done : retraits deja faits.
+def payout_status(cycle_days: list, balance: float, floor: float, done: int, p: PropProfile, live_balance: float | None = None,
+                  equity: float | None = None) -> dict:
+    """Ou en est le prochain retrait (compte finance). cycle_days : [(jour, P&L net)] des journees TERMINEES du cycle en cours ; balance : solde a la
+    derniere cloture ; floor : plancher a cette date ; done : retraits deja faits ; live_balance / equity : solde et equity du moment (la marge APRES
+    retrait se calcule dessus : si la journee est deja negative, le retrait ne doit pas faire passer sous le plancher).
 
     Eligibilite : au moins `payout_days` jours a >= `payout_day_profit` dans le cycle, profit du cycle positif, et un plafond (min(part du profit,
     plafond)) au moins egal au minimum d'une demande. Le plafond ne monte pas avec le nombre de retraits.
@@ -146,28 +213,33 @@ def payout_status(cycle_days: list, balance: float, floor: float, done: int, p: 
     days_ok = [(d, x) for d, x in cycle_days if x >= p.payout_day_profit - 1e-9]
     cycle_profit = sum(x for _, x in cycle_days)
     profit_basis = max(0.0, balance - p.start_balance)
-    cap = min(p.payout_cap_pct * profit_basis, p.payout_cap)
+    cap = math.floor(min(p.payout_cap_pct * profit_basis, p.payout_cap) * 100 + 1e-6) / 100          # jamais arrondi vers le haut : on n'affiche pas un maximum que la règle refuse
     lock = locked_level(p)
     floor_after = max(floor, lock) if lock is not None else floor
+    live = balance if live_balance is None else live_balance
+    eq = live if equity is None else equity
+    room = eq - floor_after                                   # marge disponible avant le plancher, au moment de la demande
     why = []
     if len(days_ok) < p.payout_days:
         why.append(f"il manque {p.payout_days - len(days_ok)} jour(s) à ≥ {p.payout_day_profit:.0f} $ dans ce cycle")
     if cycle_profit <= 0:
         why.append("le profit du cycle n'est pas positif")
     if cap < p.payout_min - 1e-9:
-        why.append(f"le plafond actuel ({cap:.0f} $) est sous le minimum ({p.payout_min:.0f} $) : il faut au moins "
-                   f"{p.payout_min / p.payout_cap_pct:.0f} $ de profit sur le compte")
+        why.append(f"le plafond actuel ({math.floor(cap):.0f} $) est sous le minimum ({p.payout_min:.0f} $) : il faut au moins "
+                   f"{math.ceil(p.payout_min / p.payout_cap_pct):.0f} $ de profit sur le compte")
+    elif room - p.payout_min <= 0:
+        why.append(f"la marge actuelle ({max(0.0, room):.0f} $) ne permet pas un retrait minimal ({p.payout_min:.0f} $) sans toucher le plancher")
     if done >= p.max_payouts:
         why.append(f"{p.max_payouts} retraits déjà faits : passage en Live au choix de Lucid")
     eligible = not why
-    req = cap if eligible else 0.0
+    req = float(max(p.payout_min, math.floor(min(cap, room - 1)))) if eligible else 0.0       # en dollars entiers, jamais au-dessus du plafond, au moins 1 $ au-dessus du plancher
 
     def after(amount):
-        return {"amount": amount, "net": amount * p.payout_split, "balance": balance - amount, "floor": floor_after, "cushion": balance - amount - floor_after}
+        return {"amount": amount, "net": math.floor(amount * p.payout_split * 100 + 1e-6) / 100, "balance": round(live - amount, 2), "floor": floor_after, "cushion": round(eq - amount - floor_after, 2)}
     return {"eligible": eligible, "why": why, "daysOk": [d for d, _ in days_ok], "daysNeeded": p.payout_days, "dayProfit": p.payout_day_profit,
             "cycleProfit": cycle_profit, "profitBasis": profit_basis, "cap": cap, "minRequest": p.payout_min, "done": done, "left": max(0, p.max_payouts - done),
             "max": after(req) if eligible else None, "min": after(p.payout_min) if eligible or cap >= p.payout_min else None,
-            "profitForMin": p.payout_min / p.payout_cap_pct if p.payout_cap_pct else None}
+            "profitForMin": math.ceil(p.payout_min / p.payout_cap_pct)}
 
 
 def consistency(day_pnls: list, p: PropProfile) -> dict:
@@ -194,16 +266,20 @@ def state(closed_days: list, today_pnl: float, open_pnl: float, p: PropProfile, 
     Le plancher ne change qu'en fin de journee (EOD) : pendant la seance il reste celui de la veille, et la marge (`buffer`) est mesuree sur
     l'EQUITY (solde + latent), prudemment : la limite est consideree touchee des que l'equity l'atteint. La limite de perte journaliere (option)
     est « souple » : elle verrouille la fin de seance (`dllHit`) sans faire echouer le compte."""
-    payouts = payouts or []
+    pays = [(x[0], x[1], bool(x[2]) if len(x) > 2 else False) for x in (payouts or [])]      # (jour, montant, saisi apres les trades de ce jour)
+    merged: dict = {}
+    for d, x in closed_days:                                  # un jour present plusieurs fois compte pour UN jour (comme dans ledger)
+        merged[d] = merged.get(d, 0.0) + x
+    closed_days = sorted(merged.items())
     funded = stage == "funded"
-    before = [(d, a) for d, a in payouts if today is None or d < today]
-    pay_today = sum(a for d, a in payouts if today is not None and d == today)
+    before = [(d, a) for d, a, _ in pays if today is None or d < today]
+    pay_today = sum(a for d, a, _ in pays if today is not None and d == today)
     led = ledger(closed_days, before, p)
-    bal_closed, floor = led["balance"] - pay_today, led["floor"]
+    bal_closed, floor = round(led["balance"] - pay_today, 2), led["floor"]
     lock = locked_level(p)
     if pay_today and lock is not None:
         floor = max(floor, lock)
-    balance = bal_closed + today_pnl
+    balance = round(bal_closed + today_pnl, 2)
     equity = balance + open_pnl
     buffer = equity - floor
     profit = balance - p.start_balance
@@ -213,7 +289,7 @@ def state(closed_days: list, today_pnl: float, open_pnl: float, p: PropProfile, 
     cons = consistency(all_days, pc)
     cons["todayCap"] = consistency(pnls, pc)["dayCap"]                        # gain maximal d'AUJOURD'HUI sans depasser la part autorisee du total (jours termines)
     traded = len([x for x in closed_days if x[1] != 0]) + (1 if today_pnl else 0)
-    target_hit = profit >= p.profit_target
+    target_hit = profit >= p.profit_target - 1e-6
     enough_days = p.min_trading_days is None or traded >= p.min_trading_days
     breached = equity <= floor + 1e-9
     passed = (not funded) and (not breached) and target_hit and cons["ok"] and enough_days
@@ -232,7 +308,7 @@ def state(closed_days: list, today_pnl: float, open_pnl: float, p: PropProfile, 
     best_day = max(closed_days, key=lambda x: x[1]) if closed_days else None
     # taille autorisee : evaluation = plafond plein ; compte finance = palier selon le profit a la derniere cloture (mis a jour en fin de seance)
     if funded:
-        minis, micros, nxt = scaling_caps(bal_closed - p.start_balance, p)
+        minis, micros, nxt = scaling_caps(led["balance"] - p.start_balance, p)         # palier mesure AVANT un retrait du jour : il ne bouge qu'en fin de seance
     else:
         minis, micros, nxt = p.max_minis, p.max_micros, None
     out = {
@@ -245,15 +321,16 @@ def state(closed_days: list, today_pnl: float, open_pnl: float, p: PropProfile, 
         "todayPnl": today_pnl, "openPnl": open_pnl, "dayPnl": day_now,
         "dailyStop": p.daily_stop, "dailyStopLeft": max(0.0, p.daily_stop + day_now) if day_now < 0 else p.daily_stop,
         "dailyStopHit": day_now <= -p.daily_stop,
-        "dll": p.daily_loss_limit, "dllHit": p.daily_loss_limit is not None and day_now <= -p.daily_loss_limit,
+        "dll": p.daily_loss_limit, "dllHit": p.daily_loss_limit is not None and day_now <= -p.daily_loss_limit + 1e-9,
         "maxMinis": p.max_minis, "maxMicros": p.max_micros, "caps": {"minis": minis, "micros": micros, "next": nxt}, "riskPerTrade": p.risk_per_trade,
         "passed": passed, "breached": breached, "paid": led["paid"] + pay_today, "payout": None,
     }
     if funded:
-        last_pay = max((d for d, _ in payouts if today is None or d <= today), default=None)
-        cycle = [x for x in closed_days if last_pay is None or x[0] >= last_pay]
-        done = len([1 for d, _ in payouts if today is None or d <= today])
-        out["payout"] = payout_status(cycle, bal_closed, floor, done, p)
+        dated = [x for x in pays if today is None or x[0] <= today]
+        last = max(enumerate(dated), key=lambda ix: (ix[1][0], ix[0]))[1] if dated else None        # dernier retrait : le plus tardif, a jour egal le dernier saisi
+        # un retrait a l'ouverture de son jour : les trades de ce jour comptent dans le NOUVEAU cycle ; saisi apres ces trades : ils restent dans l'ancien
+        cycle = [x for x in closed_days if last is None or x[0] > last[0] or (x[0] == last[0] and not last[2])]
+        out["payout"] = payout_status(cycle, bal_closed, floor, len(dated), p, live_balance=balance, equity=equity)
     return out
 
 
@@ -331,6 +408,8 @@ def plan(side: str, entry: float, stop: float, targets: list, root: str, p: Prop
             warns.append(f"Si le stop est touché, la journée atteint ton stop quotidien (−{acct['dailyStop']:.0f} $).")
         if acct["breached"]:
             warns.append("Le plancher du compte est atteint : plus aucun trade.")
+        elif acct.get("dllHit"):
+            warns.append("La limite de perte journalière est atteinte : plus aucun trade jusqu'à la séance suivante.")
     if risk > p.risk_per_trade + 1e-9:
         warns.append(f"Risque demandé ({risk:.0f} $) au-dessus de ta limite par trade ({p.risk_per_trade:.0f} $).")
     first = sizes[root]["targets"][0] if sizes[root]["targets"] else None

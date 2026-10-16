@@ -307,18 +307,27 @@ class ApiTests(unittest.TestCase):
     def test_zz_funded_and_payout_via_api(self):
         self.post("/api/account/reset", {"confirm": True})
         self.assertEqual(self.post("/api/account/payout", {"amount": 500})[0], 400)               # pas de retrait en evaluation
-        st, r = self.post("/api/account/funded", {})
+        st, r = self.post("/api/account/funded", {"t": 1_790_000_000_000})                        # 2026-09-21
         self.assertEqual((st, r["stage"]), (200, "funded"))
         self.assertEqual(self.post("/api/account/funded", {})[0], 400)
         st, ac = self.get("/api/account")
         self.assertEqual((ac["stage"], ac["caps"]["minis"], ac["payout"]["eligible"]), ("funded", 1, False))
         self.assertIn("jour(s)", ac["payout"]["why"][0])
-        self.assertEqual(self.post("/api/account/payout", {"amount": -1})[0], 400)
+        for bad in (-1, 0, "nan", "inf", 1e308, True, None, [5], "abc", 499, 1_001):
+            self.assertEqual(self.post("/api/account/payout", {"amount": bad})[0], 400, bad)
+        st, e = self.post("/api/account/payout", {"amount": 500})                                 # compte neuf : 24 500 $ serait sous le plancher verrouillé
+        self.assertEqual(st, 400)
+        self.assertIn("plancher", e["error"])
+        for t in ("x", 1e30, 123, -5):
+            self.assertEqual(self.post("/api/account/funded", {"t": t})[0], 400, t)               # reste « déjà financé » ou horodatage refusé : jamais 500
+        for d in range(22, 27):
+            self.assertEqual(self.post("/api/account/adjust", {"day": f"2026-09-{d}", "net": 300})[0], 200)
         st, p = self.post("/api/account/payout", {"amount": 500, "note": "test"})
-        self.assertEqual((st, p["amount"]), (200, 500.0))
-        self.assertEqual(self.get("/api/account")[1]["balance"], 24_500)
+        self.assertEqual((st, p["amount"], p["warnings"]), (200, 500.0, []))
+        self.assertEqual(self.get("/api/account")[1]["balance"], 26_000)
         self.post("/api/account/undo", {})
-        self.post("/api/account/undo", {})
+        for _ in range(6):
+            self.post("/api/account/undo", {})
         self.assertEqual(self.get("/api/account")[1]["stage"], "eval")
 
     def test_zz_reset_needs_confirmation_and_profile(self):

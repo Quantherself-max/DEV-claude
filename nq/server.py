@@ -94,6 +94,17 @@ def route_get(app: App, path: str, q: dict):
     return None
 
 
+def _finite(o):
+    """Copie de `o` ou tout nombre non fini est remplace par None."""
+    if isinstance(o, float):
+        return o if o == o and o not in (float("inf"), float("-inf")) else None
+    if isinstance(o, dict):
+        return {k: _finite(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_finite(v) for v in o]
+    return o
+
+
 def route_post(app: App, path: str, body: dict):
     s = app.service
     a = s.account
@@ -156,7 +167,11 @@ def make_handler(app: App):
             self.wfile.write(data)
 
         def _json(self, status: int, obj):
-            self._send(status, json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8"), "application/json; charset=utf-8")
+            try:
+                text = json.dumps(obj, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            except ValueError:                                              # NaN / infini : jamais dans le JSON (l'interface le refuserait) -> null
+                text = json.dumps(_finite(obj), ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            self._send(status, text.encode("utf-8"), "application/json; charset=utf-8")
 
         def _static(self, path: str):
             rel = "index.html" if path in ("", "/") else path.lstrip("/")

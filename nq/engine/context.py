@@ -3,6 +3,8 @@
 Ce n'est PAS un generateur de signaux. Chaque ligne decrit un fait mesure (position face au VWAP, a la zone de valeur, a l'initial balance,
 flux d'ordres, amplitude du jour) avec un ton : `bull` (favorable aux acheteurs), `bear` (aux vendeurs), `info`, `warn`. Les setups viendront
 au-dessus de cette lecture, et seront MESURES avant d'etre crus (voir README, « Methode »)."""
+from decimal import ROUND_HALF_UP, Decimal
+
 from . import clock, cvd, vp, vwap
 from .bars import atr, resample
 from .events import blackout, upcoming
@@ -11,7 +13,8 @@ from .levels import nearest
 
 def fr(x, d: int = 1) -> str:
     """Nombre a la francaise : virgule decimale, espace fine insecable pour les milliers, vrai signe moins."""
-    return f"{x:,.{d}f}".replace(",", "\u202f").replace(".", ",").replace("-", "\u2212")
+    q = Decimal(repr(float(x))).quantize(Decimal(1).scaleb(-d), rounding=ROUND_HALF_UP)         # comme l'interface (Intl) : 472,5 -> 473, pas 472
+    return f"{q:,.{d}f}".replace(",", "\u202f").replace(".", ",").replace("-", "\u2212")
 
 
 def _adr(mk, day: str, n: int = 5):

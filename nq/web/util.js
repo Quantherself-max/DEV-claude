@@ -43,9 +43,21 @@ const U = (() => {
     clearTimeout(toastT); toastT = setTimeout(() => { el.hidden = true; }, bad ? 6000 : 3000);
   }
 
+  // nombre saisi a la francaise ou a l'anglaise ('1 000', '1\u202f000,5', '1,000', '25000.25') : espaces et separateurs de milliers ignores ; NaN si le reste n'est pas un nombre
+  // (parseFloat('1 000') donnerait 1 : un retrait de 1 000 $ serait enregistre pour 1 $)
+  const parseNum = s => {
+    let t = String(s == null ? '' : s).replace(/[\s\u00a0\u202f]/g, '');
+    if (t === '') return NaN;
+    const c = t.lastIndexOf(','), d = t.lastIndexOf('.');
+    if (c >= 0 && d >= 0) t = c > d ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+    else if (c >= 0) t = /^-?[1-9]\d{0,2}(,\d{3})+$/.test(t) ? t.replace(/,/g, '') : t.replace(',', '.');
+    else if (d >= 0 && /^-?[1-9]\d{0,2}(\.\d{3}){2,}$/.test(t)) t = t.replace(/\./g, '');
+    return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : NaN;
+  };
+
   const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
   const hm = (tSec, tz) => new Intl.DateTimeFormat('fr-FR', {timeZone: tz === 'et' ? 'America/New_York' : 'Europe/Paris', hour: '2-digit', minute: '2-digit',
     second: '2-digit', hourCycle: 'h23'}).format(new Date(tSec * 1000));
 
-  return {fmt, sign, usd, susd, pct, esc, cls, $, $$, api, setToken, store, toast, debounce, hm};
+  return {fmt, sign, usd, susd, pct, esc, cls, $, $$, api, setToken, store, toast, debounce, hm, parseNum};
 })();
