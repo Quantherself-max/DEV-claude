@@ -533,7 +533,126 @@ class AccountTests(unittest.TestCase):
         acc = Account(self.path, now_ms=lambda: self.now)
         self.assertEqual(len(acc.records), 1)                                          # le journal reste, seuls les réglages abîmés sont écartés
         self.assertEqual(acc.snapshot("2026-10-12")["todayPnl"], 196.5)
-        self.assertEqual(acc.profile.risk_per_trade, 100.0)
+        self.assertEqual(acc.profile.risk_per_trade, 80.0)                             # le réglage sain est gardé
+        self.assertEqual(sorted(acc.profile_dropped), ["payout_cap_pct", "scaling"])
+        self.assertEqual(sorted(acc.snapshot("2026-10-12")["profileDropped"]), ["payout_cap_pct", "scaling"])
+        self.assertTrue(list(Path(self.dir.name).glob("compte.json.avant-reglages-*")))       # l'original reste lisible à côté
+        acc.add_adjust("2026-10-13", 5)
+        self.assertEqual(json.loads(self.path.read_text(encoding="utf-8"))["profile"], {"risk_per_trade": 80})
+
+    def test_old_profile_with_consistency_zero_is_kept(self):
+        old = {"version": 1, "next_id": 1, "profile": {"consistency_pct": 0, "fee_rt": {"NQ": 4.5, "MNQ": 1.25}, "max_minis": 1, "max_micros": 10, "daily_stop": 450},
+               "records": []}
+        self.path.write_text(json.dumps(old), encoding="utf-8")
+        acc = Account(self.path, now_ms=lambda: self.now)
+        self.assertEqual((acc.profile.fee_rt["NQ"], acc.profile.max_minis, acc.profile.daily_stop, acc.profile.consistency_pct), (4.5, 1, 450.0, None))
+        self.assertEqual(acc.profile_dropped, [])
+
+    def test_sixth_payout_is_refused_even_when_backdated(self):
+        self.now = utc(2026, 11, 30, 20)
+        self.acc.start_funded(t=utc(2026, 10, 5, 12))
+        d = 5
+        while d < 30:
+            for _ in range(5):
+                self.acc.add_adjust(f"2026-10-{d:02d}", 400)
+                d += 1
+            d += 0
+            if d >= 30:
+                break
+        for k in range(1, 4):                                                          # des jours gagnants en novembre, pour que le solde soit large
+            self.acc.add_adjust(f"2026-11-{k:02d}", 1_000)
+        for day in ("2026-10-12", "2026-10-19", "2026-10-26", "2026-11-02", "2026-11-09"):
+            self.acc.add_payout(500, t=utc(*[int(x) for x in day.split("-")], 21, 5))
+        self.assertEqual(len(self.acc.snapshot("2026-11-30")["payouts"]), 5)
+        with self.assertRaises(AccountError) as e:
+            self.acc.add_payout(500, t=utc(2026, 10, 7, 21, 5))                        # antidaté avant tous les autres
+        self.assertIn("5 retraits", str(e.exception))
+        self.assertEqual(len(self.acc.snapshot("2026-11-30")["payouts"]), 5)
+
+    def test_backdated_payout_cannot_sink_the_final_balance(self):
+        self.now = utc(2026, 10, 20, 20)
+        self.acc.start_funded(t=utc(2026, 10, 5, 12))
+        for d in range(5, 10):
+            self.acc.add_adjust(f"2026-10-{d:02d}", 300)                                 # 26 500 $
+        self.acc.add_adjust("2026-10-12", -1_300)                                        # 25 200 $
+        with self.assertRaises(AccountError) as e:
+            self.acc.add_payout(500, t=utc(2026, 10, 9, 21, 5))                          # 25 200 - 500 = 24 700 < 25 100 une fois les saisies suivantes rejouées
+        self.assertIn("plancher", str(e.exception))
+        self.assertEqual(self.acc.snapshot("2026-10-20")["payouts"], [])
+
+    def test_warnings_use_the_same_cycle_as_the_stored_payout(self):
+        self.now = utc(2026, 10, 16, 20)
+        self.acc.start_funded(t=utc(2026, 10, 5, 12))
+        for d in range(5, 9):
+            self.acc.add_trade("NQ", "long", 1, 25_000, 25_012.5, t=utc(2026, 10, d, 15), fees=0)      # 4 x +250
+        self.acc.add_trade("NQ", "long", 1, 25_000, 25_020, t=utc(2026, 10, 9, 18), fees=0)             # +400 le vendredi à 14 h ET
+        r = self.acc.add_payout(650, t=utc(2026, 10, 9, 19, 30))                                        # 15 h 30 ET : après le dernier trade, avant 16 h 45
+        self.assertEqual(r["warnings"], [])                                                             # le vendredi compte dans le cycle que ce retrait clôt
+
+    def test_payouts_are_ordered_by_time_not_by_entry_order(self):
+        self.now = utc(2026, 10, 16, 20)
+        self.acc.start_funded(t=utc(2026, 10, 5, 12))
+        for d in range(5, 9):
+            self.acc.add_adjust(f"2026-10-{d:02d}", 300)
+        self.acc.add_trade("NQ", "long", 1, 25_000, 25_020, t=utc(2026, 10, 9, 15), fees=0)             # +400 vendredi 11 h ET
+        self.acc.add_payout(500, t=utc(2026, 10, 9, 21, 5))                                             # 17 h 05 ET : clôt le vendredi
+        self.acc.add_payout(500, t=utc(2026, 10, 9, 13, 0))                                             # 9 h ET, saisi après : ne doit pas rouvrir le vendredi
+        self.assertEqual(self.acc.snapshot("2026-10-12")["payout"]["daysOk"], [])
+
+    def test_text_and_number_edge_cases_never_escape_as_exceptions(self):
+        with self.assertRaises(AccountError):
+            self.acc.add_trade("NQ", "long", 10 ** 400, 25_000, 25_010)
+        with self.assertRaises(AccountError):
+            self.acc.add_adjust("2026-10-08", 10 ** 400)
+        with self.assertRaises(AccountError):
+            self.acc.set_profile({"payout_min": 10 ** 400})
+        r = self.acc.add_adjust("2026-10-08", 5, note="a\ud800b")                        # substitut isolé : impossible à écrire en UTF-8
+        self.assertEqual(Account(self.path, now_ms=lambda: self.now).records[0]["id"], r["id"])
+        with self.assertRaises(AccountError):
+            self.acc.set_profile({"name": 123})
+        with self.assertRaises(AccountError):
+            self.acc.set_profile({"to_verify": "abc"})
+
+    def test_journal_types_are_strict_at_load(self):
+        good = {"id": 1, "kind": "adjust", "t": 1, "day": "2026-10-08", "net": 5.0, "note": ""}
+        trade = {"id": 1, "kind": "trade", "t": 1, "day": "2026-10-08", "inst": "NQ", "side": "long", "qty": 1, "entry": 1.0, "exit": 2.0, "gross": 1.0,
+                 "fees": 0.0, "net": 1.0, "pts": 1.0, "setup": "", "note": ""}
+        bads = [dict(good, net="12.5"), dict(good, id="1"), dict(good, id=True), dict(trade, hold_s="3"), dict(trade, setup=["x"]), dict(trade, fees="0"),
+                dict(trade, qty="1"), {"id": 1, "kind": "payout", "t": 1, "day": "2026-10-08", "amount": "500"}]
+        for rec in bads:
+            self.path.write_text(json.dumps({"records": [rec]}), encoding="utf-8")
+            self.assertEqual(Account(self.path, now_ms=lambda: self.now).records, [], rec)
+            for f in Path(self.dir.name).glob("compte.json.corrompu-*"):
+                f.unlink()
+        for text in ('{"next_id": 1' + '0' * 400 + ', "records": []}', "[" * 5000, '{"records": []' + "," * 3 + "}"):
+            self.path.write_text(text, encoding="utf-8")
+            self.assertEqual(Account(self.path, now_ms=lambda: self.now).records, [])         # jamais d'exception au démarrage
+            for f in Path(self.dir.name).glob("compte.json.corrompu-*"):
+                f.unlink()
+        self.path.write_text(json.dumps({"records": [good, trade]}), encoding="utf-8")
+        self.assertEqual(len(Account(self.path, now_ms=lambda: self.now).records), 2)
+
+    def test_dll_latch_is_not_touched_by_refused_operations(self):
+        self.acc.set_profile({"daily_loss_limit": 600})
+        self.acc.start_funded(t=utc(2026, 10, 12, 13))
+        self.assertTrue(self.acc.snapshot("2026-10-12", open_pnl=-650)["dllHit"])
+        with self.assertRaises(AccountError):
+            self.acc.add_payout(500, t=utc(2026, 10, 12, 17))                             # refusé : pas de jours, solde au plancher
+        self.assertTrue(self.acc.snapshot("2026-10-12", open_pnl=-100)["dllHit"])          # le verrou du jour courant est resté
+        self.acc.set_profile({"risk_per_trade": 90})                                       # enregistrer d'autres règles ne rouvre pas la séance
+        self.assertTrue(self.acc.snapshot("2026-10-12", open_pnl=-100)["dllHit"])
+        self.acc.set_profile({"daily_loss_limit": 700})                                    # changer la limite oui
+        self.assertFalse(self.acc.snapshot("2026-10-12", open_pnl=-100)["dllHit"])
+
+    def test_failed_reset_keeps_the_journal_file(self):
+        self.acc.add_adjust("2026-10-08", 100)
+        (Path(self.dir.name) / "compte.json.tmp").mkdir()
+        with self.assertRaises(AccountError):
+            self.acc.reset()
+        self.assertTrue(self.path.is_file())                                              # le fichier n'a pas été déplacé
+        (Path(self.dir.name) / "compte.json.tmp").rmdir()
+        self.assertEqual(len(Account(self.path, now_ms=lambda: self.now).records), 1)
+        self.assertEqual(len(self.acc.records), 1)
 
     def test_daily_loss_limit_stays_locked_when_the_open_pnl_recovers(self):
         self.acc.set_profile({"daily_loss_limit": 600})

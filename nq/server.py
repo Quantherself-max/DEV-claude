@@ -89,7 +89,7 @@ def route_get(app: App, path: str, q: dict):
         try:
             targets = [x for x in (one("targets") or "").split(",") if x.strip()]
             return s.plan(one("side", "long"), _num(q, "entry"), _num(q, "stop"), targets, one("root"), one("risk"), one("pos"))
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, OverflowError) as e:
             raise ApiError(400, str(e) if str(e) else "paramètres du plan invalides") from None
     return None
 
@@ -132,8 +132,8 @@ def route_post(app: App, path: str, body: dict):
             return s.test_file(str(body.get("path", "")))
     except AccountError as e:
         raise ApiError(400, str(e)) from None
-    except (ValueError, TypeError) as e:
-        raise ApiError(400, str(e)) from None
+    except (ValueError, TypeError, OverflowError) as e:
+        raise ApiError(400, str(e) or "valeur invalide") from None
     return None
 
 

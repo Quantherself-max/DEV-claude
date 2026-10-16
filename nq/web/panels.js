@@ -6,6 +6,7 @@ const Panels = (() => {
   let cb = {};
   let lastField = 'entry';
   let showRounds = false;
+  let replan = null;            // recalcule le plan affiché (posé par buildPlan) sans toucher aux champs
   const GROUP_COLOR = {veille: '#f5a97f', nuit: '#b794f6', seance: '#5eead4', rond: '#6b7280'};
 
   const gauge = (frac, kind = '', marker = null) =>
@@ -101,7 +102,7 @@ const Panels = (() => {
       <div class="card"><h2>Journées</h2><div id="acctDays"></div></div>
       <div class="card"><h2>Statistiques du journal</h2><div id="acctPerf"></div></div>
       <div class="card"><details id="rules"><summary>Règles Lucid et limites personnelles</summary><form id="rulesForm" class="f"></form>
-        <div class="row" style="margin-top:6px"><button id="rulesSave" class="primary" type="button">Enregistrer les règles</button></div><div id="rulesNote" class="small" style="margin-top:6px"></div></details></div>
+        <div class="row" style="margin-top:6px"><button id="rulesSave" class="primary" type="button">Enregistrer les règles</button></div><div id="rulesErr" class="err"></div><div id="rulesNote" class="small" style="margin-top:6px"></div></details></div>
       <div class="card"><details><summary>Reprendre un compte entamé · remettre à zéro</summary>
         <form id="adjForm" class="f"><label>Journée de trading<input name="day" placeholder="AAAA-MM-JJ"></label><label>P&amp;L net du jour ($)<input name="net" inputmode="decimal"></label>
           <label class="wide">Note<input name="note" placeholder="ex. reprise du compte"></label><div class="row" style="grid-column:1/3"><button class="primary" type="submit">Ajouter</button></div></form>
@@ -152,18 +153,24 @@ const Panels = (() => {
     };
     // regles
     $('#rulesForm').innerHTML = RULE_FIELDS.map(([k, l]) => `<label>${l}<input name="${k}" inputmode="decimal"></label>`).join('');
+    $('#rulesForm').addEventListener('input', () => { $('#rulesForm').dataset.dirty = '1'; });          // saisie en cours : le rafraîchissement ne l'écrase pas
     $('#rulesSave').onclick = async () => {
-      const f = $('#rulesForm'), ch = {fee_rt: {}};
-      $('#rulesNote').textContent = '';
+      const f = $('#rulesForm'), ch = {fee_rt: {}}, kept = [];
+      $('#rulesErr').textContent = '';
       for (const [k] of RULE_FIELDS) {
         const raw = String(f[k].value).trim(), fee = k.startsWith('fee_');
         if (raw === '') { if (!fee) ch[k] = null; continue; }
         const n = parseNum(raw);
-        if (isNaN(n)) { $('#rulesNote').textContent = `${k} : « ${raw} » n'est pas un nombre`; return; }
+        if (isNaN(n)) { $('#rulesErr').textContent = `${k} : « ${raw} » n'est pas un nombre`; return; }
         if (fee) ch.fee_rt[k.slice(4)] = n; else ch[k] = n;
       }
-      for (const k of ['profit_target', 'max_drawdown', 'max_minis', 'max_micros', 'risk_per_trade', 'daily_stop']) if (ch[k] == null || isNaN(ch[k])) { delete ch[k]; }
-      try { await api('/api/account/profile', {body: {changes: ch}}); toast('Règles enregistrées'); cb.refreshAccount(true); } catch (err) { $('#rulesNote').textContent = err.message; }
+      for (const k of ['profit_target', 'max_drawdown', 'max_minis', 'max_micros', 'risk_per_trade', 'daily_stop']) if (ch[k] == null || isNaN(ch[k])) { delete ch[k]; kept.push(k); }
+      try {
+        await api('/api/account/profile', {body: {changes: ch}});
+        delete f.dataset.dirty;
+        toast(kept.length ? `Règles enregistrées ; champ vide ignoré, valeur actuelle conservée : ${kept.join(', ')}` : 'Règles enregistrées', kept.length > 0);
+        cb.refreshAccount(true);
+      } catch (err) { $('#rulesErr').textContent = err.message; }
     };
     const af = $('#adjForm');
     af.onsubmit = async e => {
@@ -196,7 +203,7 @@ const Panels = (() => {
     if (capKey !== account.capKey) {
       const first = account.capKey === undefined; account.capKey = capKey;
       const pf = $('#planForm');
-      if (!first && pf && pf.entry.value && pf.stop.value) pf.entry.dispatchEvent(new Event('input', {bubbles: true}));
+      if (!first && pf && pf.entry.value && pf.stop.value && replan) replan();
     }
     const [label, kind] = STATUS[a.status] || ['—', ''];
     const c = a.consistency, buf = a.bufferFrac;
@@ -215,7 +222,7 @@ const Panels = (() => {
     $('#acctStatus').innerHTML = `<h2>${esc(a.name)} <span class="badge ${kind}">${label}</span></h2>`
       + kv('Solde réalisé', usd(a.balance, 2)) + kv('Equity (avec le latent)', usd(a.equity, 2), cls(a.openPnl))
       + kv('Plancher du compte', usd(a.floor, 2) + (a.locked ? ' <small>verrouillé</small>' : ''))
-      + (a.locked ? '' : '<div class="small">Le plancher suit ton meilleur solde de fin de journée (jusqu\'à ' + usd(a.start + a.profile.lock_offset) + ').</div>')
+      + (a.locked ? '' : '<div class="small">Le plancher suit ton meilleur solde de fin de journée' + (a.profile.lock_offset == null ? ' (aucun verrou dans ce profil).' : ' (jusqu\'à ' + usd(a.start + a.profile.lock_offset) + ').') + '</div>')
       + `<div style="margin-top:6px"><b>Marge avant le plancher : ${usd(a.buffer, 0)}</b> <small>${pct(buf)} de la perte maximale</small></div>`
       + gauge(buf, a.status === 'danger' || a.status === 'breached' ? 'bad' : a.status === 'warn' ? 'warn' : '')
       + (funded ? `<div style="margin-top:6px">Profit sur le compte : <b class="${cls(a.profit)}">${susd(a.profit)}</b> <small>retraits déjà pris : ${usd(a.paid)}</small></div>`
@@ -233,19 +240,21 @@ const Panels = (() => {
     $('#payoutCard').hidden = !funded;
     if (funded && a.payout) {
       const po = a.payout, chips = Array.from({length: po.daysNeeded}, (_, i) => `<span class="dot" style="background:${i < po.daysOk.length ? 'var(--up)' : '#3a4052'}" title="${po.daysOk[i] || 'à gagner'}"></span>`).join('');
-      let h = `<div class="small">Retrait n° <b>${Math.min(po.done + 1, 99)}</b> · il en reste ${po.left} sur ${po.done + po.left} avant le Live</div>`
-        + `<div style="margin-top:6px">Jours à ≥ ${usd(po.dayProfit)} dans ce cycle : ${chips} <b>${po.daysOk.length} / ${po.daysNeeded}</b></div>`
+      const pr = a.profile, split = Math.round(pr.payout_split * 100), capPct = Math.round(pr.payout_cap_pct * 100);
+      let h = (po.left > 0 ? `<div class="small">Retrait n° <b>${po.done + 1}</b> · il en reste ${po.left} sur ${po.done + po.left} avant le Live</div>`
+                           : `<div class="small"><b>${po.done} retraits faits</b> : le compte passe en Live au choix de Lucid (non modélisé ici).</div>`)
+        + `<div style="margin-top:6px">Jours à ≥ ${usd(po.dayProfit)} dans ce cycle : ${chips} <b>${Math.min(po.daysOk.length, po.daysNeeded)} / ${po.daysNeeded}</b>${po.daysOk.length > po.daysNeeded ? ` <small>(${po.daysOk.length} jours qualifiants)</small>` : ''}</div>`
         + kv('Profit du cycle', susd(po.cycleProfit), cls(po.cycleProfit)) + kv('Profit sur le compte', usd(po.profitBasis))
-        + kv('Plafond actuel', `${usd(Math.floor(po.cap + 1e-9))} <small>50 % du profit, 1 000 $ maximum</small>`);
+        + kv('Plafond actuel', `${usd(Math.floor(po.cap + 1e-9))} <small>${capPct} % du profit, ${usd(pr.payout_cap)} maximum</small>`);
       if (po.eligible) {
-        h += `<div style="margin-top:6px"><span class="badge ok">RETRAIT POSSIBLE</span> jusqu'à <b>${usd(po.max.amount)}</b> <small>soit ${usd(po.max.net)} pour toi (90 %)</small></div>`
+        h += `<div style="margin-top:6px"><span class="badge ok">RETRAIT POSSIBLE</span> jusqu'à <b>${usd(po.max.amount)}</b> <small>soit ${usd(po.max.net)} pour toi (${split} %)</small></div>`
           + `<div class="small">Après ce retrait : solde ${usd(po.max.balance)}, plancher ${usd(po.max.floor)} <small>(il saute au niveau verrouillé dès la demande)</small>, <b>marge ${usd(po.max.cushion)}</b>.</div>`
           + (po.min ? `<div class="small">Au minimum (${usd(po.minRequest)}) : marge ${usd(po.min.cushion)}.</div>` : '');
       } else {
         h += `<div style="margin-top:6px"><span class="badge warn">PAS ENCORE</span></div>` + po.why.map(w => `<div class="small">• ${esc(w)}</div>`).join('')
-          + (po.profitForMin ? `<div class="small">Le premier retrait demande au moins ${usd(po.profitForMin)} de profit sur le compte : 5 jours à ${usd(po.dayProfit)} ne suffisent pas.</div>` : '');
+          + (po.profitForMin && po.done === 0 ? `<div class="small">Le premier retrait demande au moins ${usd(po.profitForMin)} de profit sur le compte : ${po.daysNeeded} jours à ${usd(po.dayProfit)} ne suffisent pas.</div>` : '');
       }
-      h += `<div class="small" style="margin-top:6px">Hypothèses (non tranchées par l'article) : un jour compte net de frais et par séance ; le « 50 % » porte sur le profit du compte.</div>`;
+      h += `<div class="small" style="margin-top:6px">Hypothèses (non tranchées par l'article) : un jour compte net de frais et par séance ; le « ${capPct} % » porte sur le profit du compte.</div>`;
       $('#payoutBox').innerHTML = h;
     }
     $('#posSummary').innerHTML = a.position ? `<b>${a.position.side === 'long' ? 'Achat' : 'Vente'} ${a.position.qty} ${a.position.root}</b> à ${fmt(a.position.entry, 2)} · latent <b class="${cls(a.position.pnl)}">${susd(a.position.pnl, 2)}</b>`
@@ -284,11 +293,12 @@ const Panels = (() => {
       if (dl) dl.innerHTML = Object.keys(perf.bySetup).filter(k => k !== '(sans setup)').map(k => `<option value="${esc(k)}">`).join('');
     }
     const rf = $('#rulesForm'), p = a.profile;
-    if (rf && !rf.contains(document.activeElement)) {
+    if (rf && !rf.contains(document.activeElement) && !rf.dataset.dirty) {
       const vals = {profit_target: p.profit_target, max_drawdown: p.max_drawdown, lock_offset: p.lock_offset, daily_loss_limit: p.daily_loss_limit, consistency_pct: p.consistency_pct, min_trading_days: p.min_trading_days,
         max_minis: p.max_minis, max_micros: p.max_micros, risk_per_trade: p.risk_per_trade, daily_stop: p.daily_stop, fee_NQ: p.fee_rt.NQ, fee_MNQ: p.fee_rt.MNQ};
       for (const k in vals) rf[k].value = vals[k] == null ? '' : vals[k];
-      $('#rulesNote').innerHTML = `<b>À vérifier sur le site de Lucid :</b> ${a.toVerify.map(esc).join(' · ')}. Un champ vide = pas de règle. Les valeurs « risque par trade » et « stop quotidien » sont TES limites, pas celles de Lucid.`;
+      $('#rulesNote').innerHTML = `<b>À vérifier sur le site de Lucid :</b> ${a.toVerify.map(esc).join(' · ')}. Un champ vide = pas de règle (sauf cible, perte maximale, tailles, risque et stop : ils gardent leur valeur). Les valeurs « risque par trade » et « stop quotidien » sont TES limites, pas celles de Lucid.`
+        + ((a.profileDropped || []).length ? ` <span class="neg">Réglages du fichier inutilisables, remis aux valeurs par défaut : ${a.profileDropped.map(esc).join(', ')} (l'original est gardé à côté, dans data_local).</span>` : '');
     }
   }
 
@@ -323,6 +333,7 @@ const Panels = (() => {
         planResult(await api('/api/plan?' + q), entry);
       } catch (err) { out.innerHTML = `<div class="card"><div class="err">${esc(err.message)}</div></div>`; }
     }, 250);
+    replan = calc;
     // chaque niveau (stop, objectifs) a deux ecritures : en prix ou en points depuis l'entree. On retient celle que tu as saisie en dernier et on recalcule
     // l'autre quand l'entree ou le sens changent (des points restent des points, un prix saisi reste ce prix).
     const src = {stop: 'price', t1: 'price', t2: 'price'};

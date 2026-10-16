@@ -50,9 +50,9 @@ const U = (() => {
     if (t === '') return NaN;
     const c = t.lastIndexOf(','), d = t.lastIndexOf('.');
     if (c >= 0 && d >= 0) t = c > d ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
-    else if (c >= 0) t = /^-?[1-9]\d{0,2}(,\d{3})+$/.test(t) ? t.replace(/,/g, '') : t.replace(',', '.');
-    else if (d >= 0 && /^-?[1-9]\d{0,2}(\.\d{3}){2,}$/.test(t)) t = t.replace(/\./g, '');
-    return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : NaN;
+    else if (c >= 0) t = /^[+-]?[1-9]\d{0,2}(,\d{3})+$/.test(t) ? t.replace(/,/g, '') : t.replace(',', '.');
+    else if (d >= 0 && /^[+-]?[1-9]\d{0,2}(\.\d{3}){2,}$/.test(t)) t = t.replace(/\./g, '');
+    return /^[+-]?(\d+\.?\d*|\.\d+)$/.test(t) ? Number(t) : NaN;
   };
 
   const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };

@@ -3,7 +3,7 @@
 Ce n'est PAS un generateur de signaux. Chaque ligne decrit un fait mesure (position face au VWAP, a la zone de valeur, a l'initial balance,
 flux d'ordres, amplitude du jour) avec un ton : `bull` (favorable aux acheteurs), `bear` (aux vendeurs), `info`, `warn`. Les setups viendront
 au-dessus de cette lecture, et seront MESURES avant d'etre crus (voir README, « Methode »)."""
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 
 from . import clock, cvd, vp, vwap
 from .bars import atr, resample
@@ -12,9 +12,16 @@ from .levels import nearest
 
 
 def fr(x, d: int = 1) -> str:
-    """Nombre a la francaise : virgule decimale, espace fine insecable pour les milliers, vrai signe moins."""
-    q = Decimal(repr(float(x))).quantize(Decimal(1).scaleb(-d), rounding=ROUND_HALF_UP)         # comme l'interface (Intl) : 472,5 -> 473, pas 472
-    return f"{q:,.{d}f}".replace(",", "\u202f").replace(".", ",").replace("-", "\u2212")
+    """Nombre a la francaise : virgule decimale, espace fine insecable pour les milliers, vrai signe moins. Arrondi « moitie vers le haut » comme l'interface
+    (472,5 -> 473). Ne leve jamais : un nombre non fini ou gigantesque s'affiche tel quel plutot que de faire tomber la page."""
+    try:
+        with localcontext() as ctx:
+            ctx.prec = 80
+            q = Decimal(repr(float(x))).quantize(Decimal(1).scaleb(-d), rounding=ROUND_HALF_UP)
+            text = f"{q:,.{d}f}"
+    except (InvalidOperation, ValueError, OverflowError, TypeError):
+        text = f"{x:,.{d}f}" if isinstance(x, (int, float)) else str(x)
+    return text.replace(",", "\u202f").replace(".", ",").replace("-", "\u2212")
 
 
 def _adr(mk, day: str, n: int = 5):

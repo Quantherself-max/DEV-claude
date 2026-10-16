@@ -39,7 +39,7 @@ def parse_position(text) -> dict | None:
         side, root, qty, entry = (x.strip() for x in str(text).split(","))
         side, root = side.lower(), root.upper()
         qty, entry = int(float(qty)), float(entry)
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, OverflowError):
         return None
     if side not in ("long", "short") or root not in INSTRUMENTS or qty <= 0 or entry <= 0:
         return None

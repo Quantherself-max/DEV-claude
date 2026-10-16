@@ -79,6 +79,12 @@ class PropProfile:
             setattr(base, k, None if v is None and k in optional else int(_number(v, k)))
         if base.daily_loss_limit == 0:                         # 0 = « pas de limite » (champ vide), pas une limite a 0 $ qui verrouillerait chaque seance
             base.daily_loss_limit = None
+        if base.consistency_pct == 0:                          # idem : 0 % = pas de regle de consistance (c'est ainsi que l'ancien formulaire l'entendait)
+            base.consistency_pct = None
+        if not isinstance(base.name, str) or not base.name.strip():
+            raise ValueError("name : un texte est attendu")
+        if isinstance(base.to_verify, (str, bytes)) or not all(isinstance(x, str) for x in base.to_verify):
+            raise ValueError("to_verify : une liste de textes est attendue")
         base.to_verify = tuple(base.to_verify)
         try:
             base.scaling = tuple(sorted((_number(t[0], "scaling"), int(_number(t[1], "scaling")), int(_number(t[2], "scaling"))) for t in base.scaling))
@@ -109,7 +115,7 @@ def _number(v, name: str) -> float:
         raise ValueError(f"{name} : un nombre est attendu")
     try:
         x = float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise ValueError(f"{name} : un nombre est attendu") from None
     if not math.isfinite(x):
         raise ValueError(f"{name} : un nombre fini est attendu")
@@ -211,7 +217,7 @@ def payout_status(cycle_days: list, balance: float, floor: float, done: int, p: 
     plafond)) au moins egal au minimum d'une demande. Le plafond ne monte pas avec le nombre de retraits.
     HYPOTHESES (l'article ne les tranche pas) : un jour compte net de frais et par seance ; le « 50 % » porte sur le profit du compte (solde - capital)."""
     days_ok = [(d, x) for d, x in cycle_days if x >= p.payout_day_profit - 1e-9]
-    cycle_profit = sum(x for _, x in cycle_days)
+    cycle_profit = round(sum(x for _, x in cycle_days), 2)                       # au centime : un cycle a 0,00 $ ne doit pas sortir a +2,8e-14
     profit_basis = max(0.0, balance - p.start_balance)
     cap = math.floor(min(p.payout_cap_pct * profit_basis, p.payout_cap) * 100 + 1e-6) / 100          # jamais arrondi vers le haut : on n'affiche pas un maximum que la règle refuse
     lock = locked_level(p)
