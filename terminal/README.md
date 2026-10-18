@@ -1,7 +1,8 @@
-# Liq Terminal (V29)
+# Liq Terminal (V30)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Intérêt ouvert en bougies et delta en barres sous le graphique, TPO épuré, panneau de droite réservé aux idées de trade** (V30, voir « V30 » plus bas).
 - **La heatmap et la carte des liquidations sur tout le graphique, même en 4 heures** (V29) : la heatmap du carnet garde 6 mois en mémoire et, avant tes propres photos, reprend les archives publiques de Binance ; nouvelle **carte des liquidations** estimée sur 6 mois (BTC et SOL), comme celles des sites spécialisés (voir « V29 » plus bas).
 - **Un Desk sans bruit, à la carte** (V28) : un onglet par instrument (BTC, SOL) et un onglet « BTC + SOL » pour les setups qui vont ensemble ; un graphique à **éléments** (rien n'est dessiné sans avoir été choisi dans « ＋ Éléments », chaque élément listé dans la légende du graphique avec un œil et une croix) ; une vue **Vierge** à construire soi-même ; une **heatmap du carnet d'ordres BTC** (Binance, OKX, Bybit, Coinbase) ; et des confluences **notées sur 14**, dessinées seulement à partir de **9/14** (voir « V28 » plus bas).
 - **Un terminal allégé** (V27) : plus de Lexique ni de Plan de trade ; les **idées de trade** ont leur propre page (menu Workspace) et quittent le panneau de droite du Desk ; **une seule page Macro** au lieu de trois (l'essentiel en tête, puis les annonces, puis le détail par thème dans des sections dépliables) ; les options du graphique principal sont rangées en **menus déroulants** (voir « V27 » plus bas).
@@ -124,6 +125,27 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V30 : intérêt ouvert et delta sous le graphique, TPO sans bruit, panneau des idées
+
+### Intérêt ouvert et delta, comme le volume
+- Deux nouveaux éléments dans « ＋ Éléments » (famille Flux d'ordres), chacun dans sa propre fenêtre sous les bougies :
+  - **Intérêt ouvert** en **bougies** : ouverture, plus haut, plus bas et clôture de l'intérêt ouvert pendant chaque bougie du graphique (relevés de Binance toutes les 5 minutes : 29 jours par l'adresse de Binance, et plusieurs mois par les archives déjà téléchargées pour la carte des liquidations ; le graphique 4 heures est rempli sur toute sa largeur). Bleu : l'intérêt ouvert monte (nouvelles positions) ; orange : il baisse (positions fermées ou liquidées).
+  - **Delta** en **barres** : volume acheteur agressif moins volume vendeur agressif de chaque bougie, avec le **CVD** (le cumul) en ligne par-dessus ; le menu de l'élément permet « barres seules ».
+- En haut de chaque fenêtre : la valeur de la bougie sous le pointeur (ou de la dernière), la variation de l'intérêt ouvert dans la bougie et depuis le début du graphique, le delta et le CVD.
+
+### TPO : plus précis, sans bruit
+- **Single prints aux bords exacts** : la zone va du plus haut de la tranche du dessous au plus bas de celle du dessus, au prix près (avant : à la ligne du profil près).
+- **Seulement ce qui reste à combler** : quand le prix est repassé dans une partie de la zone, seule la partie non retraversée reste dessinée ; une zone entièrement retraversée disparaît.
+- **Les petites zones ne sont plus dessinées** : au moins 2 lignes du profil et 4 % de l'amplitude de la séance.
+- **Poor high / poor low** : dessinés tant qu'ils ne sont pas dépassés, avec le nombre de tranches au plafond quand il y en a 3 ou plus (plafond bien plat).
+- **Rien pour la séance en cours** de 1 jour, 4 heures ou 1 heure (ses marques changent encore) ; la semaine et le mois en cours restent.
+- **Pas de doublons** : la plus grande unité de temps est dessinée d'abord ; une marque déjà couverte par une plus grande n'est pas redessinée, son étiquette dit « aussi 1 j ». Seules les séances récentes de chaque unité sont gardées.
+- La vue TPO et les mesures sur l'historique ne changent pas ; les confluences utilisent ces marques épurées.
+
+### Panneau de droite : les idées de trade, et rien d'autre
+- Le panneau de droite du Desk ne montre plus que les idées : la semaine (idées envoyées sur le quota), le biais du terminal, les idées affichées sur le graphique, les **idées envoyées sur Telegram** et les **configurations du moment**. La page « Idées de trade » du menu reste, avec la validation historique.
+- Lecture, Niveaux, Stratégie et Discussion ne sont plus dans le panneau.
 
 ## Ce qui est nouveau en V29 : la heatmap et la carte des liquidations sur tout le graphique
 

@@ -196,6 +196,7 @@ def profile(bars, start: int, end: int, bracket_ms: int, step: float, min_single
         out["tailLow"] = [lo, (k0 + bot) * step]
     out["poorHigh"] = cnt[n - 1] >= 2                      # au moins deux tranches au plus haut, donc pas de queue
     out["poorLow"] = cnt[0] >= 2
+    out["poorHighN"], out["poorLowN"] = cnt[n - 1], cnt[0]  # V30 : nombre de tranches au plus haut / au plus bas (plus il y en a, plus le plafond est plat)
     j = bot
     while j < n - top:
         if cnt[j] == 1:
@@ -206,8 +207,55 @@ def profile(bars, start: int, end: int, bracket_ms: int, step: float, min_single
                 out["singles"].append([(k0 + s) * step, (k0 + j) * step])
         else:
             j += 1
+    out["singlesX"] = [exact_single(br, a, b) for a, b in out["singles"]]
     out["shape"] = shape(cnt, poc, out, step)
     return out
+
+
+def exact_single(br, a: float, b: float) -> list:
+    """V30 : bords EXACTS d'une zone de single prints (au prix près, pas à la ligne près) : la tranche seule à y être passée va de son plus bas
+    à son plus haut ; la zone s'arrête au plus haut de la tranche voisine du dessous et au plus bas de celle du dessus."""
+    mid = (a + b) / 2
+    own = [x for x in br if x[2] <= mid <= x[1]]
+    if len(own) != 1:
+        return [a, b]
+    i, h, l = own[0][0], own[0][1], own[0][2]
+    below = [x[1] for x in br if x[0] != i and x[1] < mid]
+    above = [x[2] for x in br if x[0] != i and x[2] > mid]
+    lo, hi = max(below + [l]), min(above + [h])
+    return [lo, hi] if hi > lo else [a, b]
+
+
+def unfilled(a: float, b: float, lo: float, hi: float) -> list:
+    """Morceaux de [a, b] où le prix n'est pas repassé depuis (il a couvert [lo, hi] depuis la fin de la séance)."""
+    if not lo <= hi:
+        return [[a, b]]
+    out = []
+    if a < lo:
+        out.append([a, min(b, lo)])
+    if b > hi:
+        out.append([max(a, hi), b])
+    return out
+
+
+def chart_marks(p: dict, after_lo: float, after_hi: float, current: bool, kind: str) -> dict:
+    """V30 : marques ÉPURÉES pour les graphiques et les confluences (la vue TPO garde toutes les marques) :
+      - single prints aux bords exacts, seulement la partie que le prix n'a pas encore retraversée, et seulement si elle fait au moins
+        2 lignes et 4 % de l'amplitude de la séance (les petites ne servent à rien sur un graphique) ;
+      - poor high / poor low pas encore dépassés, avec le nombre de tranches au plafond ;
+      - rien pour une séance de 1 jour, 4 heures ou 1 heure en cours (ses marques changent encore) ; la semaine et le mois en cours, oui."""
+    if current and kind not in ("W", "M"):
+        return {"singles": [], "poorHigh": None, "poorLow": None}
+    step = p["step"]
+    minh = max(2 * step, 0.04 * max(p["high"] - p["low"], step)) - 1e-9
+    singles = []
+    for a, b in p.get("singlesX") or p["singles"]:
+        for x, y in ([[a, b]] if current else unfilled(a, b, after_lo, after_hi)):
+            if y - x >= minh:
+                singles.append([x, y, False])
+    ph = {"price": p["high"], "active": True, "n": p.get("poorHighN", 2)} if p["poorHigh"] and (current or not after_hi > p["high"]) else None
+    pl = {"price": p["low"], "active": True, "n": p.get("poorLowN", 2)} if p["poorLow"] and (current or not after_lo < p["low"]) else None
+    return {"singles": singles, "poorHigh": ph, "poorLow": pl}
 
 
 def shape(cnt, poc, p, step):
@@ -313,14 +361,15 @@ def suffix_extremes(bars):
     return lo, hi
 
 
-def marks(p: dict, after_lo: float, after_hi: float, current: bool) -> dict:
+def marks(p: dict, after_lo: float, after_hi: float, current: bool, kind: str = "") -> dict:
     """Marques a suivre sur les graphiques : single prints comblees ou non (le prix a traverse toute la zone depuis la fin de la seance),
     poor high / poor low toujours actifs ou repares (depasses depuis), POC vierge ou non (jamais retraverse depuis)."""
     return {"start": p["start"], "end": p["end"], "current": current,
             "singles": [[a, b, (not current) and after_lo <= a and after_hi >= b] for a, b in p["singles"]],
             "poorHigh": {"price": p["high"], "active": current or not after_hi > p["high"]} if p["poorHigh"] else None,
             "poorLow": {"price": p["low"], "active": current or not after_lo < p["low"]} if p["poorLow"] else None,
-            "poc": {"price": p["poc"], "naked": (not current) and not (after_lo <= p["poc"] <= after_hi)}}
+            "poc": {"price": p["poc"], "naked": (not current) and not (after_lo <= p["poc"] <= after_hi)},
+            "chart": chart_marks(p, after_lo, after_hi, current, kind)}
 
 
 def composite(profiles, step):
@@ -403,7 +452,7 @@ def sessions(bars, kind: str, now_ms: int, n: int | None = None, rows: int | Non
             ctx["va"] = dict(zip(("code", "text"), va_relation(p, prev)))
             ctx["open"] = dict(zip(("code", "text"), open_location(p, prev)))
             ctx["eighty"] = eighty(p, prev, bars[i0:i1], step)
-        out.append({**p, "label": spec["label"], "marks": marks(p, slo[i1], shi[i1], current), "ctx": ctx,
+        out.append({**p, "label": spec["label"], "marks": marks(p, slo[i1], shi[i1], current, kind), "ctx": ctx,
                     "shapeText": SHAPES.get(p.get("shape"))})
     done = [x for x in out if not x["marks"]["current"]]
     comp = composite(done[-spec["comp"]:], step)

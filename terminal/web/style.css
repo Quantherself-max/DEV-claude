@@ -594,3 +594,8 @@ body.theme-nuit .itabs{background:#0b0b0b}body.theme-nuit .itabs button.on{backg
 .gparts{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 4px}.gparts .pill{font-size:11px}
 .legend .lg-head{pointer-events:auto;display:flex;align-items:center;gap:4px}.legend .lg-fold{font-size:10px;padding:0 4px 0 0}
 @media (max-width:700px){.pbody .legend{font-size:10.5px}.legend .lg-item{padding:0 4px 0 1px}.legend .lg-view{display:none}}   /* le nom de la vue est déjà dans l'en-tête du graphique */
+/* V30 : panneau de droite du Desk = les idées de trade seulement */
+#side .sidehead{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px 6px;border-bottom:1px solid var(--line, #2a2e39)}
+#side .sidehead b{font-size:13px;letter-spacing:.02em}
+.sideideas{display:flex;flex-direction:column;gap:8px;padding:8px 8px 16px}
+.sideideas > a.small{padding:0 4px}

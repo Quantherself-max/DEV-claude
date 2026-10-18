@@ -62,6 +62,10 @@ class Panel {
       wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineColor: '',
       autoscaleInfoProvider: o => this.autoscale(o)});
     if (kind === 'main' && this.series.attachPrimitive) { this.under = new FlowUnder(); this.series.attachPrimitive(this.under); }
+    if (kind === 'main') this.chart.subscribeCrosshairMove(p => {          // V30 : valeurs des sous-fenêtres à l'heure pointée
+      const tt = p && p.time != null ? p.time : null;
+      if (tt !== this.crossT) { this.crossT = tt; if (this.panes().length) this.sig = ''; }
+    });
     this.applyTheme();
     this.chart.subscribeClick(p => this.onClick(p));
     this.body.addEventListener('mousemove', ev => this.onMove(ev));
@@ -103,6 +107,7 @@ class Panel {
   // largeurs (pixels) du profil de la seance et du carnet, colles a droite du graphique principal
   static DOMW = 318;
   static profKinds(o) { return ['D', 'W', 'M'].filter(k => o && o[{D: 'sess', W: 'sessW', M: 'sessM'}[k]]); }
+  static get PANE() { return 0.17; }                 // hauteur d'une sous-fenêtre (part du graphique)
   static tpoKinds(o) { return ['M', 'W', 'D', '4h', '1h'].filter(k => o && o[{M: 'tpoM', W: 'tpoW', D: 'tpoD', '4h': 'tpo4', '1h': 'tpo1'}[k]]); }
   // V17 : profils de volume colles a droite, une colonne par periode (jour au bord de l'echelle, puis semaine, puis mois)
   static drawProfiles(ctx, series, profs, kinds, x1, W, h, t, small = false) {
@@ -192,39 +197,56 @@ class Panel {
   }
   // V17 : single prints non comblees (rectangle gris) et poor highs / lows non repares (pointilles), de la seance jusqu'a xr.
   // V20 : semaine et mois dessines en premier, trait plus epais et fond un peu plus marque (zones rares et larges).
+  // V30 : marques TPO épurées (le serveur ne garde que les single prints non retraversées, aux bords exacts, et les poor highs / lows pas
+  // encore dépassés) ; ici : la plus grande unité de temps d'abord, une marque déjà couverte par une plus grande n'est pas redessinée (son
+  // étiquette dit « aussi 1 j »), et seulement les séances récentes de chaque unité
   static drawTpo(ctx, series, xOf, marks, kinds, xr, h, t, small) {
     if (!marks || !kinds.length) return;
-    const TXT = {M: 'mois', W: 'semaine', D: '1 j', '4h': '4 h', '1h': '1 h'}, HTF = {M: true, W: true};
+    const TXT = {M: 'mois', W: 'semaine', D: '1 j', '4h': '4 h', '1h': '1 h'}, HTF = {M: true, W: true}, KEEP = {M: 6, W: 8, D: 6, '4h': 6, '1h': 4};
+    const ORDER = ['M', 'W', 'D', '4h', '1h'].filter(k => kinds.includes(k));
     ctx.font = `500 ${small ? 8.5 : 9.5}px ${t.font}`;
     const taken = [], free = (x, y) => !taken.some(q => Math.abs(q[0] - x) < 110 && Math.abs(q[1] - y) < 11);  // pas d'etiquettes superposees
-    kinds.forEach(k => (marks[k] || []).forEach(ss => {
-      let x0 = xOf(ss.start);
-      x0 = Math.max(0, x0 == null ? 0 : x0);
+    const zones = [], lines = [];
+    ORDER.forEach(k => (marks[k] || []).slice(-KEEP[k]).forEach(ss => {
+      const x0 = Math.max(0, xOf(ss.start) == null ? 0 : xOf(ss.start));
       if (x0 >= xr - 4) return;
-      ss.singles.forEach(([lo, hi, filled]) => {
+      (ss.singles || []).forEach(([lo, hi, filled]) => {
         if (filled) return;
-        const yt = series.priceToCoordinate(hi), yb = series.priceToCoordinate(lo);
-        if (yt == null || yb == null || yb < 0 || yt > h - 26) return;
-        const hh = Math.max(2, yb - yt), big = HTF[k];
-        ctx.fillStyle = t.spFill; ctx.fillRect(x0, yt, xr - x0, hh);
-        if (big) ctx.fillRect(x0, yt, xr - x0, hh);                                     // fond deux fois plus marque
-        ctx.strokeStyle = t.spLine; ctx.lineWidth = big ? 1.6 : 1; ctx.strokeRect(Math.round(x0) + 0.5, Math.round(yt) + 0.5, Math.max(1, xr - x0 - 1), Math.max(1, hh - 1));
-        if (hh >= 11 && free(x0, yt)) { taken.push([x0, yt]); ctx.fillStyle = t.label; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('single prints ' + TXT[k], x0 + 3, yt + 2); }
+        const same = zones.find(z => Math.min(hi, z.hi) - Math.max(lo, z.lo) >= 0.7 * (hi - lo));
+        if (same) { if (!same.also.includes(TXT[k])) same.also.push(TXT[k]); return; }
+        zones.push({lo, hi, k, x0, also: []});
       });
       [['poorHigh', 'poor high'], ['poorLow', 'poor low']].forEach(([key, lab]) => {
         const pm = ss[key];
         if (!pm || !pm.active) return;
-        const y = series.priceToCoordinate(pm.price);
-        if (y == null || y < 4 || y > h - 26) return;
-        ctx.strokeStyle = t.poor; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
-        ctx.beginPath(); ctx.moveTo(x0, Math.round(y) + 0.5); ctx.lineTo(xr, Math.round(y) + 0.5); ctx.stroke(); ctx.setLineDash([]);
-        const ly = key === 'poorHigh' ? y - 6 : y + 6;
-        if (!free(xr - 60, ly)) return;
-        taken.push([xr - 60, ly]);
-        ctx.fillStyle = t.poor; ctx.textAlign = 'right'; ctx.textBaseline = key === 'poorHigh' ? 'bottom' : 'top';
-        ctx.fillText(`${lab} ${TXT[k]}`, xr - 4, key === 'poorHigh' ? y - 1 : y + 1);
+        const same = lines.find(l => l.key === key && Math.abs(l.price - pm.price) <= pm.price * 0.0004);
+        if (same) { if (!same.also.includes(TXT[k])) same.also.push(TXT[k]); return; }
+        lines.push({key, lab, price: pm.price, k, x0, n: pm.n || 2, also: []});
       });
     }));
+    zones.forEach(z => {
+      const yt = series.priceToCoordinate(z.hi), yb = series.priceToCoordinate(z.lo);
+      if (yt == null || yb == null || yb < 0 || yt > h - 26) return;
+      const hh = Math.max(2, yb - yt), big = HTF[z.k];
+      ctx.fillStyle = t.spFill; ctx.fillRect(z.x0, yt, xr - z.x0, hh);
+      if (big) ctx.fillRect(z.x0, yt, xr - z.x0, hh);                                   // fond deux fois plus marque
+      ctx.strokeStyle = t.spLine; ctx.lineWidth = big ? 1.6 : 1; ctx.strokeRect(Math.round(z.x0) + 0.5, Math.round(yt) + 0.5, Math.max(1, xr - z.x0 - 1), Math.max(1, hh - 1));
+      if (hh >= 11 && free(z.x0, yt)) {
+        taken.push([z.x0, yt]); ctx.fillStyle = t.label; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+        ctx.fillText(`single prints ${TXT[z.k]}${z.also.length ? ' · aussi ' + z.also.join(', ') : ''}`, z.x0 + 3, yt + 2);
+      }
+    });
+    lines.forEach(l => {
+      const y = series.priceToCoordinate(l.price);
+      if (y == null || y < 4 || y > h - 26) return;
+      ctx.strokeStyle = t.poor; ctx.lineWidth = HTF[l.k] ? 1.5 : 1; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(l.x0, Math.round(y) + 0.5); ctx.lineTo(xr, Math.round(y) + 0.5); ctx.stroke(); ctx.setLineDash([]);
+      const ly = l.key === 'poorHigh' ? y - 6 : y + 6;
+      if (!free(xr - 60, ly)) return;
+      taken.push([xr - 60, ly]);
+      ctx.fillStyle = t.poor; ctx.textAlign = 'right'; ctx.textBaseline = l.key === 'poorHigh' ? 'bottom' : 'top';
+      ctx.fillText(`${l.lab} ${TXT[l.k]}${l.n >= 3 ? ` (${l.n} tranches)` : ''}${l.also.length ? ' · aussi ' + l.also.join(', ') : ''}`, xr - 4, l.key === 'poorHigh' ? y - 1 : y + 1);
+    });
     ctx.textBaseline = 'middle';
   }
   overlayW(plotW) {
@@ -471,7 +493,83 @@ class Panel {
     this._L = L;
     if (this.kind === 'liq') { this.drawHeat(L, w, h); this.drawLiq(L, w, h); }
     else if (this.kind === 'vp') { this.applySeries(); this.drawVP(L, w, h); }
-    else { this.applySeries(); this.syncVolume(L.d); this.drawMain(L, w, h); }
+    else {
+      this.applySeries(); this.syncVolume(L.d); this.syncSubcharts(L.d);
+      const cb = this.candleBottom(h);                 // V30 : rien du graphique des prix ne déborde sur les sous-fenêtres
+      this.ctx.save(); this.ctx.beginPath(); this.ctx.rect(0, 0, w, cb); this.ctx.clip();
+      this.drawMain(L, w, h);
+      this.ctx.restore();
+      this.drawPanes(L, w, h);
+    }
+  }
+  // ---- V30 : sous-fenêtres sous les bougies (intérêt ouvert en bougies, delta en barres et CVD), chacune sur sa propre échelle ----
+  panes() {
+    const o = LT.st.mainOpts || {};
+    return this.kind === 'main' ? ['oi', 'delta'].filter(k => o[k]) : [];
+  }
+  candleBottom(h) { return Math.max(40, (h - 26) * (1 - this.panes().length * Panel.PANE)); }
+  syncSubcharts(d) {
+    const st = LT.st, I = st.ind, panes = this.panes(), n = panes.length, P = Panel.PANE, t = this.th();
+    const ok = !!(I && I.ready && d && I.symbol === d.symbol && I.tf === d.tf);
+    const want = {oi: ok && panes.includes('oi'), delta: ok && panes.includes('delta'), cvd: ok && panes.includes('delta') && !!st.mainOpts.deltaCvd};
+    const drop = k => { if (this[k]) { this.chart.removeSeries(this[k]); this[k] = null; } };
+    if (!want.oi) drop('oiS');
+    if (!want.delta) drop('dS');
+    if (!want.cvd) drop('cvdS');
+    const base = {lastValueVisible: false, priceLineVisible: false, priceFormat: {type: 'volume'}};
+    if (want.oi && !this.oiS) this.oiS = this.chart.addCandlestickSeries({...base, priceScaleId: 'oi', borderVisible: false,
+      upColor: '#4fc3f7', downColor: '#ffa64d', wickUpColor: '#4fc3f7', wickDownColor: '#ffa64d'});
+    if (want.delta && !this.dS) this.dS = this.chart.addHistogramSeries({...base, priceScaleId: 'dl'});
+    if (want.cvd && !this.cvdS) this.cvdS = this.chart.addLineSeries({...base, priceScaleId: 'cvd', color: '#e8eaf0', lineWidth: 1.5, crosshairMarkerVisible: false});
+    const lk = [n, !!this.vol, !!this.oiS, !!this.dS, !!this.cvdS].join();
+    if (lk !== this.paneKey) {
+      this.paneKey = lk;
+      this.chart.priceScale('right').applyOptions({scaleMargins: {top: 0.08, bottom: 0.08 + n * P}});
+      if (this.vol) this.chart.priceScale('vol').applyOptions({scaleMargins: {top: Math.max(0.3, 0.84 - n * P), bottom: n * P}});
+      const pos = k => { const i = n - 1 - panes.indexOf(k); return {top: 1 - (i + 1) * P + 0.03, bottom: i * P + 0.012}; };
+      if (this.oiS) this.chart.priceScale('oi').applyOptions({scaleMargins: pos('oi'), visible: false});
+      for (const id of ['dl', 'cvd']) if ((id === 'dl' && this.dS) || (id === 'cvd' && this.cvdS)) this.chart.priceScale(id).applyOptions({scaleMargins: pos('delta'), visible: false});
+      this.indKey = '';
+    }
+    if (!ok) return;
+    const dk = [I.symbol, I.tf, I.times.length, I.times[I.times.length - 1], JSON.stringify(I.oi[I.oi.length - 1]), I.delta[I.delta.length - 1], st.theme, lk].join('|');
+    if (dk === this.indKey) return;
+    this.indKey = dk;
+    const up = t.up, dn = t.down, a = (c, al) => /^#[0-9a-f]{6}$/i.test(c) ? `rgba(${parseInt(c.slice(1, 3), 16)},${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${al})` : c;
+    if (this.oiS) this.oiS.setData(I.times.map((tm, i) => { const c = I.oi[i]; return c ? {time: tm, open: c[0], high: c[1], low: c[2], close: c[3]} : {time: tm}; }));
+    if (this.dS) this.dS.setData(I.times.map((tm, i) => { const v = I.delta[i]; return v == null ? {time: tm} : {time: tm, value: v, color: v >= 0 ? a(up, 0.8) : a(dn, 0.8)}; }));
+    if (this.cvdS) this.cvdS.setData(I.times.map((tm, i) => ({time: tm, value: I.cvd[i]})));
+  }
+  drawPanes(L, w, h) {
+    const panes = this.panes();
+    if (!panes.length) return;
+    const ctx = this.ctx, st = LT.st, I = st.ind, t = this.th(), P = Panel.PANE, H = h - 26, n = panes.length, plotW = L.plotW;
+    const ok = !!(I && I.ready && I.symbol === L.d.symbol && I.tf === L.d.tf);
+    let idx = ok ? I.times.length - 1 : -1;
+    if (ok && this.crossT != null) { const k = I.times.indexOf(this.crossT); if (k >= 0) idx = k; }
+    const unit = ok ? I.unit : '', q = v => (v >= 0 ? '+' : '−') + LT.fmtQty(Math.abs(v));
+    ctx.font = `500 11px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    panes.forEach((k, j) => {
+      const y0 = Math.round(H * (1 - (n - j) * P)) + 0.5;
+      ctx.strokeStyle = 'rgba(120,130,150,.35)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(plotW, y0); ctx.stroke();
+      let txt;
+      if (!ok) txt = (k === 'oi' ? 'Intérêt ouvert' : 'Delta') + ' · chargement…';
+      else if (k === 'oi') {
+        const c = I.oi[idx], first = I.oi.find(x => x);
+        txt = c ? `Intérêt ouvert ${LT.fmtQty(c[3])} ${unit}` + (c[0] ? ` · bougie ${q(c[3] - c[0])} (${((c[3] / c[0] - 1) * 100).toFixed(2).replace('.', ',')} %)` : '') +
+          (first ? ` · depuis le début du graphique ${((c[3] / first[3] - 1) * 100).toFixed(1).replace('.', ',')} %` : '') : 'Intérêt ouvert · pas de relevé pour cette bougie';
+      } else {
+        const v = I.delta[idx];
+        txt = !I.realDelta ? 'Delta · volume acheteur agressif inconnu' :
+          `Delta ${v == null ? '-' : q(v) + ' ' + unit}` + (st.mainOpts.deltaCvd ? ` · CVD ${q(I.cvd[idx])} ${unit}` : '');
+      }
+      if (ctx.measureText(txt).width > plotW - 16) txt = txt.split(' · ').slice(0, 2).join(' · ');   // petit écran : l'essentiel
+      if (ctx.measureText(txt).width > plotW - 16) txt = txt.split(' · ')[0];
+      const tw = ctx.measureText(txt).width;
+      ctx.fillStyle = 'rgba(10,12,16,.6)'; ctx.fillRect(4, y0 + 2, tw + 10, 16);
+      ctx.fillStyle = k === 'oi' ? '#8fd3f4' : '#cfd3dc'; ctx.fillText(txt, 9, y0 + 4);
+    });
+    ctx.textBaseline = 'middle';
   }
   // V28 : barres de volume sous les bougies (élément « Volume »), sur leur propre échelle, en bas du graphique
   syncVolume(d) {
@@ -481,7 +579,7 @@ class Panel {
     if (!this.vol) {
       this.vol = this.chart.addHistogramSeries({priceScaleId: 'vol', priceFormat: {type: 'volume'}, lastValueVisible: false, priceLineVisible: false});
       this.chart.priceScale('vol').applyOptions({scaleMargins: {top: 0.84, bottom: 0}, visible: false});
-      this.volKey = '';
+      this.volKey = ''; this.paneKey = '';
     }
     const cs = d.candles, last = cs[cs.length - 1], key = [d.symbol, d.tf, cs.length, last[0], last[5], LT.st.theme].join('|');
     if (key === this.volKey) return;
@@ -1072,7 +1170,7 @@ class Panel {
     const yt = this.series.priceToCoordinate(H.lo + H.rows * H.rowsz), yb = this.series.priceToCoordinate(H.lo);
     if (x0 == null || x1 == null || yt == null || yb == null || x1 <= x0) return;
     hctx.save();
-    hctx.beginPath(); hctx.rect(0, 0, L.plotW, h - 26); hctx.clip();
+    hctx.beginPath(); hctx.rect(0, 0, L.plotW, this.candleBottom(h)); hctx.clip();
     hctx.imageSmoothingEnabled = false;
     hctx.drawImage(H.img, x0, yt, x1 - x0, yb - yt);
     hctx.restore();

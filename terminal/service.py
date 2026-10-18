@@ -986,9 +986,9 @@ class Market:
         if getattr(self, "_tmarks", (None,))[0] == key:
             return self._tmarks[1]
         out = {}
-        for kind in self.TPO_MARK_KINDS:
+        for kind in self.TPO_MARK_KINDS:                          # V30 : marques épurées (bords exacts, partie non retraversée, pas de séance en cours)
             r = self.tpo(kind)
-            out[kind] = [{"start": x["start"], "end": x["end"], **x["marks"]} for x in r["sessions"]]
+            out[kind] = [{"start": x["start"], "end": x["end"], "current": x["marks"]["current"], **x["marks"]["chart"]} for x in r["sessions"]]
         self._tmarks = (key, out)
         return out
 

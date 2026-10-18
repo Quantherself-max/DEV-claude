@@ -33,8 +33,8 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "29"
-API_LEVEL = 30                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "30"
+API_LEVEL = 31                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -238,6 +238,7 @@ class App:
         self.desk = TradeDesk(cfg, notifier, log=alerts._log, opinions=self.social.opinions)
         self.feed = feed
         self.price_cache = {}
+        self._ind_cache = {}
         self.assistant = Assistant(cfg, lambda: self.service, cfg.data_dir)
         self.readings = readings_mod.ReadingLog(cfg)
         old_trades = getattr(self, "trades", {})
@@ -445,6 +446,36 @@ class App:
                 pass
         if self.tgchat:
             self.tgchat.close()
+
+    def indicators(self, sym: str, tf: str) -> dict:
+        """V30 : sous le graphique, l'interet ouvert en bougies (releves de l'adresse Binance, 29 jours, et des archives de la carte des
+        liquidations, plusieurs mois) et le delta de chaque bougie avec son cumul (CVD), pour les memes bougies que le graphique."""
+        from engine import subcharts
+        from engine.atr import INTERVAL_MS
+        m = self.service.markets.get(sym)
+        if m is None:
+            raise KeyError(f"symbole inconnu : {sym}")
+        if tf not in TFS:
+            raise KeyError(f"timeframe inconnu : {tf}")
+        if not m.ready:
+            return {"symbol": sym, "tf": tf, "ready": False}
+        with self.service.lock:
+            cs = m.chart_candles(tf)[-400:]
+            live = dict(m.store.oi)
+        kp = self.liqmaps.get(sym)
+        arch = kp.archive.points() if kp is not None and kp.archive is not None else {}
+        key = (sym, tf, len(cs), cs[-1].t if cs else 0, cs[-1].c if cs else 0, len(live), len(arch))
+        hit = self._ind_cache.get((sym, tf))
+        if hit and hit[0] == key:
+            return hit[1]
+        ts, vs = subcharts.merge_points(live, arch)
+        times = [k.t for k in cs]
+        oi = subcharts.oi_candles(times, INTERVAL_MS[tf], ts, vs)
+        d, cvd = subcharts.deltas(cs)
+        out = {"symbol": sym, "tf": tf, "ready": True, "unit": sym.replace("USDT", ""), "times": [t // 1000 for t in times],
+               "oi": oi, "delta": d, "cvd": cvd, "oiSince": ts[0] if ts else None, "realDelta": any(x is not None for x in d)}
+        self._ind_cache[(sym, tf)] = (key, out)
+        return out
 
     def live_price(self, sym: str) -> dict:
         """Dernier prix (cache 0,5 s) : secours quand le flux WebSocket du navigateur ne passe pas."""
@@ -1024,6 +1055,9 @@ def make_handler(app: App):
                     out = hr.book.query(int(f1("t0", 0)), int(f1("t1", 0)), f1("lo", 0), f1("hi", 0), int(f1("cols", 300)), int(f1("rows", 250)), ex)
                     out.update(symbol=sym, since=hr.book.since(), step=hr.book.step, status=hr.status(), exchanges=ex, long=hr.long_status())
                     return self._json(out)
+                if u.path == "/api/indicators":                      # V30 : interet ouvert en bougies, delta et CVD sous le graphique
+                    sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
+                    return self._json(app.indicators(sym, (q.get("tf") or ["1h"])[0]))
                 if u.path == "/api/liqmap":                          # V29 : carte des liquidations sur plusieurs mois (estimée)
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     kp = app.liqmaps.get(sym)

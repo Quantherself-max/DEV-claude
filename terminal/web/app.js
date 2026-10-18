@@ -89,10 +89,10 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
   statSide: 'all', lastBar: 0, lastBarObj: null, heat: null, liqs: null, an: null, series: null, vpd: null, serN: 0, vpFocus: null,
   liqOpts: {hours: 168, pools: true, sweeps: true, real: true, profile: true},
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
-  layout: 'main', prevLayout: null, sideOpen: true, sbCollapsed: false, ws: {}, instTab: null, minGrade: 9, heatEx: ['binance', 'okx', 'bybit', 'coinbase'], bookHeat: null, liqMap: null,
+  layout: 'main', prevLayout: null, sideOpen: true, sbCollapsed: false, ws: {}, instTab: null, minGrade: 9, heatEx: ['binance', 'okx', 'bybit', 'coinbase'], bookHeat: null, liqMap: null, ind: null,
   page: 'desk', sub: 'synth', planOn: true, planKey: null, plans: [], planHide: [], planShow: [], planSig: '', sig: null,
   theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, nodes: true, dpoc: true, npoc: true, tpoM: true, tpoW: true, tpoD: true, tpo4: false, tpo1: false, vwap: true, dom: false, big: true, bigMin: 2, bigLabels: 'top', absorb: true, absorbMode: 'fortes', gex: true,
-    vwapW: false, vwapM: false, vwapY: false, avwap: false, vol: true, heat: false, liqmap: false, zones: true}, flow: null,
+    vwapW: false, vwapM: false, vwapY: false, avwap: false, vol: true, heat: false, liqmap: false, oi: false, delta: false, deltaCvd: true, zones: true}, flow: null,
   mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {M: true, W: true, D: true, '4h': false, '1h': false},
   tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true}};
 async function api(path, body) {
@@ -653,7 +653,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 30;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap)
+const NEED_API = 31;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -745,12 +745,12 @@ function setTf(tf) {
   st.tf = tf; Desk.rememberTf(tf);
   document.querySelectorAll('#tfs button').forEach(x => x.classList.toggle('on', x.dataset.tf === tf));
   if (!changed) return;
-  st.sel = null; st.data = null; st.series = null; st.vpd = null; st.bookHeat = null; st.liqMap = null; poll(); refreshAll();
+  st.sel = null; st.data = null; st.series = null; st.vpd = null; st.bookHeat = null; st.liqMap = null; st.ind = null; poll(); refreshAll();
 }
 function resetSymbolData() {
   st.flow = null;
   st.sel = null; st.data = null; st.heat = null; st.liqs = null; st.an = null; st.series = null; st.vpd = null; st.key = null; st.sig = null; st.planKey = null; st.planSig = ''; st.plans = [];
-  st.bookHeat = null; st.liqMap = null;
+  st.bookHeat = null; st.liqMap = null; st.ind = null;
 }
 function buildControls(cfg) {
   st.cfg = cfg;
@@ -1074,7 +1074,7 @@ async function pollSignals() {
     const sym = st.symbol, r = await api(`/api/signals?symbol=${sym}`);
     if (sym !== st.symbol) return;
     st.sig = r; sigChip(); updatePlan();
-    if (st.page === 'signals') Signals.render(r);
+    if (st.page === 'signals' || st.page === 'desk') Signals.render(r);    // V30 : le panneau de droite du Desk montre les idées
   } catch (e) { /* le prochain passage reessaiera */ }
 }
 function setPlan(key) {                                               // 'off' : tout masquer ; 'on' : réafficher ; clé : configuration du moment ; null : la retirer

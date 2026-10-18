@@ -1,7 +1,7 @@
-// Idees de trade (V27 : page a part entiere du menu Workspace, retiree du panneau de droite du Desk) : cartes (quoi faire / pourquoi /
-// probabilites), validation historique, journal.
+// Idees de trade (V27 : page a part entiere du menu Workspace ; V30 : aussi, seules, dans le panneau de droite du Desk) : cartes (quoi
+// faire / pourquoi / probabilites), validation historique, journal.
 const Signals = (() => {
-  let LT = null, root = null, last = null;
+  let LT = null, root = null, side = null, last = null;
   const open = new Set();
   const xres = {};                                                    // avis d'influenceurs deja lus (cle symbole|sens)
   const esc = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
@@ -18,9 +18,11 @@ const Signals = (() => {
   const tone = s => s >= 75 ? 'up' : s >= 65 ? 'amb' : 'muted';
 
   function init(lt) {
-    LT = lt; root = document.getElementById('sigBox');
-    if (!root) return;
-    root.addEventListener('click', e => {
+    LT = lt; root = document.getElementById('sigBox'); side = document.getElementById('sideIdeas');
+    [root, side].filter(Boolean).forEach(el => wire(el));
+  }
+  function wire(el) {
+    el.addEventListener('click', e => {
       const xb = e.target.closest('button[data-x]');
       if (xb) { loadX(xb.dataset.x, xb.dataset.side); return; }
       const b = e.target.closest('button[data-plan]');
@@ -33,7 +35,7 @@ const Signals = (() => {
       if (al) { al.dataset.pall === 'reset' ? LT.planReset() : LT.setPlan(al.dataset.pall); render(last); return; }
       if (e.target.closest('[data-plan-off]')) { LT.setPlan('off'); render(last); }
     });
-    root.addEventListener('toggle', e => {
+    el.addEventListener('toggle', e => {
       const d = e.target; if (!d.dataset || !d.dataset.key) return;
       d.open ? open.add(d.dataset.key) : open.delete(d.dataset.key);
     }, true);
@@ -197,11 +199,12 @@ const Signals = (() => {
   }
 
   function render(p) {
-    if (!root || !p) return;
+    if (!p || !(root || side)) return;
     last = p;
-    if (!p.on) { root.innerHTML = '<section class="card"><div class="muted">Les idées de trade sont désactivées dans les réglages.</div></section>'; return; }
+    const put = (page, sideHtml) => { if (root) root.innerHTML = page; if (side) side.innerHTML = sideHtml == null ? page : sideHtml; };
+    if (!p.on) { put('<section class="card"><div class="muted">Les idées de trade sont désactivées dans les réglages.</div></section>'); return; }
     const sym = LT.st.symbol, sg = (p.symbols || {})[sym], desk = p.desk;
-    if (!sg || !sg.ready) { root.innerHTML = '<section class="card"><div class="muted">Calcul en cours… (les idées apparaissent quand les données et l\'historique sont chargés)</div></section>'; return; }
+    if (!sg || !sg.ready) { put('<section class="card"><div class="muted">Calcul en cours… (les idées apparaissent quand les données et l\'historique sont chargés)</div></section>'); return; }
     const w = desk.week, dots = Array.from({length: w.cap}, (_, k) => `<i class="${k < w.sent ? 'on' : ''}"></i>`).join('');
     const ideas = sg.ideas.slice(0, 6);
     const elig = sg.ideas.filter(i => i.eligible).length, sentN = sg.ideas.filter(isSent).length;
@@ -221,9 +224,16 @@ const Signals = (() => {
         `<li>${r.side === 'long' ? 'Achat' : 'Vente'} vers ${px(r.entry)} : ${esc(r.why)}</li>`).join('')}</ul></details>`;
     }
     html += `<div class="muted small">${elig ? `${elig} configuration(s) au-dessus du seuil : ${sentN} déjà envoyée(s), ${heldN} retenue(s) par les règles d'envoi (quota, une idée par paire toutes les 12 heures, doublons).` : 'Aucune configuration au-dessus du seuil.'} Le détail de chaque score est dans « Tout comprendre ».</div></section>`;
-    html += `</div><div class="sigcol"><section class="card"><h2>Idées envoyées sur Telegram <small>niveaux figés à l'envoi</small></h2>${journal(desk)}</section>`;
+    const sent = `<section class="card"><h2>Idées envoyées sur Telegram <small>niveaux figés à l'envoi</small></h2>${journal(desk)}</section>`;
+    html += `</div><div class="sigcol">${sent}`;
     html += `<section class="card"><h2>Validation historique <small>${esc(sym)}</small></h2>${validation(sg.validation, sg.minStruct)}</section></div>`;
-    root.innerHTML = html;
+    // V30 : panneau de droite du Desk : seulement les idées (envoyées d'abord, puis les configurations du moment), sur une colonne
+    const sideHtml = `<section class="card"><div class="week"><span class="dots">${dots}</span><b>${w.sent}/${w.cap}</b> idées cette semaine · ${esc(sym)}</div>` +
+      `<div class="biasline">${LT.biasHtml(desk.bias)}</div>${onChart(desk)}</section>${sent}` +
+      `<section class="card"><h2>Configurations du moment <small>recalculées en continu</small></h2>${ideas.length ? ideas.map(i => card(i, sg)).join('')
+        : '<div class="muted small">Aucune configuration ne passe les filtres pour l\'instant. C\'est normal : une bonne idée est rare.</div>'}</section>` +
+      '<a class="small" href="#/signals">Page Idées de trade (validation historique, détail) →</a>';
+    put(html, sideHtml);
   }
 
   return {init, render, last: () => last};

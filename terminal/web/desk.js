@@ -32,6 +32,8 @@ const Desk = (() => {
     vwapY: ['VWAP de l\'année', '', 'VWAP'],
     avwap: ['VWAP ancrés', 'début d\'année, mois précédent et tes ancres', 'VWAP'],
     vol: ['Volume', 'barres de volume sous les bougies', 'Flux d\'ordres'],
+    oi: ['Intérêt ouvert', 'en bougies, dans une fenêtre sous le graphique (Binance, relevé toutes les 5 minutes)', 'Flux d\'ordres'],
+    delta: ['Delta', 'en barres sous le graphique : acheteurs moins vendeurs agressifs de chaque bougie ; CVD (le cumul) en option', 'Flux d\'ordres'],
     heat: ['Heatmap du carnet', 'ordres en attente dans le temps (Binance, OKX, Bybit, Coinbase) ; avant tes propres photos : archives Binance, par tranches de 1 %', 'Flux d\'ordres', true],
     dom: ['Carnet d\'ordres', 'taille en attente et nombre d\'ordres à chaque prix, à droite', 'Flux d\'ordres'],
     big: ['Gros ordres agressifs', 'bulles : vert = acheteurs, rouge = vendeurs', 'Flux d\'ordres'],
@@ -44,7 +46,7 @@ const Desk = (() => {
   const PRESET = {main: {zones: true, sess: true, vwap: true, vol: true, plan: true}, blank: {}, heat: {heat: true, liqmap: false, big: true, vol: true, plan: true}};
   const VIEW_TF = {heat: '5m'};                                   // unité de temps de départ d'une vue (ensuite : la dernière choisie dans cette vue)
   const MO_KEYS = ['sess', 'sessW', 'sessM', 'nodes', 'dpoc', 'npoc', 'tpoM', 'tpoW', 'tpoD', 'tpo4', 'tpo1', 'vwap', 'vwapW', 'vwapM', 'vwapY', 'avwap',
-    'vol', 'heat', 'liqmap', 'dom', 'big', 'absorb', 'gex', 'zones'];
+    'vol', 'heat', 'liqmap', 'oi', 'delta', 'dom', 'big', 'absorb', 'gex', 'zones'];
   const freshSet = view => ({els: {...PRESET[view]}, minGrade: 9, bigMin: 2, absorbMode: 'fortes', bigLabels: 'top', heatEx: EX.map(e => e[0]), tf: VIEW_TF[view] || null});
 
   // ---------- espaces par instrument ----------
@@ -71,7 +73,7 @@ const Desk = (() => {
     const S = st(), s = curSet(), on = k => s.els[k] === true && allowed(k);
     S.pools = on('pools'); S.ppools = on('ppools'); S.planOn = on('plan'); S.mode = 'ess';
     MO_KEYS.forEach(k => { S.mainOpts[k] = on(k); });
-    Object.assign(S.mainOpts, {bigMin: s.bigMin, absorbMode: s.absorbMode, bigLabels: s.bigLabels});
+    Object.assign(S.mainOpts, {bigMin: s.bigMin, absorbMode: s.absorbMode, bigLabels: s.bigLabels, deltaCvd: s.deltaCvd !== false});
     S.minGrade = s.minGrade; S.heatEx = s.heatEx;
   }
   function changed(reset) {
@@ -164,6 +166,7 @@ const Desk = (() => {
   function optsHtml(k, s) {
     if (k === 'zones') return `<select class="mini" data-copt="minGrade" title="Note minimale (sur 14) pour qu'une zone soit dessinée">${[5, 6, 7, 8, 9, 10, 11, 12].map(v => `<option value="${v}"${v === s.minGrade ? ' selected' : ''}>≥ ${v}/14</option>`).join('')}</select>`;
     if (k === 'big') return `<select class="mini" data-copt="bigMin" title="Taille minimale d'une bulle">${Panel.bigSteps(st().symbol).map((v, i) => `<option value="${i}"${i === s.bigMin ? ' selected' : ''}>≥ ${LT.fmtUsdShort(v)} $</option>`).join('')}</select>`;
+    if (k === 'delta') return `<select class="mini" data-copt="deltaCvd" title="Ajouter le CVD (cumul du delta) en ligne"><option value="1"${s.deltaCvd !== false ? ' selected' : ''}>barres + CVD</option><option value="0"${s.deltaCvd === false ? ' selected' : ''}>barres seules</option></select>`;
     if (k === 'absorb') return `<select class="mini" data-copt="absorbMode"><option value="fortes"${s.absorbMode === 'fortes' ? ' selected' : ''}>fortes</option><option value="toutes"${s.absorbMode === 'toutes' ? ' selected' : ''}>toutes</option></select>`;
     return '';
   }
@@ -211,7 +214,7 @@ const Desk = (() => {
     chooser.addEventListener('change', e => {
       const t = e.target, s = curSet();
       if (t.dataset.chel) { if (t.checked) s.els[t.dataset.chel] = true; else delete s.els[t.dataset.chel]; changed(['sess', 'sessW', 'sessM', 'dom'].includes(t.dataset.chel)); }
-      else if (t.dataset.copt) { s[t.dataset.copt] = t.dataset.copt === 'absorbMode' ? t.value : +t.value; changed(false); }
+      else if (t.dataset.copt) { s[t.dataset.copt] = t.dataset.copt === 'absorbMode' ? t.value : t.dataset.copt === 'deltaCvd' ? t.value === '1' : +t.value; changed(false); }
       else if (t.dataset.ptog != null) { LT.togglePlan(t.dataset.ptog); fillChooser(); }
     });
     chooser.addEventListener('click', e => {
@@ -312,7 +315,7 @@ const Desk = (() => {
     const t0 = (cs[i0][0] + (r.from < 0 ? r.from * per : 0)) * 1000;
     const t1 = Math.min(LT.serverNow(), (r.to >= n - 1 ? cs[n - 1][0] + (r.to - (n - 1) + 1) * per : cs[Math.max(0, Math.ceil(r.to))][0]) * 1000);
     const h = p.body.clientHeight, w = ts.width() || p.body.clientWidth;
-    const hi = p.series.coordinateToPrice(0), lo = p.series.coordinateToPrice(Math.max(20, h - 28));
+    const hi = p.series.coordinateToPrice(0), lo = p.series.coordinateToPrice(Math.max(20, p.candleBottom ? p.candleBottom(h) : h - 28));
     if (hi == null || lo == null || !(t1 > t0)) return null;
     return {t0: Math.round(t0), t1: Math.round(t1), lo, hi, cols: Math.max(60, Math.min(400, Math.round(w / 3))), rows: Math.max(60, Math.min(300, Math.round(h / 3)))};
   }
@@ -333,9 +336,24 @@ const Desk = (() => {
       renderLegend();
     } catch (e) { /* le prochain passage reessaiera */ } finally { ls.busy = false; }
   }
+  // V30 : intérêt ouvert en bougies, delta et CVD (sous-fenêtres) : relus à chaque nouvelle bougie, et toutes les 30 secondes
+  const indState = {key: '', busy: false};
+  async function pollInd(force) {
+    const S = st(), d = S.data;
+    if (!mainVisible() || !(S.mainOpts.oi || S.mainOpts.delta) || !d || !d.candles || !d.candles.length || indState.busy) return;
+    const key = [S.symbol, S.tf, d.candles[d.candles.length - 1][0]].join('|');
+    if (!force && key === indState.key && S.ind && Date.now() - (S.ind.at || 0) < 30000) return;
+    indState.busy = true;
+    try {
+      const r = await LT.api(`/api/indicators?symbol=${S.symbol}&tf=${S.tf}`);
+      if (r.symbol !== S.symbol || r.tf !== S.tf) return;
+      r.at = Date.now(); indState.key = key; S.ind = r; S.version++;
+    } catch (e) { /* le prochain passage reessaiera */ } finally { indState.busy = false; }
+  }
   async function pollHeat(force) {
     clearTimeout(heatTimer);
     heatTimer = setTimeout(() => pollHeat(false), 8000);
+    pollInd(force);
     if (!heatWanted()) return;
     const q = heatQuery();
     if (!q) return;
@@ -345,6 +363,7 @@ const Desk = (() => {
   let viewSig = '', viewT = 0;
   function tick() {
     try {                                             // jamais d'erreur ici : la boucle d'affichage du terminal s'arrêterait
+      pollInd(false);
       if (!heatWanted()) return;
       const q = heatQuery(); if (!q) return;
       const s = [Math.round(q.t0 / 60000), Math.round(q.t1 / 60000), q.lo.toPrecision(4), q.hi.toPrecision(4), q.cols, q.rows].join();
