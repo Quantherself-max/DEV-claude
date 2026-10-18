@@ -593,4 +593,4 @@ body.theme-nuit .itabs{background:#0b0b0b}body.theme-nuit .itabs button.on{backg
 .pairmode #top .price,.pairmode #sigChip{display:none}
 .gparts{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 4px}.gparts .pill{font-size:11px}
 .legend .lg-head{pointer-events:auto;display:flex;align-items:center;gap:4px}.legend .lg-fold{font-size:10px;padding:0 4px 0 0}
-@media (max-width:700px){.pbody .legend{font-size:10.5px}.legend .lg-item{padding:0 4px 0 1px}}
+@media (max-width:700px){.pbody .legend{font-size:10.5px}.legend .lg-item{padding:0 4px 0 1px}.legend .lg-view{display:none}}   /* le nom de la vue est déjà dans l'en-tête du graphique */
