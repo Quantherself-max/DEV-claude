@@ -1,7 +1,8 @@
-# Liq Terminal (V28)
+# Liq Terminal (V29)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **La heatmap et la carte des liquidations sur tout le graphique, même en 4 heures** (V29) : la heatmap du carnet garde 6 mois en mémoire et, avant tes propres photos, reprend les archives publiques de Binance ; nouvelle **carte des liquidations** estimée sur 6 mois (BTC et SOL), comme celles des sites spécialisés (voir « V29 » plus bas).
 - **Un Desk sans bruit, à la carte** (V28) : un onglet par instrument (BTC, SOL) et un onglet « BTC + SOL » pour les setups qui vont ensemble ; un graphique à **éléments** (rien n'est dessiné sans avoir été choisi dans « ＋ Éléments », chaque élément listé dans la légende du graphique avec un œil et une croix) ; une vue **Vierge** à construire soi-même ; une **heatmap du carnet d'ordres BTC** (Binance, OKX, Bybit, Coinbase) ; et des confluences **notées sur 14**, dessinées seulement à partir de **9/14** (voir « V28 » plus bas).
 - **Un terminal allégé** (V27) : plus de Lexique ni de Plan de trade ; les **idées de trade** ont leur propre page (menu Workspace) et quittent le panneau de droite du Desk ; **une seule page Macro** au lieu de trois (l'essentiel en tête, puis les annonces, puis le détail par thème dans des sections dépliables) ; les options du graphique principal sont rangées en **menus déroulants** (voir « V27 » plus bas).
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
@@ -124,6 +125,27 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V29 : la heatmap et la carte des liquidations sur tout le graphique
+
+### Heatmap du carnet : tout le graphique, même en 4 heures
+- Le terminal garde maintenant une **mémoire longue** de 180 jours : un résumé par quart d'heure (la moyenne, minute par minute, de ce que chaque bourse montrait), en tranches de 0,1 % du prix. Les 24 dernières heures restent en détail (une photo toutes les 10 secondes).
+- **Avant tes propres photos** (avant le premier lancement, ou quand le PC était éteint) : les **archives publiques de Binance** (« bookDepth » sur data.binance.vision, disponibles depuis janvier 2023) sont téléchargées une seule fois, en tâche de fond, du jour le plus récent au plus ancien. Elles donnent, toutes les 30 secondes, le montant en attente à 0,2 %, 1 %, 2 %, 3 %, 4 % et 5 % du prix, sur le perpétuel Binance seulement. Chaque tranche est répartie à parts égales sur sa largeur : on voit **de quel côté et à quelle distance le carnet est épais**, pas les murs précis. La légende l'indique (« avant : archives Binance (1 %) », le détail au survol).
+- Là où tu as tes propres photos, elles passent devant les archives. Après quelques semaines de terminal allumé, tout le graphique 4 heures est en détail.
+- Volume réseau : 0,5 Mo par jour d'archive, soit 90 Mo pour 180 jours, une seule fois, puis 0,5 Mo par jour. Sur le disque : un fichier par jour dans `data_local/heatmap/BTCUSDT/`.
+
+### Carte des liquidations (nouvel élément, BTC et SOL)
+- Dans « ＋ Éléments » (famille Niveaux), et dans la légende de la vue Heatmap, masquée au départ : un clic sur l'œil l'affiche. Couleurs violet, puis vert, puis jaune pour les plus grosses lignes, comme les cartes de liquidation des sites spécialisés.
+- C'est le même calcul que les poches de liquidation (leviers 10×, 25×, 50× et 100×, longs et shorts répartis selon le volume acheteur agressif, une ligne s'éteint quand le prix la touche, tout se réduit quand l'intérêt ouvert baisse), **rejoué sur 6 mois** de bougies d'une heure avec l'intérêt ouvert de chaque heure : celui de l'adresse Binance pour les 29 derniers jours et, avant, celui des archives publiques (« metrics », 11 Ko par jour, 2 Mo pour 6 mois, téléchargées une fois et rangées dans `data_local/history/<PAIRE>/raw_metrics`, le même dossier que l'outil d'historique).
+- Au survol : la quantité estimée à liquider dans la tranche de prix (en BTC ou en SOL, et en dollars).
+- **C'est une estimation** : personne ne connaît les vrais leviers ni les vrais prix d'entrée. Ce moteur est séparé de celui des poches : les poches, les confluences, les idées de trade et leurs scores ne changent pas.
+
+### Réglage
+- `TERMINAL_HEATMAP_DAYS=180` dans `.env` : jours d'historique de la heatmap et de la carte (au plus 1100) ; `0` = comme en V28 (24 heures de heatmap, pas de carte des liquidations).
+
+### Vérifié, et pas vérifié
+- Vérifié avec les vraies archives de Binance : la profondeur du 15 octobre 2026 (96 quarts d'heure ; 733 M$ d'achats et 478 M$ de ventes à moins de 5 % du prix) et 12 jours d'intérêt ouvert. Le reste sur données simulées : graphique 4 heures rempli sur toute sa largeur, carte des liquidations sur 180 jours pour BTC et SOL, aucune erreur dans le navigateur, largeur téléphone correcte.
+- Pas vérifié : le terminal complet branché sur Binance, car l'adresse de Binance qui donne les bougies et l'intérêt ouvert récent refuse mon environnement de test (les archives, elles, répondent).
+
 ## Ce qui est nouveau en V28 : le Desk refait, sans bruit
 
 ### Un onglet par instrument
@@ -149,7 +171,7 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 ### Heatmap du carnet d'ordres (BTC)
 - Le terminal photographie les carnets et range chaque photo par tranche de 20 $ (achats et ventes additionnés), sur ±4 % autour du prix : **Binance** (carnet déjà suivi en direct, toutes les 10 secondes), **OKX** (carnet en direct toutes les 10 secondes, et 5 000 niveaux toutes les 3 minutes pour les prix éloignés), **Bybit** (500 niveaux toutes les 30 secondes), **Coinbase** (carnet complet toutes les 10 minutes). Les bourses s'allument ou s'éteignent dans la légende.
 - Dessinée **sous les bougies** : bleu nuit pour peu d'ordres, puis bleu, cyan, jaune, orange et rouge pour les plus gros murs ; une bande qui dure est un mur qui tient. Au survol : le montant en attente dans la tranche.
-- **Pas d'historique avant le premier lancement** : aucune source gratuite ne donne le carnet passé. Le terminal garde 24 heures et les sauvegarde (`data_local/heatmap`), donc un redémarrage ne les efface pas.
+- **Pas d'historique détaillé avant le premier lancement** : aucune source gratuite ne donne le carnet passé au prix près. Le terminal garde 24 heures en détail et les sauvegarde (`data_local/heatmap`), donc un redémarrage ne les efface pas. (V29 : avant tes propres photos, les archives publiques de Binance par tranches de 1 % ; voir « V29 » plus haut.)
 - Volume réseau estimé : 350 Mo par jour (les carnets profonds sont lourds, celui de Coinbase fait environ 1 Mo). `TERMINAL_HEATMAP=0` dans `.env` la coupe ; `TERMINAL_HEATMAP=BTCUSDT,SOLUSDT` l'ajoute pour SOL.
 - Vérifié sur données simulées ; depuis mon environnement de test, OKX et Coinbase répondent, Binance et Bybit non (accès refusé depuis l'endroit du test) : leur lecture est écrite selon leurs documentations publiques et sera vérifiée chez toi.
 

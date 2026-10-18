@@ -33,8 +33,8 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "28"
-API_LEVEL = 29                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "29"
+API_LEVEL = 30                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -90,15 +90,38 @@ def default_flow(cfg, source, service, feed):
     return flow
 
 
+def price_lookup(service, sym):
+    """V29 : prix d'une paire à un instant passé (bougie 5 min si elle est encore gardée, sinon bougie d'une heure ; moyenne haut, bas,
+    clôture) ; None tant que l'historique n'est pas chargé. Les listes sont copiées une fois : à rappeler pour un nouveau lot."""
+    m = service.markets.get(sym)
+    if m is None or not m.ready or not m.store.h1:
+        return None
+    m5, h1 = list(m.store.m5), list(m.store.h1)
+    t5, t1 = [k.t for k in m5], [k.t for k in h1]
+
+    def at(t_ms):
+        for ts, cs, step in ((t5, m5, 300_000), (t1, h1, 3_600_000)):
+            i = bisect_right(ts, t_ms) - 1
+            if i >= 0 and t_ms < cs[i].t + step:
+                k = cs[i]
+                return (k.h + k.l + k.c) / 3
+        return None
+    return at
+
+
 def default_heat(cfg, source, service, flow) -> dict:
-    """V28 : heatmap du carnet (BTC par defaut) : carnets en direct deja suivis + adresses publiques profondes ; fabriquee en mode simule."""
+    """V28 : heatmap du carnet (BTC par defaut) : carnets en direct deja suivis + adresses publiques profondes ; fabriquee en mode simule.
+    V29 : memoire longue (un quart d'heure par colonne, heatmap_days jours) remplie par tes photos et, la ou il n'y en a pas, par les
+    archives publiques de Binance (bookDepth) ; en mode simule, des archives fabriquees (rien n'est ecrit sur le disque)."""
     syms = [s for s in getattr(cfg, "heatmap_symbols", ()) if s in cfg.symbols]
     if not syms:
         return {}
     from data import heatbook as hb
+    days = int(getattr(cfg, "heatmap_days", hb.LT_DAYS) or 0)
     out = {}
     for sym in syms:
         book = hb.HeatBook(sym)
+        prices = lambda sym=sym: price_lookup(service, sym)
         if cfg.source != "binance":
             def price_at(t_ms, sym=sym):
                 m = service.markets.get(sym)
@@ -108,12 +131,45 @@ def default_heat(cfg, source, service, flow) -> dict:
                 i = bisect_right([k.t for k in cs], t_ms) - 1
                 return cs[max(i, 0)].c
             sim = hb.SimHeat(price_at)
+            if days:
+                book.long = hb.HeatLong(sym, days)
             out[sym] = hb.HeatRecorder(book, hb.sim_sources(sim, lambda: source.now_ms() / 1000),
                                        prefill=lambda b=book, sm=sim: hb.sim_backfill(b, sm, source.now_ms()),
-                                       now=lambda: source.now_ms() / 1000)
+                                       now=lambda: source.now_ms() / 1000, prices=prices, archive_today=True,
+                                       archive=(lambda day, sym=sym: hb.sim_depth_rows(sym, day, price_lookup(service, sym) or (lambda t: None),
+                                                                                        source.now_ms())) if days else None)
         else:
             from data.external import http_json
-            out[sym] = hb.HeatRecorder(book, hb.real_sources(sym, flow, http_json), str(Path(cfg.data_dir) / "heatmap" / f"{sym}.pkl"))
+            if days:
+                book.long = hb.HeatLong(sym, days, str(Path(cfg.data_dir) / "heatmap" / sym))
+            out[sym] = hb.HeatRecorder(book, hb.real_sources(sym, flow, http_json), str(Path(cfg.data_dir) / "heatmap" / f"{sym}.pkl"),
+                                       prices=prices, archive=(lambda day, sym=sym: hb.fetch_depth(sym, day)) if days else None)
+    return out
+
+
+def default_liqmaps(cfg, source, service) -> dict:
+    """V29 : carte des liquidations sur plusieurs mois (affichage seulement), pour chaque paire : moteur separe rejoue sur les bougies d'une
+    heure avec l'interet ouvert de l'adresse Binance (29 jours) et des archives publiques (heatmap_days jours) ; fabrique en mode simule."""
+    days = int(getattr(cfg, "heatmap_days", 180) or 0)
+    if days <= 0:
+        return {}
+    from data import oiarchive
+    from engine.liqmap import LiqMapKeeper
+    out = {}
+    for sym in cfg.symbols:
+        market = lambda sym=sym: service.markets.get(sym)
+        if cfg.source != "binance":
+            def first(sym=sym):
+                m = service.markets.get(sym)
+                if m is None or not m.store.oi_t:
+                    return None
+                t = m.store.oi_t[0]
+                return t + 300_000, m.store.oi[t]
+            clock = lambda: source.now_ms() / 1000
+            out[sym] = LiqMapKeeper(sym, market, oiarchive.SimOiArchive(sym, first, days, now=clock), days, now=clock)
+        else:
+            arch = oiarchive.OiArchive(sym, str(Path(cfg.data_dir) / "history" / sym / "raw_metrics"), days)
+            out[sym] = LiqMapKeeper(sym, market, arch, days)
     return out
 
 
@@ -171,9 +227,11 @@ class App:
 
     def _install(self, cfg):
         old, old_flow, old_heat = self.feed, getattr(self, "flow", None), getattr(self, "heat", {})
+        old_liq = getattr(self, "liqmaps", {})
         source, service, alerts, notifier, feed, flow = build_parts(cfg, self.make_source, self.make_feed, self.make_hub)
         self.flow = flow
         self.heat = default_heat(cfg, source, service, flow)
+        self.liqmaps = default_liqmaps(cfg, source, service)
         service.listeners.append(self.alert_cycle)
         self.cfg, self.source, self.service, self.alerts, self.notifier = cfg, source, service, alerts, notifier
         self.social = Influencers(cfg)
@@ -190,6 +248,8 @@ class App:
             old_flow.stop()
         for hr in old_heat.values():
             hr.stop()
+        for kp in old_liq.values():
+            kp.stop()
         for ts in old_trades.values():
             ts.stop()
         if feed and self.running:
@@ -199,6 +259,8 @@ class App:
         if self.running:
             for hr in self.heat.values():
                 hr.start()
+            for kp in self.liqmaps.values():
+                kp.start()
             for ts in self.trades.values():
                 ts.start()
         self._chat_restart()
@@ -358,6 +420,8 @@ class App:
             self.flow.start()
         for hr in self.heat.values():
             hr.start()
+        for kp in self.liqmaps.values():
+            kp.start()
         for ts in self.trades.values():
             ts.start()
         self._chat_restart()
@@ -371,6 +435,8 @@ class App:
             self.flow.stop()
         for hr in self.heat.values():
             hr.stop()
+        for kp in self.liqmaps.values():
+            kp.stop()
         for ts in self.trades.values():
             ts.stop()
             try:
@@ -864,7 +930,7 @@ def make_handler(app: App):
                 if u.path == "/api/config":
                     c = app.cfg
                     return self._json({"symbols": list(c.symbols), "tfs": list(TFS), "source": c.source,
-                                       "heatmapSymbols": sorted(app.heat),
+                                       "heatmapSymbols": sorted(app.heat), "liqmapSymbols": sorted(app.liqmaps), "heatmapDays": c.heatmap_days,
                                        "telegram": c.telegram_on, "telegramState": app.telegram_state(), "alertTf": c.alert_tf, "alertMinScore": c.alert_min_score,
                                        "alertMaxDistAtr": c.alert_max_dist_atr, "refresh": c.refresh_seconds,
                                        "anchor": c.anchor_date, "statsK": c.stats_k, "statsHorizon": c.stats_horizon,
@@ -956,7 +1022,19 @@ def make_handler(app: App):
                     f1 = lambda k, d: float((q.get(k) or [d])[0])
                     ex = [e for e in (q.get("ex") or [",".join(heat_mod.EXCHANGES)])[0].split(",") if e in heat_mod.EXCHANGES]
                     out = hr.book.query(int(f1("t0", 0)), int(f1("t1", 0)), f1("lo", 0), f1("hi", 0), int(f1("cols", 300)), int(f1("rows", 250)), ex)
-                    out.update(symbol=sym, since=hr.book.since(), step=hr.book.step, status=hr.status(), exchanges=ex)
+                    out.update(symbol=sym, since=hr.book.since(), step=hr.book.step, status=hr.status(), exchanges=ex, long=hr.long_status())
+                    return self._json(out)
+                if u.path == "/api/liqmap":                          # V29 : carte des liquidations sur plusieurs mois (estimée)
+                    sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
+                    kp = app.liqmaps.get(sym)
+                    if kp is None:
+                        return self._json({"ready": False, "symbol": sym, "off": True,
+                                           "why": "carte coupée (TERMINAL_HEATMAP_DAYS=0)" if sym in app.cfg.symbols else "paire inconnue"})
+                    f1 = lambda k, d: float((q.get(k) or [d])[0])
+                    mp = kp.map
+                    out = mp.query(int(f1("t0", 0)), int(f1("t1", 0)), f1("lo", 0), f1("hi", 0), int(f1("cols", 300)), int(f1("rows", 250)),
+                                   app.service.last_price(sym)) if mp else {"ready": False, "why": "carte en préparation"}
+                    out.update(symbol=sym, status=kp.status(), unit=sym.upper().replace("USDT", ""))
                     return self._json(out)
                 if u.path == "/api/heat":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()

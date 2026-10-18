@@ -2,16 +2,18 @@
 // ÉLÉMENTS : rien n'est dessiné sans avoir été choisi dans « ＋ Éléments » ; chaque élément choisi apparaît dans la légende en haut à
 // gauche du graphique (œil : masquer, croix : retirer). Trois vues par instrument, chacune avec ses propres éléments : Graphique (épuré
 // par défaut), Vierge (vide, à construire) et Heatmap (carnet d'ordres, BTC). Les confluences ne sont dessinées qu'à partir d'une note
-// sur 14 (9 par défaut). La heatmap du carnet est lue sur /api/heatmap et dessinée sous les bougies.
+// sur 14 (9 par défaut). La heatmap du carnet (/api/heatmap) et la carte des liquidations (/api/liqmap, V29) sont dessinées sous les
+// bougies, sur tout le graphique : V29, mémoire longue (archives Binance avant le premier lancement) et 6 mois de liquidations estimées.
 const Desk = (() => {
   'use strict';
-  let LT = null, chooser = null, chooserBtn = null, heatTimer = null, heatKey = '', heatBusy = false, legendMin = null;
+  let LT = null, chooser = null, chooserBtn = null, heatTimer = null, legendMin = null;
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const EX = [['binance', 'Binance'], ['okx', 'OKX'], ['bybit', 'Bybit'], ['coinbase', 'Coinbase']];
   // catalogue : clé -> [nom, explication, famille, réservé au BTC]
   const EL = {
     zones: ['Confluences', 'zones où des niveaux de sources différentes se superposent, notées sur 14', 'Niveaux'],
     pools: ['Poches de liquidation', 'estimées par l\'intérêt ouvert', 'Niveaux'],
+    liqmap: ['Carte des liquidations', 'estimée sur 6 mois : où des positions à levier seraient liquidées ; une ligne s\'éteint quand le prix la touche', 'Niveaux'],
     ppools: ['Plus hauts / plus bas', 'ordres d\'arrêt visibles dans le prix : veille, semaine, mois', 'Niveaux'],
     npoc: ['POC vierges', 'des jours et semaines passés, jamais retraversés', 'Niveaux'],
     sess: ['Profil du jour', 'volume par prix depuis 00 h UTC, POC, VAH, VAL', 'Profils de volume'],
@@ -30,7 +32,7 @@ const Desk = (() => {
     vwapY: ['VWAP de l\'année', '', 'VWAP'],
     avwap: ['VWAP ancrés', 'début d\'année, mois précédent et tes ancres', 'VWAP'],
     vol: ['Volume', 'barres de volume sous les bougies', 'Flux d\'ordres'],
-    heat: ['Heatmap du carnet', 'ordres en attente dans le temps (Binance, OKX, Bybit, Coinbase)', 'Flux d\'ordres', true],
+    heat: ['Heatmap du carnet', 'ordres en attente dans le temps (Binance, OKX, Bybit, Coinbase) ; avant tes propres photos : archives Binance, par tranches de 1 %', 'Flux d\'ordres', true],
     dom: ['Carnet d\'ordres', 'taille en attente et nombre d\'ordres à chaque prix, à droite', 'Flux d\'ordres'],
     big: ['Gros ordres agressifs', 'bulles : vert = acheteurs, rouge = vendeurs', 'Flux d\'ordres'],
     absorb: ['Absorptions', 'delta fort contre la bougie ; murs en direct', 'Flux d\'ordres'],
@@ -39,10 +41,10 @@ const Desk = (() => {
   };
   const CATS = ['Niveaux', 'Profils de volume', 'TPO', 'VWAP', 'Flux d\'ordres', 'Options', 'Idées'];
   const VIEWS = {main: 'Graphique', blank: 'Vierge', heat: 'Heatmap'};
-  const PRESET = {main: {zones: true, sess: true, vwap: true, vol: true, plan: true}, blank: {}, heat: {heat: true, big: true, vol: true, plan: true}};
+  const PRESET = {main: {zones: true, sess: true, vwap: true, vol: true, plan: true}, blank: {}, heat: {heat: true, liqmap: false, big: true, vol: true, plan: true}};
   const VIEW_TF = {heat: '5m'};                                   // unité de temps de départ d'une vue (ensuite : la dernière choisie dans cette vue)
   const MO_KEYS = ['sess', 'sessW', 'sessM', 'nodes', 'dpoc', 'npoc', 'tpoM', 'tpoW', 'tpoD', 'tpo4', 'tpo1', 'vwap', 'vwapW', 'vwapM', 'vwapY', 'avwap',
-    'vol', 'heat', 'dom', 'big', 'absorb', 'gex', 'zones'];
+    'vol', 'heat', 'liqmap', 'dom', 'big', 'absorb', 'gex', 'zones'];
   const freshSet = view => ({els: {...PRESET[view]}, minGrade: 9, bigMin: 2, absorbMode: 'fortes', bigLabels: 'top', heatEx: EX.map(e => e[0]), tf: VIEW_TF[view] || null});
 
   // ---------- espaces par instrument ----------
@@ -53,6 +55,10 @@ const Desk = (() => {
     if (!S.ws[sym]) S.ws[sym] = {layout: 'main', sets: {}};
     const w = S.ws[sym];
     Object.keys(VIEWS).forEach(v => { if (!w.sets[v] || typeof w.sets[v].els !== 'object') w.sets[v] = freshSet(v); });
+    if (!w.v29) {                                     // V29 : la carte des liquidations apparaît (masquée) dans la légende de la vue Heatmap
+      if (!('liqmap' in w.sets.heat.els)) w.sets.heat.els.liqmap = false;
+      w.v29 = 1;
+    }
     return w;
   }
   const heatSyms = () => (st().cfg && st().cfg.heatmapSymbols) || ['BTCUSDT'];
@@ -96,19 +102,35 @@ const Desk = (() => {
     const g = z => z.grade || 0, shown = d.zones.filter(z => g(z) >= s.minGrade).length, best = Math.max(0, ...d.zones.map(g));
     return shown ? `${shown} zone${shown > 1 ? 's' : ''}` : `aucune en ce moment · meilleure ${best}/14`;
   }
+  const dayFmt = t => new Date(t).toLocaleDateString('fr-FR', {timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', year: '2-digit'});
+  const minFmt = t => new Date(t).toLocaleString('fr-FR', {timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
   function heatStatus() {
     const H = st().bookHeat;
     if (!heatSyms().includes(st().symbol)) return 'BTC seulement';
     if (!H) return 'chargement…';
     if (H.off) return esc(H.why || 'désactivée');
-    const since = H.since ? new Date(H.since).toLocaleString('fr-FR', {timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}) : null;
-    return since ? `historique depuis le ${since}` : 'premières photos en cours';
+    const lg = H.long || {}, a = lg.archive || {}, own = [H.since, lg.since].filter(Boolean);
+    const out = [own.length ? `photos depuis le ${minFmt(Math.min(...own))}` : 'premières photos en cours'];
+    if (lg.archiveSince) out.push(`<span title="Avant tes propres photos : archives publiques de Binance depuis le ${dayFmt(lg.archiveSince)}, montant en attente par tranches de 1 % du prix (perpétuel Binance seulement)">avant : archives Binance (1 %)</span>`);
+    else if (a.running) out.push('archives Binance : téléchargement…');
+    else if (a.error) out.push('archives Binance injoignables pour l\'instant');
+    return out.join(' · ');
+  }
+  function liqStatus() {
+    const H = st().liqMap;
+    if (!H) return 'chargement…';
+    if (H.off || !H.ready) return esc(H.why || 'en préparation');
+    const s = H.status || {}, out = ['estimée'];
+    if (s.oiSince) out.push(`depuis le ${dayFmt(s.oiSince)}`);
+    if (s.error) out.push('archives injoignables pour l\'instant');
+    return out.join(' · ');
   }
   function legendItem(k, vis, s) {
     const [name] = EL[k], ok = allowed(k);
     let extra = '';
     if (k === 'zones') extra = ` <label class="lg-sel" title="Note minimale pour qu'une zone soit dessinée">≥ <select data-lgrade>${[5, 6, 7, 8, 9, 10, 11, 12].map(v => `<option value="${v}"${v === s.minGrade ? ' selected' : ''}>${v}</option>`).join('')}</select>/14</label> <span class="lg-st">${zoneStatus()}</span>`;
-    else if (k === 'heat') extra = ok ? ` ${EX.map(([e, n]) => `<button class="lg-ex${s.heatEx.includes(e) ? ' on' : ''}" data-lex="${e}" title="Afficher ou retirer ${n}">${n}</button>`).join('')} <span class="lg-st">${heatStatus()}</span>` : ' <span class="lg-st">BTC seulement</span>';
+    else if (k === 'heat') extra = ok ? ` ${EX.map(([e, n]) => `<button class="lg-ex${s.heatEx.includes(e) ? ' on' : ''}" data-lex="${e}" title="Afficher ou retirer ${n}">${n}</button>`).join('')}${vis ? ` <span class="lg-st">${heatStatus()}</span>` : ''}` : ' <span class="lg-st">BTC seulement</span>';
+    else if (k === 'liqmap') extra = vis ? ` <span class="lg-st">${liqStatus()}</span>` : '';
     else if (!ok) extra = ' <span class="lg-st">BTC seulement</span>';
     return `<div class="lg-item${vis ? '' : ' off'}${ok ? '' : ' na'}" data-lk="${k}"><button class="lg-eye" data-leye="${k}" title="${vis ? 'Masquer' : 'Afficher'}">${vis ? EYE : EYE_OFF}</button>` +
       `<span class="lg-name">${esc(name)}</span>${extra}<button class="lg-x" data-lx="${k}" title="Retirer du graphique">✕</button></div>`;
@@ -238,36 +260,46 @@ const Desk = (() => {
   }
   function rememberTf(tf) { if (VIEWS[st().layout]) curSet().tf = tf; }
 
-  // ---------- heatmap du carnet ----------
-  // 0 = rien ; puis bleu nuit, bleu, cyan, jaune, orange, rouge (comme les écrans de carnet)
-  const STOPS = [[0, [8, 18, 48, 0]], [18, [16, 40, 110, 0.35]], [70, [25, 90, 190, 0.6]], [130, [40, 170, 220, 0.75]], [180, [240, 205, 80, 0.88]], [225, [245, 140, 45, 0.95]], [255, [235, 70, 60, 1]]];
-  const CMAP = (() => {
+  // ---------- couches sous les bougies : heatmap du carnet et carte des liquidations ----------
+  // une palette par couche : carnet = bleu nuit, bleu, cyan, jaune, orange, rouge (comme les écrans de carnet) ; liquidations = violet,
+  // bleu, vert d'eau, vert, jaune (comme les cartes de liquidation des sites spécialisés)
+  const cmapOf = stops => {
     const out = new Uint8ClampedArray(256 * 4);
     for (let q = 0; q < 256; q++) {
-      let a = STOPS[0], b = STOPS[STOPS.length - 1];
-      for (let i = 0; i < STOPS.length - 1; i++) if (q >= STOPS[i][0] && q <= STOPS[i + 1][0]) { a = STOPS[i]; b = STOPS[i + 1]; break; }
+      let a = stops[0], b = stops[stops.length - 1];
+      for (let i = 0; i < stops.length - 1; i++) if (q >= stops[i][0] && q <= stops[i + 1][0]) { a = stops[i]; b = stops[i + 1]; break; }
       const f = b[0] === a[0] ? 0 : (q - a[0]) / (b[0] - a[0]);
       for (let c = 0; c < 3; c++) out[q * 4 + c] = Math.round(a[1][c] + (b[1][c] - a[1][c]) * f);
       out[q * 4 + 3] = q === 0 ? 0 : Math.round(255 * (a[1][3] + (b[1][3] - a[1][3]) * f));
     }
     return out;
-  })();
-  function heatImage(h) {
+  };
+  const CMAP = cmapOf([[0, [8, 18, 48, 0]], [18, [16, 40, 110, 0.35]], [70, [25, 90, 190, 0.6]], [130, [40, 170, 220, 0.75]], [180, [240, 205, 80, 0.88]], [225, [245, 140, 45, 0.95]], [255, [235, 70, 60, 1]]]);
+  const CMAP_LIQ = cmapOf([[0, [68, 1, 84, 0]], [13, [72, 20, 110, 0.4]], [70, [59, 82, 139, 0.6]], [130, [33, 145, 140, 0.75]], [190, [94, 201, 98, 0.88]], [255, [253, 231, 37, 0.97]]]);
+  function heatImage(h, cmap) {
     const bytes = Uint8Array.from(atob(h.data), c => c.charCodeAt(0)), n = h.cols, m = h.rows;
     const cv = document.createElement('canvas'); cv.width = n; cv.height = m;
     const cx = cv.getContext('2d'), img = cx.createImageData(n, m);
     for (let j = 0; j < m; j++) for (let i = 0; i < n; i++) {
       const q = bytes[j * n + i], o = ((m - 1 - j) * n + i) * 4;
-      img.data[o] = CMAP[q * 4]; img.data[o + 1] = CMAP[q * 4 + 1]; img.data[o + 2] = CMAP[q * 4 + 2]; img.data[o + 3] = CMAP[q * 4 + 3];
+      img.data[o] = cmap[q * 4]; img.data[o + 1] = cmap[q * 4 + 1]; img.data[o + 2] = cmap[q * 4 + 2]; img.data[o + 3] = cmap[q * 4 + 3];
     }
     cx.putImageData(img, 0, 0);
     h.bytes = bytes; h.img = cv;
     return h;
   }
-  function heatWanted() {
+  // une couche : sa clé d'élément, où elle est rangée, son adresse, sa palette, son rythme de rafraîchissement (selon l'unité de temps)
+  const LAYERS = [
+    {el: 'heat', slot: 'bookHeat', cmap: CMAP, url: (sym, q) => `/api/heatmap?symbol=${sym}&${q}&ex=${encodeURIComponent((st().heatEx || []).join(','))}`,
+      every: tf => ({'5m': 8000, '15m': 15000, '1h': 30000}[tf] || 60000), extra: () => (st().heatEx || []).join(',')},
+    {el: 'liqmap', slot: 'liqMap', cmap: CMAP_LIQ, url: (sym, q) => `/api/liqmap?symbol=${sym}&${q}`, every: () => 60000, extra: () => ''},
+  ];
+  const layerState = {heat: {key: '', busy: false}, liqmap: {key: '', busy: false}};
+  function mainVisible() {
     const S = st();
-    return S.page === 'desk' && S.mainOpts.heat && LT.panels().some(p => p.kind === 'main' && p.visible());
+    return S.page === 'desk' && LT.panels().some(p => p.kind === 'main' && p.visible());
   }
+  function heatWanted() { return mainVisible() && LAYERS.some(l => st().mainOpts[l.el]); }
   function heatQuery() {
     try { return heatQuery0(); } catch (e) { return null; }
   }
@@ -284,25 +316,30 @@ const Desk = (() => {
     if (hi == null || lo == null || !(t1 > t0)) return null;
     return {t0: Math.round(t0), t1: Math.round(t1), lo, hi, cols: Math.max(60, Math.min(400, Math.round(w / 3))), rows: Math.max(60, Math.min(300, Math.round(h / 3)))};
   }
+  async function pollLayer(L, q, force) {
+    const S = st(), ls = layerState[L.el], sym = S.symbol;
+    if (!S.mainOpts[L.el] || ls.busy) return;
+    const key = [sym, L.extra(), Math.round(q.t0 / 5000), Math.round(q.t1 / 5000), q.lo.toPrecision(6), q.hi.toPrecision(6), q.cols, q.rows].join('|');
+    const cur = S[L.slot];
+    if (!force && key === ls.key && cur && Date.now() - (cur.at || 0) < L.every(S.tf) - 500) return;
+    ls.busy = true;
+    try {
+      const h = await LT.api(L.url(sym, `t0=${q.t0}&t1=${q.t1}&lo=${q.lo}&hi=${q.hi}&cols=${q.cols}&rows=${q.rows}`));
+      if (sym !== S.symbol) return;
+      ls.key = key;
+      h.at = Date.now();
+      S[L.slot] = h.ready && !h.empty && h.data ? heatImage(h, L.cmap) : h;
+      S.version++;
+      renderLegend();
+    } catch (e) { /* le prochain passage reessaiera */ } finally { ls.busy = false; }
+  }
   async function pollHeat(force) {
     clearTimeout(heatTimer);
     heatTimer = setTimeout(() => pollHeat(false), 8000);
-    if (!heatWanted() || heatBusy) return;
-    const S = st(), q = heatQuery(), sym = S.symbol;
+    if (!heatWanted()) return;
+    const q = heatQuery();
     if (!q) return;
-    const ex = (S.heatEx || []).join(',');
-    const key = [sym, ex, Math.round(q.t0 / 5000), Math.round(q.t1 / 5000), q.lo.toPrecision(6), q.hi.toPrecision(6), q.cols, q.rows].join('|');
-    if (!force && key === heatKey && S.bookHeat && Date.now() - (S.bookHeat.at || 0) < 7500) return;
-    heatBusy = true;
-    try {
-      const h = await LT.api(`/api/heatmap?symbol=${sym}&t0=${q.t0}&t1=${q.t1}&lo=${q.lo}&hi=${q.hi}&cols=${q.cols}&rows=${q.rows}&ex=${encodeURIComponent(ex)}`);
-      if (sym !== S.symbol) return;
-      heatKey = key;
-      h.at = Date.now();
-      S.bookHeat = h.ready && !h.empty && h.data ? heatImage(h) : h;
-      S.version++;
-      renderLegend();
-    } catch (e) { /* le prochain passage reessaiera */ } finally { heatBusy = false; }
+    LAYERS.forEach(L => pollLayer(L, q, force));
   }
   // appelé à chaque image : si la vue a bougé (défilement, zoom), nouvelle image une demi-seconde après
   let viewSig = '', viewT = 0;
@@ -315,10 +352,9 @@ const Desk = (() => {
       else if (viewT && Date.now() - viewT > 500) { viewT = 0; pollHeat(true); }
     } catch (e) { /* vue pas encore prête */ }
   }
-  // bulle : montant en attente sous le pointeur
-  function heatTip(panel, x, y) {
-    const H = st().bookHeat;
-    if (!H || !H.img || !H.bytes || !st().mainOpts.heat) return null;
+  // bulle : montant en attente (carnet) et positions estimées à liquider (carte) sous le pointeur
+  function cellAt(H, panel, x, y) {
+    if (!H || !H.img || !H.bytes) return null;
     const price = panel.series.coordinateToPrice(y), tt = panel.chart.timeScale().coordinateToTime(x);
     if (price == null) return null;
     const j = Math.floor((price - H.lo) / H.rowsz), L = panel._L;
@@ -327,9 +363,23 @@ const Desk = (() => {
     if (tms == null) return null;
     const i = Math.floor((tms - H.t0) / ((H.t1 - H.t0) / H.cols));
     if (j < 0 || j >= H.rows || i < 0 || i >= H.cols) return null;
-    const q = H.bytes[j * H.cols + i]; if (!q) return null;
-    const usd = H.ref * Math.pow(q / 255, 2), lo = H.lo + j * H.rowsz;
-    return `<b>${LT.usdFmt(usd)}</b> en attente entre ${LT.fmtP(lo)} et ${LT.fmtP(lo + H.rowsz)}<div class="muted small">${q >= 255 ? 'au plus fort de l\'image (99e centile ou plus) · ' : ''}achats et ventes additionnés, bourses choisies</div>`;
+    const q = H.bytes[j * H.cols + i];
+    return q ? {q, lo: H.lo + j * H.rowsz, hi: H.lo + (j + 1) * H.rowsz} : null;
+  }
+  function heatTip(panel, x, y) {
+    const S = st(), out = [];
+    if (S.mainOpts.heat) {
+      const c = cellAt(S.bookHeat, panel, x, y);
+      if (c) out.push(`<b>${LT.usdFmt(S.bookHeat.ref * Math.pow(c.q / 255, 2))}</b> en attente entre ${LT.fmtP(c.lo)} et ${LT.fmtP(c.hi)}<div class="muted small">${c.q >= 255 ? 'au plus fort de l\'image (99e centile ou plus) · ' : ''}carnet : achats et ventes additionnés, bourses choisies</div>`);
+    }
+    if (S.mainOpts.liqmap) {
+      const c = cellAt(S.liqMap, panel, x, y);
+      if (c) {
+        const H = S.liqMap, coins = H.ref * Math.pow(c.q / 255, 1 / 0.85), px = (c.lo + c.hi) / 2;
+        out.push(`≈ <b>${LT.fmtQty(coins)} ${esc(H.unit || '')}</b> (${LT.usdFmt(coins * px)}) de positions à liquider entre ${LT.fmtP(c.lo)} et ${LT.fmtP(c.hi)}<div class="muted small">${c.q >= 255 ? 'au plus fort de l\'image · ' : ''}carte des liquidations : estimation (intérêt ouvert Binance, leviers 10× à 100×)</div>`);
+      }
+    }
+    return out.length ? out.join('<div style="height:6px"></div>') : null;
   }
 
   function init(lt) {

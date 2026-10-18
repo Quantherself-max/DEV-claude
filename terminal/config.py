@@ -86,6 +86,7 @@ class Config:
     orderflow_on: bool = True            # V15 : carnet d'ordres Binance (route /public) + nombre d'ordres OKX + ruban (vitesse, gros ordres)
     footprint_days: int = 62              # V23 : jours de transactions exactes (archives Binance Vision + API + direct) ; 62 couvre le mois precedent ; 0 = desactive
     heatmap_symbols: tuple = ("BTCUSDT",)   # V28 : heatmap du carnet (photos des carnets Binance, OKX, Bybit, Coinbase) ; () = desactivee
+    heatmap_days: int = 180                 # V29 : memoire longue de la heatmap et archives Binance (jours) ; aussi la carte des liquidations ; 0 = rien de plus que les 24 h
     binance_ws_public: str = "wss://fstream.binance.com/public"   # flux a haute frequence de Binance futures (profondeur du carnet)
     okx_ws: str = "wss://ws.okx.com:8443/ws/v5/public"            # carnet OKX (nombre d'ordres par prix), public, sans cle
     anchor_date: str = "2024-01-01"      # VWAP ancree
@@ -184,6 +185,7 @@ def load_config(env_path: Path | None = None) -> Config:
     c.footprint_days = max(0, min(400, int(float(g("TERMINAL_FOOTPRINT_DAYS", c.footprint_days)))))
     hm = g("TERMINAL_HEATMAP", ",".join(c.heatmap_symbols)).strip()
     c.heatmap_symbols = () if hm.lower() in ("0", "false", "non", "no", "") else tuple(x.strip().upper() for x in hm.split(",") if x.strip())
+    c.heatmap_days = max(0, min(1100, int(float(g("TERMINAL_HEATMAP_DAYS", c.heatmap_days)))))
     c.binance_ws_public = g("TERMINAL_BINANCE_WS_PUBLIC", c.binance_ws_public).rstrip("/")
     c.okx_ws = g("TERMINAL_OKX_WS", c.okx_ws)
     c.anchor_date = g("TERMINAL_ANCHOR_DATE", c.anchor_date)

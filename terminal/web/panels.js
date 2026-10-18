@@ -1060,9 +1060,14 @@ class Panel {
   }
 
   // ---- V28 : heatmap du carnet d'ordres (couche SOUS les bougies) : une colonne par tranche de temps, une ligne par tranche de prix ----
-  drawBookHeat(L, h) {
-    const st = LT.st, H = st.bookHeat, hctx = this.hctx;
-    if (!st.mainOpts.heat || !H || !H.img || H.symbol !== L.d.symbol) return;
+  drawBookHeat(L, h) {                                // V29 : carte des liquidations (dessous), puis heatmap du carnet
+    const st = LT.st;
+    if (st.mainOpts.liqmap) this.drawHeatImage(L, h, st.liqMap);
+    if (st.mainOpts.heat) this.drawHeatImage(L, h, st.bookHeat);
+  }
+  drawHeatImage(L, h, H) {
+    const hctx = this.hctx;
+    if (!H || !H.img || H.symbol !== L.d.symbol) return;
     const x0 = this.timeX(H.t0 / 1000, L), x1 = this.timeX(H.t1 / 1000, L);
     const yt = this.series.priceToCoordinate(H.lo + H.rows * H.rowsz), yb = this.series.priceToCoordinate(H.lo);
     if (x0 == null || x1 == null || yt == null || yb == null || x1 <= x0) return;
