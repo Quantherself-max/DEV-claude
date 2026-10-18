@@ -1,4 +1,5 @@
-// Idees de trade : cartes (quoi faire / pourquoi / probabilites), validation historique, journal.
+// Idees de trade (V27 : page a part entiere du menu Workspace, retiree du panneau de droite du Desk) : cartes (quoi faire / pourquoi /
+// probabilites), validation historique, journal.
 const Signals = (() => {
   let LT = null, root = null, last = null;
   const open = new Set();
@@ -191,7 +192,8 @@ const Signals = (() => {
     const off = !LT.st.planOn;
     return `<div class="onchart"><span class="lt">Sur le graphique</span> ${off ? '<span class="muted small">traits des idées masqués</span>' : items || '<span class="muted small">aucune idée dessinée</span>'}
       ${off ? '<button data-pall="on">Réafficher</button>' : ps.length ? '<button data-pall="off" title="Masquer tous les traits (aussi : case « Idées envoyées » du graphique)">Tout masquer</button>' : ''}
-      ${hidden ? `<button data-pall="reset" title="Réafficher les idées que tu as masquées une par une">${hidden > 1 ? `Réafficher les ${hidden} idées masquées` : 'Réafficher l\'idée masquée'}</button>` : ''}</div>`;
+      ${hidden ? `<button data-pall="reset" title="Réafficher les idées que tu as masquées une par une">${hidden > 1 ? `Réafficher les ${hidden} idées masquées` : 'Réafficher l\'idée masquée'}</button>` : ''}
+      <a href="#/desk" class="small">Ouvrir le graphique →</a></div>`;
   }
 
   function render(p) {
@@ -201,10 +203,10 @@ const Signals = (() => {
     const sym = LT.st.symbol, sg = (p.symbols || {})[sym], desk = p.desk;
     if (!sg || !sg.ready) { root.innerHTML = '<section class="card"><div class="muted">Calcul en cours… (les idées apparaissent quand les données et l\'historique sont chargés)</div></section>'; return; }
     const w = desk.week, dots = Array.from({length: w.cap}, (_, k) => `<i class="${k < w.sent ? 'on' : ''}"></i>`).join('');
-    const ideas = sg.ideas.slice(0, 4);
+    const ideas = sg.ideas.slice(0, 6);
     const elig = sg.ideas.filter(i => i.eligible).length, sentN = sg.ideas.filter(isSent).length;
     const heldN = sg.ideas.filter(i => i.send && (i.send.state === 'blocked' || i.send.state === 'warming')).length;
-    let html = `<section class="card"><h2>Cette semaine <small>lundi 00 h UTC → dimanche</small></h2>
+    let html = `<div class="sigcol"><section class="card"><h2>Cette semaine <small>lundi 00 h UTC → dimanche · ${esc(sym)}</small></h2>
       <div class="week"><span class="dots">${dots}</span><b>${w.sent}/${w.cap}</b> idées envoyées · seuil de qualité <b>${sg.minScore}/100</b> (la dernière place exige ${sg.minScore + 8})</div>
       <div class="biasline">${LT.biasHtml(desk.bias)}</div>
       ${onChart(desk)}
@@ -219,8 +221,8 @@ const Signals = (() => {
         `<li>${r.side === 'long' ? 'Achat' : 'Vente'} vers ${px(r.entry)} : ${esc(r.why)}</li>`).join('')}</ul></details>`;
     }
     html += `<div class="muted small">${elig ? `${elig} configuration(s) au-dessus du seuil : ${sentN} déjà envoyée(s), ${heldN} retenue(s) par les règles d'envoi (quota, une idée par paire toutes les 12 heures, doublons).` : 'Aucune configuration au-dessus du seuil.'} Le détail de chaque score est dans « Tout comprendre ».</div></section>`;
-    html += `<section class="card"><h2>Validation historique <small>${esc(sym)}</small></h2>${validation(sg.validation, sg.minStruct)}</section>`;
-    html += `<section class="card"><h2>Idées envoyées sur Telegram <small>niveaux figés à l'envoi</small></h2>${journal(desk)}</section>`;
+    html += `</div><div class="sigcol"><section class="card"><h2>Idées envoyées sur Telegram <small>niveaux figés à l'envoi</small></h2>${journal(desk)}</section>`;
+    html += `<section class="card"><h2>Validation historique <small>${esc(sym)}</small></h2>${validation(sg.validation, sg.minStruct)}</section></div>`;
     root.innerHTML = html;
   }
 

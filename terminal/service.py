@@ -1120,7 +1120,6 @@ class Service:
         self._an_state: dict = {}
         self._sig_cache: dict = {}
         self._fp_cache: dict = {}
-        self._plan_cache: dict = {}
         self._regime_cache: dict = {}
         self._ev_cache: dict = {}
         self._mw_cache: dict = {}                    # bilans macro hebdomadaires (V18) : semaine -> (instant, bilan)
@@ -2014,40 +2013,6 @@ class Service:
                          "tone": (first["dom"].get("regime") or {}).get("tone")},
                  "sources": first["sources"]}
         return {"ready": True, "t": self.source.now_ms(), "symbols": syms, **g}
-
-    def plan(self, symbol: str, side: str, tp_pct: float, sl_pct: float, lev: float, horizon: int) -> dict:
-        m = self.markets.get(symbol)
-        if m is None:
-            raise KeyError(f"symbole inconnu : {symbol}")
-        if not m.ready:
-            return {"ready": False}
-        if side not in ("long", "short") or not (0.05 <= tp_pct <= 50 and 0.05 <= sl_pct <= 50) or horizon not in (4, 24, 72):
-            raise ValueError("parametres invalides (sens long/short, TP et SL entre 0,05 et 50 %, horizon 4, 24 ou 72 h)")
-        lev = max(1.0, min(125.0, lev))
-        with self.lock:
-            h1, atrs = m.h1_atrs()
-            h1, atrs = list(h1), list(atrs)
-            price, tab = m.price(), m.reach
-        key = (symbol, len(h1), side, round(tp_pct, 2), round(sl_pct, 2), horizon)
-        res = self._plan_cache.get(key)
-        if res is None:
-            res = bias_engine.plan(h1, atrs, side, tp_pct, sl_pct, horizon, price, atrs[-1])
-            if len(self._plan_cache) > 80:
-                self._plan_cache.clear()
-            self._plan_cache[key] = res
-        mmr = 0.4
-        liq_pct = max(0.0, 100.0 / lev - mmr)
-        a_pct = atrs[-1] / price * 100.0
-        d = liq_pct / a_pct if a_pct else None
-        direction = "down" if side == "long" else "up"
-        touch = {str(H): (reach_prob(tab, d, direction, H) if tab and d is not None else None) for H in (4, 24, 72)}
-        liq_px = price * (1 - liq_pct / 100.0) if side == "long" else price * (1 + liq_pct / 100.0)
-        return {"ready": True, "symbol": symbol, "side": side, "price": price, "atrPct": a_pct, "plan": res,
-                "lev": lev, "liqPct": liq_pct, "liqPrice": liq_px, "liqAtr": d, "liqTouch": touch,
-                "slBeyondLiq": sl_pct >= liq_pct, "entry": price,
-                "tpPrice": price * (1 + tp_pct / 100) if side == "long" else price * (1 - tp_pct / 100),
-                "slPrice": price * (1 - sl_pct / 100) if side == "long" else price * (1 + sl_pct / 100),
-                "riskOnMargin": sl_pct * lev, "gainOnMargin": tp_pct * lev}
 
     def get_heat(self, symbol: str, hours: float | None = None) -> dict:
         m = self.markets.get(symbol)

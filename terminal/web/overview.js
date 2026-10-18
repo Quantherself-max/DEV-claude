@@ -48,7 +48,7 @@ const Overview = (() => {
       trendBlock(s) + ideaBlock(s) +
       (near.length ? `<div class="sect">Niveaux proches</div><div class="small">${near.join(' · ')}</div>` : '') +
       `<div class="sect">Contexte</div><div class="muted small">${s.regime ? esc(s.regime) + '<br>' : ''}Funding ${s.funding != null ? sg(s.funding, 4, ' %') : '-'} · OI 24 h ${sg(s.oi24, 1, ' %')} · achats agressifs 24 h ${s.buy24 != null ? n1(s.buy24, 1) + ' %' : '-'} · L/S ${s.ls != null ? n1(s.ls) : '-'}</div>` +
-      `<div class="line" style="margin-top:8px"><button data-ovgo="${esc(s.symbol)}" class="primary">Ouvrir sur le Desk</button><button data-ovan="${esc(s.symbol)}">Analyse</button></div>`);
+      `<div class="line" style="margin-top:8px"><button data-ovgo="${esc(s.symbol)}" class="primary">Ouvrir sur le Desk</button><button data-ovan="${esc(s.symbol)}">Idées de trade</button></div>`);
   }
 
   function render(o) {
@@ -77,7 +77,7 @@ const Overview = (() => {
     el.className = 'ovwrap';
     el.innerHTML = top + `<div class="ag two" style="margin-top:10px">${o.symbols.map(symCard).join('')}</div>`;
     el.querySelectorAll('[data-ovgo]').forEach(b => b.onclick = () => LT.openSymbol(b.dataset.ovgo, 'desk'));
-    el.querySelectorAll('[data-ovan]').forEach(b => b.onclick = () => LT.openSymbol(b.dataset.ovan, 'analysis'));
+    el.querySelectorAll('[data-ovan]').forEach(b => b.onclick = () => LT.openSymbol(b.dataset.ovan, 'signals'));
   }
   function init(lt) { LT = lt; }
   return {init, render};

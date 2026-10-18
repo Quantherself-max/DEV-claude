@@ -741,7 +741,6 @@ function showPane(name) {
   if (name === 'chat') loadChat();
   if (name === 'liquidity') { pollLiqs(); renderLqReal(); }
   if (name === 'vp') pollVP();
-  if (name === 'signals') { pollSignals(); if (st.sig) Signals.render(st.sig); }
   if (name === 'mine') Strategy.show();
   if (name === 'lecture') Lecture.show();
 }
@@ -749,7 +748,7 @@ function showPane(name) {
 function reloadSideTab() { if (st.tab === 'lecture') Lecture.show(); else if (st.tab === 'mine') Strategy.show(); }
 const EXPERT_TABS = ['context', 'stats', 'liquidity', 'vp', 'alerts'];
 function applyExpert() {
-  document.querySelectorAll('#tabs button[data-expert], #sidebar a[data-expert]').forEach(b => { b.hidden = !st.expert; });
+  document.querySelectorAll('#tabs button[data-expert], #sidebar a[data-expert], #anTabs button[data-expert]').forEach(b => { b.hidden = !st.expert; });
   const nt = $('#navExpertTxt'); if (nt) nt.textContent = 'Mode détaillé : ' + (st.expert ? 'oui' : 'non');
   const more = $('#tabMore'); if (more) { more.textContent = st.expert ? 'Détails ▴' : 'Détails ▾'; more.classList.toggle('on', st.expert); }
   if (!st.expert && EXPERT_TABS.includes(st.tab)) showPane('lecture');
@@ -764,16 +763,18 @@ $('#stats').addEventListener('click', e => {
 });
 
 // ---------- workspace : pages, menu lateral, mise en page ----------
-const PAGES = {desk: 'Desk', overview: 'Overview', history: 'Historique', backtest: 'Backtest', analysis: 'Analyse'};
-const SUBS = {synth: 'Biais & probabilités', macro: 'Macro & annonces', week: 'Macro de la semaine', month: 'Macro du mois', dom: 'Dominance BTC / alts', plan: 'Plan de trade', lex: 'Lexique du graphique'};
+const PAGES = {desk: 'Desk', overview: 'Overview', signals: 'Idées de trade', history: 'Historique', backtest: 'Backtest', analysis: 'Analyse'};
+const SUBS = {macro: 'Macro', synth: 'Biais & probabilités', dom: 'Dominance BTC / alts'};
+const OLD_SUBS = {week: 'macro', month: 'macro', plan: 'macro', lex: 'macro'};            // V27 : anciennes pages (favoris) -> Macro
 function navigate(page, sub) {
   if (!PAGES[page]) page = 'desk';
   st.page = page;
-  if (page === 'analysis') st.sub = SUBS[sub] ? sub : (st.sub || 'synth');
+  if (page === 'analysis') st.sub = SUBS[sub] ? sub : OLD_SUBS[sub] || (SUBS[st.sub] ? st.sub : 'macro');
   document.querySelectorAll('.page').forEach(p => p.hidden = p.dataset.page !== page);
   document.querySelectorAll('#sidebar a[data-nav]').forEach(a => a.classList.toggle('on', a.dataset.nav === page && (page !== 'analysis' || a.dataset.sub === st.sub)));
   $('#crumb').textContent = page === 'analysis' ? SUBS[st.sub] : PAGES[page];
-  if (page === 'analysis') Analysis.show(st.sub); else { MacroWeek.hide(); MacroMonth.hide(); }
+  if (page === 'analysis') Analysis.show(st.sub); else Macro.hide();
+  if (page === 'signals') { pollSignals(); if (st.sig) Signals.render(st.sig); }
   if (page === 'desk') setTimeout(() => { syncRange(); refreshAll(); }, 60);
   if (page === 'desk' && st.layout === 'mtf') MTF.show(); else MTF.hide();
   if (page === 'desk' && st.layout === 'tpo') TPO.show(); else TPO.hide();
@@ -784,8 +785,7 @@ function navigate(page, sub) {
 }
 function routeFromHash() {
   const m = /^#\/([a-z]+)(?:\/([a-z]+))?/.exec(location.hash);
-  if (m && m[1] === 'signals') { st.sideOpen = true; navigate('desk'); applyLayout(); showPane('signals'); document.querySelectorAll('#sidebar a[data-nav]').forEach(a => a.classList.toggle('on', a.dataset.nav === 'signals')); }
-  else if (m) navigate(m[1], m[2]);
+  if (m) navigate(m[1], m[2]);
   else { let saved = null; try { saved = localStorage.getItem('liqPage'); } catch (e) { /* rien */ } const q = (saved || 'desk').split('/'); navigate(q[0], q[1]); }
 }
 window.addEventListener('hashchange', routeFromHash);
@@ -961,9 +961,9 @@ function riskChip() {
   el.hidden = false; el.className = 'badge risk ' + lvl;
   const tm = Math.round(Math.abs(mins));
   el.textContent = (mins >= 0 ? '⚠ ' : '') + r.label + (mins >= 0 ? ' dans ' : ' il y a ') + (tm >= 60 ? Math.floor(tm / 60) + ' h ' + String(tm % 60).padStart(2, '0') : tm + ' min');
-  el.title = 'Annonce majeure : ouvre l\'onglet Macro & annonces';
+  el.title = 'Annonce majeure : ouvre la page Macro';
 }
-$('#riskChip').onclick = () => { const b = document.querySelector('#anTabs button[data-an="macro"]'); if (b) { b.click(); $('#analysis').scrollIntoView({behavior: 'smooth'}); } };
+$('#riskChip').onclick = () => { location.hash = '#/analysis/macro'; };
 
 // ---------- idees de trade ----------
 let sigTimer = null;
@@ -971,7 +971,7 @@ let sigTimer = null;
 // (recalculée sans cesse, donc mobile) n'apparaît que si tu la demandes, marquée « pas envoyée ».
 const OPEN_ST = ['pending', 'active', 'tp1'], RECENT_MS = 48 * 3600e3;
 // V26 : chaque trait se masque ou se réaffiche, idée par idée (choix gardé) ; par défaut, les idées en cours et celles terminées depuis
-// moins de 48 h. Une configuration du moment affichée reste toujours retirable (liste « Sur le graphique » de l'onglet Idées).
+// moins de 48 h. Une configuration du moment affichée reste toujours retirable (menu « Idées » des options du graphique, V27).
 function planVisible(t, now = Date.now()) {
   if (st.planHide.includes(t.id)) return false;
   return st.planShow.includes(t.id) || OPEN_ST.includes(t.status) || (t.endAt || t.closedAt || 0) > now - RECENT_MS;
@@ -993,7 +993,7 @@ function activePlans() {
 }
 function updatePlan() {
   const ps = activePlans(), k = ps.map(p => [p.key, p.kind, p.status, p.entry, p.stop, p.tp1, p.tp2].join()).join('|');
-  if (k !== st.planSig) { st.planSig = k; st.plans = ps; st.version++; panels.forEach(x => x.sig = ''); }
+  if (k !== st.planSig) { st.planSig = k; st.plans = ps; st.version++; panels.forEach(x => x.sig = ''); syncAllTools(); }
 }
 function togglePlan(id) {                                              // idée envoyée : masquer si elle est dessinée, sinon l'afficher
   const t = ((st.sig && st.sig.desk && st.sig.desk.trades) || []).find(x => x.id === id);
@@ -1031,7 +1031,7 @@ async function pollSignals() {
     const sym = st.symbol, r = await api(`/api/signals?symbol=${sym}`);
     if (sym !== st.symbol) return;
     st.sig = r; sigChip(); updatePlan();
-    if (st.page === 'desk' && st.tab === 'signals') Signals.render(r);
+    if (st.page === 'signals') Signals.render(r);
   } catch (e) { /* le prochain passage reessaiera */ }
 }
 function setPlan(key) {                                               // 'off' : tout masquer ; 'on' : réafficher ; clé : configuration du moment ; null : la retirer
@@ -1279,7 +1279,7 @@ function openSymbol(sym, page) {
   if (st.cfg && st.cfg.symbols.includes(sym) && sym !== st.symbol) {
     st.symbol = sym; $('#symbol').value = sym; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); reloadSideTab(); MTF.refresh(); TPO.refresh();
   }
-  location.hash = page === 'analysis' ? '#/analysis/synth' : '#/desk';
+  location.hash = page === 'analysis' ? '#/analysis/synth' : page === 'signals' ? '#/signals' : '#/desk';
 }
 (async () => {
   loadPrefs();
@@ -1302,7 +1302,7 @@ function openSymbol(sym, page) {
   Analysis.init(window.LT);
   renderLqLegend(); applySidebar(); applyLayout();
   applyExpert();
-  try { const t = localStorage.getItem('liqTab'); showPane((['lecture', 'signals', 'levels', 'mine', 'chat'].includes(t) || (st.expert && EXPERT_TABS.includes(t))) ? t : 'lecture'); } catch (err) { showPane('lecture'); }
+  try { const t = localStorage.getItem('liqTab'); showPane((['lecture', 'levels', 'mine', 'chat'].includes(t) || (st.expert && EXPERT_TABS.includes(t))) ? t : 'lecture'); } catch (err) { showPane('lecture'); }
   $('#navSettings').onclick = e => { e.preventDefault(); openSettings(); };
   routeFromHash();
   poll(); pollAnalysis(); pollSignals(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop); setTimeout(updateNotice, 2500);

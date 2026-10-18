@@ -170,7 +170,7 @@ def week_chip(d: dict):
         note = ((f"Régime : {reg.lower()}. " if reg else "") +
                 (f"Le marché anticipe {fr(abs(cuts), 1)} {'baisse' if cuts > 0 else 'hausse'}{'s' if round(abs(cuts), 1) >= 2 else ''} de taux d'ici un an. "
                  if cuts is not None and abs(cuts) >= 0.4 else "") +
-                "Détail : Analyse → Macro de la semaine.")
+                "Détail : page Macro.")
         sc = vw.get("score") or 0.0
         return chip("macroweek", "Macro et liquidité", "Vision macro de la semaine", vw["label"].upper(), note, "up" if sc >= 0.4 else "dn" if sc <= -0.4 else "", "contexte")
     v = (w or {}).get("verdict") or {}
@@ -179,7 +179,7 @@ def week_chip(d: dict):
     sc = v.get("score") or 0.0
     pos = [p["title"].lower() for p in v.get("parts", []) if p["score"] > 0]
     neg = [p["title"].lower() for p in v.get("parts", []) if p["score"] < 0]
-    note = ("Soutiens : " + ", ".join(pos) + ". " if pos else "") + ("Freins : " + ", ".join(neg) + ". " if neg else "") + "Détail : Analyse → Bilan macro de la semaine."
+    note = ("Soutiens : " + ", ".join(pos) + ". " if pos else "") + ("Freins : " + ", ".join(neg) + ". " if neg else "") + "Détail : page Macro."
     return chip("macroweek", "Macro et liquidité", "Bilan macro de la semaine", v["label"].upper(), note, "up" if sc >= 0.75 else "dn" if sc <= -0.75 else "", "contexte")
 
 

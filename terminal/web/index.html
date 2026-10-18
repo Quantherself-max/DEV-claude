@@ -15,18 +15,14 @@
     <div class="sgroup">WORKSPACE</div>
     <a href="#/desk" data-nav="desk"><i>▥</i><span>Desk</span></a>
     <a href="#/overview" data-nav="overview"><i>▦</i><span>Overview</span></a>
-    <a href="#/signals" data-nav="signals"><i>◎</i><span>Idées de trade</span></a>
+    <a href="#/signals" data-nav="signals" title="Idées de trade : la semaine, les configurations du moment, les idées envoyées sur Telegram"><i>◎</i><span>Idées de trade</span></a>
     <a href="#/history" data-nav="history" title="Toutes les idées et alertes envoyées avec leur résultat, et la lecture du terminal jour après jour"><i>⧗</i><span>Historique</span></a>
     <a href="#/backtest" data-nav="backtest"><i>⌁</i><span>Backtest</span></a>
     <div class="sgroup">ANALYSE</div>
+    <a href="#/analysis/macro" data-nav="analysis" data-sub="macro" title="Toute la macro sur une page : l'essentiel (vent de la semaine, moyen terme, Fed, régime, marchés), les annonces, puis le détail par thème"><i>▲</i><span>Macro</span></a>
     <a href="#/analysis/synth" data-nav="analysis" data-sub="synth" data-expert hidden><i>◆</i><span>Biais &amp; probabilités</span></a>
-    <a href="#/analysis/macro" data-nav="analysis" data-sub="macro"><i>▲</i><span>Macro &amp; annonces</span></a>
-    <a href="#/analysis/week" data-nav="analysis" data-sub="week" title="Vision de la semaine (régime, surprises face au consensus, ce que le marché attend de la Fed, estimation du terminal pour chaque annonce) puis bilan chiffré"><i>▤</i><span>Macro de la semaine</span></a>
-    <a href="#/analysis/month" data-nav="analysis" data-sub="month" title="Analyse du mois : la Fed (projections, communiqué annoté, votes), projections Fed / FMI / marché, moyen terme, scénarios, rapports des banques"><i>▦</i><span>Macro du mois</span></a>
     <a href="#/analysis/dom" data-nav="analysis" data-sub="dom" data-expert hidden><i>◧</i><span>Dominance BTC / alts</span></a>
-    <a href="#/analysis/plan" data-nav="analysis" data-sub="plan"><i>⚖</i><span>Plan de trade</span></a>
-    <div class="sgroup">AIDE</div>
-    <a href="#/analysis/lex" data-nav="analysis" data-sub="lex"><i>?</i><span>Lexique</span></a>
+    <div class="sgroup">TERMINAL</div>
     <a href="#" id="navExpert" title="Affiche les onglets et pages de détail (contexte, statistiques, liquidité, profils, biais statistique, dominance)"><i>⋯</i><span id="navExpertTxt">Mode détaillé : non</span></a>
     <a href="#" id="navSettings"><i>⚙</i><span>Réglages</span></a>
   </nav>
@@ -72,7 +68,6 @@
     <aside id="side">
       <nav id="tabs" class="tabs" role="tablist">
         <button data-tab="lecture" class="on">Lecture</button>
-        <button data-tab="signals">Idées</button>
         <button data-tab="levels">Niveaux</button>
         <button data-tab="mine">Stratégie</button>
         <button data-tab="chat" title="Pose tes questions à Claude, qui répond avec toutes les données du terminal">Discussion</button>
@@ -112,9 +107,6 @@
           <div id="pricePools"></div>
           <div class="note">Plus haut et plus bas de la veille, de la semaine, du mois ; creux et sommets récents ; deux niveaux presque égaux comptent comme une seule poche plus forte. Contrairement aux poches estimées par l'Open Interest (29 jours d'historique), ceux-ci se testent sur toute l'histoire : voir la page Backtest.</div>
         </section>
-      </div>
-      <div class="pane" data-pane="signals" hidden>
-        <div id="sigBox" class="sigbox"><section class="card"><div class="muted">Chargement…</div></section></div>
       </div>
       <div class="pane" data-pane="mine" hidden>
         <div id="mineBox" class="sigbox"><section class="card"><div class="muted">Chargement…</div></section></div>
@@ -163,6 +155,10 @@
   <div id="overview" class="ovwrap"><div class="muted">Chargement…</div></div>
 </section>
 
+<section class="page" data-page="signals" hidden>
+  <div id="sigBox" class="sigpage"><section class="card"><div class="muted">Chargement…</div></section></div>
+</section>
+
 <section class="page" data-page="history" hidden>
   <div id="histBox" class="btwrap"></div>
 </section>
@@ -174,23 +170,15 @@
 <section class="page" data-page="analysis" hidden>
 <section id="analysis">
   <nav id="anTabs" class="antabs" role="tablist">
-    <h2 id="anTitle">Biais &amp; probabilités</h2>
-    <button data-an="synth" class="on">Biais &amp; probabilités</button>
-    <button data-an="macro">Macro &amp; annonces</button>
-    <button data-an="week">Macro de la semaine</button>
-    <button data-an="month">Macro du mois</button>
-    <button data-an="dom">Dominance BTC / alts</button>
-    <button data-an="plan">Plan de trade</button>
-    <button data-an="lex">Lexique du graphique</button>
+    <h2 id="anTitle">Macro</h2>
+    <button data-an="macro" class="on">Macro</button>
+    <button data-an="synth" data-expert hidden>Biais &amp; probabilités</button>
+    <button data-an="dom" data-expert hidden>Dominance BTC / alts</button>
     <span class="spacer"></span><span id="anStatus" class="muted small"></span>
   </nav>
-  <div class="anpane" data-anpane="synth"><div id="anSynth" class="muted">Analyse en cours…</div></div>
-  <div class="anpane" data-anpane="macro" hidden><div id="anMacro" class="muted">Analyse en cours…</div></div>
-  <div class="anpane" data-anpane="week" hidden><div id="anWeek"></div></div>
-  <div class="anpane" data-anpane="month" hidden><div id="anMonth"></div></div>
+  <div class="anpane" data-anpane="macro"><div id="anMacro"></div></div>
+  <div class="anpane" data-anpane="synth" hidden><div id="anSynth" class="muted">Analyse en cours…</div></div>
   <div class="anpane" data-anpane="dom" hidden><div id="anDom" class="muted">Analyse en cours…</div></div>
-  <div class="anpane" data-anpane="plan" hidden><div id="anPlan"></div></div>
-  <div class="anpane" data-anpane="lex" hidden><div id="anLex"></div></div>
 </section>
 </section>
 
@@ -317,8 +305,7 @@
 <script src="panels.js"></script>
 <script src="mtf.js"></script>
 <script src="tpo.js"></script>
-<script src="macroweek.js"></script>
-<script src="macromonth.js"></script>
+<script src="macro.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

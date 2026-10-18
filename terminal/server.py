@@ -31,7 +31,7 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "26"
+VERSION = "27"
 API_LEVEL = 28                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
@@ -908,11 +908,6 @@ def make_handler(app: App):
                 if u.path == "/api/analysis":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.service.analysis(sym))
-                if u.path == "/api/plan":
-                    sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
-                    g = lambda k, d: float((q.get(k) or [d])[0])
-                    return self._json(app.service.plan(sym, (q.get("side") or ["long"])[0], g("tp", 2.0), g("sl", 1.0),
-                                                       g("lev", 10.0), int(g("h", 24))))
                 if u.path == "/api/heat":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     hrs = float((q.get("hours") or ["0"])[0]) or None

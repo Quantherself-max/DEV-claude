@@ -407,19 +407,7 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(r["macro"]["upcoming"])
         self.assertIn("horizons", r["bias"])
         self.assertEqual(self.get("/api/analysis?symbol=XXX")[0], 404)
-        p = json.loads(self.get("/api/plan?symbol=BTCUSDT&side=long&tp=2&sl=1&lev=10&h=24")[1])
-        self.assertTrue(p["ready"])
-        pl = p["plan"]
-        self.assertAlmostEqual(pl["tp"]["p"] + pl["sl"]["p"] + pl["none"]["p"], 1.0, places=6)
-        self.assertAlmostEqual(p["liqPct"], 9.6)                       # 100/10 - 0,4
-        self.assertLess(p["liqPrice"], p["price"])
-        self.assertFalse(p["slBeyondLiq"])
-        self.assertIsNotNone(p["liqTouch"]["24"])
-        s = json.loads(self.get("/api/plan?symbol=BTCUSDT&side=short&tp=2&sl=12&lev=10&h=24")[1])
-        self.assertTrue(s["slBeyondLiq"])                              # stop au-dela de la liquidation : signale
-        self.assertGreater(s["liqPrice"], s["price"])
-        self.assertEqual(self.get("/api/plan?symbol=BTCUSDT&side=up&tp=2&sl=1&lev=10&h=24")[0], 400)
-        self.assertEqual(self.get("/api/plan?symbol=BTCUSDT&side=long&tp=2&sl=1&lev=10&h=5")[0], 400)
+        self.assertEqual(self.get("/api/plan?symbol=BTCUSDT&side=long&tp=2&sl=1&lev=10&h=24")[0], 404)   # V27 : page Plan de trade retiree
 
     def test_volume_profiles_series_and_specs(self):
         st = json.loads(self.get("/api/state?symbol=BTCUSDT&tf=1h")[1])

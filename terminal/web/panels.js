@@ -68,6 +68,7 @@ class Panel {
     host.querySelector('.pmax').onclick = () => LT.maximize(kind);
     host.querySelector('.ptools').addEventListener('click', ev => this.onTool(ev));
     host.querySelector('.ptools').addEventListener('change', ev => this.onTool(ev));
+    if (kind === 'main') Panel.ddInit();
     this.syncTools();
   }
 
@@ -250,33 +251,47 @@ class Panel {
   }
 
   // ---------- barre d'outils ----------
+  // V27 : options du graphique principal rangées en menus déroulants (zones, liquidité, profils, TPO, VWAP et gamma, flux d'ordres, idées)
+  static DD = {
+    liq: ['pools', 'ppools'], prof: ['sess', 'sessW', 'sessM', 'nodes', 'dpoc', 'npoc'], tpo: ['tpoM', 'tpoW', 'tpoD', 'tpo4', 'tpo1'],
+    vwap: ['vwap', 'gex'], flow: ['dom', 'big', 'absorb'],
+  };
+  static MODES = {ess: 'Essentiel', conf: 'Confluences', all: 'Tous'};
   static tools(kind) {
-    if (kind === 'main') return `<label title="Seulement les 2 zones les plus importantes de chaque côté du prix"><input type="radio" name="mode" value="ess"> Essentiel</label>` +
-      `<label title="Toutes les zones de confluence proches"><input type="radio" name="mode" value="conf"> Confluences</label>` +
-      `<label title="Tous les niveaux de la fenêtre"><input type="radio" name="mode" value="all"> Tous</label>` +
-      `<label title="Poches de liquidations estimées par l'Open Interest"><input type="checkbox" data-opt="pools"> Poches</label>` +
-      `<label title="Ordres d'arrêt visibles dans le prix : plus haut / plus bas de la veille, de la semaine, du mois, creux et sommets récents"><input type="checkbox" data-opt="ppools"> Plus hauts / bas</label>` +
-      `<label title="Idées envoyées sur Telegram : entrée, stop et objectifs figés, à partir de l'heure d'envoi"><input type="checkbox" data-opt="plan"> Idées envoyées</label>` +
-      `<label title="Profil de volume du jour (depuis 00 h UTC), collé à l'échelle des prix : volume par prix, part des acheteurs (bleu) ou des vendeurs (blanc), POC / VAH / VAL"><input type="checkbox" data-mo="sess"> Profil J</label>` +
-      `<label title="Profil de volume de la semaine en cours (depuis lundi 00 h UTC), à gauche du profil du jour"><input type="checkbox" data-mo="sessW"> S</label>` +
-      `<label title="Profil de volume du mois en cours (depuis le 1er, 00 h UTC)"><input type="checkbox" data-mo="sessM"> M</label>` +
-      `<label title="Nœuds de volume du profil du jour : bandes bleues = zones d'acceptation (HVN, beaucoup d'échanges), violettes = zones de rejet (LVN, le prix les traverse vite)"><input type="checkbox" data-mo="nodes"> Nœuds</label>` +
-      `<label title="POC (trait clair), VAH et VAL (pointillés bleus) du jour tels qu'ils ont évolué au fil de la séance"><input type="checkbox" data-mo="dpoc"> POC évolutif</label>` +
-      `<label title="POC des jours et semaines passés jamais retraversés depuis (pointillés), les plus proches du prix"><input type="checkbox" data-mo="npoc"> POC vierges</label>` +
-      `<label title="TPO du mois (tranches d'1 jour) : single prints non comblées (rectangle gris, trait épais) et poor highs / lows non réparés (pointillés)"><input type="checkbox" data-mo="tpoM"> TPO mois</label>` +
-      `<label title="TPO de la semaine (lundi 00 h UTC, tranches de 4 heures)"><input type="checkbox" data-mo="tpoW"> semaine</label>` +
-      `<label title="TPO des séances d'1 jour (tranches de 30 minutes)"><input type="checkbox" data-mo="tpoD"> 1 j</label>` +
-      `<label title="TPO des séances de 4 heures"><input type="checkbox" data-mo="tpo4"> 4 h</label>` +
-      `<label title="TPO des séances d'1 heure (beaucoup de marques : à utiliser en 5 ou 15 minutes)"><input type="checkbox" data-mo="tpo1"> 1 h</label>` +
-      `<label title="VWAP du jour et bandes à ±1 écart-type"><input type="checkbox" data-mo="vwap"> VWAP</label>` +
-      `<label title="Gamma des options BTC (Deribit, BTC seulement) : mur de calls (magenta), mur de puts (cyan), bascule du gamma (jaune) et barres de gamma par strike à gauche ; « ≈ VWAP » = confluence avec un VWAP ou un VWAP ancré. Estimation : hypothèse sur le sens des teneurs de marché, effet non mesuré sur le passé"><input type="checkbox" data-mo="gex"> Gamma BTC</label>` +
-      `<label title="Carnet d'ordres en direct aligné sur les prix : taille en attente (Binance), nombre d'ordres (OKX), volume échangé à chaque prix"><input type="checkbox" data-mo="dom"> Carnet</label>` +
-      `<label title="Gros ordres agressifs exécutés (bulles) : vert = acheteurs agressifs (un peu à droite de la bougie), rouge = vendeurs agressifs (un peu à gauche). La taille de la bulle suit le montant ; les bulles d'une même bougie trop proches à l'écran sont réunies en une seule. Survole une bulle pour le détail"><input type="checkbox" data-mo="big"> Gros ordres <span class="lgd"><i class="lb buy"></i><i class="lb sell"></i></span></label>` +
-      `<select class="mini" data-mosel="bigMin" title="Taille minimale d'une bulle (somme des gros ordres d'une même bougie au même prix) : au-dessous, rien n'est dessiné"></select>` +
-      `<label title="Absorptions : sur la bougie, delta fort CONTRE son sens (triangle vert sous la bougie = vendeurs absorbés, rouge au-dessus = acheteurs absorbés) ; en direct, « mur » au prix où le volume agressif a été absorbé sans que le prix passe au travers (trait horizontal : pattes vers le haut = mur qui soutient, vers le bas = mur qui bloque ; pointillé = en cours, double trait = ordre réapprovisionné, pâle et barré = cassé). Survole pour le détail et la mesure"><input type="checkbox" data-mo="absorb"> Absorptions <span class="lgd"><i class="lw up"></i><i class="lw dn"></i></span></label>` +
-      `<select class="mini" data-mosel="absorbMode" title="Fortes : delta d'au moins 3 écarts-types ou au plus bas / plus haut des 12 dernières bougies, volume au moins 1,3 fois la normale, une seule par grappe de bougies ; en direct, au moins 1,5 fois le seuil ou ordre réapprovisionné, sur les 3 dernières heures. Toutes : tout ce qui est détecté"><option value="fortes">fortes</option><option value="toutes">toutes</option></select>` +
-      `<select class="mini" data-mosel="bigLabels" title="Montants écrits à côté des gros ordres et des murs d'absorption : les 3 plus gros visibles (par défaut), tous ceux qui ont la place, ou aucun. Le détail reste toujours au survol"><option value="top">chiffres : 3 plus gros</option><option value="all">chiffres : tous</option><option value="none">chiffres : aucun</option></select>` +
-      `<button class="mini" data-flowreset title="Remettre à zéro le volume échangé affiché dans le carnet">↺ volumes</button>`;
+    if (kind === 'main') {
+      const opt = (attr, label, sub) => `<label><input type="checkbox" ${attr}><span>${label}${sub ? `<small>${sub}</small>` : ''}</span></label>`;
+      const dd = (key, label, body, title) => `<span class="dd" data-dd="${key}"><button type="button" class="ddb" data-ddt="${key}" title="${title}">${label}<em class="ddn"></em><i class="ddc">▾</i></button>` +
+        `<div class="ddp" hidden>${body}</div></span>`;
+      return dd('zones', 'Zones', ['ess', 'conf', 'all'].map(v => `<label><input type="radio" name="mode" value="${v}"><span>${Panel.MODES[v]}<small>${
+        {ess: 'les 2 zones les plus importantes de chaque côté du prix', conf: 'toutes les zones de confluence proches', all: 'tous les niveaux de la fenêtre'}[v]}</small></span></label>`).join(''),
+        'Zones de confluence dessinées : essentiel, confluences ou tous les niveaux') +
+        dd('liq', 'Liquidité', opt('data-opt="pools"', 'Poches de liquidation', 'estimées par l\'intérêt ouvert') +
+          opt('data-opt="ppools"', 'Plus hauts / plus bas', 'ordres d\'arrêt visibles dans le prix : veille, semaine, mois, creux et sommets récents'), 'Poches de liquidation et ordres d\'arrêt') +
+        dd('prof', 'Profils', '<div class="ddh">Profils de volume collés à l\'échelle des prix</div>' +
+          opt('data-mo="sess"', 'Profil du jour', 'depuis 00 h UTC : volume par prix, part des acheteurs, POC, VAH, VAL') +
+          opt('data-mo="sessW"', 'Profil de la semaine', 'depuis lundi 00 h UTC') + opt('data-mo="sessM"', 'Profil du mois', 'depuis le 1er, 00 h UTC') +
+          '<div class="ddh">Repères tirés des profils</div>' +
+          opt('data-mo="nodes"', 'Nœuds de volume', 'bandes bleues = acceptation (HVN), violettes = rejet (LVN)') +
+          opt('data-mo="dpoc"', 'POC, VAH et VAL évolutifs', 'du jour, tels qu\'ils ont évolué pendant la séance') +
+          opt('data-mo="npoc"', 'POC vierges', 'des jours et semaines passés, jamais retraversés'), 'Profils de volume et repères (nœuds, POC)') +
+        dd('tpo', 'TPO', '<div class="ddh">Single prints non comblés (rectangle gris) et poor highs / lows non réparés (pointillés)</div>' +
+          opt('data-mo="tpoM"', 'Mois', 'tranches d\'1 jour') + opt('data-mo="tpoW"', 'Semaine', 'tranches de 4 heures') +
+          opt('data-mo="tpoD"', 'Jour', 'tranches de 30 minutes') + opt('data-mo="tpo4"', 'Séances de 4 heures') +
+          opt('data-mo="tpo1"', 'Séances d\'1 heure', 'beaucoup de marques : à utiliser en 5 ou 15 minutes'), 'Marques TPO (profil de marché)') +
+        dd('vwap', 'VWAP · Gamma', opt('data-mo="vwap"', 'VWAP du jour', 'et bandes à ±1 écart-type') +
+          opt('data-mo="gex"', 'Gamma des options BTC', 'Deribit, BTC seulement : mur de calls (magenta), mur de puts (cyan), bascule (jaune), barres par strike ; « ≈ VWAP » = confluence avec un VWAP. Estimation hors score'),
+          'VWAP du jour et gamma des options BTC') +
+        dd('flow', 'Flux d\'ordres', `<div class="ddrow">${opt('data-mo="dom"', 'Carnet d\'ordres en direct', 'taille en attente (Binance), nombre d\'ordres (OKX), volume échangé à chaque prix')}` +
+          '<button class="mini" data-flowreset title="Remettre à zéro le volume échangé affiché dans le carnet">↺ volumes</button></div>' +
+          `<div class="ddrow">${opt('data-mo="big"', 'Gros ordres agressifs <span class="lgd"><i class="lb buy"></i><i class="lb sell"></i></span>', 'bulles : vert = acheteurs, rouge = vendeurs ; taille selon le montant')}` +
+          '<select class="mini" data-mosel="bigMin" title="Taille minimale d\'une bulle : au-dessous, rien n\'est dessiné"></select></div>' +
+          `<div class="ddrow">${opt('data-mo="absorb"', 'Absorptions <span class="lgd"><i class="lw up"></i><i class="lw dn"></i></span>', 'delta fort contre la bougie ; en direct, « mur » qui absorbe le volume agressif')}` +
+          '<select class="mini" data-mosel="absorbMode" title="Fortes : delta d\'au moins 3 écarts-types ou au plus bas / plus haut des 12 dernières bougies, volume au moins 1,3 fois la normale. Toutes : tout ce qui est détecté"><option value="fortes">fortes</option><option value="toutes">toutes</option></select></div>' +
+          '<label class="ddsel">Montants écrits <select class="mini" data-mosel="bigLabels" title="Montants écrits à côté des gros ordres et des murs d\'absorption ; le détail reste au survol"><option value="top">3 plus gros</option><option value="all">tous</option><option value="none">aucun</option></select></label>',
+          'Carnet, gros ordres agressifs et absorptions') +
+        dd('ideas', 'Idées', opt('data-opt="plan"', 'Traits des idées sur le graphique', 'entrée, stop et objectifs figés à l\'envoi, à partir de l\'heure d\'envoi') +
+          '<div class="ddplans"></div><a class="ddlink" href="#/signals">Page Idées de trade →</a>', 'Idées envoyées dessinées sur le graphique : afficher ou masquer chacune');
+    }
     if (kind === 'liq') return `<span class="seg mini" data-hours><button data-h="24">24 h</button><button data-h="72">3 j</button><button data-h="168">7 j</button><button data-h="0">29 j</button></span>` +
       `<label><input type="checkbox" data-lq="pools"> Poches</label><label><input type="checkbox" data-lq="sweeps"> Balayages</label>` +
       `<label><input type="checkbox" data-lq="real"> Réel</label><label><input type="checkbox" data-lq="profile"> Profil</label>`;
@@ -302,9 +317,65 @@ class Panel {
     h.querySelectorAll('[data-lq]').forEach(c => c.checked = !!st.liqOpts[c.dataset.lq]);
     h.querySelectorAll('[data-vp]').forEach(c => c.checked = !!st.vpOpts[c.dataset.vp]);
     h.querySelectorAll('[data-hours] button').forEach(b => b.classList.toggle('on', +b.dataset.h === st.liqOpts.hours));
+    if (this.kind === 'main') this.syncDD();
+  }
+  // V27 : résumé sur chaque bouton de menu (nombre d'options actives) et liste des idées dessinées
+  syncDD() {
+    const st = LT.st, h = this.host, btc = st.symbol === 'BTCUSDT';
+    h.querySelectorAll('[data-mo=gex]').forEach(c => { c.disabled = !btc; c.closest('label').classList.toggle('off', !btc); });
+    const on = k => k === 'pools' ? st.pools : k === 'ppools' ? st.ppools : k === 'gex' ? btc && !!st.mainOpts.gex : !!st.mainOpts[k];
+    h.querySelectorAll('.dd').forEach(dd => {
+      const k = dd.dataset.dd, em = dd.querySelector('.ddn');
+      let txt = '';
+      if (k === 'zones') txt = Panel.MODES[st.mode] || '';
+      else if (k === 'ideas') txt = st.planOn ? String((st.plans || []).filter(x => x.symbol === st.symbol).length || '') : 'masquées';
+      else { const n = (Panel.DD[k] || []).filter(on).length; txt = n ? String(n) : ''; }
+      em.textContent = txt; em.hidden = !txt;
+      dd.classList.toggle('act', !!txt && txt !== 'masquées');
+    });
+    const box = h.querySelector('.ddplans');
+    if (box) box.innerHTML = this.planList();
+  }
+  planList() {
+    const st = LT.st, sym = st.symbol, e = Panel.esc;
+    if (!st.planOn) return '<div class="ddnote">Tous les traits des idées sont masqués.</div>';
+    const trades = ((st.sig && st.sig.desk && st.sig.desk.trades) || []).filter(t => t.symbol === sym && t.mode !== 'alerte').slice(0, 8);
+    const OPEN = ['pending', 'active', 'tp1'];
+    let out = trades.map(t => `<label><input type="checkbox" data-ptog="${e(t.id)}"${LT.planVisible(t) ? ' checked' : ''}><span class="${t.side === 'long' ? 'up' : 'dn'}">${t.side === 'long' ? 'Achat' : 'Vente'} du ${e(LT.parisAt(t.created))}` +
+      `<small>${OPEN.includes(t.status) ? 'en cours' : 'terminée'} · entrée ${e(LT.fmtP(t.entry))}, stop ${e(LT.fmtP(t.stop))}${t.hedgeOf ? ' · couverture' : ''}</small></span></label>`).join('');
+    const live = (st.plans || []).find(x => x.kind === 'live' && x.symbol === sym);
+    if (live) out += `<label><input type="checkbox" data-plive="" checked><span>${live.side === 'long' ? 'Achat' : 'Vente'} du moment<small>pas envoyée : niveaux recalculés en continu (gris)</small></span></label>`;
+    if (!out) out = `<div class="ddnote">Aucune idée envoyée sur ${e(String(sym || '').replace('USDT', ''))} pour l'instant.</div>`;
+    const hidden = trades.filter(t => st.planHide.includes(t.id)).length;
+    return out + (hidden ? `<button class="mini" data-pall="reset" title="Réafficher les idées masquées une par une">Réafficher ${hidden > 1 ? `les ${hidden} idées masquées` : 'l\'idée masquée'}</button>` : '');
+  }
+  // menus déroulants : un seul ouvert à la fois, placé sous son bouton (au-dessus du graphique), fermé par un clic ailleurs ou Échap
+  static ddClose(except) { document.querySelectorAll('.dd.open').forEach(d => { if (d !== except) { d.classList.remove('open'); d.querySelector('.ddp').hidden = true; } }); }
+  static ddInit() {
+    if (Panel.ddReady) return;
+    Panel.ddReady = true;
+    document.addEventListener('mousedown', ev => { if (!ev.target.closest('.dd')) Panel.ddClose(); });
+    document.addEventListener('keydown', ev => { if (ev.key === 'Escape') Panel.ddClose(); });
+    window.addEventListener('resize', () => Panel.ddClose());
+  }
+  ddToggle(dd) {
+    const p = dd.querySelector('.ddp'), opening = p.hidden;
+    Panel.ddClose(dd);
+    if (!opening) { dd.classList.remove('open'); p.hidden = true; return; }
+    this.syncDD();
+    dd.classList.add('open'); p.hidden = false;
+    const r = dd.querySelector('.ddb').getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+    p.style.maxHeight = Math.max(160, vh - r.bottom - 12) + 'px';
+    p.style.top = (r.bottom + 4) + 'px';
+    p.style.left = Math.max(6, Math.min(r.left, vw - p.offsetWidth - 6)) + 'px';
   }
   onTool(ev) {
     const t = ev.target, st = LT.st;
+    if (ev.type === 'click' && t.closest('.ddb')) { this.ddToggle(t.closest('.dd')); return; }
+    if (ev.type === 'click' && t.closest('[data-pall]')) { LT.planReset(); return; }
+    if (ev.type === 'click' && t.closest('.ddlink')) { Panel.ddClose(); return; }
+    if (ev.type === 'change' && t.dataset.ptog != null) { LT.togglePlan(t.dataset.ptog); return; }
+    if (ev.type === 'change' && t.dataset.plive != null) { LT.setPlan(null); return; }
     if (ev.type === 'click' && t.closest('[data-hours] button')) {
       st.liqOpts.hours = +t.closest('button').dataset.h; LT.savePrefs(); LT.syncAllTools(); LT.pollHeat(); return;
     }
