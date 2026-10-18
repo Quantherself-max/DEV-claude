@@ -10,6 +10,7 @@ import re
 import secrets
 import threading
 import time
+from bisect import bisect_right
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -22,6 +23,7 @@ from alerts.rules import AlertEngine
 from alerts.trades import OPEN, TradeDesk
 from config import ROOT, chat_is_bot, chat_ok, clean_chat, clean_token, env_sources, load_config, token_ok, write_env
 from data import reports as reports_mod
+from data import heatbook as heat_mod
 from data.binance import BinanceSource
 from data.live import LiveFeed
 from data.orderflow import OrderFlow, SimFlow
@@ -31,8 +33,8 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "27"
-API_LEVEL = 28                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "28"
+API_LEVEL = 29                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -88,6 +90,33 @@ def default_flow(cfg, source, service, feed):
     return flow
 
 
+def default_heat(cfg, source, service, flow) -> dict:
+    """V28 : heatmap du carnet (BTC par defaut) : carnets en direct deja suivis + adresses publiques profondes ; fabriquee en mode simule."""
+    syms = [s for s in getattr(cfg, "heatmap_symbols", ()) if s in cfg.symbols]
+    if not syms:
+        return {}
+    from data import heatbook as hb
+    out = {}
+    for sym in syms:
+        book = hb.HeatBook(sym)
+        if cfg.source != "binance":
+            def price_at(t_ms, sym=sym):
+                m = service.markets.get(sym)
+                if m is None or not m.ready or not m.store.m5:
+                    return None
+                cs = m.store.m5[-200:]
+                i = bisect_right([k.t for k in cs], t_ms) - 1
+                return cs[max(i, 0)].c
+            sim = hb.SimHeat(price_at)
+            out[sym] = hb.HeatRecorder(book, hb.sim_sources(sim, lambda: source.now_ms() / 1000),
+                                       prefill=lambda b=book, sm=sim: hb.sim_backfill(b, sm, source.now_ms()),
+                                       now=lambda: source.now_ms() / 1000)
+        else:
+            from data.external import http_json
+            out[sym] = hb.HeatRecorder(book, hb.real_sources(sym, flow, http_json), str(Path(cfg.data_dir) / "heatmap" / f"{sym}.pkl"))
+    return out
+
+
 def default_trades(cfg, source, feed):
     """V23 : transactions exactes de chaque paire (archives Binance Vision + API publique + flux en direct). Seulement avec Binance."""
     if cfg.source != "binance" or getattr(cfg, "footprint_days", 0) <= 0 or not hasattr(source, "_get"):
@@ -141,9 +170,10 @@ class App:
         self._install(cfg)
 
     def _install(self, cfg):
-        old, old_flow = self.feed, getattr(self, "flow", None)
+        old, old_flow, old_heat = self.feed, getattr(self, "flow", None), getattr(self, "heat", {})
         source, service, alerts, notifier, feed, flow = build_parts(cfg, self.make_source, self.make_feed, self.make_hub)
         self.flow = flow
+        self.heat = default_heat(cfg, source, service, flow)
         service.listeners.append(self.alert_cycle)
         self.cfg, self.source, self.service, self.alerts, self.notifier = cfg, source, service, alerts, notifier
         self.social = Influencers(cfg)
@@ -158,6 +188,8 @@ class App:
             old.stop()
         if old_flow:
             old_flow.stop()
+        for hr in old_heat.values():
+            hr.stop()
         for ts in old_trades.values():
             ts.stop()
         if feed and self.running:
@@ -165,6 +197,8 @@ class App:
         if flow and self.running:
             flow.start()
         if self.running:
+            for hr in self.heat.values():
+                hr.start()
             for ts in self.trades.values():
                 ts.start()
         self._chat_restart()
@@ -322,6 +356,8 @@ class App:
             self.feed.start()
         if self.flow:
             self.flow.start()
+        for hr in self.heat.values():
+            hr.start()
         for ts in self.trades.values():
             ts.start()
         self._chat_restart()
@@ -333,6 +369,8 @@ class App:
             self.feed.stop()
         if self.flow:
             self.flow.stop()
+        for hr in self.heat.values():
+            hr.stop()
         for ts in self.trades.values():
             ts.stop()
             try:
@@ -826,6 +864,7 @@ def make_handler(app: App):
                 if u.path == "/api/config":
                     c = app.cfg
                     return self._json({"symbols": list(c.symbols), "tfs": list(TFS), "source": c.source,
+                                       "heatmapSymbols": sorted(app.heat),
                                        "telegram": c.telegram_on, "telegramState": app.telegram_state(), "alertTf": c.alert_tf, "alertMinScore": c.alert_min_score,
                                        "alertMaxDistAtr": c.alert_max_dist_atr, "refresh": c.refresh_seconds,
                                        "anchor": c.anchor_date, "statsK": c.stats_k, "statsHorizon": c.stats_horizon,
@@ -908,6 +947,17 @@ def make_handler(app: App):
                 if u.path == "/api/analysis":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.service.analysis(sym))
+                if u.path == "/api/heatmap":                         # V28 : heatmap du carnet (temps x prix)
+                    sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
+                    hr = app.heat.get(sym)
+                    if hr is None:
+                        return self._json({"ready": False, "symbol": sym, "off": True,
+                                           "why": "heatmap désactivée pour cette paire (réglage TERMINAL_HEATMAP)" if sym in app.cfg.symbols else "paire inconnue"})
+                    f1 = lambda k, d: float((q.get(k) or [d])[0])
+                    ex = [e for e in (q.get("ex") or [",".join(heat_mod.EXCHANGES)])[0].split(",") if e in heat_mod.EXCHANGES]
+                    out = hr.book.query(int(f1("t0", 0)), int(f1("t1", 0)), f1("lo", 0), f1("hi", 0), int(f1("cols", 300)), int(f1("rows", 250)), ex)
+                    out.update(symbol=sym, since=hr.book.since(), step=hr.book.step, status=hr.status(), exchanges=ex)
+                    return self._json(out)
                 if u.path == "/api/heat":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     hrs = float((q.get("hours") or ["0"])[0]) or None

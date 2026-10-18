@@ -33,7 +33,7 @@ from engine import lecture as lecture_engine
 from engine import gamma as gamma_engine
 from engine import squeeze as squeeze_engine
 from engine import swingavwap, vwapstrat
-from engine.confluence import Level, find_zones
+from engine.confluence import Level, find_zones, grade as confluence_grade
 from engine.liquidity import LiqEngine
 from engine.periods import AnchoredVWAP, KINDS, NakedPocs, PeriodTracker
 from engine.stats import atr_series, reach_prob, reach_table, reaction_stats, round_step, sweep_outcomes
@@ -763,6 +763,7 @@ class Market:
         sweeps = self.sweeps()
         zones = []
         for k, z in enumerate(find_zones(levels, tol)):
+            gr = confluence_grade(z["members"])                  # V28 : note sur 14 (sept piliers), seuil d'affichage du graphique
             inside = z["lo"] <= price <= z["hi"]
             edge = 0.0 if inside else (z["lo"] - price if z["lo"] > price else z["hi"] - price)
             has_mag = any(m.kind == "liq" and m.extra["pool"]["magnet"] for m in z["members"])
@@ -771,6 +772,7 @@ class Market:
                 "id": f"z{k}", "mid": z["mid"], "lo": z["lo"], "hi": z["hi"], "side": side,
                 "distPct": edge / price * 100.0, "distAtr": abs(edge) / atr, "groups": z["groups"],
                 "score": len(z["groups"]) + (1 if has_mag else 0), "hasMagnet": has_mag,
+                "grade": gr["grade"], "gradeMax": gr["max"], "gradeParts": gr["parts"],
                 "members": [m.id for m in z["members"]],
                 "prob": self._prob_for(side, edge, len(z["groups"])),
             })

@@ -42,7 +42,8 @@ class Panel {
     host.classList.add('panel', 'k-' + kind);
     host.innerHTML = `<div class="phead"><span class="ptitle">${T}</span><span class="ptools">${Panel.tools(kind)}</span>` +
       `<button class="pmax" title="Agrandir / revenir à la mise en page">⤢</button></div>` +
-      `<div class="pbody"><canvas class="heat"></canvas><div class="chart"></div><canvas class="ov"></canvas><div class="ptag" hidden></div><div class="cdwn" hidden title="Temps restant avant la clôture de la bougie en cours"></div><div class="tip" hidden></div></div>`;
+      `<div class="pbody"><canvas class="heat"></canvas><div class="chart"></div><canvas class="ov"></canvas><div class="ptag" hidden></div><div class="cdwn" hidden title="Temps restant avant la clôture de la bougie en cours"></div><div class="tip" hidden></div>` +
+      (kind === 'main' ? '<div class="legend" hidden></div>' : '') + '</div>';
     this.body = host.querySelector('.pbody');
     this.heatCv = host.querySelector('.heat'); this.hctx = this.heatCv.getContext('2d');
     this.ov = host.querySelector('.ov'); this.ctx = this.ov.getContext('2d');
@@ -68,7 +69,6 @@ class Panel {
     host.querySelector('.pmax').onclick = () => LT.maximize(kind);
     host.querySelector('.ptools').addEventListener('click', ev => this.onTool(ev));
     host.querySelector('.ptools').addEventListener('change', ev => this.onTool(ev));
-    if (kind === 'main') Panel.ddInit();
     this.syncTools();
   }
 
@@ -90,11 +90,13 @@ class Panel {
   th() { return Panel.TH[LT.st.theme] || Panel.TH.nuit; }
   applyTheme() {
     const t = this.th();
-    this.chart.applyOptions({layout: {background: {type: 'solid', color: t.bg}, textColor: t.text, fontFamily: t.font, fontSize: t.fontSize},
+    this.chart.applyOptions({layout: {background: {type: 'solid', color: 'rgba(0,0,0,0)'}, textColor: t.text, fontFamily: t.font, fontSize: t.fontSize},
       grid: {vertLines: {color: t.grid}, horzLines: {color: t.grid}}, rightPriceScale: {borderColor: t.border}, timeScale: {borderColor: t.border},
       crosshair: {vertLine: {color: t.cross, labelBackgroundColor: t.crossLabel}, horzLine: {color: t.cross, labelBackgroundColor: t.crossLabel}}});
     this.series.applyOptions({upColor: t.up, downColor: t.down, wickUpColor: t.up, wickDownColor: t.down, lastValueVisible: !t.ownTag});
     this.host.classList.toggle('th-nuit', LT.st.theme === 'nuit');
+    this.body.style.background = t.bg === 'rgba(0,0,0,0)' ? '' : t.bg;          // V28 : fond sous la heatmap du carnet
+    if (this.vol) this.vol.applyOptions({priceLineVisible: false});
     for (const k in this.layers) { this.chart.removeSeries(this.layers[k].s); delete this.layers[k]; }
     this.cdKey = ''; this.stamp = ''; this.sig = '';
   }
@@ -251,47 +253,10 @@ class Panel {
   }
 
   // ---------- barre d'outils ----------
-  // V27 : options du graphique principal rangées en menus déroulants (zones, liquidité, profils, TPO, VWAP et gamma, flux d'ordres, idées)
-  static DD = {
-    liq: ['pools', 'ppools'], prof: ['sess', 'sessW', 'sessM', 'nodes', 'dpoc', 'npoc'], tpo: ['tpoM', 'tpoW', 'tpoD', 'tpo4', 'tpo1'],
-    vwap: ['vwap', 'gex'], flow: ['dom', 'big', 'absorb'],
-  };
-  static MODES = {ess: 'Essentiel', conf: 'Confluences', all: 'Tous'};
+  // V28 : graphique à éléments : un seul bouton « ＋ Éléments » (menu de desk.js) ; les éléments choisis sont listés dans la légende du graphique
   static tools(kind) {
-    if (kind === 'main') {
-      const opt = (attr, label, sub) => `<label><input type="checkbox" ${attr}><span>${label}${sub ? `<small>${sub}</small>` : ''}</span></label>`;
-      const dd = (key, label, body, title) => `<span class="dd" data-dd="${key}"><button type="button" class="ddb" data-ddt="${key}" title="${title}">${label}<em class="ddn"></em><i class="ddc">▾</i></button>` +
-        `<div class="ddp" hidden>${body}</div></span>`;
-      return dd('zones', 'Zones', ['ess', 'conf', 'all'].map(v => `<label><input type="radio" name="mode" value="${v}"><span>${Panel.MODES[v]}<small>${
-        {ess: 'les 2 zones les plus importantes de chaque côté du prix', conf: 'toutes les zones de confluence proches', all: 'tous les niveaux de la fenêtre'}[v]}</small></span></label>`).join(''),
-        'Zones de confluence dessinées : essentiel, confluences ou tous les niveaux') +
-        dd('liq', 'Liquidité', opt('data-opt="pools"', 'Poches de liquidation', 'estimées par l\'intérêt ouvert') +
-          opt('data-opt="ppools"', 'Plus hauts / plus bas', 'ordres d\'arrêt visibles dans le prix : veille, semaine, mois, creux et sommets récents'), 'Poches de liquidation et ordres d\'arrêt') +
-        dd('prof', 'Profils', '<div class="ddh">Profils de volume collés à l\'échelle des prix</div>' +
-          opt('data-mo="sess"', 'Profil du jour', 'depuis 00 h UTC : volume par prix, part des acheteurs, POC, VAH, VAL') +
-          opt('data-mo="sessW"', 'Profil de la semaine', 'depuis lundi 00 h UTC') + opt('data-mo="sessM"', 'Profil du mois', 'depuis le 1er, 00 h UTC') +
-          '<div class="ddh">Repères tirés des profils</div>' +
-          opt('data-mo="nodes"', 'Nœuds de volume', 'bandes bleues = acceptation (HVN), violettes = rejet (LVN)') +
-          opt('data-mo="dpoc"', 'POC, VAH et VAL évolutifs', 'du jour, tels qu\'ils ont évolué pendant la séance') +
-          opt('data-mo="npoc"', 'POC vierges', 'des jours et semaines passés, jamais retraversés'), 'Profils de volume et repères (nœuds, POC)') +
-        dd('tpo', 'TPO', '<div class="ddh">Single prints non comblés (rectangle gris) et poor highs / lows non réparés (pointillés)</div>' +
-          opt('data-mo="tpoM"', 'Mois', 'tranches d\'1 jour') + opt('data-mo="tpoW"', 'Semaine', 'tranches de 4 heures') +
-          opt('data-mo="tpoD"', 'Jour', 'tranches de 30 minutes') + opt('data-mo="tpo4"', 'Séances de 4 heures') +
-          opt('data-mo="tpo1"', 'Séances d\'1 heure', 'beaucoup de marques : à utiliser en 5 ou 15 minutes'), 'Marques TPO (profil de marché)') +
-        dd('vwap', 'VWAP · Gamma', opt('data-mo="vwap"', 'VWAP du jour', 'et bandes à ±1 écart-type') +
-          opt('data-mo="gex"', 'Gamma des options BTC', 'Deribit, BTC seulement : mur de calls (magenta), mur de puts (cyan), bascule (jaune), barres par strike ; « ≈ VWAP » = confluence avec un VWAP. Estimation hors score'),
-          'VWAP du jour et gamma des options BTC') +
-        dd('flow', 'Flux d\'ordres', `<div class="ddrow">${opt('data-mo="dom"', 'Carnet d\'ordres en direct', 'taille en attente (Binance), nombre d\'ordres (OKX), volume échangé à chaque prix')}` +
-          '<button class="mini" data-flowreset title="Remettre à zéro le volume échangé affiché dans le carnet">↺ volumes</button></div>' +
-          `<div class="ddrow">${opt('data-mo="big"', 'Gros ordres agressifs <span class="lgd"><i class="lb buy"></i><i class="lb sell"></i></span>', 'bulles : vert = acheteurs, rouge = vendeurs ; taille selon le montant')}` +
-          '<select class="mini" data-mosel="bigMin" title="Taille minimale d\'une bulle : au-dessous, rien n\'est dessiné"></select></div>' +
-          `<div class="ddrow">${opt('data-mo="absorb"', 'Absorptions <span class="lgd"><i class="lw up"></i><i class="lw dn"></i></span>', 'delta fort contre la bougie ; en direct, « mur » qui absorbe le volume agressif')}` +
-          '<select class="mini" data-mosel="absorbMode" title="Fortes : delta d\'au moins 3 écarts-types ou au plus bas / plus haut des 12 dernières bougies, volume au moins 1,3 fois la normale. Toutes : tout ce qui est détecté"><option value="fortes">fortes</option><option value="toutes">toutes</option></select></div>' +
-          '<label class="ddsel">Montants écrits <select class="mini" data-mosel="bigLabels" title="Montants écrits à côté des gros ordres et des murs d\'absorption ; le détail reste au survol"><option value="top">3 plus gros</option><option value="all">tous</option><option value="none">aucun</option></select></label>',
-          'Carnet, gros ordres agressifs et absorptions') +
-        dd('ideas', 'Idées', opt('data-opt="plan"', 'Traits des idées sur le graphique', 'entrée, stop et objectifs figés à l\'envoi, à partir de l\'heure d\'envoi') +
-          '<div class="ddplans"></div><a class="ddlink" href="#/signals">Page Idées de trade →</a>', 'Idées envoyées dessinées sur le graphique : afficher ou masquer chacune');
-    }
+    if (kind === 'main') return '<span class="viewname"></span><button type="button" class="ddb elbtn" data-elbtn title="Choisir ce qui est dessiné sur ce graphique">＋ Éléments</button>' +
+      '<button class="mini" data-flowreset title="Remettre à zéro le volume échangé affiché dans le carnet">↺ volumes</button>';
     if (kind === 'liq') return `<span class="seg mini" data-hours><button data-h="24">24 h</button><button data-h="72">3 j</button><button data-h="168">7 j</button><button data-h="0">29 j</button></span>` +
       `<label><input type="checkbox" data-lq="pools"> Poches</label><label><input type="checkbox" data-lq="sweeps"> Balayages</label>` +
       `<label><input type="checkbox" data-lq="real"> Réel</label><label><input type="checkbox" data-lq="profile"> Profil</label>`;
@@ -304,78 +269,15 @@ class Panel {
   }
   syncTools() {
     const st = LT.st, h = this.host;
-    h.querySelectorAll('input[name=mode]').forEach(r => r.checked = r.value === st.mode);
-    h.querySelectorAll('[data-opt=pools]').forEach(c => c.checked = st.pools);
-    h.querySelectorAll('[data-opt=ppools]').forEach(c => c.checked = st.ppools);
-    h.querySelectorAll('[data-opt=plan]').forEach(c => c.checked = st.planOn);
-    h.querySelectorAll('[data-mo]').forEach(c => c.checked = !!st.mainOpts[c.dataset.mo]);
-    this.syncBigSel();                                                      // V21.1 : tailles adaptees a la paire
-    h.querySelectorAll('[data-mosel=bigMin]').forEach(sel => { sel.value = String(st.mainOpts.bigMin ?? 2); sel.disabled = !st.mainOpts.big; });
-    h.querySelectorAll('[data-mosel=absorbMode]').forEach(sel => { sel.value = st.mainOpts.absorbMode || 'fortes'; sel.disabled = !st.mainOpts.absorb; });
-    h.querySelectorAll('[data-mosel=bigLabels]').forEach(sel => { sel.value = st.mainOpts.bigLabels || 'top'; sel.disabled = !st.mainOpts.big && !st.mainOpts.absorb; });
     h.querySelectorAll('[data-flowreset]').forEach(b => b.hidden = !st.mainOpts.dom);
     h.querySelectorAll('[data-lq]').forEach(c => c.checked = !!st.liqOpts[c.dataset.lq]);
     h.querySelectorAll('[data-vp]').forEach(c => c.checked = !!st.vpOpts[c.dataset.vp]);
     h.querySelectorAll('[data-hours] button').forEach(b => b.classList.toggle('on', +b.dataset.h === st.liqOpts.hours));
-    if (this.kind === 'main') this.syncDD();
-  }
-  // V27 : résumé sur chaque bouton de menu (nombre d'options actives) et liste des idées dessinées
-  syncDD() {
-    const st = LT.st, h = this.host, btc = st.symbol === 'BTCUSDT';
-    h.querySelectorAll('[data-mo=gex]').forEach(c => { c.disabled = !btc; c.closest('label').classList.toggle('off', !btc); });
-    const on = k => k === 'pools' ? st.pools : k === 'ppools' ? st.ppools : k === 'gex' ? btc && !!st.mainOpts.gex : !!st.mainOpts[k];
-    h.querySelectorAll('.dd').forEach(dd => {
-      const k = dd.dataset.dd, em = dd.querySelector('.ddn');
-      let txt = '';
-      if (k === 'zones') txt = Panel.MODES[st.mode] || '';
-      else if (k === 'ideas') txt = st.planOn ? String((st.plans || []).filter(x => x.symbol === st.symbol).length || '') : 'masquées';
-      else { const n = (Panel.DD[k] || []).filter(on).length; txt = n ? String(n) : ''; }
-      em.textContent = txt; em.hidden = !txt;
-      dd.classList.toggle('act', !!txt && txt !== 'masquées');
-    });
-    const box = h.querySelector('.ddplans');
-    if (box) box.innerHTML = this.planList();
-  }
-  planList() {
-    const st = LT.st, sym = st.symbol, e = Panel.esc;
-    if (!st.planOn) return '<div class="ddnote">Tous les traits des idées sont masqués.</div>';
-    const trades = ((st.sig && st.sig.desk && st.sig.desk.trades) || []).filter(t => t.symbol === sym && t.mode !== 'alerte').slice(0, 8);
-    const OPEN = ['pending', 'active', 'tp1'];
-    let out = trades.map(t => `<label><input type="checkbox" data-ptog="${e(t.id)}"${LT.planVisible(t) ? ' checked' : ''}><span class="${t.side === 'long' ? 'up' : 'dn'}">${t.side === 'long' ? 'Achat' : 'Vente'} du ${e(LT.parisAt(t.created))}` +
-      `<small>${OPEN.includes(t.status) ? 'en cours' : 'terminée'} · entrée ${e(LT.fmtP(t.entry))}, stop ${e(LT.fmtP(t.stop))}${t.hedgeOf ? ' · couverture' : ''}</small></span></label>`).join('');
-    const live = (st.plans || []).find(x => x.kind === 'live' && x.symbol === sym);
-    if (live) out += `<label><input type="checkbox" data-plive="" checked><span>${live.side === 'long' ? 'Achat' : 'Vente'} du moment<small>pas envoyée : niveaux recalculés en continu (gris)</small></span></label>`;
-    if (!out) out = `<div class="ddnote">Aucune idée envoyée sur ${e(String(sym || '').replace('USDT', ''))} pour l'instant.</div>`;
-    const hidden = trades.filter(t => st.planHide.includes(t.id)).length;
-    return out + (hidden ? `<button class="mini" data-pall="reset" title="Réafficher les idées masquées une par une">Réafficher ${hidden > 1 ? `les ${hidden} idées masquées` : 'l\'idée masquée'}</button>` : '');
-  }
-  // menus déroulants : un seul ouvert à la fois, placé sous son bouton (au-dessus du graphique), fermé par un clic ailleurs ou Échap
-  static ddClose(except) { document.querySelectorAll('.dd.open').forEach(d => { if (d !== except) { d.classList.remove('open'); d.querySelector('.ddp').hidden = true; } }); }
-  static ddInit() {
-    if (Panel.ddReady) return;
-    Panel.ddReady = true;
-    document.addEventListener('mousedown', ev => { if (!ev.target.closest('.dd')) Panel.ddClose(); });
-    document.addEventListener('keydown', ev => { if (ev.key === 'Escape') Panel.ddClose(); });
-    window.addEventListener('resize', () => Panel.ddClose());
-  }
-  ddToggle(dd) {
-    const p = dd.querySelector('.ddp'), opening = p.hidden;
-    Panel.ddClose(dd);
-    if (!opening) { dd.classList.remove('open'); p.hidden = true; return; }
-    this.syncDD();
-    dd.classList.add('open'); p.hidden = false;
-    const r = dd.querySelector('.ddb').getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
-    p.style.maxHeight = Math.max(160, vh - r.bottom - 12) + 'px';
-    p.style.top = (r.bottom + 4) + 'px';
-    p.style.left = Math.max(6, Math.min(r.left, vw - p.offsetWidth - 6)) + 'px';
+    if (this.kind === 'main' && typeof Desk !== 'undefined') Desk.renderLegend();
   }
   onTool(ev) {
     const t = ev.target, st = LT.st;
-    if (ev.type === 'click' && t.closest('.ddb')) { this.ddToggle(t.closest('.dd')); return; }
-    if (ev.type === 'click' && t.closest('[data-pall]')) { LT.planReset(); return; }
-    if (ev.type === 'click' && t.closest('.ddlink')) { Panel.ddClose(); return; }
-    if (ev.type === 'change' && t.dataset.ptog != null) { LT.togglePlan(t.dataset.ptog); return; }
-    if (ev.type === 'change' && t.dataset.plive != null) { LT.setPlan(null); return; }
+    if (ev.type === 'click' && t.closest('[data-elbtn]')) { Desk.toggleChooser(t.closest('[data-elbtn]')); return; }
     if (ev.type === 'click' && t.closest('[data-hours] button')) {
       st.liqOpts.hours = +t.closest('button').dataset.h; LT.savePrefs(); LT.syncAllTools(); LT.pollHeat(); return;
     }
@@ -383,20 +285,7 @@ class Panel {
       LT.api('/api/flow/reset', {symbol: st.symbol}).then(() => LT.pollFlow()).catch(() => {}); return;
     }
     if (ev.type !== 'change') return;
-    if (t.dataset.mosel) {                                              // V21.1 : selection des gros ordres et des absorptions
-      st.mainOpts[t.dataset.mosel] = t.dataset.mosel === 'bigMin' ? +t.value : t.value; this.stamp = '';
-      LT.savePrefs(); LT.syncAllTools(); LT.refreshAll(); if (typeof MTF !== 'undefined') MTF.redraw(); return;
-    }
-    if (t.dataset.mo) {
-      st.mainOpts[t.dataset.mo] = t.checked; this.stamp = '';
-      LT.savePrefs(); LT.syncAllTools(); LT.refreshAll(); if (['dom', 'sess', 'sessW', 'sessM'].includes(t.dataset.mo)) this.resetView();
-      if (typeof MTF !== 'undefined') MTF.redraw(); LT.pollFlow(); return;
-    }
-    if (t.name === 'mode') { st.mode = t.value; }
-    else if (t.dataset.opt === 'pools') { st.pools = t.checked; }
-    else if (t.dataset.opt === 'ppools') { st.ppools = t.checked; }
-    else if (t.dataset.opt === 'plan') { st.planOn = t.checked; LT.updatePlan(); }
-    else if (t.dataset.lq) { st.liqOpts[t.dataset.lq] = t.checked; }
+    if (t.dataset.lq) { st.liqOpts[t.dataset.lq] = t.checked; }
     else if (t.dataset.vp) { st.vpOpts[t.dataset.vp] = t.checked; this.stamp = ''; }
     else return;
     LT.savePrefs(); LT.syncAllTools(); LT.refreshAll();
@@ -508,6 +397,10 @@ class Panel {
         for (const [id, k, lab] of [['mU', 1, '+1σ'], ['mL', -1, '−1σ']])
           want.push({id, name: 'VWAP ' + lab, color: t.band, w: 1, st: 2, v: S.vwap.D.map((x, i) => x == null || S.sd.D[i] == null ? null : x + k * S.sd.D[i]), mainLabel: lab});
       }
+      // V28 : VWAP de la semaine, du mois, de l'année et VWAP ancrés, comme éléments du graphique principal
+      for (const [k, opt, lab] of [['W', 'vwapW', 'VWAP S'], ['M', 'vwapM', 'VWAP M'], ['Y', 'vwapY', 'VWAP A']])
+        if (st.mainOpts[opt] && S.vwap[k]) want.push({id: 'm' + k, name: lab, color: LT.PER[k.toLowerCase()], w: 1.5, v: S.vwap[k], mainLabel: lab});
+      if (st.mainOpts.avwap) (S.avwap || []).slice(0, 4).forEach((a, i) => want.push({id: 'mA' + i, name: a.label, color: ['#E0E0E0', '#B0BEC5', '#90A4AE', '#78909C'][i], w: 1.2, st: 1, v: a.v, mainLabel: a.label}));
     } else if (ok) {
       const PER = LT.PER, bandCol = {D: '#FFB30066', W: '#4CAF5066', M: '#42A5F566', Y: '#EC407A66'};
       const NM = {D: 'VWAP J', W: 'VWAP S', M: 'VWAP M', Y: 'VWAP A'};
@@ -578,7 +471,23 @@ class Panel {
     this._L = L;
     if (this.kind === 'liq') { this.drawHeat(L, w, h); this.drawLiq(L, w, h); }
     else if (this.kind === 'vp') { this.applySeries(); this.drawVP(L, w, h); }
-    else { this.applySeries(); this.drawMain(L, w, h); }
+    else { this.applySeries(); this.syncVolume(L.d); this.drawMain(L, w, h); }
+  }
+  // V28 : barres de volume sous les bougies (élément « Volume »), sur leur propre échelle, en bas du graphique
+  syncVolume(d) {
+    const on = LT.st.mainOpts.vol && d && d.candles && d.candles.length;
+    if (!on) { if (this.vol) { this.chart.removeSeries(this.vol); this.vol = null; this.volKey = ''; } return; }
+    const t = this.th(), hexA = (c, a) => /^#[0-9a-f]{6}$/i.test(c) ? `rgba(${parseInt(c.slice(1, 3), 16)},${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${a})` : c;
+    if (!this.vol) {
+      this.vol = this.chart.addHistogramSeries({priceScaleId: 'vol', priceFormat: {type: 'volume'}, lastValueVisible: false, priceLineVisible: false});
+      this.chart.priceScale('vol').applyOptions({scaleMargins: {top: 0.84, bottom: 0}, visible: false});
+      this.volKey = '';
+    }
+    const cs = d.candles, last = cs[cs.length - 1], key = [d.symbol, d.tf, cs.length, last[0], last[5], LT.st.theme].join('|');
+    if (key === this.volKey) return;
+    this.volKey = key;
+    const up = hexA(t.up, 0.34), dn = hexA(t.down, 0.22);
+    this.vol.setData(cs.map(c => ({time: c[0], value: c[5] || 0, color: c[4] >= c[1] ? up : dn})));
   }
   // evite qu'une etiquette en recouvre une autre (zones, plus hauts / bas, noms de niveaux) : decale vers la droite, derriere celle qui gene
   place(x, y, w, h, limit) {
@@ -757,6 +666,7 @@ class Panel {
   }
   drawMain(L, w, h) {
     const ctx = this.ctx, st = LT.st, {d, plotW} = L, byId = LT.byId, fmtP = LT.fmtP, pr = LT.pr;
+    this.drawBookHeat(L, h);
     const sessW = this.drawSession(L, h);
     this.rightLimit = plotW - sessW - (st.mainOpts.dom ? Panel.DOMW + 12 : 0);
     this.drawVpExtras(L, h);
@@ -780,16 +690,16 @@ class Panel {
         if (yv != null) { ctx.fillStyle = 'rgba(236,236,236,0.85)'; ctx.beginPath(); ctx.moveTo(xv, yv - 4); ctx.lineTo(xv + 4, yv); ctx.lineTo(xv, yv + 4); ctx.lineTo(xv - 4, yv); ctx.fill(); }
       }
       if (sel) { ctx.strokeStyle = 'rgba(255,179,0,.85)'; ctx.lineWidth = 1; ctx.strokeRect(0.5, y + 0.5, plotW - 1, hh - 1); }
-      if (st.mode === 'ess') zl.push({y: (z.key != null ? (this.series.priceToCoordinate(z.key) ?? y + hh / 2) : y + hh / 2), z});
+      zl.push({y: (z.key != null ? (this.series.priceToCoordinate(z.key) ?? y + hh / 2) : y + hh / 2), z});
     });
     this.drawPools(L, h);
     this.drawGex(L, h);
     this.drawPlan(L, h);
     const lv = byId(d.levels);
-    if (st.mode === 'ess') LT.placeLabels(zl, 17, 12, h - 30).forEach(it => {
+    LT.placeLabels(zl, 17, 12, h - 30).forEach(it => {
       const z = it.z, ar = z.side === 'above' ? '▲' : z.side === 'below' ? '▼' : '◆', col = z.side === 'above' ? '#3ddc97' : z.side === 'below' ? '#ff6b6b' : '#ffb300';
-      const reach = z.prob && z.side !== 'in' ? ' · ' + pr(z.prob.reach['24']) + '/24 h' : '';
-      const txt = `${ar} ${fmtP(z.key != null ? z.key : z.mid)}  ${'●'.repeat(Math.min(5, z.score))}${reach}`;
+      const reach = z.prob && z.side !== 'in' ? ' · ' + pr(z.prob.reach['24']) + ' en 24 h' : '';
+      const txt = `${ar} ${fmtP(z.key != null ? z.key : z.mid)} · ${z.grade != null ? z.grade : z.score}/14${reach}`;
       ctx.font = '600 11px sans-serif';
       const tw = ctx.measureText(txt).width + 18;
       const zx = this.place(10, it.ly, tw, 18, (this.rightLimit || plotW) - 6);
@@ -799,7 +709,6 @@ class Panel {
     });
     this.drawPricePools(L, h);                                              // apres les zones : celles-ci gardent la place, les plus hauts / bas se decalent
     const names = new Map();
-    if (st.mode === 'all') d.levels.filter(l => l.kind !== 'liq' && l.inWindow).forEach(l => names.set(l.id, l));
     if (selZ) (byId(d.zones)[selZ]?.members || []).forEach(i => lv[i] && lv[i].kind !== 'liq' && names.set(i, lv[i]));
     if (st.sel && st.sel.type === 'level' && lv[st.sel.id]) names.set(st.sel.id, lv[st.sel.id]);
     const lab = [];
@@ -808,7 +717,7 @@ class Panel {
       const c = LT.levelColor(it.l);
       if (Math.abs(it.ly - it.y) > 2) { ctx.strokeStyle = 'rgba(180,184,196,.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, it.y); ctx.lineTo(10, it.ly); ctx.stroke(); }
       ctx.font = '500 11px sans-serif';
-      const txt = it.l.name + '  ' + fmtP(it.l.price), tw = ctx.measureText(txt).width + 22, xx = this.place(st.mode === 'ess' ? 190 : 10, it.ly, tw, 16, (this.rightLimit || plotW) - 6);
+      const txt = it.l.name + '  ' + fmtP(it.l.price), tw = ctx.measureText(txt).width + 22, xx = this.place(190, it.ly, tw, 16, (this.rightLimit || plotW) - 6);
       ctx.fillStyle = 'rgba(11,14,17,.88)'; ctx.fillRect(xx, it.ly - 8, tw, 16);
       ctx.fillStyle = c; ctx.fillRect(xx, it.ly - 8, 3, 16);
       ctx.fillStyle = '#d1d4dc'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(txt, xx + 9, it.ly + 0.5);
@@ -1150,6 +1059,19 @@ class Panel {
     ctx.fillText(parts.join('  ·  '), 8, h - 36);
   }
 
+  // ---- V28 : heatmap du carnet d'ordres (couche SOUS les bougies) : une colonne par tranche de temps, une ligne par tranche de prix ----
+  drawBookHeat(L, h) {
+    const st = LT.st, H = st.bookHeat, hctx = this.hctx;
+    if (!st.mainOpts.heat || !H || !H.img || H.symbol !== L.d.symbol) return;
+    const x0 = this.timeX(H.t0 / 1000, L), x1 = this.timeX(H.t1 / 1000, L);
+    const yt = this.series.priceToCoordinate(H.lo + H.rows * H.rowsz), yb = this.series.priceToCoordinate(H.lo);
+    if (x0 == null || x1 == null || yt == null || yb == null || x1 <= x0) return;
+    hctx.save();
+    hctx.beginPath(); hctx.rect(0, 0, L.plotW, h - 26); hctx.clip();
+    hctx.imageSmoothingEnabled = false;
+    hctx.drawImage(H.img, x0, yt, x1 - x0, yb - yt);
+    hctx.restore();
+  }
   // ---- carte de chaleur (couche SOUS le graphique) ----
   drawHeat(L, w, h) {
     const H = LT.st.heat, hctx = this.hctx; if (!H || !H.ready || !H.img) return;
@@ -1294,7 +1216,7 @@ class Panel {
       }
     }
     if (this.kind === 'liq') return LT.select(null);
-    const zs = st.mode === 'ess' ? LT.essentialZones(d) : LT.ladderZones(d);
+    const zs = LT.shownZones(d);
     for (const z of zs) {
       const a = this.series.priceToCoordinate(z.hi), b = this.series.priceToCoordinate(z.lo);
       if (a == null || b == null) continue;
@@ -1304,7 +1226,7 @@ class Panel {
     let best = null, bd = 7;
     d.levels.forEach(l => {
       if (l.kind === 'liq') return;
-      const visible = st.mode === 'all' ? l.inWindow : st.mode === 'conf' && zs.some(z => z.members.includes(l.id));
+      const visible = false;
       const yy = this.series.priceToCoordinate(l.price);
       if (visible && yy != null && Math.abs(yy - y) < bd) { bd = Math.abs(yy - y); best = l; }
     });
@@ -1316,6 +1238,8 @@ class Panel {
       const r = this.body.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
       const near = (this.absHits || []).concat(this.bigHits || []).filter(q => Math.abs(q.x - x) <= q.r && Math.abs(q.y - y) <= (q.ry || q.r));
       const hit = near.sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0];   // la marque la plus proche du pointeur
+      const hh = !hit && typeof Desk !== 'undefined' ? Desk.heatTip(this, x, y) : null;                 // V28 : montant en attente sous le pointeur
+      if (hh) { tip.innerHTML = hh; tip.hidden = false; tip.style.left = Math.max(4, Math.min(r.width - 300, x + 14)) + 'px'; tip.style.top = Math.max(4, Math.min(r.height - 80, y - 30)) + 'px'; return; }
       if (!hit) { tip.hidden = true; return; }
       tip.innerHTML = hit.html; tip.hidden = false;
       tip.style.left = Math.max(4, Math.min(r.width - 340, x + 14)) + 'px'; tip.style.top = Math.max(4, Math.min(r.height - 190, y - 40)) + 'px';

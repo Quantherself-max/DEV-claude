@@ -89,9 +89,10 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
   statSide: 'all', lastBar: 0, lastBarObj: null, heat: null, liqs: null, an: null, series: null, vpd: null, serN: 0, vpFocus: null,
   liqOpts: {hours: 168, pools: true, sweeps: true, real: true, profile: true},
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
-  layout: window.innerWidth >= 1500 ? '3' : window.innerWidth >= 1100 ? '2' : '1', prevLayout: null, sideOpen: true, sbCollapsed: false,
+  layout: 'main', prevLayout: null, sideOpen: true, sbCollapsed: false, ws: {}, instTab: null, minGrade: 9, heatEx: ['binance', 'okx', 'bybit', 'coinbase'], bookHeat: null,
   page: 'desk', sub: 'synth', planOn: true, planKey: null, plans: [], planHide: [], planShow: [], planSig: '', sig: null,
-  theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, nodes: true, dpoc: true, npoc: true, tpoM: true, tpoW: true, tpoD: true, tpo4: false, tpo1: false, vwap: true, dom: false, big: true, bigMin: 2, bigLabels: 'top', absorb: true, absorbMode: 'fortes', gex: true}, flow: null,
+  theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, nodes: true, dpoc: true, npoc: true, tpoM: true, tpoW: true, tpoD: true, tpo4: false, tpo1: false, vwap: true, dom: false, big: true, bigMin: 2, bigLabels: 'top', absorb: true, absorbMode: 'fortes', gex: true,
+    vwapW: false, vwapM: false, vwapY: false, avwap: false, vol: true, heat: false, zones: true}, flow: null,
   mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {M: true, W: true, D: true, '4h': false, '1h': false},
   tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true}};
 async function api(path, body) {
@@ -112,7 +113,8 @@ const ladderZones = d => {
   return [...d.ladder.above, ...d.ladder.inside, ...d.ladder.below].map(i => z[i]).filter(Boolean);
 };
 const essentialZones = d => { const z = byId(d.zones); return (d.ladder.essential || []).map(i => z[i]).filter(Boolean); };
-const shownZones = d => st.mode === 'ess' ? essentialZones(d) : ladderZones(d);
+// V28 : seules les zones dont la note sur 14 atteint le seuil choisi (9 par défaut), quand l'élément « Confluences » est affiché
+const shownZones = d => st.mainOpts.zones ? (d.zones || []).filter(z => (z.grade || 0) >= (st.minGrade || 9)) : [];
 const shownPools = (d, all) => {
   const ps = d.liquidity.pools.map((p, i) => ({p, i}));
   if (st.mode !== 'ess' || all) return ps;
@@ -159,10 +161,12 @@ function buildHeatImage(h) {
 }
 
 const panels = [];
-const LAYOUTS = {'1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: []};
-const needs = k => LAYOUTS[st.layout].includes(k) && st.page === 'desk';
+// V28 : main = Graphique (épuré), blank = Vierge, heat = Heatmap du carnet ; les trois sont le graphique principal avec SES éléments (desk.js) ;
+// 3 = Grille (principal + liquidité + VWAP·VP) ; pair = onglet « BTC + SOL » (deux instruments côte à côte, setups liés)
+const LAYOUTS = {main: ['main'], blank: ['main'], heat: ['main'], '1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: [], pair: []};
+const needs = k => (LAYOUTS[st.layout] || LAYOUTS.main).includes(k) && st.page === 'desk';
 function savePrefs() {
-  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, planHide: st.planHide.slice(-80), planShow: st.planShow.slice(-80), expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds, tpoOpts: st.tpoOpts})); } catch (e) { /* stockage indisponible */ }
+  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, planHide: st.planHide.slice(-80), planShow: st.planShow.slice(-80), expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds, tpoOpts: st.tpoOpts, ws: st.ws, instTab: st.instTab, v: 28})); } catch (e) { /* stockage indisponible */ }
 }
 function loadPrefs() {
   try {
@@ -171,7 +175,11 @@ function loadPrefs() {
     if (typeof p.pools === 'boolean') st.pools = p.pools;
     if (typeof p.ppools === 'boolean') st.ppools = p.ppools;
     Object.assign(st.liqOpts, p.liqOpts || {}); Object.assign(st.vpOpts, p.vpOpts || {});
-    if (LAYOUTS[p.layout]) st.layout = p.layout;
+    if (LAYOUTS[p.layout]) st.layout = p.layout === '1' ? 'main' : p.layout;
+    // V28 : un espace par instrument (vue et éléments de chaque vue) ; les réglages d'avant la V28 (graphique chargé) ne sont pas repris : épuré
+    if (p.v >= 28 && p.ws && typeof p.ws === 'object') st.ws = p.ws;
+    else st.layout = 'main';
+    if (typeof p.instTab === 'string') st.instTab = p.instTab;
     if (typeof p.side === 'boolean') st.sideOpen = p.side;
     if (typeof p.sb === 'boolean') st.sbCollapsed = p.sb;
     if (typeof p.plan === 'boolean') st.planOn = p.plan;
@@ -191,7 +199,7 @@ function loadPrefs() {
   } catch (e) { /* preferences illisibles : valeurs par defaut */ }
 }
 function syncAllTools() { panels.forEach(p => p.syncTools()); }
-const needsSeries = () => needs('vp') || st.tab === 'vp' || (needs('main') && st.mainOpts.vwap);
+const needsSeries = () => needs('vp') || st.tab === 'vp' || (needs('main') && ['vwap', 'vwapW', 'vwapM', 'vwapY', 'avwap'].some(k => st.mainOpts[k]));
 function refreshAll() { panels.forEach(p => { p.stamp = ''; p.rebuildLines(); }); st.version++; if (needs('liq')) { pollHeat(); pollLiqs(); } if (needsSeries()) pollVP(); }
 function syncRange() {
   const first = panels.find(p => p.visible()); if (!first) return;
@@ -199,21 +207,35 @@ function syncRange() {
   panels.forEach(p => { if (p !== first && p.visible()) p.chart.timeScale().setVisibleLogicalRange(r); });
 }
 function applyLayout() {
+  const heatOk = !st.cfg || (st.cfg.heatmapSymbols || ['BTCUSDT']).includes(st.symbol);
+  if (st.layout === 'heat' && !heatOk) st.layout = 'main';
+  if (st.layout === 'pair' && st.instTab !== 'PAIR') st.layout = 'main';
+  if (!LAYOUTS[st.layout]) st.layout = 'main';
   const want = LAYOUTS[st.layout];
   $('#desk').className = 'l' + st.layout;
+  Desk.apply();
   panels.forEach(p => p.host.classList.toggle('hide', !want.includes(p.kind)));
-  const g = $('#mtfGrid');                                              // V16 : grille multi-unites
-  if (g) { g.classList.toggle('hide', st.layout !== 'mtf'); if (st.layout === 'mtf' && st.page === 'desk') MTF.show(); else MTF.hide(); }
+  const g = $('#mtfGrid');                                              // V16 : grille multi-unites ; V28 : aussi l'onglet « BTC + SOL »
+  if (g) {
+    const on = st.layout === 'mtf' || st.layout === 'pair';
+    g.classList.toggle('hide', !on);
+    if (on && st.page === 'desk') { if (st.layout === 'pair') MTF.showPair(st.cfg ? st.cfg.symbols.slice(0, 2) : []); else MTF.show(); } else MTF.hide();
+  }
+  const hb = document.querySelector('#layouts [data-layout="heat"]'); if (hb) hb.hidden = !heatOk;
+  $('#layouts').hidden = st.layout === 'pair';
+  document.body.classList.toggle('pairmode', st.layout === 'pair');
+  const pl = $('#pairHint'); if (pl) pl.hidden = st.layout !== 'pair';
+  Desk.renderTabs(); Desk.renderLegend(); setTimeout(() => Desk.pollHeat(true), 300);
   const tg = $('#tpoGrid');                                             // V17 : vue TPO
   if (tg) { tg.classList.toggle('hide', st.layout !== 'tpo'); if (st.layout === 'tpo' && st.page === 'desk') TPO.show(); else TPO.hide(); }
-  document.querySelectorAll('#layouts button').forEach(b => b.classList.toggle('on', b.dataset.layout === st.layout));
+  document.querySelectorAll('#layouts button').forEach(b => b.classList.toggle('on', b.dataset.layout === st.layout || (b.dataset.layout === 'main' && st.layout === '1')));
   $('#deskwrap').classList.toggle('noside', !st.sideOpen);
   $('#sideToggle').textContent = st.sideOpen ? 'Panneau ▸' : '◂ Panneau';
   setTimeout(() => { panels.forEach(p => p.visible() && p.resetView()); st.version++; refreshAll(); }, 90);
   savePrefs();
 }
 function maximize(kind) {
-  const solo = kind === 'main' ? '1' : kind;
+  const solo = kind === 'main' ? 'main' : kind;
   if (st.layout === solo) st.layout = st.prevLayout && st.prevLayout !== solo ? st.prevLayout : '3';
   else { st.prevLayout = st.layout; st.layout = solo; }
   applyLayout();
@@ -352,10 +374,10 @@ function zoneRow(z, d) {
   const lv = byId(d.levels);
   const names = z.members.map(i => lv[i]).filter(Boolean).sort((a, b) => a.price - b.price).map(m => m.name);
   const ar = z.side === 'above' ? '<span class="ar up">▲</span>' : z.side === 'below' ? '<span class="ar dn">▼</span>' : '<span class="ar inz">◆</span>';
-  const dots = '●'.repeat(Math.min(5, z.score));
+  const g = z.grade != null ? z.grade : z.score, dots = `<b title="Note sur 14 : ${esc((z.gradeParts || []).map(p => p.name + ' ' + p.pts).join(', '))}">${g}/14</b>`;
   const sel = st.sel && st.sel.type === 'zone' && st.sel.id === z.id ? ' sel' : '';
-  const ess = (d.ladder.essential || []).includes(z.id);
-  return `<div class="row${z.score < 3 ? ' weak' : ''}${st.mode === 'ess' && !ess ? ' weak' : ''}${sel}" data-zone="${z.id}">${ar}<span class="nm" title="${esc(names.join(' + '))}">${ess ? '<b class="amb" title="Zone essentielle (tracée sur le graphique)">★</b> ' : ''}${esc(names.join(' + '))}</span>` +
+  const ess = (z.grade || 0) >= (st.minGrade || 9);                                     // V28 : dessinée sur le graphique (note au moins égale au seuil)
+  return `<div class="row${ess ? '' : ' weak'}${sel}" data-zone="${z.id}">${ar}<span class="nm" title="${esc(names.join(' + '))}">${ess ? '<b class="amb" title="Note au moins égale au seuil : dessinée sur le graphique">★</b> ' : ''}${esc(names.join(' + '))}</span>` +
     `<span class="pv" title="${z.key != null ? `prix clé (médiane pondérée des niveaux) ${fmtP(z.key)} · cœur ${fmtP(z.core[0])} – ${fmtP(z.core[1])}` + (z.vpoc ? ` · prix le plus échangé ${fmtP(z.vpoc)}` : '') : ''}">${fmtP(z.key != null ? z.key : z.mid)}</span><span class="sub"><span data-zd="${z.id}">${zoneDist(z, d, livePrice(d))}</span><span class="dots">${dots}</span>${z.hasMagnet ? ' · plus grosse poche' : ''}` +
     probLine(z) + '</span></div>';
 }
@@ -368,7 +390,7 @@ function renderLadder(d) {
   d.ladder.below.forEach(i => h += zoneRow(zs[i], d));
   if (!d.zones.length) h = '<div class="muted">Aucune confluence pour l\'instant.</div>' + h;
   $('#ladder').innerHTML = h;
-  $('#confHint').textContent = `${d.zones.length} zones · pâle = 2 sources`;
+  $('#confHint').textContent = `${d.zones.length} zones · note sur 14 · ★ = dessinée (au moins ${st.minGrade || 9}/14)`;
 }
 function renderPools(d) {
   const q = d.liquidity, pools = q.pools;
@@ -478,7 +500,8 @@ function renderDetail(d) {
       `<tr><td>Cœur <span class="muted small">(la moitié centrale du poids des niveaux)</span></td><td class="r">${fmtP(z.core[0])} – ${fmtP(z.core[1])}</td></tr>` +
       (z.vpoc ? `<tr><td>Prix le plus échangé <span class="muted small">(14 derniers jours, bougies 5 min)</span></td><td class="r">${fmtP(z.vpoc)}</td></tr>` : '') +
       `<tr><td>Largeur <span class="muted small">(toute la zone / cœur)</span></td><td class="r">${num(z.widthAtr, 2)} / ${num(z.coreAtr, 2)} ATR · ${PREC[z.precision] || '—'}</td></tr></table>` : '';
-    el.innerHTML = `<div><b>${ar} Confluence ${fmtP(z.key != null ? z.key : z.mid)}</b> <span class="muted">${z.side === 'in' ? '' : fmtPct(z.distPct) + ' · ' + num(z.distAtr, 1) + ' ATR · '}score ${z.score}</span></div>` +
+    el.innerHTML = `<div><b>${ar} Confluence ${fmtP(z.key != null ? z.key : z.mid)}</b> <span class="muted">${z.side === 'in' ? '' : fmtPct(z.distPct) + ' · ' + num(z.distAtr, 1) + ' ATR · '}note <b>${z.grade != null ? z.grade : z.score}/14</b></span></div>` +
+      ((z.gradeParts || []).length ? `<div class="gparts">${z.gradeParts.map(p => `<span class="pill" title="${esc((p.what || []).join(', '))}">${esc(p.name)} ${p.pts}/2</span>`).join(' ')}</div>` : '') +
       `<table class="mem">${rows}</table>` + precHtml +
       (p ? (z.side !== 'in' ? reachBlock(p.reach, `atteigne la zone (${num(p.distAtrH1, 1)} ATR 1h)`) : '') +
         `<div class="sect">Si le prix touche la zone</div>` + statLine(p.bounce, p.base, `Zones à ${bucket} (${p.side === 'support' ? 'support' : p.side === 'resistance' ? 'résistance' : 'tous'})`) + defNote()
@@ -630,7 +653,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 28;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC)
+const NEED_API = 29;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -687,6 +710,7 @@ function apply(d) {
   if (d.now) st.clockOff = d.now - Date.now();
   pushBars(d); header(d); panels.forEach(p => p.rebuildLines());
   renderLadder(d); renderPools(d); renderPricePools(d); renderPools2(d); renderDetail(d); renderContext(d); renderStats(d);
+  Desk.renderLegend();
   st.version++;
 }
 let timer = null;
@@ -714,19 +738,37 @@ async function poll() {
     }
   } catch (e) { console.error(e); $('#status').textContent = 'erreur d\'affichage : ' + e.message; $('#status').className = 'bad'; }
 }
+// unité de temps du graphique ; V28 : retenue par la vue en cours (la Heatmap garde ses 5 minutes, le Graphique son heure)
+function setTf(tf) {
+  if (!st.cfg || !st.cfg.tfs.includes(tf)) return;
+  const changed = tf !== st.tf;
+  st.tf = tf; Desk.rememberTf(tf);
+  document.querySelectorAll('#tfs button').forEach(x => x.classList.toggle('on', x.dataset.tf === tf));
+  if (!changed) return;
+  st.sel = null; st.data = null; st.series = null; st.vpd = null; st.bookHeat = null; poll(); refreshAll();
+}
 function resetSymbolData() {
   st.flow = null;
   st.sel = null; st.data = null; st.heat = null; st.liqs = null; st.an = null; st.series = null; st.vpd = null; st.key = null; st.sig = null; st.planKey = null; st.planSig = ''; st.plans = [];
+  st.bookHeat = null;
 }
 function buildControls(cfg) {
   st.cfg = cfg;
+  if (!st.symbol && st.instTab && cfg.symbols.includes(st.instTab)) st.symbol = st.instTab;     // V28 : on reprend sur l'onglet d'instrument quitté
   if (!cfg.symbols.includes(st.symbol)) st.symbol = cfg.symbols[0];
   const sel = $('#symbol'); sel.innerHTML = cfg.symbols.map(s => `<option${s === st.symbol ? ' selected' : ''}>${s}</option>`).join('');
-  sel.onchange = () => { st.symbol = sel.value; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); pollOverview(); pollSignals(); reloadSideTab(); MTF.refresh(); TPO.refresh(); };
+  sel.onchange = () => {
+    st.symbol = sel.value; st.instTab = st.symbol; st.layout = Desk.wsOf(st.symbol).layout || 'main';      // V28 : chaque instrument garde sa vue
+    resetSymbolData(); Desk.apply(); applyLayout(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); pollOverview(); pollSignals(); reloadSideTab(); MTF.refresh(); TPO.refresh();
+  };
+  if (!st.instTab || (st.instTab !== 'PAIR' && !cfg.symbols.includes(st.instTab))) st.instTab = st.symbol;
+  st.layout = st.instTab === 'PAIR' && cfg.symbols.length >= 2 ? 'pair' : (Desk.wsOf(st.symbol).layout || 'main');
+  const vt = Desk.VIEWS[st.layout] ? Desk.curSet().tf : null;                    // la vue reprend son unité de temps
+  if (vt && cfg.tfs.includes(vt)) st.tf = vt;
+  Desk.renderTabs();
   const box = $('#tfs');
   box.innerHTML = cfg.tfs.map(t => `<button data-tf="${t}" class="${t === st.tf ? 'on' : ''}">${t}</button>`).join('');
-  box.onclick = e => { const b = e.target.closest('button'); if (!b) return; st.tf = b.dataset.tf; st.sel = null; st.data = null; st.series = null; st.vpd = null;
-    box.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b)); poll(); refreshAll(); };
+  box.onclick = e => { const b = e.target.closest('button'); if (b) setTf(b.dataset.tf); };
   updateBanner(st.data);
   if (!live.ws || live.sym !== st.symbol || !cfg.wsBase) liveConnect();
   if (cfg.cbWs && (!cb.ws || cb.sym !== st.symbol)) cbConnect();
@@ -791,7 +833,7 @@ function routeFromHash() {
 window.addEventListener('hashchange', routeFromHash);
 function applySidebar() { document.body.classList.toggle('sbmin', st.sbCollapsed); $('#sbToggle').textContent = st.sbCollapsed ? '»' : '«'; }
 $('#sbToggle').onclick = () => { st.sbCollapsed = !st.sbCollapsed; applySidebar(); savePrefs(); setTimeout(() => { st.version++; }, 250); };
-$('#layouts').onclick = e => { const b = e.target.closest('button[data-layout]'); if (b) { st.layout = b.dataset.layout; applyLayout(); } };
+$('#layouts').onclick = e => { const b = e.target.closest('button[data-layout]'); if (b) { Desk.rememberTf(st.tf); st.layout = b.dataset.layout; Desk.onLayout(st.layout); applyLayout(); } };
 $('#sideToggle').onclick = () => { st.sideOpen = !st.sideOpen; applyLayout(); };
 
 // ---------- carte de chaleur, liquidations reelles, VWAP / volume profiles : recuperation ----------
@@ -969,12 +1011,13 @@ $('#riskChip').onclick = () => { location.hash = '#/analysis/macro'; };
 let sigTimer = null;
 // V25.3 : sur le graphique, les idées ENVOYÉES (niveaux figés, à partir de la bougie où elles sont parties) ; la configuration du moment
 // (recalculée sans cesse, donc mobile) n'apparaît que si tu la demandes, marquée « pas envoyée ».
-const OPEN_ST = ['pending', 'active', 'tp1'], RECENT_MS = 48 * 3600e3;
-// V26 : chaque trait se masque ou se réaffiche, idée par idée (choix gardé) ; par défaut, les idées en cours et celles terminées depuis
-// moins de 48 h. Une configuration du moment affichée reste toujours retirable (menu « Idées » des options du graphique, V27).
+const OPEN_ST = ['pending', 'active', 'tp1'], RECENT_MS = 2 * 3600e3;
+// V26 : chaque trait se masque ou se réaffiche, idée par idée (choix gardé). V28 (moins de bruit) : par défaut, seulement les idées en
+// cours, et celles exécutées puis terminées depuis moins de 2 heures (pour voir leur résultat) ; un ordre jamais exécuté disparaît dès
+// qu'il expire. Toute idée se réaffiche à la demande (élément « Idées envoyées » du menu « ＋ Éléments »).
 function planVisible(t, now = Date.now()) {
   if (st.planHide.includes(t.id)) return false;
-  return st.planShow.includes(t.id) || OPEN_ST.includes(t.status) || (t.endAt || t.closedAt || 0) > now - RECENT_MS;
+  return st.planShow.includes(t.id) || OPEN_ST.includes(t.status) || (!!t.filledAt && (t.endAt || t.closedAt || 0) > now - RECENT_MS);
 }
 function activePlans() {
   const sig = st.sig, sg = sig && sig.symbols && sig.symbols[st.symbol];
@@ -1265,7 +1308,7 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
 
 
 function loop() {
-  if (st.data) { panels.forEach(p => p.tick()); liveRender(); }
+  if (st.data) { panels.forEach(p => p.tick()); liveRender(); Desk.tick(); }
   requestAnimationFrame(loop);
 }
 let ovTimer = null;
@@ -1275,10 +1318,22 @@ async function pollOverview() {
   ovTimer = setTimeout(pollOverview, 6000);
   try { Overview.render(await api('/api/overview')); } catch (e) { $('#overview').innerHTML = `<div class="dn">Vue d'ensemble indisponible : ${esc(e.message)}</div>`; }
 }
+// V28 : un seul témoin d'état dans l'en-tête (le détail s'ouvre d'un clic) : source, prix en direct, Telegram, niveaux
+function headStatus() {
+  const src = $('#srcBadge'), tg = $('#tgBadge'), lv = $('#liveBadge'), stt = $('#status');
+  const bad = /bad/.test(stt.className) || /bad/.test(tg.className), warn = /warn/.test(lv.className) || (!lv.hidden && !/ok/.test(lv.className) && st.cfg && st.cfg.wsBase);
+  const sim = st.cfg && st.cfg.source === 'simulated';
+  const txt = /injoignable/.test(stt.textContent) ? 'terminal injoignable' : `${sim ? 'Données simulées' : 'Binance'}${lv.hidden ? '' : ' · ' + lv.textContent.replace('● ', '').toLowerCase()}${/ERREUR/.test(tg.textContent) ? ' · Telegram en erreur' : ''}`;
+  const dot = bad ? 'bad' : sim || warn ? 'warn' : 'ok';
+  const t = $('#hStatusTxt'), d = $('#hDot');
+  if (t.textContent !== txt) t.textContent = txt;
+  if (d.className !== dot) d.className = dot;
+}
+$('#hStatus').onclick = e => { e.stopPropagation(); const p = $('#hStatusPop'); p.hidden = !p.hidden; };
+document.addEventListener('click', e => { const p = $('#hStatusPop'); if (!p.hidden && !e.target.closest('.hstat')) p.hidden = true; });
+function switchSymbol(sym) { const sel = $('#symbol'); if (!st.cfg || !st.cfg.symbols.includes(sym)) return; sel.value = sym; sel.onchange(); }
 function openSymbol(sym, page) {
-  if (st.cfg && st.cfg.symbols.includes(sym) && sym !== st.symbol) {
-    st.symbol = sym; $('#symbol').value = sym; resetSymbolData(); liveConnect(); cbConnect(); poll(); pollAnalysis(); refreshAll(); reloadSideTab(); MTF.refresh(); TPO.refresh();
-  }
+  if (st.cfg && st.cfg.symbols.includes(sym) && sym !== st.symbol) switchSymbol(sym);
   location.hash = page === 'analysis' ? '#/analysis/synth' : page === 'signals' ? '#/signals' : '#/desk';
 }
 (async () => {
@@ -1286,7 +1341,9 @@ function openSymbol(sym, page) {
   let cfg;
   try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
   window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
-    serverOld, LAUNCHER, OPEN_ST, shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, oppOf, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan, togglePlan, planReset, planVisible};
+    serverOld, LAUNCHER, OPEN_ST, shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, oppOf, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan, togglePlan, planReset, planVisible,
+    panels: () => panels, switchSymbol, applyLayout, setTf};
+  Desk.init(window.LT);
   Overview.init(window.LT);
   Signals.init(window.LT);
   Backtest.init(window.LT);
@@ -1307,7 +1364,7 @@ function openSymbol(sym, page) {
   routeFromHash();
   poll(); pollAnalysis(); pollSignals(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop); setTimeout(updateNotice, 2500);
   setInterval(() => {
-    livePoll(); liveBadge(); cbRender(); riskChip();
+    livePoll(); liveBadge(); cbRender(); riskChip(); headStatus();
     const lb = $('#liveBadge'), sb = $('#sbLive'); sb.hidden = lb.hidden; sb.textContent = lb.textContent; sb.className = lb.className;
   }, 1000);
   window.__term = {st, panels, select, openSettings, live, cb, Analysis, Signals, navigate, maximize, applyLayout, pollSignals};      // pour les tests automatiques

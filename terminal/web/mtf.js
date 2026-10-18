@@ -3,13 +3,15 @@
 // seance colle a l'echelle des prix (POC, VAH, VAL), plus hauts / bas de la veille, de la semaine et du mois precedents.
 // Le reticule est synchronise : meme instant et meme prix sur tous les graphiques. Une ligne resume l'alignement des unites (des faits,
 // pas un signal : aucun de ces alignements n'a ete valide par le backtest du terminal).
+// V28 : la meme grille sert l'onglet « BTC + SOL » : un graphique par instrument (meme unite de temps), les idees envoyees de chacun
+// dessinees a leurs niveaux, et en tete les setups qui vont ensemble (une idee et sa couverture sur l'autre instrument).
 const MTF = (() => {
   'use strict';
   const TFS = ['5m', '15m', '1h', '4h', '1d'];
   const SEC = {'5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400};
   const NAME = {'5m': '5 min', '15m': '15 min', '1h': '1 heure', '4h': '4 heures', '1d': '1 jour'};
   const DEF = ['5m', '15m', '1h', '4h', '1d'];
-  let LT = null, root = null, cells = null, charts = [], timer = null, on = false, raf = 0, alignAt = 0;
+  let LT = null, root = null, cells = null, charts = [], timer = null, on = false, raf = 0, alignAt = 0, pair = null;
 
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const pct = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2).replace('.', ',') + ' %';
@@ -21,10 +23,10 @@ const MTF = (() => {
   }
 
   class Mini {
-    constructor(host, idx) {
-      this.host = host; this.idx = idx; this.data = null; this.bars = []; this.lines = []; this.sig = ''; this.cdKey = '';
+    constructor(host, idx, sym) {
+      this.host = host; this.idx = idx; this.sym = sym || null; this.data = null; this.bars = []; this.lines = []; this.sig = ''; this.cdKey = '';
       host.className = 'mcell';
-      host.innerHTML = `<div class="mhead"><select data-mtf-tf="${idx}" aria-label="Unité de temps du graphique ${idx + 1}">${TFS.map(t => `<option value="${t}">${NAME[t]}</option>`).join('')}</select>` +
+      host.innerHTML = `<div class="mhead">${sym ? `<b class="msym">${esc(sym.replace('USDT', ''))}</b>` : ''}<select data-mtf-tf="${idx}" aria-label="Unité de temps du graphique ${idx + 1}">${TFS.map(t => `<option value="${t}">${NAME[t]}</option>`).join('')}</select>` +
         `<span class="mfacts muted small"></span><span class="spacer"></span><span class="mcd muted small" title="Temps restant avant la clôture de la bougie en cours"></span>` +
         `<button class="mini mopen" title="Ouvrir cette unité dans le graphique principal (carnet, poches, zones…)">⤢</button></div>` +
         `<div class="mbody"><div class="chart"></div><canvas class="ov"></canvas></div>`;
@@ -36,8 +38,8 @@ const MTF = (() => {
       const line = o => this.chart.addLineSeries({lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null, ...o});
       this.vD = line({lineWidth: 1.5}); this.uD = line({lineWidth: 1, lineStyle: 2}); this.lD = line({lineWidth: 1, lineStyle: 2}); this.vW = line({lineWidth: 1, lineStyle: 1});
       this.chart.subscribeCrosshairMove(p => sync(this, p));
-      host.querySelector('select').addEventListener('change', e => { this.setTf(e.target.value); LT.st.mtf.tfs[this.idx] = this.tf; LT.savePrefs(); });
-      host.querySelector('.mopen').onclick = () => LT.openTf(this.tf);
+      host.querySelector('select').addEventListener('change', e => { this.setTf(e.target.value); if (!this.sym) { LT.st.mtf.tfs[this.idx] = this.tf; LT.savePrefs(); } });
+      host.querySelector('.mopen').onclick = () => { if (this.sym && this.sym !== LT.st.symbol) LT.switchSymbol(this.sym); LT.openTf(this.tf); };
       this.applyTheme();
     }
     th() { return Panel.TH[LT.st.theme] || Panel.TH.nuit; }
@@ -58,12 +60,13 @@ const MTF = (() => {
       this.data = null; this.bars = []; this.series.setData([]); [this.vD, this.uD, this.lD, this.vW].forEach(s => s.setData([]));
       this.load(true);
     }
+    symbol() { return this.sym || LT.st.symbol; }
     async load(reset) {
-      const sym = LT.st.symbol, tf = this.tf;
+      const sym = this.symbol(), tf = this.tf;
       if (!sym) return;
       let d;
       try { d = await LT.api(`/api/mtf?symbol=${sym}&tf=${tf}`); } catch (e) { this.host.querySelector('.mfacts').textContent = 'indisponible : ' + e.message; return; }
-      if (sym !== LT.st.symbol || tf !== this.tf || !d.ready) return;
+      if (sym !== this.symbol() || tf !== this.tf || !d.ready) return;
       const first = !this.data;
       this.data = d;
       const live = this.bars.length ? this.bars[this.bars.length - 1] : null;
@@ -93,10 +96,16 @@ const MTF = (() => {
       const d = this.data; if (!d) return;
       (d.levels || []).forEach(l => this.lines.push(this.series.createPriceLine({price: l.price, color: LT.st.theme === 'nuit' ? 'rgba(170,170,170,0.55)' : 'rgba(180,184,196,0.55)',
         lineWidth: 1, lineStyle: 3, axisLabelVisible: false, title: ''})));
+      if (this.sym) ideasOf(this.sym).forEach(t => {                                    // V28 : idées envoyées de cet instrument (niveaux figés)
+        const col = t.side === 'long' ? '#3ddc97' : '#ff6b6b', nm = t.side === 'long' ? 'achat' : 'vente';
+        [[t.entry, `${nm} : entrée`, 0, 2], [t.stop, 'stop', 2, 1], [t.tp1, 'objectif 1', 2, 1]].concat(t.tp2 != null ? [[t.tp2, 'objectif 2', 2, 1]] : []).forEach(([px, title, style, w]) => {
+          if (px != null) this.lines.push(this.series.createPriceLine({price: px, color: title === 'stop' ? 'rgba(255,107,107,.85)' : title.startsWith('objectif') ? 'rgba(61,220,151,.85)' : col, lineWidth: w, lineStyle: style, axisLabelVisible: true, title}));
+        });
+      });
     }
     // bougie en cours mise a jour a chaque transaction (meme flux que le graphique principal)
     onTick(price, tms) {
-      if (!this.bars.length) return;
+      if (!this.bars.length || (this.sym && this.sym !== LT.st.symbol)) return;
       const per = SEC[this.tf], bt = Math.floor(tms / 1000 / per) * per, last = this.bars[this.bars.length - 1];
       if (bt < last.time) return;
       let b;
@@ -198,22 +207,42 @@ const MTF = (() => {
     if (Date.now() - alignAt > 1000) { alignAt = Date.now(); align(); }
     raf = requestAnimationFrame(loop);
   }
+  // idées envoyées encore en cours ou terminées depuis moins de 48 heures, d'un instrument
+  function ideasOf(sym) {
+    const S = LT.st, tr = (S.sig && S.sig.desk && S.sig.desk.trades) || [];
+    return tr.filter(t => t.symbol === sym && t.mode !== 'alerte' && LT.planVisible(t)).slice(0, 3);
+  }
+  // setups qui vont ensemble : une idée et sa couverture (hedgeOf), ou deux idées en cours en même temps sur les deux instruments
+  function linked() {
+    const S = LT.st, tr = (S.sig && S.sig.desk && S.sig.desk.trades) || [], open = tr.filter(t => ['pending', 'active', 'tp1'].includes(t.status) && t.mode !== 'alerte');
+    const nm = t => `${t.side === 'long' ? 'Achat' : 'Vente'} ${t.symbol.replace('USDT', '')} du ${LT.parisAt(t.created)}`;
+    const pairs = open.filter(t => t.hedgeOf).map(t => { const o = tr.find(x => x.id === t.hedgeOf); return o ? `${esc(nm(o))} <b class="amb">couverte par</b> ${esc(nm(t))}` : null; }).filter(Boolean);
+    if (pairs.length) return pairs.join(' · ');
+    const syms = [...new Set(open.map(t => t.symbol))];
+    return syms.length > 1 ? `En cours en même temps : ${open.map(t => esc(nm(t))).join(', ')}` : 'Aucun setup lié en ce moment : chaque instrument a son onglet ; ici, les deux côte à côte.';
+  }
   function build() {
-    const st = LT.st, n = Math.max(2, Math.min(5, st.mtf.n || 4));
+    const st = LT.st, n = pair ? pair.length : Math.max(2, Math.min(5, st.mtf.n || 4));
+    const want = pair ? pair.join() : 'tf';
+    if (cells.dataset.mode !== want) { while (charts.length) charts.pop().destroy(); cells.dataset.mode = want; }
     while (charts.length > n) charts.pop().destroy();
     while (charts.length < n) {
       const el = document.createElement('section'); cells.appendChild(el);
-      const c = new Mini(el, charts.length); charts.push(c);
-      c.setTf(st.mtf.tfs[c.idx] || DEF[c.idx]);
+      const c = new Mini(el, charts.length, pair ? pair[charts.length] : null); charts.push(c);
+      c.setTf(pair ? (TFS.includes(st.tf) ? st.tf : '1h') : (st.mtf.tfs[c.idx] || DEF[c.idx]));
     }
     cells.className = 'mtfcells n' + n;
+    root.querySelector('.mtfbar').hidden = !!pair;
+    const pb = root.querySelector('.pairbar'); pb.hidden = !pair;
+    if (pair) pb.innerHTML = `<span class="lt">Setups liés</span> ${linked()}`;
     root.querySelectorAll('[data-mtf-n]').forEach(b => b.classList.toggle('on', +b.dataset.mtfN === n));
     setTimeout(() => charts.forEach(c => c.resetView()), 60);
   }
   function init(lt, host) {
     LT = lt; root = host;
     root.innerHTML = `<div class="mtfbar"><span class="muted small">Graphiques</span><span class="seg mini">${[2, 3, 4, 5].map(k => `<button data-mtf-n="${k}">${k}</button>`).join('')}</span>` +
-      `<span class="mtfalign small" title="Faits, pas un signal : aucun de ces alignements n'a été validé par le backtest du terminal (le seul filtre validé est la tendance de fond, onglet Lecture)."></span></div><div class="mtfcells"></div>`;
+      `<span class="mtfalign small" title="Faits, pas un signal : aucun de ces alignements n'a été validé par le backtest du terminal (le seul filtre validé est la tendance de fond, onglet Lecture)."></span></div>` +
+      `<div class="pairbar small" hidden></div><div class="mtfcells"></div>`;
     cells = root.querySelector('.mtfcells');
     root.addEventListener('click', e => {
       const b = e.target.closest('[data-mtf-n]');
@@ -221,10 +250,17 @@ const MTF = (() => {
     });
   }
   function show() {
-    on = true;
+    on = true; pair = null;
     build();
     clearInterval(timer);
     timer = setInterval(() => charts.forEach((c, i) => setTimeout(() => c.load(false), i * 250)), 15000);   // bougies fermees et VWAP : toutes les 15 s
+    if (!raf) raf = requestAnimationFrame(loop);
+  }
+  function showPair(syms) {                         // V28 : onglet « BTC + SOL »
+    on = true; pair = syms && syms.length >= 2 ? syms.slice(0, 2) : null;
+    build();
+    clearInterval(timer);
+    timer = setInterval(() => { charts.forEach((c, i) => setTimeout(() => { c.load(false); }, i * 250)); if (pair) root.querySelector('.pairbar').innerHTML = `<span class="lt">Setups liés</span> ${linked()}`; }, 15000);
     if (!raf) raf = requestAnimationFrame(loop);
   }
   function hide() { on = false; clearInterval(timer); timer = null; }
@@ -232,5 +268,5 @@ const MTF = (() => {
   function onTick(price, tms) { if (on) charts.forEach(c => c.onTick(price, tms)); }
   function applyTheme() { charts.forEach(c => c.applyTheme()); }
   function redraw() { charts.forEach(c => { c.sig = ''; c.resetView(); }); }
-  return {init, show, hide, refresh, onTick, applyTheme, redraw, TFS, DEF, active: () => on, charts: () => charts};
+  return {init, show, showPair, hide, refresh, onTick, applyTheme, redraw, TFS, DEF, active: () => on, charts: () => charts};
 })();

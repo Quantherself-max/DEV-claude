@@ -208,7 +208,7 @@ body.sbmin #sidebar a{justify-content:center;margin:2px 6px}
 .panel.k-main .pbody .tip{max-width:330px}
 .pbody .tip[hidden]{display:none}
 .pbody .cdwn{position:absolute;z-index:5;right:0;height:17px;line-height:17px;text-align:center;font:600 11px/17px -apple-system,Segoe UI,Roboto,sans-serif;color:#fff;border-radius:2px;pointer-events:none;font-variant-numeric:tabular-nums}.pbody .cdwn[hidden]{display:none}
-.k-main .heat,.k-vp .heat{display:none}
+.k-vp .heat{display:none}
 #side{height:100%;overflow:auto}
 #analysis{padding-top:4px}
 #anTabs button{display:none}
@@ -546,3 +546,51 @@ details.mxmore{margin:4px 0}details.mxmore>summary{cursor:pointer;color:#9db4ff;
 body.theme-nuit .ddp{background:#141414;border-color:#2c2c2c}
 body.theme-nuit .dd.open .ddb{background:#1b2333}
 @media (max-width:700px){#deskbar{flex-wrap:wrap}#deskbar .seg{flex-wrap:wrap}#deskhint{display:none}.mxbar label{flex-wrap:wrap}.mxbar select{max-width:calc(100vw - 110px)}table.vtab{display:block;overflow-x:auto}}
+
+/* V28 : onglets d'instrument, témoin d'état unique, légende dans le graphique, menu « ＋ Éléments » */
+.itabs{display:flex;gap:2px;background:#0d1117;border:1px solid var(--line);border-radius:8px;padding:2px}
+.itabs button{border:0;background:transparent;color:var(--mut);padding:5px 14px;border-radius:6px;font-weight:600;letter-spacing:.02em;cursor:pointer}
+.itabs button:hover{color:var(--text)}
+.itabs button.on{background:#1f2738;color:#fff;box-shadow:inset 0 -2px 0 var(--acc)}
+.itabs button.pair{font-weight:500}
+body.theme-nuit .itabs{background:#0b0b0b}body.theme-nuit .itabs button.on{background:#1b1b1b}
+.hstat{position:relative}
+.hsbtn{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--mut);padding:4px 10px;border-radius:999px;cursor:pointer}
+.hsbtn i{width:8px;height:8px;border-radius:50%;background:#6a6e7a;display:inline-block}
+.hsbtn i.ok{background:var(--up)}.hsbtn i.warn{background:var(--amb)}.hsbtn i.bad{background:var(--dn)}
+.hpop{position:absolute;right:0;top:calc(100% + 6px);z-index:40;background:var(--panel);border:1px solid #343a4c;border-radius:8px;padding:8px 10px;min-width:280px;box-shadow:0 12px 32px rgba(0,0,0,.55);display:flex;flex-direction:column;gap:6px}
+.hpop[hidden]{display:none}.hpop .hrow{display:flex;align-items:center;justify-content:space-between;gap:10px}.hpop .regime{display:inline-block;max-width:200px}
+.panel .phead .viewname{font-size:11px;color:var(--mut);margin-left:6px;letter-spacing:.04em;text-transform:uppercase}
+.elbtn{color:var(--text)!important;border-color:#3a4258!important;font-weight:600}
+.elbtn.open{border-color:var(--acc)!important;background:#1a2236}
+.pbody .legend{position:absolute;left:8px;top:6px;z-index:4;display:flex;flex-direction:column;align-items:flex-start;gap:2px;max-width:min(560px,70%);pointer-events:none;font:500 11.5px/1.35 -apple-system,Segoe UI,Roboto,sans-serif}
+.pbody .legend[hidden]{display:none}
+.legend .lg-head{color:var(--mut);font-size:11px;margin-bottom:2px}.legend .lg-head b{color:var(--text);font-size:12px;margin-right:4px}.legend .lg-view{margin-left:6px;text-transform:uppercase;letter-spacing:.05em;font-size:10px}
+.legend .lg-item{pointer-events:auto;display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:1px 6px 1px 2px;border-radius:5px;background:rgba(10,12,16,.55);color:#cfd3dc}
+.legend .lg-item:hover{background:rgba(20,24,32,.85)}
+.legend .lg-item.off .lg-name{color:var(--mut);text-decoration:line-through}
+.legend .lg-item.na .lg-name{color:var(--mut)}
+.legend button{border:0;background:transparent;color:var(--mut);padding:0 3px;cursor:pointer;line-height:1;font-size:11px}
+.legend button:hover{color:#fff}
+.legend .lg-x{opacity:0;transition:opacity .15s}.legend .lg-item:hover .lg-x{opacity:1}
+.legend .lg-st{color:var(--mut);font-size:11px}
+.legend .lg-sel{color:var(--mut);display:inline-flex;align-items:center;gap:2px}.legend .lg-sel select{padding:0 2px;font-size:11px;height:18px;background:#141821}
+.legend .lg-ex{border:1px solid #2c3242;border-radius:4px;padding:1px 6px;font-size:10.5px;color:#7d8291}
+.legend .lg-ex.on{color:#e8eaf0;border-color:#4a5a80;background:rgba(76,141,255,.16)}
+.legend .lg-empty{pointer-events:auto;color:var(--mut);background:rgba(10,12,16,.55);padding:3px 8px;border-radius:5px}
+@media (hover:none){.legend .lg-x{opacity:1}}
+.chooser{min-width:330px;max-width:min(420px,94vw)}
+.chooser .chhead{display:flex;align-items:center;gap:6px;padding:2px 2px 6px;border-bottom:1px solid var(--line);margin-bottom:4px}
+.chooser .chhead b{font-size:12.5px}
+.chooser em{font-style:normal;color:var(--mut);font-size:11px}
+.chooser .ddplans{margin:0 0 4px 24px}
+.chooser .ddplans label.sub{font-size:12px}
+.pairbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);margin-bottom:8px;line-height:1.5}
+.pairbar[hidden]{display:none}
+.mhead .msym{font-size:13px;margin-right:6px;color:#fff}
+#pairHint{margin-left:4px}
+@media (max-width:700px){.itabs button{padding:5px 10px}.pbody .legend{max-width:92%}.hpop{right:-60px}}
+.pairmode #top .price,.pairmode #sigChip{display:none}
+.gparts{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 4px}.gparts .pill{font-size:11px}
+.legend .lg-head{pointer-events:auto;display:flex;align-items:center;gap:4px}.legend .lg-fold{font-size:10px;padding:0 4px 0 0}
+@media (max-width:700px){.pbody .legend{font-size:10.5px}.legend .lg-item{padding:0 4px 0 1px}}

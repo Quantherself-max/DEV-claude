@@ -1,7 +1,8 @@
-# Liq Terminal (V27)
+# Liq Terminal (V28)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Un Desk sans bruit, à la carte** (V28) : un onglet par instrument (BTC, SOL) et un onglet « BTC + SOL » pour les setups qui vont ensemble ; un graphique à **éléments** (rien n'est dessiné sans avoir été choisi dans « ＋ Éléments », chaque élément listé dans la légende du graphique avec un œil et une croix) ; une vue **Vierge** à construire soi-même ; une **heatmap du carnet d'ordres BTC** (Binance, OKX, Bybit, Coinbase) ; et des confluences **notées sur 14**, dessinées seulement à partir de **9/14** (voir « V28 » plus bas).
 - **Un terminal allégé** (V27) : plus de Lexique ni de Plan de trade ; les **idées de trade** ont leur propre page (menu Workspace) et quittent le panneau de droite du Desk ; **une seule page Macro** au lieu de trois (l'essentiel en tête, puis les annonces, puis le détail par thème dans des sections dépliables) ; les options du graphique principal sont rangées en **menus déroulants** (voir « V27 » plus bas).
 - **Un banc d'essai historique honnête** (V6, page **Backtest**) : la stratégie du terminal est rejouée sur 13 ans de BTC (bougies 1 minute), avec frais, contre des entrées au hasard, par période. Résultat : **le seul filtre qui compte est la tendance de fond** (voir « V6 » plus bas).
 - **Ta stratégie, mesurée** (V7, onglet **Stratégie** et rapport « ta stratégie » dans la page **Backtest**) : rebonds / clôtures sur VWAP et VWAP ancrés de la semaine et du mois, position face à la VAL / VAH du volume profile, poches de liquidité en objectif, 1 à 2 jours. Testée en 252 variantes sur 13 ans de BTC, avec recherche de couverture (voir « V7 » plus bas).
@@ -122,6 +123,35 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V28 : le Desk refait, sans bruit
+
+### Un onglet par instrument
+- En haut à gauche, les onglets **BTC**, **SOL** et **BTC + SOL** remplacent le menu déroulant des paires. Chaque instrument garde **sa** vue (Graphique, Vierge, Heatmap…), **ses** éléments et son unité de temps : tu retrouves BTC et SOL comme tu les as laissés.
+- **BTC + SOL** : les deux graphiques côte à côte (même unité de temps), chacun avec ses idées envoyées dessinées à leurs niveaux, et en tête les **setups liés** (une idée et sa couverture sur l'autre instrument, ou deux idées en cours en même temps). C'est le seul endroit où les deux instruments se mélangent.
+
+### Un graphique à éléments (inspiré des écrans d'order flow)
+- **Rien n'est dessiné sans avoir été choisi.** Le bouton **« ＋ Éléments »** (en haut du graphique) liste tout ce que le terminal sait dessiner, rangé par famille : niveaux (confluences, poches de liquidation, plus hauts / plus bas, POC vierges), profils de volume (jour, semaine, mois, nœuds, POC évolutifs), TPO (mois, semaine, jour, 4 heures, 1 heure), VWAP (jour, semaine, mois, année, VWAP ancrés), flux d'ordres (volume, heatmap du carnet, carnet, gros ordres, absorptions), options (gamma BTC), idées envoyées.
+- Chaque élément choisi apparaît dans la **légende**, en haut à gauche du graphique : **l'œil** le masque sans le retirer, **la croix** le retire.
+- Trois vues par instrument, chacune avec ses propres éléments :
+  - **Graphique** (par défaut, conseillé) : confluences 9/14 et plus, profil du jour, VWAP du jour, volume, idées envoyées. C'est tout.
+  - **Vierge** : un graphique vide ; tu ajoutes ce que tu veux (par exemple un TPO de la semaine et un profil du mois).
+  - **Heatmap** (BTC) : la heatmap du carnet, le volume, les gros ordres et les idées, en 5 minutes par défaut.
+- Bouton « Conseillé » pour revenir au réglage sans bruit, « Tout retirer » pour repartir de zéro. Les anciens réglages (graphique chargé) ne sont pas repris : le Desk repart épuré.
+- **Moins de traits d'idées** : seules les idées en cours restent dessinées, et celles exécutées puis terminées depuis moins de 2 heures (pour voir le résultat) ; un ordre jamais exécuté disparaît dès qu'il expire. Chacune se réaffiche d'un clic dans « ＋ Éléments ».
+- **En-tête allégé** : un seul témoin d'état (source, prix en direct, Telegram, niveaux) dont le détail s'ouvre d'un clic ; mises en page réduites à Graphique, Vierge, Heatmap, Grille, Multi-unités, TPO.
+
+### Confluences notées sur 14
+- Chaque zone reçoit une **note sur 14** : sept piliers notés 0, 1 ou 2 — VWAP, VWAP ancrés, profils de volume, POC vierges et TPO, plus hauts / plus bas, ouvertures, liquidité. Un niveau de la journée vaut 1 point, un niveau de la semaine, du mois ou de l'année 2 points ; deux niveaux différents d'un même pilier valent aussi 2 ; la plus grosse poche de liquidation d'un côté (ou une poche d'importance 70/100 et plus) vaut 2. Les nombres ronds ne comptent pas.
+- **Seules les zones à 9/14 et plus sont dessinées** (réglable dans la légende, de 5 à 12). Il faut donc plusieurs piliers de grande unité de temps au même prix : c'est rare. Sur les données simulées, une zone sur 175 environ atteint 9 ; la légende dit « aucune en ce moment · meilleure 7/14 » quand rien n'atteint le seuil, pour que tu saches que ce n'est pas une panne.
+- L'onglet Niveaux et le détail d'une zone montrent la note et ses piliers (« VWAP 2/2, Profils de volume 2/2… »). Cette note sert à l'affichage : elle ne change ni le score des idées ni leurs envois.
+
+### Heatmap du carnet d'ordres (BTC)
+- Le terminal photographie les carnets et range chaque photo par tranche de 20 $ (achats et ventes additionnés), sur ±4 % autour du prix : **Binance** (carnet déjà suivi en direct, toutes les 10 secondes), **OKX** (carnet en direct toutes les 10 secondes, et 5 000 niveaux toutes les 3 minutes pour les prix éloignés), **Bybit** (500 niveaux toutes les 30 secondes), **Coinbase** (carnet complet toutes les 10 minutes). Les bourses s'allument ou s'éteignent dans la légende.
+- Dessinée **sous les bougies** : bleu nuit pour peu d'ordres, puis bleu, cyan, jaune, orange et rouge pour les plus gros murs ; une bande qui dure est un mur qui tient. Au survol : le montant en attente dans la tranche.
+- **Pas d'historique avant le premier lancement** : aucune source gratuite ne donne le carnet passé. Le terminal garde 24 heures et les sauvegarde (`data_local/heatmap`), donc un redémarrage ne les efface pas.
+- Volume réseau estimé : 350 Mo par jour (les carnets profonds sont lourds, celui de Coinbase fait environ 1 Mo). `TERMINAL_HEATMAP=0` dans `.env` la coupe ; `TERMINAL_HEATMAP=BTCUSDT,SOLUSDT` l'ajoute pour SOL.
+- Vérifié sur données simulées ; depuis mon environnement de test, OKX et Coinbase répondent, Binance et Bybit non (accès refusé depuis l'endroit du test) : leur lecture est écrite selon leurs documentations publiques et sera vérifiée chez toi.
 
 ## Ce qui est nouveau en V27 : un terminal allégé et mieux rangé
 

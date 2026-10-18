@@ -30,19 +30,25 @@
 </aside>
 <div id="content">
 <header id="top">
-  <div class="crumb"><span class="muted">Workspace</span> <span class="muted">/</span> <b id="crumb">Desk</b></div>
-  <select id="symbol" aria-label="Symbole"></select>
+  <b id="crumb" hidden>Desk</b>
+  <nav id="instTabs" class="itabs" aria-label="Instruments"></nav>
+  <select id="symbol" aria-label="Symbole" hidden></select>
   <div id="tfs" class="seg" role="group" aria-label="Timeframe"></div>
   <div class="price"><b id="price" title="Dernier prix échangé sur le perpétuel Binance">-</b><small id="atr"></small>
     <span id="cbPrice" class="cb" hidden title="Prix Coinbase (spot USD) : le marché de ton graphique TradingView"></span></div>
-  <span id="regime" class="regime" hidden></span>
   <button id="riskChip" class="badge risk" hidden></button>
   <button id="sigChip" class="badge sig" hidden></button>
   <div class="spacer"></div>
-  <button id="srcBadge" class="badge" title="Changer la source dans les réglages">-</button>
-  <button id="tgBadge" class="badge" title="Configurer Telegram dans les réglages">-</button>
-  <span id="liveBadge" class="badge" hidden>● DIFFÉRÉ</span>
-  <span id="status" class="muted">chargement...</span>
+  <div class="hstat">
+    <button id="hStatus" class="hsbtn" title="État du terminal : source des données, flux en direct, Telegram, mise à jour des niveaux"><i id="hDot"></i><span id="hStatusTxt">chargement…</span></button>
+    <div id="hStatusPop" class="hpop" hidden>
+      <div class="hrow"><span class="muted small">Données</span><button id="srcBadge" class="badge" title="Changer la source dans les réglages">-</button></div>
+      <div class="hrow"><span class="muted small">Prix en direct</span><span id="liveBadge" class="badge" hidden>● DIFFÉRÉ</span></div>
+      <div class="hrow"><span class="muted small">Telegram</span><button id="tgBadge" class="badge" title="Configurer Telegram dans les réglages">-</button></div>
+      <div class="hrow"><span class="muted small">Niveaux</span><span id="status" class="muted">chargement...</span></div>
+      <div class="hrow"><span class="muted small">Prix et intérêt ouvert</span><span id="regime" class="regime" hidden></span></div>
+    </div>
+  </div>
   <button id="themeBtn" class="badge" title="Style des graphiques : nuit (fond noir, bougies bleues et blanches, comme les terminaux d'order flow) ou classique">☾ nuit</button>
   <button id="openSettings" class="primary" title="Réglages">⚙</button>
 </header>
@@ -50,16 +56,15 @@
 
 <section class="page" data-page="desk">
   <div id="deskbar">
-    <span class="seg" id="layouts" role="group" aria-label="Mise en page">
-      <button data-layout="1" title="Graphique principal seul">▣ Principal</button>
-      <button data-layout="liq" title="Poches de liquidité seules">◧ Liquidité</button>
-      <button data-layout="vp" title="VWAP, AVWAP et volume profiles seuls">◨ VWAP · VP</button>
-      <button data-layout="2" title="Principal + liquidité">◫ 2 graphiques</button>
-      <button data-layout="3" title="Principal + liquidité + VWAP/VP">▦ 3 graphiques</button>
-      <button data-layout="mtf" title="Le même actif sur plusieurs unités de temps à la fois (2 à 5 graphiques, unité au choix pour chacun)">⊞ Multi-unités</button>
-      <button data-layout="tpo" title="TPO (profil de marché) des séances d'1 mois, d'1 semaine, d'1 jour, de 4 heures et d'1 heure : single prints, poor high / poor low, zone de valeur">▥ TPO</button>
+    <span class="seg" id="layouts" role="group" aria-label="Vue">
+      <button data-layout="main" title="Le graphique épuré : confluences notées 9/14 et plus, profil du jour, VWAP, volume, idées envoyées">Graphique</button>
+      <button data-layout="blank" title="Un graphique vide : ajoute ce que tu veux avec « ＋ Éléments » (TPO, profils, VWAP, carnet…)">Vierge</button>
+      <button data-layout="heat" title="Heatmap du carnet d'ordres (Binance, OKX, Bybit, Coinbase) sous les bougies, carnet à droite, gros ordres">Heatmap</button>
+      <button data-layout="3" title="Trois graphiques : principal, poches de liquidation, VWAP et profils">Grille</button>
+      <button data-layout="mtf" title="Le même instrument sur plusieurs unités de temps à la fois">Multi-unités</button>
+      <button data-layout="tpo" title="TPO (profil de marché) des séances du mois, de la semaine, du jour, de 4 heures et d'1 heure">TPO</button>
     </span>
-    <span class="muted small" id="deskhint">Zoom et défilement synchronisés entre les graphiques.</span>
+    <span id="pairHint" class="muted small" hidden>Les deux instruments côte à côte, avec les setups qui vont ensemble. Chaque instrument a aussi son propre onglet.</span>
     <div class="spacer"></div>
     <button id="sideToggle" class="seg-like" title="Afficher / masquer le panneau de droite">Panneau ▸</button>
   </div>
@@ -303,6 +308,7 @@
 <script src="strategy.js"></script>
 <script src="lecture.js"></script>
 <script src="panels.js"></script>
+<script src="desk.js"></script>
 <script src="mtf.js"></script>
 <script src="tpo.js"></script>
 <script src="macro.js"></script>

@@ -146,7 +146,7 @@ def synthesize(sym, price, bias, macro, dom, ctx, zones, ess_ids):
         "pros": pros, "cons": cons, "invalidation": inval,
         "pUp24": p24["pUp"] if p24 else None, "pUp4": p4["pUp"] if p4 else None,
         "base24": p24["base"] if p24 else None,
-        "levels": [{"id": z["id"], "side": z["side"], "mid": z["mid"], "score": z["score"], "distAtr": z["distAtr"],
+        "levels": [{"id": z["id"], "side": z["side"], "mid": z["mid"], "score": z["score"], "grade": z.get("grade"), "distAtr": z["distAtr"],
                     "reach24": (z.get("prob") or {}).get("reach", {}).get("24"),
                     "bounce": (z.get("prob") or {}).get("bounce")} for z in sorted(ess, key=lambda z: -z["mid"])],
     }

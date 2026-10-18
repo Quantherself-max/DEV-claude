@@ -47,7 +47,7 @@ const Lecture = (() => {
     return `<div class="lidea"><b class="${cls}">${i.side === 'long' ? 'ACHAT' : 'VENTE'}</b> <span class="muted small">qualité ${Math.round(i.score)}/100${status}${why ? ' · ' + esc(why) : ''}</span>
       <div class="small">entrée ${px(i.entry)} · stop ${px(i.stop)} · objectif ${px(i.tp1)}</div></div>`;
   }
-  function lv(l, up) { return `<span class="${up ? 'up' : 'dn'}">${up ? '▲' : '▼'}</span> ${px(l.mid)} <span class="muted small">${n1(l.distAtr, 1)} ATR · ${'●'.repeat(Math.min(5, l.score || 0))}${l.reach24 != null ? ' · ' + Math.round(l.reach24 * 100) + ' % en 24 h' : ''}</span>`; }
+  function lv(l, up) { return `<span class="${up ? 'up' : 'dn'}">${up ? '▲' : '▼'}</span> ${px(l.mid)} <span class="muted small">${n1(l.distAtr, 1)} ATR · ${l.grade != null ? l.grade + '/14' : '●'.repeat(Math.min(5, l.score || 0))}${l.reach24 != null ? ' · ' + Math.round(l.reach24 * 100) + ' % en 24 h' : ''}</span>`; }
 
   function moneyHtml(m) {
     if (!m) return '';
