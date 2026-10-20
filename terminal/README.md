@@ -1,7 +1,8 @@
-# Liq Terminal (V30)
+# Liq Terminal (V31)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Nouvelle stratégie d'idées de trade : prix, intérêt ouvert et CVD lus sur la liquidité et les VWAP** (V31) : l'ancienne note de confluence est remplacée ; 8 combinaisons, une réaction pour chacune, mesurée sur SOL, BTC et ETH depuis 2022 (voir « V31 » plus bas).
 - **Intérêt ouvert en bougies et delta en barres sous le graphique, TPO épuré, panneau de droite réservé aux idées de trade** (V30, voir « V30 » plus bas).
 - **La heatmap et la carte des liquidations sur tout le graphique, même en 4 heures** (V29) : la heatmap du carnet garde 6 mois en mémoire et, avant tes propres photos, reprend les archives publiques de Binance ; nouvelle **carte des liquidations** estimée sur 6 mois (BTC et SOL), comme celles des sites spécialisés (voir « V29 » plus bas).
 - **Un Desk sans bruit, à la carte** (V28) : un onglet par instrument (BTC, SOL) et un onglet « BTC + SOL » pour les setups qui vont ensemble ; un graphique à **éléments** (rien n'est dessiné sans avoir été choisi dans « ＋ Éléments », chaque élément listé dans la légende du graphique avec un œil et une croix) ; une vue **Vierge** à construire soi-même ; une **heatmap du carnet d'ordres BTC** (Binance, OKX, Bybit, Coinbase) ; et des confluences **notées sur 14**, dessinées seulement à partir de **9/14** (voir « V28 » plus bas).
@@ -125,6 +126,50 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V31 : une nouvelle stratégie, prix + intérêt ouvert + CVD sur la liquidité et les VWAP
+
+L'ancienne analyse (note de confluence sur sept piliers, ancien rejeu historique) donnait des résultats peu concluants avec trop de
+variables. Elle ne fabrique plus les idées de trade. La nouvelle stratégie (`engine/flowstrat.py`) n'a que trois ingrédients :
+
+1. **Un lieu** : une bougie 4 heures prend une poche de liquidité (plus haut ou plus bas de la veille, de la semaine, du mois, sommet ou
+   creux d'une heure, niveaux égaux) ou touche un VWAP de la semaine ou du mois, ou un VWAP ancré (début de la semaine ou du mois précédents,
+   plus haut ou plus bas de 7 et 30 jours).
+2. **Le flux** au moment où le prix arrive au lieu : le sens du prix, de l'intérêt ouvert et du CVD (8 combinaisons). Sur une poche, on compare
+   au moment où la poche s'est formée (divergence : le prix fait un plus haut plus haut, l'intérêt ouvert et le CVD suivent-ils ?) ; sur un VWAP,
+   aux 12 heures d'approche. Intérêt ouvert à moins de 0,5 % ou CVD à moins de 1 % du volume : plat, pas de signal.
+3. **Une réaction par combinaison**, un seul principe :
+
+| Prix | Intérêt ouvert | CVD | Lecture | Réaction |
+|---|---|---|---|---|
+| hausse | hausse | hausse | nouveaux acheteurs | **ACHAT** (suivre) |
+| hausse | hausse | baisse | des vendeurs agressifs ouvrent des positions dans la hausse | **VENTE** (contrer) |
+| baisse | hausse | baisse | nouveaux vendeurs | **VENTE** (suivre) |
+| baisse | hausse | hausse | des acheteurs agressifs ouvrent des positions dans la baisse | **ACHAT** (contrer) |
+| hausse | baisse | hausse | rachat de shorts | rien |
+| hausse | baisse | baisse | hausse sans acheteurs | rien |
+| baisse | baisse | baisse | liquidation des longs | rien |
+| baisse | baisse | hausse | baisse sans vendeurs | rien |
+
+En clair : **quand l'intérêt ouvert monte (argent neuf), suivre le CVD** (le camp agressif qui ouvre ces positions) ; quand il baisse, rien.
+Il faut aussi une **confirmation** : un autre signal dans le même sens dans les 24 heures précédentes (le premier signal d'une série perd de
+l'argent sur l'historique). Le trade : entrée à la clôture de la bougie 4 heures, stop au-delà de la bougie du signal (entre 1 et 4 fois son
+amplitude moyenne), objectif à 3 fois le risque, sortie au bout de 72 heures au plus.
+
+**Mesure** (`python tools/run_flow_study.py SOLUSDT`, rapports dans la page **Backtest**, en tête de liste ; les anciennes mesures restent
+consultables, rangées dans « Anciennes mesures ») : perpétuels Binance depuis janvier 2022, vrai volume acheteur agressif, intérêt ouvert toutes
+les 5 minutes, frais comptés, une position à la fois, 5 par semaine au plus.
+
+- **SOL : validée.** Période de test (août 2024 → octobre 2026) : 310 trades, +0,09 fois le risque par trade après frais, mieux que 98 % des
+  mêmes trades placés au hasard ; encore positive avec des frais doublés. Une année perdante sur cinq (2024).
+- **BTC : non validée** (−0,07 fois le risque par trade sur le test). **ETH**, jamais regardé avant (contrôle à l'aveugle) : **non validée**.
+- Honnêteté : le seuil de 0,5 % et la confirmation ont été repérés en regardant SOL et le BTC sur toute la période. Le résultat de SOL est donc
+  probablement optimiste. Le journal des idées en direct reste le vrai juge.
+
+**Dans le terminal** : seules les idées **confirmées** d'une paire **validée** partent sur Telegram (donc SOL aujourd'hui). Les idées du BTC
+restent affichées, marquées « non validée », jamais envoyées. La page **Idées de trade** et le panneau de droite montrent le flux des
+12 dernières heures (combinaison et réaction), les 8 combinaisons avec ce qu'elles ont donné sur la paire, et les signaux des 72 dernières heures.
+La tendance de fond (moyennes 50 / 200 jours) et l'attente des annonces ne filtrent plus les idées : elles ne font pas partie de la stratégie mesurée.
 
 ## Ce qui est nouveau en V30 : intérêt ouvert et delta sous le graphique, TPO sans bruit, panneau des idées
 

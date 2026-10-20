@@ -595,7 +595,7 @@ class ServerTests(unittest.TestCase):
         lec = json.loads(self.get("/api/lecture?symbol=BTCUSDT")[1])
         self.assertIn("ideaSend", lec)
         self.assertTrue(sg["ready"])
-        for k in ("ideas", "rejected", "minScore", "maxWeek", "minStruct", "validation", "warm"):
+        for k in ("ideas", "rejected", "minScore", "maxWeek", "verdict", "validated", "table", "flow", "recent", "warm"):      # V31
             self.assertIn(k, sg)
         self.assertEqual(self.get("/api/signals?symbol=XXX")[0], 404)
         self.assertEqual(list(json.loads(self.get("/api/signals")[1])["symbols"]), ["BTCUSDT"])
@@ -624,12 +624,12 @@ class ServerTests(unittest.TestCase):
         code, res = self.post("/api/settings", {"signalTrendGate": True})
         self.assertTrue(res["signalTrendGate"])
         sg = json.loads(self.get("/api/signals?symbol=BTCUSDT")[1])["symbols"]["BTCUSDT"]
-        self.assertIn("regime", sg)
-        self.assertTrue(sg["trendGate"])
+        self.assertEqual(sg["strategy"], "flow")                                    # V31 : la tendance de fond ne filtre plus les idees
+        self.assertEqual(len(sg["table"]), 8)
         for i in sg["ideas"]:
-            self.assertIn("align", i)
-            if i["align"] is not None and i["align"] <= 0:
-                self.assertFalse(i["eligible"], "une idee a contre-courant ou en tendance indecise n'est jamais envoyee")
+            self.assertIn("state", i)
+            if not sg["validated"]:
+                self.assertFalse(i["eligible"], "une paire ou la strategie n'est pas validee n'envoie jamais d'idee")
 
     def test_backtest_endpoint(self):
         code, body, _ = self.get("/api/backtest")

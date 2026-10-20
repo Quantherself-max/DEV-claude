@@ -25,6 +25,7 @@ from engine import dominance as dominance_engine
 from engine import macro as macro_engine
 from engine import macromonth, macroview, macroweek
 from engine import signals as signals_engine
+from engine import flowstrat
 from engine import sigtest
 from engine import synth as synth_engine
 from engine import trend as trend_engine
@@ -1121,6 +1122,8 @@ class Service:
         self._an_cache: dict = {}
         self._an_state: dict = {}
         self._sig_cache: dict = {}
+        self._flow_rep: dict = {}
+        self.oi_extra: dict = {}           # V31 : symbole -> fonction rendant l'intérêt ouvert archivé (carte des liquidations)
         self._fp_cache: dict = {}
         self._regime_cache: dict = {}
         self._ev_cache: dict = {}
@@ -1329,12 +1332,6 @@ class Service:
                 self.errors.pop(f"absorptions {sym}", None)
             except Exception as e:
                 self.errors[f"absorptions {sym}"] = f"{type(e).__name__}: {e}"
-            if self.cfg.signal_on:
-                try:                                                # rejeu des idees de trade (structure seule) depuis le debut de l'historique
-                    self.compute_sigval(sym, candles, atrs)
-                    self.errors.pop(f"rejeu {sym}", None)
-                except Exception as e:
-                    self.errors[f"rejeu {sym}"] = f"{type(e).__name__}: {e}"
         except Exception as e:
             self.errors[f"stats {sym}"] = f"{type(e).__name__}: {e}"
         finally:
@@ -1841,75 +1838,81 @@ class Service:
         self._ev_cache[symbol] = (time.time(), ev)
         return ev
 
+    def flow_report(self, symbol: str):
+        """Rapport de la stratégie V31 pour ce symbole (tools/run_flow_study.py), ou None."""
+        hit = self._flow_rep.get(symbol)
+        if hit and time.time() - hit[0] < 600:
+            return hit[1]
+        rep = reports_mod.load(self.report_dirs, reports_mod.base_of(symbol), "flow")
+        self._flow_rep[symbol] = (time.time(), rep)
+        return rep
+
     def signals(self, symbol: str) -> dict:
-        """Idees de trade du moment pour ce symbole : candidates classees par score, rejets et validation historique."""
+        """Idées de trade du moment (V31) : prix, intérêt ouvert et CVD sur la liquidité et les VWAP (engine/flowstrat.py), mêmes règles que la mesure."""
         m = self.markets.get(symbol)
         if m is None:
             raise KeyError(f"symbole inconnu : {symbol}")
         if not m.ready or not self.cfg.signal_on:
             return {"ready": False, "symbol": symbol, "on": self.cfg.signal_on}
-        hit = self._sig_cache.get(symbol)
-        if hit and time.time() - hit[0] < 4.0:
-            return hit[1]
-        cfg = self.cfg
-        an = self.analysis(symbol)
-        st = self._an_state.get(symbol)
-        if not an.get("ready") or not st:
-            return {"ready": False, "symbol": symbol, "on": True}
-        state, now = st[1], self.source.now_ms()
         with self.lock:
-            cs = list(m.store.closed_h1()[-14:])
-            events = [dict(e) for e in m.liq.events[-30:]]
-            h1, atrs = m.h1_atrs()
-            try:
-                pprices = list(state["liquidity"].get("pricePools") or [])
-                events += m.price_sweeps(pprices)
-            except Exception as e:
-                pprices = []
-                self.errors[f"balayages {symbol}"] = f"{type(e).__name__}: {e}"
-            tab, sigval = m.reach, m.sigval
-        opts = {"min_struct": cfg.signal_min_struct, "valid_hours": cfg.signal_valid_hours, "leverage": cfg.signal_leverage,
-                "trend_gate": cfg.signal_trend_gate}
-        regime, evidence = self.regime(symbol), self.evidence(symbol)
-        vw = {l["name"][0].upper(): l["price"] for l in state["levels"] if l["kind"] == "vwap" and l["name"] in ("wVWAP", "mVWAP", "yVWAP")}
-        inp = {"symbol": symbol, "now": now, "price": state["price"], "atr": state["atr"], "levels": state["levels"], "zones": state["zones"],
-               "pools": list(state["liquidity"]["pools"]) + pprices, "candles": cs, "sweeps": events, "opts": opts}
-        raw, rejects = signals_engine.build_ideas(inp)
-        ctx = {"price": state["price"], "vwap": vw, "flow": synth_engine.flow_score(state["context"]), "macro": an["macro"],
-               "synth": an["synth"], "dom": an["dom"], "is_alt": symbol != "BTCUSDT", "now": now, "regime": regime, "evidence": evidence,
-               "squeeze": state["context"].get("squeeze")}
-        zprob = {z["id"]: z.get("prob") for z in state["zones"]}
-        ideas = []
-        for idea in raw:
-            sc = signals_engine.score_idea(idea, ctx, opts)
-            sc.update(symbol=symbol, price=state["price"], atr=state["atr"], atrPct=state["atrPct"], validHours=cfg.signal_valid_hours,
-                      sweepAgeH=(now - sc["sweep"]["t"]) / 3_600_000 if sc["sweep"] else None)
-            sc["key"] = hashlib.md5((symbol + sc["side"] + "+".join(sorted(i["group"] for i in sc["st"]["items"]))).encode()).hexdigest()[:10]
-            sc["grade"] = signals_engine.grade(sc["score"])
-            probs = None
-            if sc["score"] >= cfg.signal_min_score - 12:
-                try:
-                    probs = self._idea_probs(symbol, sc, zprob.get(sc["zoneId"]), h1, atrs, tab)
-                except Exception as e:
-                    self.errors[f"probas idee {symbol}"] = f"{type(e).__name__}: {e}"
-            vt = sigtest.tier_for(sigval, sc["st"]["S"])
-            valid = {"text": sigtest.validation_text(sigval, sc["st"]["S"]), "verdict": vt["verdict"] if vt else None} if vt else None
-            if valid and not valid["text"]:
-                valid = None
-            sc["probs"], sc["valid"] = probs, valid
-            sc["desc"] = signals_engine.describe(sc, probs, valid, cfg.signal_leverage, symbol)
-            sc["eligible"] = sc["score"] >= cfg.signal_min_score and not sc["hold"] and not sc["gates"]
-            pub = {k: v for k, v in sc.items() if k not in ("tp1Ref", "tp2Ref")}
-            pub["st"] = {**sc["st"], "items": [{k: it[k] for k in ("tf", "fam", "w", "text", "price", "name")} for it in sc["st"]["items"]]}
-            ideas.append(pub)
-        ideas.sort(key=lambda i: (0 if i["eligible"] else 1 if not i["gates"] else 2, -i["score"]))      # d'abord celles qui passent tous les filtres
-        rej = [{"side": r["side"], "S": r["st"]["S"], "label": r["label"], "why": r["why"], "entry": r["entry"]}
-               for r in sorted([r for r in rejects if r["distAtr"] <= 12], key=lambda r: -r["st"]["S"])[:4]]
-        out = {"ready": True, "on": True, "symbol": symbol, "t": now, "price": state["price"], "atr": state["atr"], "ideas": ideas,
-               "rejected": rej, "minScore": cfg.signal_min_score, "maxWeek": cfg.signal_max_week, "minStruct": cfg.signal_min_struct,
-               "validation": sigval, "leverage": cfg.signal_leverage, "warm": m.stats is not None and sigval is not None,
-               "regime": regime if regime and regime.get("ready") else None, "evidence": evidence, "trendGate": cfg.signal_trend_gate}
-        self._sig_cache[symbol] = (time.time(), out)
+            h1 = list(m.store.closed_h1()[-24 * 120:])
+            key = (h1[-1].t if h1 else 0, m.store.oi_t[-1] if m.store.oi_t else 0)
+            price = m.store.h1[-1].c if m.store.h1 else None
+        hit = self._sig_cache.get(symbol)
+        if hit and hit[0] == key and time.time() - hit[1] < 60:
+            return {**hit[2], "price": price}
+        cfg = self.cfg
+        rep = self.flow_report(symbol)
+        vd = flowstrat.verdict(rep) if rep else {"validated": False, "text": f"pas encore de mesure pour {symbol} (tools/run_flow_study.py)"}
+        out = {"ready": True, "on": True, "symbol": symbol, "t": self.source.now_ms(), "price": price, "ideas": [], "rejected": [], "minScore": cfg.signal_min_score,
+               "maxWeek": cfg.signal_max_week, "leverage": cfg.signal_leverage, "warm": False, "strategy": "flow", "validated": vd["validated"], "verdict": vd["text"],
+               "flow": None, "recent": [], "table": self.flow_table(symbol, rep)}
+        try:
+            with self.lock:
+                m5 = list(m.store.fine_m5())
+                live_oi = dict(m.store.oi)
+            if not h1 or not m5:
+                raise ValueError("bougies manquantes")
+            b1h = fine.from_candles(h1, H1)
+            b5 = fine.from_candles([k for k in m5 if k.t + M5 <= self.source.now_ms()], M5)
+            extra = self.oi_extra.get(symbol)
+            oi = flowstrat.live_oi(b1h, live_oi, extra() if extra else {})
+            sig = flowstrat.live_signals(flowstrat.LiveData(b1h, b5), oi)
+            if not sig.get("ready"):
+                out["why"] = sig.get("why")
+            else:
+                out["warm"] = True
+                out["flow"] = {**(sig["now"] or {}), "t": sig["t"], "next": sig["next"]}
+                txt = vd["text"]
+                for e in sig["latest"]:
+                    i = flowstrat.idea(e, symbol, price, vd["validated"], txt, cfg.signal_leverage)
+                    if i:
+                        out["ideas"].append(i)
+                out["ideas"].sort(key=lambda i: (0 if i["eligible"] else 1, -i["score"]))
+                out["recent"] = [{"t": e["t"], "place": e["place"], "state": flowstrat.skey(e["st"]), "name": flowstrat.STATES[e["st"]][0],
+                                  "side": {1: "long", -1: "short", 0: None}[flowstrat.reaction(e["st"])], "level": e["lvl"], "src": e["src"],
+                                  "confirm": e.get("confirm", 0), "price": e["price"]} for e in sig["events"] if e["t"] > sig["t"] - 72 * H1][-24:]
+            self.errors.pop(f"idées {symbol}", None)
+        except Exception as e:
+            self.errors[f"idées {symbol}"] = f"{type(e).__name__}: {e}"
+            out["why"] = f"calcul indisponible ({type(e).__name__})"
+        self._sig_cache[symbol] = (key, time.time(), out)
+        return out
+
+    def flow_table(self, symbol: str, rep) -> list:
+        """Les 8 combinaisons, leur lecture, la réaction retenue et, si la mesure existe, ce qu'elle a donné sur ce symbole (lieu par lieu)."""
+        rows = {(r["place"], r["state"]): r for r in (rep or {}).get("matrix") or []}
+        out = []
+        for st in flowstrat.ORDER:
+            k = flowstrat.skey(st)
+            react = flowstrat.react_of(st)
+            meas = {}
+            for place in flowstrat.PLACES:
+                r = rows.get((place, k))
+                if r and react:
+                    meas[place] = {"is": r[react]["is"], "oos": r[react]["oos"]}
+            out.append({"state": k, "name": flowstrat.STATES[st][0], "reading": flowstrat.STATES[st][1], "action": flowstrat.ACTION[st],
+                        "side": {1: "long", -1: "short"}.get(flowstrat.reaction(st)), "react": react, "measure": meas})
         return out
 
     def _trend_brief(self, sym):

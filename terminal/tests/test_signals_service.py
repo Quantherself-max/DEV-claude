@@ -8,6 +8,7 @@ import service as service_mod
 from alerts.trades import TradeDesk
 from config import Config
 from data.simulated import SimulatedSource
+from engine import flowstrat
 from engine import signals as sg
 from server import App
 from tests.test_data_server import NOW
@@ -39,14 +40,12 @@ class ServiceSignalsTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    def test_replay_validation_is_computed_with_the_stats(self):
-        m = self.svc.markets["BTCUSDT"]
-        self.assertIsNotNone(m.stats)
-        v = m.sigval
-        self.assertTrue(v["ready"])
-        self.assertEqual(v["cap"], 5)
-        self.assertEqual(len(v["tiers"]), 3)
-        self.assertNotIn("rejeu BTCUSDT", self.svc.errors)
+    def test_old_replay_is_gone_and_the_reaction_table_is_served(self):
+        self.assertIsNone(self.svc.markets["BTCUSDT"].sigval)                      # V31 : l'ancien rejeu de la note de confluence n'est plus calcule
+        s = self.svc.signals("BTCUSDT")
+        self.assertEqual([r["state"] for r in s["table"]], [flowstrat.skey(st) for st in flowstrat.ORDER])
+        self.assertEqual(sum(1 for r in s["table"] if r["side"]), 4)              # intérêt ouvert en hausse : 4 réactions ; en baisse : rien
+        self.assertTrue(s["verdict"])
 
     def test_signals_payload_shape_and_plain_text(self):
         s = self.svc.signals("BTCUSDT")
@@ -54,23 +53,24 @@ class ServiceSignalsTests(unittest.TestCase):
         self.assertTrue(s["warm"])
         self.assertTrue(s["ideas"], "le scenario simule doit produire au moins une idee")
         json.dumps(s)                                              # tout est serialisable
-        for k in ("ideas", "rejected", "minScore", "maxWeek", "minStruct", "validation", "price", "atr"):
+        for k in ("ideas", "rejected", "minScore", "maxWeek", "verdict", "validated", "flow", "recent", "table", "price"):
             self.assertIn(k, s)
         i = s["ideas"][0]
-        for k in ("side", "kind", "score", "grade", "comps", "entry", "stop", "tp1", "rr1", "desc", "key", "eligible", "hold", "warn", "probs", "st", "news"):
+        for k in ("side", "kind", "score", "grade", "comps", "entry", "stop", "tp1", "rr1", "desc", "key", "eligible", "hold", "warn", "probs", "st", "state", "place"):
             self.assertIn(k, i)
         self.assertEqual(sum(c["max"] for c in i["comps"]), 100)
-        self.assertGreater(i["rr1"], 1.4)
-        self.assertGreaterEqual(abs(i["entry"] - i["stop"]), 1.5 * s["atr"] - 1e-9)
-        rank = lambda x: (0 if x["eligible"] else 1 if not x["gates"] else 2, -x["score"])
-        self.assertEqual([rank(x) for x in s["ideas"]], sorted(rank(x) for x in s["ideas"]))     # celles qui passent les filtres d'abord, puis par score
+        self.assertEqual(i["entryType"], "marché")
+        self.assertAlmostEqual(i["rr1"], 3.0, places=2)                           # objectif à 3 fois le risque (sortie mesurée)
+        self.assertGreaterEqual(abs(i["entry"] - i["stop"]), i["atr"] - 1e-6)     # au moins 1 ATR de la bougie 4 heures
+        self.assertEqual(i["side"], {1: "long", -1: "short"}[flowstrat.reaction(flowstrat.parse_skey(i["state"]))])
         text = sg.to_text(i, i["desc"], 1, 3)
         self.assertIsNone(BANNED.search(text), BANNED.search(text))
         self.assertTrue(all(len(x) < 3900 for x in sg.split_message(text)))
         self.assertIn("PRUDENCE", text)                                       # jamais tronque
         self.assertIn(i["desc"]["headline"], text)
         if i["side"] == "long":
-            self.assertLess(i["stop"], i["entry"] < i["tp1"] and i["entry"])
+            self.assertLess(i["stop"], i["entry"])
+            self.assertLess(i["entry"], i["tp1"])
         else:
             self.assertGreater(i["stop"], i["entry"])
 
@@ -147,12 +147,13 @@ class ServiceSignalsTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.svc.strategy("XXX")
 
-    def test_announcement_in_the_next_hours_puts_the_idea_on_hold(self):
+    def test_a_pair_without_a_validated_strategy_never_sends(self):
         s = self.svc.signals("BTCUSDT")
-        held = [i for i in s["ideas"] if i["hold"]]
-        self.assertTrue(held, "une annonce majeure est proche dans le scenario simule")
-        self.assertFalse(any(i["eligible"] for i in held))
-        self.assertIn("annonce", held[0]["hold"][0])
+        self.assertFalse(s["validated"])                                         # le rapport livre pour le BTC ne valide pas la strategie
+        self.assertTrue(s["ideas"])
+        for i in s["ideas"]:
+            self.assertFalse(i["eligible"])
+            self.assertTrue(any("non validée" in g for g in i["gates"]))
 
     def test_trade_cycle_sends_an_eligible_idea_and_follows_it(self):
         notifier = Fake()
@@ -160,15 +161,10 @@ class ServiceSignalsTests(unittest.TestCase):
         self.app.desk.dir = __import__("pathlib").Path(self.tmp.name) / "desk_test"          # journal isole
         self.app.desk.file = self.app.desk.dir / "trades.json"
         self.app.desk.trades = []
-        orig = sg.score_idea
-
-        def no_hold(idea, c, o=None):
-            r = orig(idea, c, o)
-            r["hold"], r["gates"] = [], []
-            return r
         self.svc._sig_cache.clear()
-        with mock.patch.object(service_mod.signals_engine, "score_idea", no_hold):
+        with mock.patch.object(service_mod.flowstrat, "verdict", lambda rep: {"validated": True, "text": "validée (test)"}):
             self.app.trade_cycle(self.svc, ["BTCUSDT"])
+        self.svc._sig_cache.clear()
         self.assertEqual(len(self.app.desk.trades), 1)
         self.assertIn(len(notifier.sent), (1, 2))                              # une idee longue part en deux messages au plus, sans rien perdre
         self.assertIn("Idée de trade 1/5", notifier.sent[0])

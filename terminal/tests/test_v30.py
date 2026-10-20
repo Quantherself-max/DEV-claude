@@ -103,7 +103,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(r["unit"], "SOL")
         st = self.get("/api/state?symbol=SOLUSDT&tf=4h")
         self.assertEqual(r["times"][-1], st["candles"][-1][0])               # les mêmes bougies que le graphique
-        self.assertEqual(self.get("/api/config")["version"], "30")
+        self.assertGreaterEqual(int(self.get("/api/config")["version"]), 30)
 
     def test_tpo_marks_on_the_chart_are_the_clean_ones(self):
         st = self.get("/api/state?symbol=BTCUSDT&tf=1h")
@@ -138,7 +138,7 @@ class PageTests(unittest.TestCase):
         self.assertIn("/api/indicators?symbol=", self.DESK)
         self.assertIn("this.oiS = this.chart.addCandlestickSeries(", self.PANELS)        # intérêt ouvert en bougies
         self.assertIn("this.dS = this.chart.addHistogramSeries(", self.PANELS)           # delta en barres
-        self.assertIn("NEED_API = 31", self.APP)
+        self.assertGreaterEqual(int(__import__("re").search(r"NEED_API = (\d+)", self.APP).group(1)), 31)
 
 
 if __name__ == "__main__":

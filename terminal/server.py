@@ -33,8 +33,8 @@ from service import TFS, Service
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "30"
-API_LEVEL = 31                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "31"
+API_LEVEL = 32                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -232,6 +232,8 @@ class App:
         self.flow = flow
         self.heat = default_heat(cfg, source, service, flow)
         self.liqmaps = default_liqmaps(cfg, source, service)
+        for sym, kp in self.liqmaps.items():                  # V31 : intérêt ouvert archivé pour les idées (poches formées il y a plus de 29 jours)
+            service.oi_extra[sym] = kp.archive.points
         service.listeners.append(self.alert_cycle)
         self.cfg, self.source, self.service, self.alerts, self.notifier = cfg, source, service, alerts, notifier
         self.social = Influencers(cfg)
