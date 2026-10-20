@@ -114,11 +114,13 @@
     if (S.tab === 'setups') Panels.setups(d);
     const top = d && d.ready && d.setups && d.setups.length && !d.setups[0].suppressed ? d.setups[0] : null;
     NQChart.setSetup(o.lines ? top : null);
+    trackSetup(top, o.min);
     if (o.alerts && top && top.score >= o.min) alertSetup(top, d.tf);
   }
 
   // ---------- alertes ----------
-  const lastAlert = {long: {k: '', t: 0}, short: {k: '', t: 0}};
+  // alerte sur l'APPARITION d'un setup (absent -> présent) ou un changement de type, pas à chaque lecture tant qu'il persiste
+  const lastAlert = {long: {k: '', t: 0, on: false}, short: {k: '', t: 0, on: false}};
   let audio = null;
   function beep(up) {
     try {
@@ -133,10 +135,15 @@
       });
     } catch (e) { /* audio indisponible */ }
   }
+  function trackSetup(top, min) {
+    for (const side of ['long', 'short']) if (!top || top.side !== side || top.score < min) lastAlert[side].on = false;
+  }
   function alertSetup(s, tf) {
-    const k = `${s.kind}|${Math.round(s.entry)}`, la = lastAlert[s.side], now = Date.now();
-    if (la.k === k || now - la.t < 60_000) return;
-    lastAlert[s.side] = {k, t: now};
+    const la = lastAlert[s.side], now = Date.now(), k = s.kind;
+    const fresh = !la.on || la.k !== k;
+    la.on = true;
+    if (!fresh || now - la.t < 60_000) { la.k = k; return; }
+    Object.assign(la, {k, t: now});
     const msg = `${s.side === 'long' ? 'ACHAT' : 'VENTE'} ${s.kind === 'momentum' ? 'momentum' : 'retournement'} · score ${Math.round(s.score)} · entrée ${fmt(s.entry, 2)} · stop ${fmt(s.stop, 2)} (${tf || S.tf})`;
     beep(s.side === 'long');
     U.toast('Setup : ' + msg);

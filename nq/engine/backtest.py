@@ -154,7 +154,8 @@ def _size(stop_pts, inst, profile, risk_usd):
     if per <= 0:
         return 0
     n = int(math.floor(risk_usd / per))
-    return max(0, min(n, profile.max_minis))
+    cap = profile.max_micros if inst.mini_equiv < 1 else profile.max_minis       # MNQ / MES : plafond en micros
+    return max(0, min(n, cap))
 
 
 class Tape:
@@ -251,15 +252,27 @@ def simulate(tape: Tape, inst, profile: risk.PropProfile, params: BtParams = Non
         gross = (fill - pos["entry"]) * sgn * inst.point_value * pos["qty"]
         fee = profile.fee_rt.get(inst.root, 0.0) * pos["qty"]
         same = bar.t == pos["t_entry"]                  # sortie dans la barre d'entrée : durée inconnue (0 à 1 barre)
-        trades.append({**pos, "exit": round(fill, 2), "reason": reason, "gross": round(gross, 2), "fee": round(fee, 2),
+        trades.append({**{k: v for k, v in pos.items() if k != "ff"}, "exit": round(fill, 2), "reason": reason, "gross": round(gross, 2), "fee": round(fee, 2),
                        "net": round(gross - fee, 2), "t_exit": bar.t + step,          # connu au plus tard à la clôture de la barre
                        "holdS": round((bar.t - pos["t_entry"]) / 1000.0, 1), "sameBar": same, "day": clock.trading_day(pos["t_entry"])})
 
     for i, bar in enumerate(sig_bars):
         now, day, ff, rth_started, blocked, top = rows[i]
+        if pos and (bar.t >= pos["ff"] or clock.trading_day(bar.t) != pos["day"]):
+            # trou de données jusqu'après 16 h 45 (jour férié écourté, enregistreur coupé) : Lucid a fermé la position à 16 h 45 ;
+            # on la clôture à la dernière clôture connue de SA journée, jamais sur les prix de la séance suivante
+            close(sig_bars[i - 1], sig_bars[i - 1].c, "16h45")
+            pos = None
         if pos:
+            if bar.t < pos["ff"] < bar.t + step:
+                # barre à cheval sur 16 h 45 (unités de 30 min, 1 h) : ce qui suit 16 h 45 n'existe pas pour le compte. Le stop compte
+                # (prudent), pas l'objectif ; sinon sortie à l'ouverture de la barre, dernier prix connu avant la fermeture forcée
+                ex = _exit_on(bar, dict(pos, target=float("inf") if pos["side"] == "long" else float("-inf")), tick, 0)
+                close(bar, *(ex if ex[0] is not None else (bar.o, "16h45")))
+                pos = None
+                continue
             exit_p, reason = _exit_on(bar, pos, tick, params.limit_through_ticks)
-            if exit_p is None and now >= ff > pos["t_entry"]:                        # fermeture forcée 16 h 45
+            if exit_p is None and now >= pos["ff"]:                                # fermeture forcée 16 h 45
                 exit_p, reason = bar.c, "16h45"
             if exit_p is None and (now - pos["t_entry"]) >= params.max_hold_min * 60_000:
                 exit_p, reason = bar.c, "temps"
@@ -273,9 +286,9 @@ def simulate(tape: Tape, inst, profile: risk.PropProfile, params: BtParams = Non
             continue
         if params.one_per_session and rth_started and (day in traded_this_session):
             continue
-        if 0 <= (ff - now) / 60_000 <= sp.flat_guard_min:
-            continue
         nxt = sig_bars[i + 1]
+        if nxt.t + step > ff - sp.flat_guard_min * 60_000:     # la barre d'entrée doit finir avant la marge de sécurité de 16 h 45
+            continue
         if clock.trading_day(nxt.t) != day or nxt.t - bar.t > 3 * step:     # trou de données / changement de journée : pas d'entrée à l'aveugle
             continue
         sgn = 1 if top["side"] == "long" else -1
@@ -294,7 +307,7 @@ def simulate(tape: Tape, inst, profile: risk.PropProfile, params: BtParams = Non
         if (target - entry) * sgn <= 0:                 # l'ouverture a déjà dépassé l'objectif : plus rien à gagner
             continue
         pos = {"side": top["side"], "kind": top["kind"], "entry": round(entry, 2), "stop": round(stop, 2),
-               "target": target, "qty": qty, "score": top["score"], "t_entry": nxt.t}
+               "target": target, "qty": qty, "score": top["score"], "t_entry": nxt.t, "ff": ff, "day": day}
         traded_this_session.add(day)
 
     if pos:                                             # fin de l'historique : on clôture à la dernière clôture connue
@@ -357,6 +370,8 @@ def _summary(trades, inst, profile, n_days: int | None = None) -> dict:
     lock = risk.locked_level(profile)
     seen = []
     for d, v in days:
+        if passed_on is not None:                       # l'évaluation s'arrête le jour où elle est validée : la suite n'est plus jugée
+            break
         if floor_breach is None and bal + low_day.get(d, 0.0) <= led_floor + 1e-9:
             floor_breach = {"day": d, "balance": round(bal + low_day[d], 2), "floor": led_floor, "intraday": True}
         bal = round(bal + v, 2)
@@ -372,7 +387,7 @@ def _summary(trades, inst, profile, n_days: int | None = None) -> dict:
             if lock is not None:
                 nf = min(nf, lock)
             led_floor = max(led_floor, nf)
-    cons = risk.consistency(day_pnls, profile)
+    cons = risk.consistency(seen if passed_on else day_pnls, profile)      # jugée sur les jours de l'évaluation
     profit = round(bal - profile.start_balance, 2)
     eval_passed = passed_on is not None
 

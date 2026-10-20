@@ -1,4 +1,5 @@
 """Service : relie la source de donnees, le marche, le compte et les vues JSON servies au navigateur."""
+import copy
 import logging
 import threading
 import time
@@ -290,11 +291,17 @@ class Service:
         mk = self.market
         with mk.lock:
             bars = list(mk.series.bars)
-        if days:                                             # limite éventuelle au N dernières journées de trading
+            if bars:                                         # la dernière barre se forme encore : on en fige une copie (lue hors du verrou)
+                last = copy.copy(bars[-1])
+                last.fp = {k: list(v) if isinstance(v, list) else v for k, v in bars[-1].fp.items()}
+                bars[-1] = last
+        if days and days > 0:                                # limite éventuelle au N dernières journées de trading
             keep = set(sorted({clock.trading_day(b.t) for b in bars})[-int(days):])
             bars = [b for b in bars if clock.trading_day(b.t) in keep]
         tf = tf if tf in TF_MS else "1m"
-        key = (tf, int(days or 0), len(bars), bars[-1].t if bars else None, bars[-1].v if bars else None)
+        # clé : barres CLOSES seulement. La barre en cours change à chaque transaction ; tant qu'aucune nouvelle barre ne s'ouvre, on réutilise
+        # le calcul (Backtest puis Robustesse instantanés), au prix d'une dernière minute un peu en retard.
+        key = (tf, int(days or 0) if days and days > 0 else 0, len(bars), bars[-1].t if bars else None)
         with self._bt_lock:
             if self._bt_cache and self._bt_cache[0] == key:
                 return self._bt_cache[1], tf

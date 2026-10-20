@@ -486,7 +486,7 @@ const Panels = (() => {
     const num = (v, d) => { const x = parseNum(v); return isNaN(x) ? d : x; };
     const query = () => {
       const q = new URLSearchParams({tf: f.tf.value, minScore: num(f.minScore.value, 40), slippage: Math.max(0, num(f.slippage.value, 1)),
-        maxHold: Math.max(1, num(f.maxHold.value, 20)), risk: Math.max(1, num(f.risk.value, 100)), onePerSession: f.one.checked ? '1' : '0',
+        maxHold: Math.max(1, Math.round(num(f.maxHold.value, 20))), risk: Math.max(1, num(f.risk.value, 100)), onePerSession: f.one.checked ? '1' : '0',
         horizon: Math.max(5, Math.min(250, Math.round(num(f.horizon.value, 60))))});
       const dv = parseNum(f.days.value); if (!isNaN(dv) && dv > 0) q.set('days', Math.round(dv));
       const fee = parseNum(f.evalFee.value); if (!isNaN(fee) && fee > 0) q.set('evalFee', fee);

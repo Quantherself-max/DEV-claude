@@ -228,6 +228,39 @@ class SimulateMechanicsTests(unittest.TestCase):
         self.assertEqual(r["trades"][-1]["reason"], "fin")
 
 
+    def test_data_gap_past_1645_closes_on_the_positions_own_day(self):
+        # barres jusqu'à 16 h 29 ET, puis plus rien avant la séance suivante (18 h ET) : la position est close à 16 h 45, jamais sur la suite
+        t0 = utc(2026, 10, 13, 20, 0)                     # 16 h ET
+        spec = [mkbar(t0 + k * 60_000, 100, 100.5, 99.5, 100, 5, 5) for k in range(30)]
+        t1 = utc(2026, 10, 13, 22, 0)                     # 18 h ET : journée suivante
+        spec += [mkbar(t1 + k * 60_000, 125, 126, 124, 125, 5, 5) for k in range(5)]
+        tops = [None] * len(spec)
+        tops[0] = self.long_setup(97.0, 110.0)
+        r = backtest.simulate(tape_of(spec, tops), NQ, risk.PropProfile(),
+                              backtest.BtParams(min_score=10, slippage_ticks=0, max_hold_min=600,
+                                                signal_params=signals.Params(flat_guard_min=0)))
+        t = r["trades"][0]
+        self.assertEqual(t["reason"], "16h45")
+        self.assertEqual(t["exit"], 100.0)
+        self.assertLess(t["t_exit"], t1)
+
+    def test_no_entry_whose_bar_straddles_the_forced_flat(self):
+        # 30 min : décision à 16 h, entrée 16 h 00 -> barre jusqu'à 16 h 30 > 16 h 45 - 12 min : refusée
+        t0 = utc(2026, 10, 13, 19, 30)
+        bars = [mkbar(t0 + k * 1_800_000, 100, 101, 99, 100, 5, 5) for k in range(3)]
+        rows = []
+        for b, top in zip(bars, [None, self.long_setup(97.0, 110.0), None]):
+            now = b.t + 1_800_000
+            day = clock.trading_day(now)
+            rows.append((now, day, clock.forced_flat(day), True, False, top))
+        r = backtest.simulate(backtest.Tape("30m", 1_800_000, bars, rows), NQ, risk.PropProfile(), backtest.BtParams(min_score=10))
+        self.assertEqual(r["nTrades"], 0)
+
+    def test_micro_contract_cap_uses_max_micros(self):
+        from engine.instruments import MNQ
+        self.assertGreater(backtest._size(2.0, MNQ, risk.PropProfile(), 100.0), risk.PropProfile().max_minis)
+
+
 class SummaryRulesTests(unittest.TestCase):
     def trade(self, day, net, t):
         return {"day": day, "net": net, "fee": 0.0, "holdS": 60.0, "kind": "reversal", "reason": "stop", "t_exit": t}
@@ -244,6 +277,12 @@ class SummaryRulesTests(unittest.TestCase):
         tr = [self.trade("2026-10-13", 900, 1), self.trade("2026-10-14", -1000, 2)]
         self.assertIsNone(backtest._summary(tr, NQ, prof)["rules"]["floorBreach"])          # 25 900 - 1 000 = 24 900 > 24 000
         self.assertTrue(backtest._summary(tr, NQ, risk.PropProfile())["rules"]["floorBreach"])   # suiveur : plancher monté à 25 100
+
+    def test_no_breach_after_the_evaluation_has_passed(self):
+        tr = [self.trade(f"2026-10-{13 + i}", 450, i) for i in range(3)] + [self.trade("2026-10-16", -1500, 9)]
+        r = backtest._summary(tr, NQ, risk.PropProfile())
+        self.assertTrue(r["rules"]["evalPassed"])
+        self.assertIsNone(r["rules"]["floorBreach"])
 
     def test_passed_on_is_the_first_qualifying_day(self):
         tr = [self.trade(f"2026-10-{13 + i}", 450, i) for i in range(4)]
