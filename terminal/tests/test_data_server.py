@@ -441,7 +441,8 @@ class ServerTests(unittest.TestCase):
         sr = json.loads(self.get("/api/series?symbol=BTCUSDT&tf=1h")[1])
         self.assertTrue(sr["ready"])
         n = len(sr["times"])
-        self.assertEqual(n, 400)
+        self.assertEqual(n, len(json.loads(self.get("/api/state?symbol=BTCUSDT&tf=1h")[1])["candles"]))      # V33 : toutes les bougies du graphique
+        self.assertGreater(n, 400)
         self.assertTrue(all(len(v) == n for v in sr["vwap"].values()))
         self.assertTrue(any(v is not None for v in sr["vwap"]["W"]))
         labels = [a["label"] for a in sr["avwap"]]

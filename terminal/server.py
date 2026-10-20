@@ -29,11 +29,11 @@ from data.live import LiveFeed
 from data.orderflow import OrderFlow, SimFlow
 from data.social import Influencers, clean_handles
 from data.simulated import SimulatedSource
-from service import TFS, Service
+from service import TFS, Service, chart_bars
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "32"
+VERSION = "33"
 API_LEVEL = 33                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
@@ -168,8 +168,9 @@ def default_liqmaps(cfg, source, service) -> dict:
             clock = lambda: source.now_ms() / 1000
             out[sym] = LiqMapKeeper(sym, market, oiarchive.SimOiArchive(sym, first, days, now=clock), days, now=clock)
         else:
-            arch = oiarchive.OiArchive(sym, str(Path(cfg.data_dir) / "history" / sym / "raw_metrics"), days)
-            out[sym] = LiqMapKeeper(sym, market, arch, days)
+            folder = str(Path(cfg.data_dir) / "history" / sym / "raw_metrics")
+            arch = oiarchive.OiArchive(sym, folder, days)
+            out[sym] = LiqMapKeeper(sym, market, arch, days, deep=oiarchive.DeepOi(sym, folder))
     return out
 
 
@@ -450,8 +451,8 @@ class App:
             self.tgchat.close()
 
     def indicators(self, sym: str, tf: str) -> dict:
-        """V30 : sous le graphique, l'interet ouvert en bougies (releves de l'adresse Binance, 29 jours, et des archives de la carte des
-        liquidations, plusieurs mois) et le delta de chaque bougie avec son cumul (CVD), pour les memes bougies que le graphique."""
+        """V30 : sous le graphique, l'interet ouvert en bougies (releves de l'adresse Binance, 29 jours, des archives de la carte des
+        liquidations, plusieurs mois, et V33 : des archives depuis decembre 2021, une valeur par heure) et le delta de chaque bougie avec son cumul (CVD), pour les memes bougies que le graphique."""
         from engine import subcharts
         from engine.atr import INTERVAL_MS
         m = self.service.markets.get(sym)
@@ -462,10 +463,13 @@ class App:
         if not m.ready:
             return {"symbol": sym, "tf": tf, "ready": False}
         with self.service.lock:
-            cs = m.chart_candles(tf)[-400:]
+            cs = m.chart_candles(tf)[-chart_bars(tf):]
             live = dict(m.store.oi)
         kp = self.liqmaps.get(sym)
         arch = kp.archive.points() if kp is not None and kp.archive is not None else {}
+        deep = kp.deep.points() if kp is not None and kp.deep is not None else {}
+        if deep:                                                     # V33 : années précédentes, une valeur par heure (les relevés 5 minutes passent devant)
+            arch = {**deep, **arch}
         key = (sym, tf, len(cs), cs[-1].t if cs else 0, cs[-1].c if cs else 0, len(live), len(arch))
         hit = self._ind_cache.get((sym, tf))
         if hit and hit[0] == key:

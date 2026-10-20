@@ -152,3 +152,84 @@ class SimOiArchive:
 
     def fetch(self, stop_ev=None) -> int:
         return 0
+
+
+class DeepOi:
+    """V33 : intérêt ouvert sur plusieurs années (depuis décembre 2021, début des archives « metrics » de Binance), une valeur par heure, pour
+    les bougies d'intérêt ouvert sous le graphique en journalier et en 4 heures. Mêmes fichiers que OiArchive (dossier raw_metrics : rien n'est
+    téléchargé deux fois) ; seule la dernière valeur de chaque heure est gardée en mémoire (40 000 valeurs pour 4 ans et demi au lieu de 500 000).
+    Les heures déjà lues sont gardées dans oi_deep_1h.csv : au redémarrage, seules les nouvelles archives sont relues."""
+
+    START = 1_638_316_800_000          # 2021-12-01
+
+    def __init__(self, symbol: str, folder: str, now=time.time, http_bytes=None):
+        days = max(1, int((now() * 1000 - self.START) // DAY))
+        self.arch = OiArchive(symbol, folder, days, now=now, http_bytes=http_bytes)
+        self.folder = folder
+        self.cache = os.path.join(folder, "oi_deep_1h.csv")
+        self.lock = threading.Lock()
+        self._pts: dict = {}
+        self._done: set = set()
+        self._loaded = False
+
+    def _load(self):
+        if self._loaded:
+            return
+        self._loaded = True
+        try:
+            with open(self.cache, encoding="utf-8") as f:
+                head = f.readline().strip()
+                self._done = set(head.split(",")[1:]) if head.startswith("#done") else set()
+                for line in f:
+                    a, _, b = line.partition(",")
+                    try:
+                        self._pts[int(a)] = float(b)
+                    except ValueError:
+                        continue
+        except OSError:
+            pass
+
+    def refresh(self) -> int:
+        """Lit les archives présentes pas encore lues (à appeler en tâche de fond, la lecture se fait hors du verrou) ; rend le nombre de jours ajoutés."""
+        with self.lock:
+            self._load()
+            todo = [f for f in (self.arch._file(d) for d in self.arch._wanted())
+                    if os.path.basename(f) not in self._done and os.path.exists(f)]
+        last, names = {}, []
+        for f in todo:
+            try:
+                rows = history.parse_metrics(history.read_zip_rows(f))
+            except Exception:
+                continue
+            for t, oi, _, _ in rows:
+                if oi:
+                    last[(t + 3_599_999) // 3_600_000 * 3_600_000] = oi              # clé : fin de l'heure ; le dernier relevé de l'heure l'emporte
+            names.append(os.path.basename(f))
+        if not names:
+            return 0
+        with self.lock:
+            self._pts.update(last)
+            self._done.update(names)
+            try:
+                tmp = self.cache + ".part"
+                with open(tmp, "w", encoding="utf-8") as fo:
+                    fo.write("#done," + ",".join(sorted(self._done)) + "\n")
+                    for t in sorted(self._pts):
+                        fo.write(f"{t},{self._pts[t]}\n")
+                os.replace(tmp, self.cache)
+            except OSError:
+                pass
+        return len(names)
+
+    def fetch(self, stop_ev=None) -> int:
+        n = self.arch.fetch(stop_ev)
+        self.refresh()
+        return n
+
+    def points(self) -> dict:
+        with self.lock:
+            self._load()
+            return dict(self._pts)
+
+    def days_count(self) -> int:
+        return len(self._done)

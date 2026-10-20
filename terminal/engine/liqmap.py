@@ -146,8 +146,9 @@ class LiqMapKeeper:
     market() -> Market (store.h1, store.oi) ou None ; archive.points() -> {fin de période 5 min (ms): intérêt ouvert} ; archive.fetch()
     télécharge les jours manquants (rend le nombre de jours nouveaux)."""
 
-    def __init__(self, symbol: str, market, archive=None, days: int = 180, now=time.time):
+    def __init__(self, symbol: str, market, archive=None, days: int = 180, now=time.time, deep=None):
         self.symbol, self.market, self.archive, self.days, self.now = symbol, market, archive, days, now
+        self.deep = deep                                      # V33 : intérêt ouvert sur plusieurs années (bougies sous le graphique seulement)
         self.map: LiqMap | None = None
         self.stop_ev = threading.Event()
         self.thread = None
@@ -216,6 +217,12 @@ class LiqMapKeeper:
                     self.fetch_archives()
                     nxt_arch = time.monotonic() + (600 if self.state["error"] else 3 * 3600)
                     self.step()
+                    if self.deep is not None:                 # après la carte : l'intérêt ouvert des années précédentes, au calme
+                        try:
+                            self.deep.fetch(self.stop_ev)
+                            self.state["deepDays"] = self.deep.days_count()
+                        except Exception as e:
+                            self.state["deepError"] = f"{type(e).__name__}: {e}"[:160]
             except Exception as e:                            # une erreur ici ne doit jamais arrêter le terminal
                 self.state["error"] = f"{type(e).__name__}: {e}"[:160]
 

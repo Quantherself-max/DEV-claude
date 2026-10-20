@@ -86,6 +86,13 @@ def bisect_left_t(candles, t_ms):
     return lo
 
 
+CHART_BARS = {"1d": 3000}  # V33 : bougies envoyées au graphique : tout l'historique en journalier (depuis 2019 pour le BTC), 1 500 ailleurs
+CHART_DEFAULT = 1500       # (250 jours en 4 heures, 2 mois en 1 heure, 15 jours en 15 minutes, 5 jours en 5 minutes)
+
+
+def chart_bars(tf: str) -> int:
+    return CHART_BARS.get(tf, CHART_DEFAULT)
+
 class Market:
     def __init__(self, source, symbol: str, cfg: Config):
         self.symbol, self.cfg, self.source = symbol, cfg, source
@@ -833,7 +840,7 @@ class Market:
         return {
             "symbol": self.symbol, "tf": tf, "source": self.source.name, "now": self.source.now_ms(), "absorb": absorb,
             "price": price, "atr": atr, "atrPct": atr / price * 100.0, "window": win, "tol": tol,
-            "candles": [[k.t // 1000, k.o, k.h, k.l, k.c, k.v] for k in cs[-400:]],
+            "candles": [[k.t // 1000, k.o, k.h, k.l, k.c, k.v] for k in cs[-chart_bars(tf):]],
             "levels": lv_out, "zones": zones,
             "ladder": {"above": [z["id"] for z in reversed(above)], "inside": [z["id"] for z in inside],
                        "below": [z["id"] for z in below], "essential": essential},
@@ -1040,7 +1047,7 @@ class Market:
         return out
 
     def vwap_series(self, tf: str):
-        cs = self.chart_candles(tf)[-400:]
+        cs = self.chart_candles(tf)[-chart_bars(tf):]
         if not cs:
             return {"ready": False}
         h1 = self.store.h1
@@ -1228,7 +1235,9 @@ class Service:
                "candles": [[k.t // 1000, k.o, k.h, k.l, k.c, k.v] for k in cs], "session": sess, "profiles": profs, "tpo": tmarks, "levels": levels,
                "absorb": absorb}
         if ser.get("ready"):
-            out.update(times=ser["times"], vwapD=ser["vwap"].get("D"), sdD=ser["sd"].get("D"), vwapW=ser["vwap"].get("W"))
+            k = len(cs)                                                 # V33 : la serie couvre tout le graphique, la grille ses 400 dernieres bougies
+            cut = lambda a: a[-k:] if a else a
+            out.update(times=ser["times"][-k:], vwapD=cut(ser["vwap"].get("D")), sdD=cut(ser["sd"].get("D")), vwapW=cut(ser["vwap"].get("W")))
         return out
 
     def get_tpo(self, symbol: str, kind: str, n: int | None = None, rows: int | None = None) -> dict:

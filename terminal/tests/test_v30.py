@@ -97,7 +97,7 @@ class ServerTests(unittest.TestCase):
         r = self.get("/api/indicators?symbol=SOLUSDT&tf=4h")
         self.assertTrue(r["ready"])
         self.assertEqual(len(r["times"]), len(r["oi"]))
-        self.assertEqual(len(r["times"]), 400)                               # les 400 bougies du graphique
+        self.assertEqual(len(r["times"]), 1500)                              # V33 : les 1 500 bougies du graphique
         self.assertGreater(sum(1 for x in r["oi"] if x), 200)                 # 40 jours d'intérêt ouvert archivé : 240 bougies de 4 heures
         self.assertTrue(r["realDelta"])
         self.assertEqual(r["unit"], "SOL")

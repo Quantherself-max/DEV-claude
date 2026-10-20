@@ -1,7 +1,8 @@
-# Liq Terminal (V32)
+# Liq Terminal (V33)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Plus d'historique sur le graphique** (V33) : tout l'historique en journalier (depuis 2019 pour le BTC), 1 500 bougies dans les autres unités de temps (avant : 400) ; VWAP, intérêt ouvert et delta suivent sur toute la largeur ; l'intérêt ouvert remonte maintenant jusqu'à décembre 2021 (voir « V33 » plus bas).
 - **Seulement les divergences prix / intérêt ouvert / CVD, en journalier, 4 heures et 1 heure** (V32, voir « V32 » plus bas).
 - **Nouvelle stratégie d'idées de trade : prix, intérêt ouvert et CVD lus sur la liquidité et les VWAP** (V31) : l'ancienne note de confluence est remplacée ; 8 combinaisons, une réaction pour chacune, mesurée sur SOL, BTC et ETH depuis 2022 (voir « V31 » plus bas).
 - **Intérêt ouvert en bougies et delta en barres sous le graphique, TPO épuré, panneau de droite réservé aux idées de trade** (V30, voir « V30 » plus bas).
@@ -127,6 +128,18 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V33 : plus d'historique sur le graphique
+
+- Le graphique recevait seulement les **400 dernières bougies** (un peu plus d'un an en journalier). Il reçoit maintenant **tout l'historique
+  en journalier** (depuis septembre 2019 pour le BTC, depuis le lancement du perpétuel pour SOL) et **1 500 bougies** dans les autres unités de
+  temps : environ 250 jours en 4 heures, 2 mois en 1 heure, 15 jours en 15 minutes, 5 jours en 5 minutes. Dézoome (molette) ou fais glisser vers
+  la gauche pour remonter.
+- Les VWAP, le volume, l'intérêt ouvert et le delta (avec le CVD) suivent sur toute la largeur.
+- **Intérêt ouvert sur plusieurs années** : en tâche de fond, le terminal télécharge une fois les archives publiques de Binance depuis
+  décembre 2021 (environ 18 Mo par paire, les fichiers déjà présents ne sont pas retéléchargés) et garde une valeur par heure dans
+  `oi_deep_1h.csv`. Les bougies d'intérêt ouvert remplissent alors le graphique journalier et 4 heures. La première fois, compter quelques
+  minutes après le démarrage.
 
 ## Ce qui est nouveau en V32 : seulement les divergences, en journalier, 4 heures et 1 heure
 
