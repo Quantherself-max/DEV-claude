@@ -10,7 +10,7 @@ const Backtest = (() => {
   const dateFr = ms => new Date(ms).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit', year: 'numeric'});
   let LT = null, list = null, label = null, kind = 'backtest', rep = null, loading = false, error = null, sortKey = null, showAll = false;
 
-  const repKind = r => ({flow: 'flow', 'vwap-strategy': 'strategy', 'avwap-swing': 'avwap', indicators: 'indicators', rotation: 'rotation', squeeze: 'squeeze', pockets: 'pockets', tpo: 'tpo', absorption: 'absorption'})[r.kind] || 'backtest';
+  const repKind = r => ({divergences: 'div', flow: 'flow', 'vwap-strategy': 'strategy', 'avwap-swing': 'avwap', indicators: 'indicators', rotation: 'rotation', squeeze: 'squeeze', pockets: 'pockets', tpo: 'tpo', absorption: 'absorption'})[r.kind] || 'backtest';
 
   async function show() {
     if (loading) return;
@@ -21,7 +21,7 @@ const Backtest = (() => {
     }
     if (list && list.length && !label) {
       const base = (LT.st.symbol || 'BTCUSDT').replace(/USDT$/, '');
-      const pick = list.find(r => r.kind === 'flow' && r.label === base) || list.find(r => r.kind === 'flow' && r.label === 'SOL') || list[0];      // V31 : la stratégie en cours d'abord
+      const pick = list.find(r => r.kind === 'div') || list[0];      // V32 : la stratégie en cours (divergences) d'abord
       label = pick.label; kind = pick.kind;
     }
     if (label && (!rep || rep.label !== label || repKind(rep) !== kind)) {
@@ -708,6 +708,49 @@ const Backtest = (() => {
       <li>Relancer : <code>python tools/run_flow_study.py SOLUSDT</code> (après <code>python tools/fetch_history.py SOLUSDT --since 2021-10 --metrics</code>).</li></ul></section>`;
   }
 
+  // ---------- V32 : divergences prix / intérêt ouvert / CVD sur 1 jour, 4 heures et 1 heure (SOL, BTC, ETH ensemble) ----------
+  const TFN = {'1d': 'Journalier', '4h': '4 heures', '1h': '1 heure'};
+  const LVLC = {'validé': 'up', 'prometteur': 'amb', 'non validé': 'dn'};
+  function divVerdict(r) {
+    const rows = ['1d', '4h', '1h'].map(tf => {
+      const t = r.tfs[tf], s = t.strategy, c = s.control || {};
+      return `<tr><td><b>${TFN[tf]}</b></td><td><span class="pill ${LVLC[t.level] || 'muted'}">${esc(t.level)}</span></td><td>${st3(s.is)}</td><td>${st3(s.oos)}</td>
+        <td>${c.pctOos == null ? '-' : pc(c.pctOos)} <span class="muted small">(hasard ${sgn(c.expMean)} R)</span></td><td>${num(s.perWeek, 1)}</td><td>${t.level === 'non validé' ? '<span class="muted">affichée seulement</span>' : '<b class="up">envoyée</b>'}</td></tr>`;
+    }).join('');
+    const assets = ['1d', '4h', '1h'].map(tf => `<tr><td><b>${TFN[tf]}</b></td>${r.assets.map(a => { const m = r.tfs[tf].strategy.byAsset[a]; return `<td>${st3(m.is)}<br>${st3(m.oos)}</td>`; }).join('')}</tr>`).join('');
+    return `<section class="card btv ${r.tfs['1d'].level !== 'non validé' ? 'warn' : 'bad'}"><div class="bthead"><h2>Verdict <small>divergences seules · ${esc(r.assets.join(', '))} · depuis ${dateFr(Math.min(...Object.values(r.period).map(p => p.start)))} · test à partir du ${dateFr(Math.min(...Object.values(r.period).map(p => p.split)))}</small></h2></div>
+      <div class="btverdict">${esc(r.verdict.text)}</div>
+      <div class="tblwrap"><table class="bttab"><thead><tr><th>Unité</th><th>Niveau</th><th>Apprentissage</th><th>Test</th><th>Face au hasard (test)</th><th>Trades par semaine (3 actifs ensemble)</th><th>Telegram</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <h2 style="margin-top:10px">Par actif <small>en haut : apprentissage ; en bas : test</small></h2>
+      <div class="tblwrap"><table class="bttab"><thead><tr><th>Unité</th>${r.assets.map(a => `<th>${esc(a)}</th>`).join('')}</tr></thead><tbody>${assets}</tbody></table></div>
+      <div class="muted small">« R » = multiple du risque pris : +0,10 R signifie que chaque trade rapporte en moyenne 10 % de la somme risquée, frais compris. « Prometteur » : apprentissage et test positifs, mais trop peu de trades pour battre le hasard de façon nette (il faudrait 90 %).</div></section>`;
+  }
+  function divTf(r, tf) {
+    const t = r.tfs[tf], s = t.strategy;
+    const rows = t.matrix.map(m => {
+      const sd = SIDE[m.side];
+      const cell = re => `<td class="${m.react === re ? 'sel' : ''}">${st3(m[re].is)}<br>${st3(m[re].oos)}</td>`;
+      return `<tr><td><b>${esc(m.state)}</b><div class="small">${esc(m.name)}</div></td><td>${sd ? `<b class="${sd[1]}">${sd[0]}</b>` : '<span class="muted">RIEN</span>'}</td>${cell('follow')}${cell('fade')}</tr>`;
+    }).join('');
+    const pr = t.principles.map((p, k) => `<tr class="${k === 0 ? 'sel' : ''}"><td>${esc(p.name)}</td><td>${st3(p.is)}</td><td>${st3(p.oos)}</td></tr>`).join('');
+    const ex = Object.entries(t.exits).map(([k, x]) => `<tr class="${k === t.exit ? 'sel' : ''}"><td>${esc(x.label)}</td><td>${st3(x.is)}</td><td>${st3(x.oos)}</td></tr>`).join('');
+    return `<section class="card"><h2>${TFN[tf]} <small><span class="pill ${LVLC[t.level] || 'muted'}">${esc(t.level)}</span> · ${esc(t.exitLabel)} · ${Object.entries(t.events).map(([a, n]) => `${a} ${n}`).join(' · ')} divergences</small></h2>
+      <div class="muted small">Les 8 combinaisons, les deux réactions possibles (SOL, BTC et ETH ensemble). En haut : apprentissage ; en bas : test. La case encadrée est la réaction retenue.</div>
+      <div class="tblwrap"><table class="bttab"><thead><tr><th>Combinaison</th><th>Réaction</th><th>Suivre le mouvement</th><th>Contrer le mouvement</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="tblwrap"><table class="bttab"><thead><tr><th>Principe appliqué aux 8 combinaisons</th><th>Apprentissage</th><th>Test</th></tr></thead><tbody>${pr}</tbody></table></div>
+      <div class="tblwrap"><table class="bttab"><thead><tr><th>Sortie (choisie sur l'apprentissage)</th><th>Apprentissage</th><th>Test</th></tr></thead><tbody>${ex}</tbody></table></div>
+      <div class="muted small">Résultat par année : ${Object.entries(s.years).map(([y, m]) => `${y} <b class="${rcol(m.expR)}">${sgn(m.expR)}</b> (${m.n})`).join(' · ')}. Achats ${st3(s.bySide.long)} · ventes ${st3(s.bySide.short)} · ${Object.entries(s.costs).map(([k, m]) => `${k} ${st3(m)}`).join(' · ')} · durée moyenne ${num(s.avgHours, 0)} h.</div></section>`;
+  }
+  function divMethod(r) {
+    const u = r.rules;
+    return `<section class="card"><h2>Méthode</h2><ul class="btnotes">
+      <li><b>Divergence</b> : sur chaque unité de temps (1 jour, 4 heures, 1 heure), un sommet ou un creux est un extrême sur ${u.swingN} bougies de chaque côté, connu seulement une fois confirmé, et sert de référence pendant ${u.swingLook} bougies. Quand une bougie le dépasse, l'intérêt ouvert et le CVD à la clôture sont comparés à leur valeur à la clôture du sommet (ou du creux). Plat : intérêt ouvert à moins de ${num(u.oiFlat * 100, 1)} %, CVD à moins de ${num(u.cvdFlat * 100, 0)} % du volume.</li>
+      <li><b>Réaction</b> : intérêt ouvert en hausse, on suit le CVD ; en baisse, rien.</li>
+      <li><b>Trade</b> : entrée au marché à la clôture ; stop au-delà de la bougie du signal (+ ${num(u.stop[2], 2)} ATR, entre ${u.stop[0]} et ${u.stop[1]} ATR) ; objectif choisi sur l'apprentissage ; sortie au bout de ${u.holdH['1d'] / 24} jours (journalier), ${u.holdH['4h']} h (4 heures) ou ${u.holdH['1h']} h (1 heure) ; une position à la fois par actif, ${u.maxWeek} par semaine au plus ; frais, glissement et financement comptés.</li>
+      <li><b>Hasard</b> : les mêmes trades (même sens, mêmes distances en ATR, même durée) placés à des clôtures tirées au hasard dans la période de test, 60 fois.</li>
+      <li>Relancer : <code>python tools/run_div_study.py</code> (après <code>python tools/fetch_history.py SOLUSDT --since 2021-10 --metrics</code>, idem BTCUSDT et ETHUSDT).</li></ul></section>`;
+  }
+
   function render() {
     const root = $('#btBox');
     if (!root) return;
@@ -715,11 +758,12 @@ const Backtest = (() => {
     if (loading && !rep) { root.innerHTML = '<section class="card"><div class="muted">Chargement du rapport…</div></section>'; return; }
     if (!list || !list.length) { root.innerHTML = '<section class="card"><h2>Backtest</h2><div class="muted">Aucun rapport trouvé. Lance <code>python tools/run_study.py BTCUSDT</code> après avoir téléchargé l\'historique (<code>python tools/fetch_history.py BTCUSDT</code>).</div></section>'; return; }
     if (!rep) return;
-    const kname = k => k === 'flow' ? 'STRATÉGIE V31 : prix, intérêt ouvert et CVD sur la liquidité et les VWAP' : k === 'absorption' ? 'absorptions (delta contre le prix)' : k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : k === 'indicators' ? 'indicateurs (en chaîne, macro, liquidité)' : k === 'rotation' ? 'où va l\'argent (rotation, or)' : k === 'squeeze' ? 'delta, CVD et squeezes' : k === 'pockets' ? 'importance des poches (confluences, âge)' : k === 'tpo' ? 'repères du profil de marché (TPO)' : 'idées du terminal';
+    const kname = k => k === 'div' ? 'STRATÉGIE V32 : divergences prix, intérêt ouvert, CVD (journalier, 4 heures, 1 heure)' : k === 'flow' ? 'V31 : prix, intérêt ouvert et CVD sur la liquidité et les VWAP' : k === 'absorption' ? 'absorptions (delta contre le prix)' : k === 'strategy' ? 'ta stratégie VWAP / profil de volume' : k === 'avwap' ? 'VWAP ancrés sur un mouvement de 5 % ou plus' : k === 'indicators' ? 'indicateurs (en chaîne, macro, liquidité)' : k === 'rotation' ? 'où va l\'argent (rotation, or)' : k === 'squeeze' ? 'delta, CVD et squeezes' : k === 'pockets' ? 'importance des poches (confluences, âge)' : k === 'tpo' ? 'repères du profil de marché (TPO)' : 'idées du terminal';
     const opt = x => `<option value="${esc(x.kind)}|${esc(x.label)}" ${x.label === label && x.kind === kind ? 'selected' : ''}>${esc(x.label)} · ${kname(x.kind)}${x.own ? ' (calculé sur tes données)' : ' (livré avec le terminal)'}</option>`;
-    const cur = list.filter(x => x.kind === 'flow'), old = list.filter(x => x.kind !== 'flow');            // V31 : les anciennes mesures restent consultables, à part
-    const sel = `<div class="btbar"><label>Rapport <select id="btSel"><optgroup label="Stratégie en cours (V31)">${cur.map(opt).join('')}</optgroup><optgroup label="Anciennes mesures (archives, plus utilisées par les idées)">${old.map(opt).join('')}</optgroup></select></label>
+    const cur = list.filter(x => x.kind === 'div'), old = list.filter(x => x.kind !== 'div');            // les anciennes mesures restent consultables, à part
+    const sel = `<div class="btbar"><label>Rapport <select id="btSel"><optgroup label="Stratégie en cours (V32)">${cur.map(opt).join('')}</optgroup><optgroup label="Anciennes mesures (archives, plus utilisées par les idées)">${old.map(opt).join('')}</optgroup></select></label>
       <span class="muted small">Calculé le ${dateFr(rep.computedAt)} en ${rep.seconds < 90 ? rep.seconds + ' s' : Math.round(rep.seconds / 60) + ' min'}</span></div>`;
+    if (rep.kind === 'divergences') { root.innerHTML = sel + '<div class="btgrid">' + divVerdict(rep) + ['1d', '4h', '1h'].map(tf => divTf(rep, tf)).join('') + divMethod(rep) + '</div>'; return; }
     if (rep.kind === 'flow') { root.innerHTML = sel + '<div class="btgrid">' + flowVerdict(rep) + flowEquity(rep) + flowMatrix(rep) + flowPrinciples(rep) + flowConfirm(rep) + flowExits(rep) + flowSplit(rep) + flowMethod(rep) + '</div>'; return; }
     if (rep.kind === 'vwap-strategy') { root.innerHTML = sel + '<div class="btgrid">' + stratVerdict(rep) + stratBest(rep) + stratVariants(rep) + stratExits(rep) + stratHedge(rep) + stratMethod(rep) + '</div>'; return; }
     if (rep.kind === 'rotation') { root.innerHTML = sel + '<div class="btgrid">' + rotVerdict(rep) + rotMap(rep) + rotGold(rep) + rotTargets(rep) + rotMethod(rep) + '</div>'; drawRotation(rep); return; }

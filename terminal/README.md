@@ -1,7 +1,8 @@
-# Liq Terminal (V31)
+# Liq Terminal (V32)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Seulement les divergences prix / intérêt ouvert / CVD, en journalier, 4 heures et 1 heure** (V32, voir « V32 » plus bas).
 - **Nouvelle stratégie d'idées de trade : prix, intérêt ouvert et CVD lus sur la liquidité et les VWAP** (V31) : l'ancienne note de confluence est remplacée ; 8 combinaisons, une réaction pour chacune, mesurée sur SOL, BTC et ETH depuis 2022 (voir « V31 » plus bas).
 - **Intérêt ouvert en bougies et delta en barres sous le graphique, TPO épuré, panneau de droite réservé aux idées de trade** (V30, voir « V30 » plus bas).
 - **La heatmap et la carte des liquidations sur tout le graphique, même en 4 heures** (V29) : la heatmap du carnet garde 6 mois en mémoire et, avant tes propres photos, reprend les archives publiques de Binance ; nouvelle **carte des liquidations** estimée sur 6 mois (BTC et SOL), comme celles des sites spécialisés (voir « V29 » plus bas).
@@ -126,6 +127,36 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V32 : seulement les divergences, en journalier, 4 heures et 1 heure
+
+Les idées de trade ne regardent plus que les **divergences** entre le prix, l'intérêt ouvert et le CVD, sur trois unités de temps : **1 jour,
+4 heures et 1 heure** (rien en dessous : trop de bruit). Les VWAP ne fabriquent plus d'idées.
+
+- **Une divergence** : sur chaque unité de temps, un sommet (ou un creux) est un extrême sur 3 bougies de chaque côté, connu seulement une fois
+  confirmé, gardé comme référence pendant 60 bougies. Quand une bougie le dépasse (plus haut plus haut, ou plus bas plus bas), l'intérêt ouvert
+  et le CVD à la clôture sont comparés à leur valeur à la clôture du sommet (ou du creux) précédent : 8 combinaisons.
+- **La réaction** reste la même règle : intérêt ouvert en hausse, suivre le CVD ; en baisse, rien.
+- **Le trade** : entrée à la clôture de la bougie, stop au-delà de la bougie du signal, objectif choisi sur la période d'apprentissage
+  (3 fois le risque en journalier, 2 fois en 4 heures et en 1 heure), sortie au bout de 10 jours (journalier), 72 heures (4 heures) ou 24 heures (1 heure).
+
+**Mesure** (`python tools/run_div_study.py`, SOL, BTC et ETH perpétuels ensemble depuis février 2022, frais comptés, une position à la fois
+par actif ; page **Backtest**, en tête de liste) :
+
+| Unité | Période de test | Face au hasard | Niveau | Telegram |
+|---|---|---|---|---|
+| Journalier | +0,10 fois le risque par trade (81 trades) ; positif sur SOL, BTC et ETH | mieux que 78 % | prometteur | envoyée |
+| 4 heures | +0,02 fois le risque par trade (419 trades) | mieux que 90 % | non validé (quasiment nul) | affichée seulement |
+| 1 heure | −0,10 fois le risque par trade (1 189 trades) | mieux que 72 % | non validé (perd) | affichée seulement |
+
+« Prometteur » : apprentissage et test positifs, mais trop peu de trades pour battre le hasard de façon nette. « Validé » demanderait
+au moins +0,05 fois le risque sur le test et mieux que 90 % du hasard. Le journalier donne peu d'idées (moins d'une par semaine pour les trois
+actifs ensemble) : c'est le prix d'un signal moins bruité.
+
+Écarté après mesure : prendre le sens du journalier pour filtrer les entrées en 4 heures et en 1 heure (très bon sur l'apprentissage, perdant sur le test).
+
+**Dans le terminal** : la page **Idées de trade** et le panneau de droite montrent, pour chaque unité de temps, la dernière divergence, sa
+réaction, ce que la mesure en dit et la prochaine clôture ; les 8 combinaisons avec leurs résultats par unité de temps ; les divergences récentes.
 
 ## Ce qui est nouveau en V31 : une nouvelle stratégie, prix + intérêt ouvert + CVD sur la liquidité et les VWAP
 

@@ -1838,17 +1838,18 @@ class Service:
         self._ev_cache[symbol] = (time.time(), ev)
         return ev
 
-    def flow_report(self, symbol: str):
-        """Rapport de la stratégie V31 pour ce symbole (tools/run_flow_study.py), ou None."""
-        hit = self._flow_rep.get(symbol)
+    def div_report(self):
+        """Rapport des divergences V32 (tools/run_div_study.py : SOL, BTC, ETH ensemble), ou None."""
+        hit = self._flow_rep.get("div")
         if hit and time.time() - hit[0] < 600:
             return hit[1]
-        rep = reports_mod.load(self.report_dirs, reports_mod.base_of(symbol), "flow")
-        self._flow_rep[symbol] = (time.time(), rep)
+        rep = reports_mod.load(self.report_dirs, "ALL", "div")
+        self._flow_rep["div"] = (time.time(), rep)
         return rep
 
     def signals(self, symbol: str) -> dict:
-        """Idées de trade du moment (V31) : prix, intérêt ouvert et CVD sur la liquidité et les VWAP (engine/flowstrat.py), mêmes règles que la mesure."""
+        """Idées de trade du moment (V32) : DIVERGENCES prix / intérêt ouvert / CVD sur 1 jour, 4 heures et 1 heure (engine/flowstrat.py),
+        mêmes règles que la mesure. Seules les unités de temps que la mesure ne rejette pas envoient des idées."""
         m = self.markets.get(symbol)
         if m is None:
             raise KeyError(f"symbole inconnu : {symbol}")
@@ -1862,36 +1863,35 @@ class Service:
         if hit and hit[0] == key and time.time() - hit[1] < 60:
             return {**hit[2], "price": price}
         cfg = self.cfg
-        rep = self.flow_report(symbol)
-        vd = flowstrat.verdict(rep) if rep else {"validated": False, "text": f"pas encore de mesure pour {symbol} (tools/run_flow_study.py)"}
+        rep = self.div_report()
+        status = {tf: flowstrat.tf_status(rep, tf) for tf in flowstrat.DIV_TFS}
         out = {"ready": True, "on": True, "symbol": symbol, "t": self.source.now_ms(), "price": price, "ideas": [], "rejected": [], "minScore": cfg.signal_min_score,
-               "maxWeek": cfg.signal_max_week, "leverage": cfg.signal_leverage, "warm": False, "strategy": "flow", "validated": vd["validated"], "verdict": vd["text"],
-               "flow": None, "recent": [], "table": self.flow_table(symbol, rep)}
+               "maxWeek": cfg.signal_max_week, "leverage": cfg.signal_leverage, "warm": False, "strategy": "divergences",
+               "validated": any(v["send"] for v in status.values()), "status": status, "tfs": {}, "recent": [], "table": self.flow_table(rep)}
         try:
             with self.lock:
-                m5 = list(m.store.fine_m5())
                 live_oi = dict(m.store.oi)
-            if not h1 or not m5:
+            if not h1:
                 raise ValueError("bougies manquantes")
             b1h = fine.from_candles(h1, H1)
-            b5 = fine.from_candles([k for k in m5 if k.t + M5 <= self.source.now_ms()], M5)
             extra = self.oi_extra.get(symbol)
             oi = flowstrat.live_oi(b1h, live_oi, extra() if extra else {})
-            sig = flowstrat.live_signals(flowstrat.LiveData(b1h, b5), oi)
+            sig = flowstrat.live_signals(flowstrat.LiveData(b1h, None), oi)
             if not sig.get("ready"):
                 out["why"] = sig.get("why")
             else:
                 out["warm"] = True
-                out["flow"] = {**(sig["now"] or {}), "t": sig["t"], "next": sig["next"]}
-                txt = vd["text"]
-                for e in sig["latest"]:
-                    i = flowstrat.idea(e, symbol, price, vd["validated"], txt, cfg.signal_leverage)
-                    if i:
-                        out["ideas"].append(i)
+                rec = []
+                for tf, v in sig["tfs"].items():
+                    last = v["events"][-1] if v["events"] else None
+                    out["tfs"][tf] = {"t": v["t"], "next": v["next"], "last": self._div_brief(last)}
+                    for e in v["latest"]:
+                        i = flowstrat.idea(e, symbol, price, status[tf], cfg.signal_leverage)
+                        if i:
+                            out["ideas"].append(i)
+                    rec += [self._div_brief(e) for e in v["events"][-6:]]
                 out["ideas"].sort(key=lambda i: (0 if i["eligible"] else 1, -i["score"]))
-                out["recent"] = [{"t": e["t"], "place": e["place"], "state": flowstrat.skey(e["st"]), "name": flowstrat.STATES[e["st"]][0],
-                                  "side": {1: "long", -1: "short", 0: None}[flowstrat.reaction(e["st"])], "level": e["lvl"], "src": e["src"],
-                                  "confirm": e.get("confirm", 0), "price": e["price"]} for e in sig["events"] if e["t"] > sig["t"] - 72 * H1][-24:]
+                out["recent"] = sorted(rec, key=lambda r: r["t"])[-18:]
             self.errors.pop(f"idées {symbol}", None)
         except Exception as e:
             self.errors[f"idées {symbol}"] = f"{type(e).__name__}: {e}"
@@ -1899,18 +1899,25 @@ class Service:
         self._sig_cache[symbol] = (key, time.time(), out)
         return out
 
-    def flow_table(self, symbol: str, rep) -> list:
-        """Les 8 combinaisons, leur lecture, la réaction retenue et, si la mesure existe, ce qu'elle a donné sur ce symbole (lieu par lieu)."""
-        rows = {(r["place"], r["state"]): r for r in (rep or {}).get("matrix") or []}
+    @staticmethod
+    def _div_brief(e):
+        if not e:
+            return None
+        return {"t": e["t"], "tf": e["tf"], "state": flowstrat.skey(e["st"]), "name": flowstrat.STATES[e["st"]][0],
+                "side": {1: "long", -1: "short", 0: None}[flowstrat.reaction(e["st"])], "level": e["lvl"], "src": e["src"], "price": e["price"],
+                "oiChg": e["oiChg"], "cvdImb": e["cvdImb"]}
+
+    def flow_table(self, rep) -> list:
+        """Les 8 combinaisons, leur lecture, la réaction retenue et ce qu'elle a donné (SOL, BTC, ETH ensemble), unité de temps par unité de temps."""
         out = []
         for st in flowstrat.ORDER:
             k = flowstrat.skey(st)
             react = flowstrat.react_of(st)
             meas = {}
-            for place in flowstrat.PLACES:
-                r = rows.get((place, k))
+            for tf in flowstrat.DIV_TFS:
+                r = next((x for x in (((rep or {}).get("tfs") or {}).get(tf) or {}).get("matrix", []) if x["state"] == k), None)
                 if r and react:
-                    meas[place] = {"is": r[react]["is"], "oos": r[react]["oos"]}
+                    meas[tf] = {"is": r[react]["is"], "oos": r[react]["oos"]}
             out.append({"state": k, "name": flowstrat.STATES[st][0], "reading": flowstrat.STATES[st][1], "action": flowstrat.ACTION[st],
                         "side": {1: "long", -1: "short"}.get(flowstrat.reaction(st)), "react": react, "measure": meas})
         return out

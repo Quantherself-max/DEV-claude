@@ -24,6 +24,18 @@ class Fake:
         return True, "ok"
 
 
+_live = service_mod.flowstrat.live_signals
+
+
+def live_with_a_signal(data, oi, days=None):
+    """A l'instant fixe des tests, aucune divergence ne tombe pile sur la derniere cloture : la plus recente de chaque unite de temps est
+    traitee comme si elle venait de se former (memes regles pour tout le reste)."""
+    out = _live(data, oi, days)
+    for v in out.get("tfs", {}).values():
+        v["latest"] = [e for e in v["events"][-1:] if service_mod.flowstrat.reaction(e["st"])]
+    return out
+
+
 class ServiceSignalsTests(unittest.TestCase):
     """Chaine complete sur les donnees simulees (instant fixe) : niveaux -> idees -> score -> textes -> suivi."""
 
@@ -35,9 +47,13 @@ class ServiceSignalsTests(unittest.TestCase):
         cls.svc = cls.app.service
         cls.svc.refresh_all()
         cls.svc.compute_stats("BTCUSDT")                         # synchrone : probabilites, biais et rejeu historique
+        cls.patch = mock.patch.object(service_mod.flowstrat, "live_signals", live_with_a_signal)
+        cls.patch.start()
+        cls.svc._sig_cache.clear()
 
     @classmethod
     def tearDownClass(cls):
+        cls.patch.stop()
         cls.tmp.cleanup()
 
     def test_old_replay_is_gone_and_the_reaction_table_is_served(self):
@@ -45,7 +61,7 @@ class ServiceSignalsTests(unittest.TestCase):
         s = self.svc.signals("BTCUSDT")
         self.assertEqual([r["state"] for r in s["table"]], [flowstrat.skey(st) for st in flowstrat.ORDER])
         self.assertEqual(sum(1 for r in s["table"] if r["side"]), 4)              # intérêt ouvert en hausse : 4 réactions ; en baisse : rien
-        self.assertTrue(s["verdict"])
+        self.assertEqual(set(s["status"]), {"1d", "4h", "1h"})                       # V32 : divergences sur trois unités de temps seulement
 
     def test_signals_payload_shape_and_plain_text(self):
         s = self.svc.signals("BTCUSDT")
@@ -53,15 +69,16 @@ class ServiceSignalsTests(unittest.TestCase):
         self.assertTrue(s["warm"])
         self.assertTrue(s["ideas"], "le scenario simule doit produire au moins une idee")
         json.dumps(s)                                              # tout est serialisable
-        for k in ("ideas", "rejected", "minScore", "maxWeek", "verdict", "validated", "flow", "recent", "table", "price"):
+        for k in ("ideas", "rejected", "minScore", "maxWeek", "status", "tfs", "validated", "recent", "table", "price"):
             self.assertIn(k, s)
         i = s["ideas"][0]
-        for k in ("side", "kind", "score", "grade", "comps", "entry", "stop", "tp1", "rr1", "desc", "key", "eligible", "hold", "warn", "probs", "st", "state", "place"):
+        for k in ("side", "kind", "score", "grade", "comps", "entry", "stop", "tp1", "rr1", "desc", "key", "eligible", "hold", "warn", "probs", "st", "state", "tf"):
             self.assertIn(k, i)
         self.assertEqual(sum(c["max"] for c in i["comps"]), 100)
         self.assertEqual(i["entryType"], "marché")
-        self.assertAlmostEqual(i["rr1"], 3.0, places=2)                           # objectif à 3 fois le risque (sortie mesurée)
-        self.assertGreaterEqual(abs(i["entry"] - i["stop"]), i["atr"] - 1e-6)     # au moins 1 ATR de la bougie 4 heures
+        self.assertGreaterEqual(i["rr1"], 1.0 - 1e-9)                              # objectif : sortie mesurée pour cette unité de temps
+        self.assertGreaterEqual(abs(i["entry"] - i["stop"]), i["atr"] - 1e-6)     # au moins 1 ATR de la bougie du signal
+        self.assertIn(i["tf"], ("1d", "4h", "1h"))
         self.assertEqual(i["side"], {1: "long", -1: "short"}[flowstrat.reaction(flowstrat.parse_skey(i["state"]))])
         text = sg.to_text(i, i["desc"], 1, 3)
         self.assertIsNone(BANNED.search(text), BANNED.search(text))
@@ -147,13 +164,13 @@ class ServiceSignalsTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.svc.strategy("XXX")
 
-    def test_a_pair_without_a_validated_strategy_never_sends(self):
+    def test_only_timeframes_the_measure_keeps_can_send(self):
         s = self.svc.signals("BTCUSDT")
-        self.assertFalse(s["validated"])                                         # le rapport livre pour le BTC ne valide pas la strategie
-        self.assertTrue(s["ideas"])
+        self.assertEqual([k for k, v in s["status"].items() if v["send"]], ["1d"])   # rapport livré : journalier prometteur, 4 heures et 1 heure non
         for i in s["ideas"]:
-            self.assertFalse(i["eligible"])
-            self.assertTrue(any("non validée" in g for g in i["gates"]))
+            self.assertEqual(i["eligible"], i["tf"] == "1d")
+            if not i["eligible"]:
+                self.assertTrue(any("non validé" in g for g in i["gates"]))
 
     def test_trade_cycle_sends_an_eligible_idea_and_follows_it(self):
         notifier = Fake()
@@ -162,7 +179,7 @@ class ServiceSignalsTests(unittest.TestCase):
         self.app.desk.file = self.app.desk.dir / "trades.json"
         self.app.desk.trades = []
         self.svc._sig_cache.clear()
-        with mock.patch.object(service_mod.flowstrat, "verdict", lambda rep: {"validated": True, "text": "validée (test)"}):
+        with mock.patch.object(service_mod.flowstrat, "tf_status", lambda rep, tf: {"tf": tf, "level": "validé", "send": True, "exit": "marché|3R", "text": "validé (test)"}):
             self.app.trade_cycle(self.svc, ["BTCUSDT"])
         self.svc._sig_cache.clear()
         self.assertEqual(len(self.app.desk.trades), 1)

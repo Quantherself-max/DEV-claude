@@ -137,9 +137,11 @@ def hourly_oi(b1h, pairs) -> list:
     return [d.get(int(t)) for t in b1h.t]
 
 
-TF_H = {"1h": 1, "4h": 4}
-APPROACH = {"1h": 4, "4h": 3}            # fenêtre d'approche d'un VWAP, en bougies (4 heures ; 12 heures)
-HOLD = {"1h": 24, "4h": 72}              # durée maximale du trade, en heures
+TF_H = {"1h": 1, "4h": 4, "1d": 24}
+APPROACH = {"1h": 4, "4h": 3, "1d": 3}   # fenêtre d'approche d'un VWAP, en bougies
+HOLD = {"1h": 24, "4h": 72, "1d": 240}   # durée maximale du trade, en heures
+SWING_N = 3                              # V32 : sommet ou creux = extrême sur 3 bougies de chaque côté, sur l'unité de temps elle-même
+SWING_LOOK = 60                          # un sommet ou un creux sert de référence pendant 60 bougies au plus
 
 
 def atr_bars(b, n: int = 14) -> list:
@@ -223,6 +225,61 @@ def build_events(ds, oi: list, start_ms: int, end_ms: int, tf: str = "1h", warm_
                         "closeBack": (c < V) if pd > 0 else (c > V), "ageH": None})
             break
     return out
+
+
+def tf_bars(b1h, tf: str):
+    return b1h if tf == "1h" else fine.resample(b1h, TF_H[tf] * HOUR)
+
+
+def build_divergences(ds, oi: list, start_ms: int, end_ms: int, tf: str) -> list[dict]:
+    """V32 : DIVERGENCES sur une unité de temps (1 jour, 4 heures ou 1 heure), avec les sommets et creux de cette unité-là.
+    Une bougie dépasse le dernier sommet (ou creux) encore intact : le prix fait un plus haut plus haut (ou un plus bas plus bas).
+    L'intérêt ouvert et le CVD à la clôture sont comparés à leur valeur à la clôture de la bougie du sommet (ou du creux) précédent.
+    Un sommet n'est connu qu'une fois confirmé (SWING_N bougies plus tard) : rien du futur."""
+    b1h = ds.b1h
+    bars = tf_bars(b1h, tf)
+    STEP = TF_H[tf] * HOUR
+    atrs = atr_bars(bars)
+    oib = []
+    for t in bars.t:
+        k = b1h.idx_at(int(t) + STEP - 1)
+        oib.append(oi[k] if k >= 0 and b1h.t[k] + HOUR == int(t) + STEP else None)
+    H, L, C, n = bars.h, bars.l, bars.c, SWING_N
+    cd, cv = bars.cd, bars.cv
+    highs, lows, out = [], [], []                       # sommets / creux confirmés et encore intacts : [index, prix]
+    for j in range(2 * n + 1, len(bars.t)):
+        p = j - 1 - n                                    # pivot confirmé à la clôture de la bougie j - 1
+        if all(H[p] > H[p - q] for q in range(1, n + 1)) and all(H[p] >= H[p + q] for q in range(1, n + 1)):
+            highs.append([p, H[p]])
+        if all(L[p] < L[p - q] for q in range(1, n + 1)) and all(L[p] <= L[p + q] for q in range(1, n + 1)):
+            lows.append([p, L[p]])
+        highs = [x for x in highs if j - x[0] <= SWING_LOOK]
+        lows = [x for x in lows if j - x[0] <= SWING_LOOK]
+        T = int(bars.t[j]) + STEP
+        took_hi = [x for x in highs if H[j] > x[1]]
+        took_lo = [x for x in lows if L[j] < x[1]]
+        if start_ms <= T < end_ms and oib[j] and atrs[j - 1] > 0 and bool(took_hi) != bool(took_lo):
+            ref = max(took_hi, key=lambda x: x[1]) if took_hi else min(took_lo, key=lambda x: x[1])
+            pd, jb = (1 if took_hi else -1), ref[0]
+            st = flow_state(pd, oib[jb], oib[j], cd[j + 1] - cd[jb + 1], cv[j + 1] - cv[jb + 1])
+            if st:
+                c = C[j]
+                rest_hi = sorted(x[1] for x in highs if x not in took_hi and x[1] > c)
+                rest_lo = sorted((x[1] for x in lows if x not in took_lo and x[1] < c), reverse=True)
+                out.append({"t": T, "tf": tf, "place": "div", "st": st, "price": c, "atr": atrs[j], "h": H[j], "l": L[j], "o": bars.o[j],
+                            "up": rest_hi[:5], "dn": rest_lo[:5], "lvl": ref[1], "src": f"{'sommet' if pd > 0 else 'creux'} {TF_WORD[tf]}",
+                            "oiChg": oib[j] / oib[jb] - 1.0, "cvdImb": (cd[j + 1] - cd[jb + 1]) / (cv[j + 1] - cv[jb + 1]), "ageH": (j - jb) * TF_H[tf],
+                            "closeBack": (c < ref[1]) if pd > 0 else (c > ref[1])})
+        if took_hi:                                      # une référence dépassée n'en est plus une
+            highs = [x for x in highs if x not in took_hi]
+        if took_lo:
+            lows = [x for x in lows if x not in took_lo]
+    return out
+
+
+TF_WORD = {"1h": "1 heure", "4h": "4 heures", "1d": "journalier"}
+TF_IN = {"1h": "en 1 heure", "4h": "en 4 heures", "1d": "en journalier"}
+TF_BAR = {"1h": "bougie d'1 heure", "4h": "bougie de 4 heures", "1d": "bougie journalière"}
 
 
 def _vwaps(b1h, b5, j: int, T: int, cache: dict) -> dict:
@@ -322,12 +379,12 @@ def react_of(st) -> str | None:
 
 
 ACTION = {      # texte de la réaction, combinaison par combinaison (le lieu précise le geste)
-    (1, 1, 1): "ACHAT : suivre la hausse. Les acheteurs agressifs ouvrent des positions au moment où le prix prend la liquidité au-dessus ou passe le VWAP : la cassure est acceptée.",
-    (1, 1, -1): "VENTE : contrer la hausse. Le prix est monté sur des ordres passifs, mais ce sont les vendeurs agressifs qui ouvrent des positions : la prise de liquidité au-dessus ou le test du VWAP par le bas est un piège pour les acheteurs.",
+    (1, 1, 1): "ACHAT : suivre la hausse. Le prix dépasse le dernier sommet (il prend la liquidité au-dessus) et ce sont les acheteurs agressifs qui ouvrent des positions : la cassure est acceptée.",
+    (1, 1, -1): "VENTE : contrer la hausse. Le prix dépasse le dernier sommet sur des ordres passifs, mais ce sont les vendeurs agressifs qui ouvrent des positions : la prise de liquidité au-dessus est un piège pour les acheteurs.",
     (1, -1, 1): "RIEN : la hausse vient de shorts qui rachètent ; quand ils ont fini, il n'y a plus d'acheteur. Pas d'argent neuf, pas de trade.",
     (1, -1, -1): "RIEN : hausse sans conviction (positions qui se ferment, vendeurs agressifs). Pas de carburant neuf, pas de trade.",
-    (-1, 1, -1): "VENTE : suivre la baisse. Les vendeurs agressifs ouvrent des positions au moment où le prix prend la liquidité en dessous ou casse le VWAP : la cassure est acceptée.",
-    (-1, 1, 1): "ACHAT : contrer la baisse. Le prix a baissé sur des ordres passifs, mais ce sont les acheteurs agressifs qui ouvrent des positions : la prise de liquidité en dessous ou le test du VWAP par le haut est un piège pour les vendeurs.",
+    (-1, 1, -1): "VENTE : suivre la baisse. Le prix enfonce le dernier creux (il prend la liquidité en dessous) et ce sont les vendeurs agressifs qui ouvrent des positions : la cassure est acceptée.",
+    (-1, 1, 1): "ACHAT : contrer la baisse. Le prix enfonce le dernier creux sur des ordres passifs, mais ce sont les acheteurs agressifs qui ouvrent des positions : la prise de liquidité en dessous est un piège pour les vendeurs.",
     (-1, -1, -1): "RIEN : des longs sortent ou se font liquider. Le rebond qui suit une purge n'a pas montré d'avantage mesurable après frais : pas de trade.",
     (-1, -1, 1): "RIEN : la baisse s'essouffle (des shorts encaissent), mais sans argent neuf il n'y a pas d'avantage mesurable : pas de trade.",
 }
@@ -533,13 +590,13 @@ def random_control(trades: list[dict], ds, costs: dict, a: int, b: int, runs: in
         A = e["atr"]
         geo.append((d, etype, (entry - e["price"]) / A, (stop - e["price"]) / A, (tp - e["price"]) / A, e["tf"]))
     if not geo:
-        return {"runs": 0, "expMean": None, "exp5": None, "exp95": None, "_exps": []}
+        return {"runs": 0, "expMean": None, "exp5": None, "exp95": None, "_exps": [], "_rs": []}
     tf = geo[0][5]
     step = TF_H[tf] * HOUR
     bars = ds.b1h if step == HOUR else fine.resample(ds.b1h, step)
     atrs = atr_bars(bars)
     idx = [j for j in range(15, len(bars.t)) if a <= bars.t[j] + step < b - HOLD[tf] * HOUR and atrs[j] > 0]
-    exps = []
+    exps, last = [], []
     for _ in range(runs):
         rs = []
         for d, etype, eo, so, to, _tf in geo:
@@ -550,9 +607,10 @@ def random_control(trades: list[dict], ds, costs: dict, a: int, b: int, runs: in
                 rs.append(bt.net_r(s, costs))
         if rs:
             exps.append(sum(rs) / len(rs))
+        last = rs
     exps.sort()
     q = lambda p: round(exps[min(len(exps) - 1, int(p * len(exps)))], 3) if exps else None
-    return {"runs": len(exps), "expMean": round(sum(exps) / len(exps), 3) if exps else None, "exp5": q(0.05), "exp95": q(0.95), "_exps": exps}
+    return {"runs": len(exps), "expMean": round(sum(exps) / len(exps), 3) if exps else None, "exp5": q(0.05), "exp95": q(0.95), "_exps": exps, "_rs": last}
 
 
 def verdict(rep: dict) -> dict:
@@ -594,92 +652,235 @@ def live_oi(b1h, live: dict, archive: dict) -> list:
     return out
 
 
-def live_signals(data: LiveData, oi: list, tf: str = "4h", days: int = 3) -> dict:
-    """Signaux des `days` derniers jours (clôtures 4 heures), confirmations comprises, et lecture du flux sur la dernière bougie fermée."""
+# =====================================================================================================
+#  V32 : divergences seules, sur 1 jour, 4 heures et 1 heure, mesurées ensemble sur plusieurs actifs
+# =====================================================================================================
+DIV_TFS = ("1d", "4h", "1h")
+DIV_EXITS = ("marché|pool", "marché|2R", "marché|3R")
+
+
+def _pick(cands, costs, a, b):
+    return bt.select(cands, lambda r: True, costs, max_week=MAX_WEEK, zone_cooldown_h=COOLDOWN_H, start_ms=a, end_ms=b)
+
+
+def _cands(events, ex, rule=reaction):
+    out = []
+    for e in events:
+        d = rule(e["st"])
+        s = e.get("sims", {}).get((d, ex)) if d else None
+        if s and s.get("filled"):
+            out.append({"t": e["t"], "side": "long" if d > 0 else "short", "kind": e["tf"], "etype": "marché", "key": skey(e["st"]),
+                        "score": 0.0, "S": 0.0, "sim": s, "ev": e})
+    return out
+
+
+def study_div(assets: dict, costs=None, progress=None, controls: int = 60) -> dict:
+    """assets : {nom: {"ds", "oi", "start", "end", "split"}}. Pour chaque unité de temps : tableau des 8 combinaisons (les deux réactions,
+    apprentissage / test, chaque actif et l'ensemble), principes comparés, sortie choisie sur l'apprentissage de l'ensemble, stratégie jouée une
+    position à la fois sur chaque actif, témoin au hasard, années. Une unité de temps est VALIDÉE si l'ensemble des actifs gagne sur le test,
+    après frais, mieux que 90 % des mêmes trades placés au hasard."""
+    costs = costs or bt.DEFAULT_COSTS
+    say = progress or (lambda *_: None)
+    out = {"kind": "divergences", "version": 2, "assets": list(assets), "tfs": {}, "costs": costs,
+           "rules": {"oiFlat": OI_FLAT, "cvdFlat": CVD_FLAT, "swingN": SWING_N, "swingLook": SWING_LOOK, "holdH": {k: HOLD[k] for k in DIV_TFS},
+                     "stop": [STOP_MIN, STOP_MAX, STOP_PAD], "maxWeek": MAX_WEEK, "cooldownH": COOLDOWN_H}}
+    out["period"] = {k: {"start": v["start"], "end": v["end"], "split": v["split"]} for k, v in assets.items()}
+    for tf in DIV_TFS:
+        say(f"divergences {tf}")
+        evs = {}
+        for name, a in assets.items():
+            ev = build_divergences(a["ds"], a["oi"], a["start"], a["end"], tf)
+            for e in ev:
+                e["sims"] = {(d, ex): run_sim(a["ds"].b5, e, d, ex) for d in (1, -1) for ex in DIV_EXITS}
+            evs[name] = ev
+        per = lambda name, e: "T" if e["t"] < assets[name]["split"] else "X"
+        # sortie choisie sur l'apprentissage de l'ensemble
+        grid = {}
+        for ex in DIV_EXITS:
+            rs = {"T": [], "X": []}
+            for name, ev in evs.items():
+                for t in _pick(_cands(ev, ex), costs, assets[name]["start"], assets[name]["end"]):
+                    rs["T" if t["t"] < assets[name]["split"] else "X"].append(t["r"])
+            grid[ex] = {"label": exit_label(ex), "is": _stats(rs["T"]), "oos": _stats(rs["X"])}
+        best = max(DIV_EXITS, key=lambda x: grid[x]["is"]["expR"] if grid[x]["is"]["expR"] is not None else -9)
+        # tableau des 8 combinaisons
+        matrix = []
+        for st in ORDER:
+            row = {"state": skey(st), "name": STATES[st][0], "action": ACTION[st], "react": react_of(st), "side": {1: "long", -1: "short"}.get(reaction(st)),
+                   "assets": {}}
+            for react in ("follow", "fade"):
+                d = st[0] if react == "follow" else -st[0]
+                allp = {"T": [], "X": []}
+                for name, ev in evs.items():
+                    rs = {"T": [], "X": []}
+                    for e in ev:
+                        if e["st"] == st:
+                            r = _net(e["sims"][(d, best)], costs)
+                            if r is not None:
+                                rs[per(name, e)].append(r)
+                    row["assets"].setdefault(name, {})[react] = {"is": _stats(rs["T"]), "oos": _stats(rs["X"])}
+                    allp["T"] += rs["T"]
+                    allp["X"] += rs["X"]
+                row[react] = {"is": _stats(allp["T"]), "oos": _stats(allp["X"])}
+            matrix.append(row)
+        principles = []
+        for pname, f in PRINCIPLES:
+            rs = {"T": [], "X": []}
+            for name, ev in evs.items():
+                for e in ev:
+                    d = f(e["st"])
+                    r = _net(e["sims"][(d, best)], costs) if d else None
+                    if r is not None:
+                        rs[per(name, e)].append(r)
+            principles.append({"name": pname, "is": _stats(rs["T"]), "oos": _stats(rs["X"])})
+        # la stratégie : une position à la fois sur chaque actif
+        trades, by_asset, ctrl_runs = [], {}, []
+        for name, ev in evs.items():
+            a = assets[name]
+            tr = _pick(_cands(ev, best), costs, a["start"], a["end"])
+            for t in tr:
+                t["asset"] = name
+            trades += tr
+            by_asset[name] = {"is": _stats([t["r"] for t in tr if t["t"] < a["split"]]), "oos": _stats([t["r"] for t in tr if t["t"] >= a["split"]]),
+                              "all": _stats([t["r"] for t in tr])}
+        T = [t["r"] for t in trades if t["t"] < assets[t["asset"]]["split"]]
+        X = [t["r"] for t in trades if t["t"] >= assets[t["asset"]]["split"]]
+        say(f"témoin {tf}")
+        exps = []
+        for k in range(controls):
+            rs = []
+            for name in evs:
+                a = assets[name]
+                sub = [t for t in trades if t["asset"] == name and t["t"] >= a["split"]]
+                c = random_control(sub, a["ds"], costs, a["split"], a["end"], runs=1, seed=5 + 97 * k)
+                rs += c["_rs"]
+            if rs:
+                exps.append(sum(rs) / len(rs))
+        exps.sort()
+        xm = _stats(X)["expR"]
+        pct = round(sum(1 for v in exps if v < xm) / len(exps), 3) if exps and xm is not None else None
+        years = {}
+        for t in trades:
+            years.setdefault(str(time.gmtime(t["t"] / 1000).tm_year), []).append(t["r"])
+        costs2 = {k: {kk: v * m for kk, v in costs.items()} for k, m in (("sans frais", 0.0), ("frais normaux", 1.0), ("frais doublés", 2.0))}
+        strat = {"is": _stats(T), "oos": _stats(X), "all": _stats(T + X), "byAsset": by_asset,
+                 "years": {y: _stats(v) for y, v in sorted(years.items())},
+                 "bySide": {sd: _stats([t["r"] for t in trades if t["side"] == sd]) for sd in ("long", "short")},
+                 "byState": {skey(st): _stats([t["r"] for t in trades if t["c"]["ev"]["st"] == st]) for st in ORDER if reaction(st)},
+                 "costs": {k: _stats([bt.net_r(t["c"]["sim"], c2) for t in trades]) for k, c2 in costs2.items()},
+                 "results": {k: sum(1 for t in trades if t["result"] == k) for k in ("tp", "stop", "timeout")},
+                 "avgHours": round(sum(t["hours"] for t in trades) / len(trades), 1) if trades else None,
+                 "perWeek": round(len(trades) / max(1.0, sum((a["end"] - a["start"]) / (7 * DAY) for a in assets.values()) / len(assets)), 2),
+                 "control": {"runs": len(exps), "expMean": round(sum(exps) / len(exps), 3) if exps else None,
+                             "exp5": round(exps[int(0.05 * len(exps))], 3) if exps else None, "exp95": round(exps[min(len(exps) - 1, int(0.95 * len(exps)))], 3) if exps else None,
+                             "pctOos": pct},
+                 "last": [{"t": t["t"], "asset": t["asset"], "side": t["side"], "state": skey(t["c"]["ev"]["st"]), "r": round(t["r"], 3), "result": t["result"],
+                           "hours": round(t["hours"], 1)} for t in sorted(trades, key=lambda t: t["t"])[-30:]]}
+        level = div_level(strat["is"], strat["oos"], pct)
+        out["tfs"][tf] = {"tf": tf, "exit": best, "exitLabel": exit_label(best), "exits": grid, "matrix": matrix, "principles": principles,
+                          "events": {name: len(ev) for name, ev in evs.items()}, "strategy": strat, "level": level, "validated": level == "validé",
+                          "verdict": div_verdict_text(tf, strat, pct, level)}
+    gen = int(time.time() * 1000)
+    out.update(generated=gen, computedAt=gen, label="ALL", source="Binance perpétuel : bougies 1 minute au vrai volume acheteur agressif, intérêt ouvert toutes les 5 minutes",
+               verdict={"text": " ".join(out["tfs"][tf]["verdict"] for tf in DIV_TFS), "send": [tf for tf in DIV_TFS if out["tfs"][tf]["level"] != "non validé"]})
+    return out
+
+
+def div_level(i: dict, o: dict, pct) -> str:
+    """« validé » : test à +0,05 fois le risque au moins, apprentissage positif et mieux que 90 % du hasard ; « prometteur » : test et apprentissage
+    positifs, mais pas encore assez de trades pour battre le hasard de façon nette ; sinon « non validé »."""
+    good = (o.get("expR") or 0) >= 0.05 and (i.get("expR") or 0) > 0
+    return "validé" if good and pct is not None and pct >= 0.9 else "prometteur" if good else "non validé"
+
+
+def div_verdict_text(tf: str, strat: dict, pct, level: str) -> str:
+    o = strat["oos"]
+    fr = lambda x: f"{x:+.2f}".replace(".", ",")
+    head = f"{'Journalier' if tf == '1d' else TF_WORD[tf].capitalize()} : {level}."
+    if not o["n"]:
+        return head + " Pas de trade sur la période de test."
+    return (head + f" Période de test : {o['n']} trades, {fr(o['expR'])} fois le risque par trade après frais"
+            + (f", mieux que {pct * 100:.0f} % des mêmes trades placés au hasard." if pct is not None else "."))
+
+
+def tf_status(rep: dict | None, tf: str) -> dict:
+    """Ce que la mesure dit de cette unité de temps (voir div_level). Les idées partent sur Telegram si elle est « validé » ou « prometteur »."""
+    r = ((rep or {}).get("tfs") or {}).get(tf)
+    if not r:
+        return {"tf": tf, "level": "inconnu", "send": False, "exit": "marché|3R", "text": "pas encore de mesure (tools/run_div_study.py)"}
+    s = r["strategy"]
+    pc = (s.get("control") or {}).get("pctOos")
+    level = div_level(s["is"], s["oos"], pc)
+    return {"tf": tf, "level": level, "send": level != "non validé", "exit": r["exit"], "text": r["verdict"], "oos": s["oos"], "is": s["is"], "pct": pc}
+
+
+def live_signals(data: LiveData, oi: list, days: dict | None = None) -> dict:
+    """Divergences récentes sur 1 jour, 4 heures et 1 heure (mêmes règles que la mesure), avec la dernière clôture de chaque unité."""
     b1h = data.b1h
     if len(b1h.t) < 24 * 45:
         return {"ready": False, "why": "pas assez d'historique (45 jours de bougies 1 heure)"}
-    step = TF_H[tf] * HOUR
-    T_last = (int(b1h.t[-1]) + HOUR) // step * step                 # dernière clôture 4 heures couverte par les bougies 1 h fermées
-    evs = build_events(data, oi, T_last - days * DAY, T_last + 1, tf)
-    confirmations(evs)
-    bars = fine.resample(b1h, step)
-    j = bars.idx_at(T_last - 1)
-    now = None
-    if j >= APPROACH[tf] and bars.t[j] + step == T_last:
-        ja = j - APPROACH[tf]
-        i1, ia = b1h.idx_at(T_last - 1), b1h.idx_at(int(bars.t[ja]) + step - 1)
-        if i1 >= 0 and ia >= 0 and oi[i1] and oi[ia]:
-            p = sign(bars.c[j] / bars.c[ja] - 1.0, 0.0)
-            st = flow_state(p, oi[ia], oi[i1], bars.cd[j + 1] - bars.cd[ja + 1], bars.cv[j + 1] - bars.cv[ja + 1])
-            now = {"t": T_last, "state": skey(st) if st else None, "oiChg": oi[i1] / oi[ia] - 1.0,
-                   "cvdImb": (bars.cd[j + 1] - bars.cd[ja + 1]) / max(1e-9, bars.cv[j + 1] - bars.cv[ja + 1]), "pChg": bars.c[j] / bars.c[ja] - 1.0,
-                   "name": STATES[st][0] if st else None, "action": ACTION[st] if st else None, "side": {1: "long", -1: "short"}.get(reaction(st)) if st else None}
-    return {"ready": True, "t": T_last, "next": T_last + step, "events": evs, "latest": [e for e in evs if e["t"] == T_last], "now": now}
+    days = days or {"1d": 60, "4h": 10, "1h": 3}
+    T1 = int(b1h.t[-1]) + HOUR
+    out = {"ready": True, "tfs": {}}
+    for tf in DIV_TFS:
+        step = TF_H[tf] * HOUR
+        T_last = T1 // step * step
+        evs = build_divergences(data, oi, T_last - days[tf] * DAY, T_last + 1, tf)
+        out["tfs"][tf] = {"t": T_last, "next": T_last + step, "events": evs, "latest": [e for e in evs if e["t"] == T_last]}
+    return out
 
 
-def idea(e: dict, symbol: str, price: float, validated: bool, rep_txt: str | None, lev: float = 10.0) -> dict | None:
-    """Idée du terminal (même format que l'ancien moteur : journal, quota, Telegram, graphique) pour un événement de la dernière clôture 4 heures."""
+def idea(e: dict, symbol: str, price: float, status: dict, lev: float = 10.0) -> dict | None:
+    """Idée du terminal (même format que l'ancien moteur : journal, quota, Telegram, graphique) pour une divergence de la dernière clôture."""
     import hashlib
     from . import signals as sg
     d = reaction(e["st"])
     if not d:
         return None
-    p = plan(e, d, "marché|3R")
+    p = plan(e, d, status.get("exit") or "marché|3R")
     if p is None:
         return None
     etype, entry, stop, tp, kind = p
     risk = abs(entry - stop)
-    side = "long" if d > 0 else "short"
-    buy = d > 0
-    conf = e.get("confirm", 0)
-    confirmed = conf >= CONFIRM_N
-    comps = [{"key": "flow", "label": "Lieu et flux (prix, intérêt ouvert, flux agressif)", "pts": 60.0, "max": 60, "note": STATES[e["st"]][0]},
-             {"key": "confirm", "label": "Confirmation (même signal dans les 24 h)", "pts": float(min(25, 15 * min(conf, 1) + 5 * max(0, conf - 1))), "max": 25,
-              "note": f"{conf} autre(s) signal(aux) dans le même sens en 24 h"},
-             {"key": "valid", "label": "Stratégie validée sur l'historique de la paire", "pts": 15.0 if validated else 0.0, "max": 15, "note": rep_txt or "pas de rapport"}]
+    side, buy, st, tf = ("long" if d > 0 else "short"), d > 0, e["st"], e["tf"]
+    lvlp = {"validé": 40.0, "prometteur": 25.0}.get(status["level"], 0.0)
+    comps = [{"key": "div", "label": "Divergence prix, intérêt ouvert, flux agressif", "pts": 45.0, "max": 45, "note": STATES[st][0]},
+             {"key": "tf", "label": "Unité de temps", "pts": {"1d": 15.0, "4h": 8.0, "1h": 0.0}[tf], "max": 15, "note": TF_WORD[tf]},
+             {"key": "valid", "label": "Ce que la mesure dit de cette unité de temps", "pts": lvlp, "max": 40, "note": status["text"]}]
     score = sum(c["pts"] for c in comps)
-    gates = []
-    if not confirmed:
-        gates.append("pas encore confirmée : il faut un deuxième signal dans le même sens en 24 heures (le premier signal d'une série perd de l'argent sur l'historique)")
-    if not validated:
-        gates.append(f"stratégie non validée sur l'historique de {symbol.replace('USDT', '')} : affichée pour information, jamais envoyée")
-    st = e["st"]
-    place = "une poche de liquidité" if e["place"] == "liq" else "un VWAP"
+    gates = [] if status["send"] else [f"divergence {TF_IN[tf]} : {status['level']}e sur l'historique (SOL, BTC, ETH) : affichée pour information, jamais envoyée"]
     lvl = sg.fmt_price(e["lvl"])
     pct = lambda a: (a / entry - 1.0) * 100.0
-    if e["place"] == "liq":
-        where = (f"La bougie 4 heures a pris la liquidité {'au-dessus' if st[0] > 0 else 'en dessous'} du {e['src']} ({lvl}). "
-                 f"Depuis ce {'plus haut' if st[0] > 0 else 'plus bas'} (il y a {e.get('ageH') or 0:.0f} h), l'intérêt ouvert a {'monté' if st[1] > 0 else 'baissé'} de "
-                 f"{abs(e['oiChg']) * 100:.1f} % et le cumul des achats agressifs moins les ventes agressives est {'plus haut' if st[2] > 0 else 'plus bas'} "
-                 f"({e['cvdImb'] * 100:+.1f} % du volume échangé).")
-    else:
-        where = (f"La bougie 4 heures a touché le {e['src']} ({lvl}) en arrivant par le {'bas' if st[0] > 0 else 'haut'}. Sur les 12 heures d'approche, "
-                 f"l'intérêt ouvert a {'monté' if st[1] > 0 else 'baissé'} de {abs(e['oiChg']) * 100:.1f} % et le cumul des achats agressifs moins les ventes agressives a {'monté' if st[2] > 0 else 'baissé'} "
-                 f"({e['cvdImb'] * 100:+.1f} % du volume échangé).")
-    action = [f"Entrée : au marché, vers {sg.fmt_price(entry)} (clôture de la bougie 4 heures du signal). Si le prix est déjà loin quand tu lis ce message, ne cours pas après.",
+    age = e.get("ageH") or 0
+    fr1 = lambda x: f"{x:.1f}".replace(".", ",")
+    where = (f"Divergence {TF_IN[tf]} : la {TF_BAR[tf]} a {'dépassé le dernier sommet' if st[0] > 0 else 'enfoncé le dernier creux'} ({lvl}, formé il y a "
+             + (f"{age / 24:.0f} jours" if age >= 48 else f"{age:.0f} heures") + f"). Depuis ce {'sommet' if st[0] > 0 else 'creux'}, l'intérêt ouvert a "
+             f"{'monté' if st[1] > 0 else 'baissé'} de {fr1(abs(e['oiChg']) * 100)} % et le cumul des achats agressifs moins les ventes agressives est "
+             f"{'plus haut' if st[2] > 0 else 'plus bas'} ({'+' if e['cvdImb'] > 0 else '−'}{fr1(abs(e['cvdImb']) * 100)} % du volume échangé).")
+    hold = HOLD[tf]
+    action = [f"Entrée : au marché, vers {sg.fmt_price(entry)} (clôture de la {TF_BAR[tf]} du signal). Si le prix est déjà loin quand tu lis ce message, ne cours pas après.",
               f"Stop : {sg.fmt_price(stop)} ({sg.fmt_pct(pct(stop), 2, True)}), au-delà de la bougie du signal.",
-              f"Objectif : {sg.fmt_price(tp)} ({sg.fmt_pct(pct(tp), 2, True)}), 3 fois le risque pris (la meilleure sortie sur l'historique).",
-              f"Durée : 72 heures au plus. Si ni le stop ni l'objectif ne sont touchés, sortie au marché (c'est la règle mesurée)."]
+              f"Objectif : {sg.fmt_price(tp)} ({sg.fmt_pct(pct(tp), 2, True)}), " + ("la prochaine poche de liquidité." if kind == "pool" else f"{kind[0]} fois le risque pris (la meilleure sortie sur l'historique pour cette unité de temps)."),
+              f"Durée : {hold // 24} jours au plus" if hold >= 48 else f"Durée : {hold} heures au plus"]
+    action[-1] += ". Si ni le stop ni l'objectif ne sont touchés, sortie au marché (c'est la règle mesurée)."
     why = [where, f"Combinaison : {words(st)} — {STATES[st][0]}. {STATES[st][1]}", f"Réaction : {ACTION[st]}",
-           f"Confirmation : {conf} autre(s) signal(aux) dans le même sens pendant les 24 heures précédentes" + (" : le flux se répète." if confirmed else " : pas encore confirmé.")]
-    ups, dns = [x for x in e["up"][:3]], [x for x in e["dn"][:3]]
-    liq = [f"  • Poches au-dessus : {', '.join(sg.fmt_price(x) for x in ups)}" if ups else "", f"  • Poches en dessous : {', '.join(sg.fmt_price(x) for x in dns)}" if dns else ""]
+           f"Mesure de cette unité de temps : {status['text']}"]
+    ups, dns = e["up"][:3], e["dn"][:3]
+    liq = [f"  • Sommets intacts au-dessus : {', '.join(sg.fmt_price(x) for x in ups)}" if ups else "", f"  • Creux intacts en dessous : {', '.join(sg.fmt_price(x) for x in dns)}" if dns else ""]
     liq = [x for x in liq if x]
     if liq:
-        why += ["Liquidités autour (plus hauts et plus bas où les ordres d'arrêt s'accumulent) :"] + liq
+        why += [f"Liquidités {TF_IN[tf]} (sommets et creux intacts, où les ordres d'arrêt s'accumulent) :"] + liq
     levl, levinfo = sg.leverage_lines({"side": side, "entry": entry, "stop": stop}, lev)
-    risks = ["Mesure honnête : sur SOL, la stratégie gagne sur la période de test ; sur le BTC et sur l'ETH (contrôle à l'aveugle), elle ne gagne pas. "
-             "L'avantage est donc fragile : petite taille de position, et le journal des idées dira la vérité."] + levl
+    risks = [f"Mesure honnête : en journalier, la règle gagne sur SOL, BTC et ETH sur la période de test, mais avec peu de trades (pas encore mieux que le hasard de façon nette) ; "
+             "en 4 heures, elle est à peu près nulle après frais ; en 1 heure, elle perd. Petite taille de position : le journal des idées dira la vérité."] + levl
     risks.append("Ce sont des statistiques passées, pas une garantie ni un conseil financier. Ne risque que ce que tu acceptes de perdre.")
-    head = f"{symbol} : {'ACHAT (position longue)' if buy else 'VENTE (position courte)'}"
-    desc = {"headline": head, "action": action, "why": why, "trend": [], "macro": [], "context": [], "news": [],
-            "probs": [rep_txt] if rep_txt else [], "risks": risks, "leverage": levinfo}
-    key = hashlib.md5(f"{symbol}{side}{e['place']}{skey(st)}{e['t']}".encode()).hexdigest()[:10]
-    return {"key": key, "symbol": symbol, "side": side, "kind": "flux", "place": e["place"], "state": skey(st), "stateName": STATES[st][0],
+    desc = {"headline": f"{symbol} : {'ACHAT (position longue)' if buy else 'VENTE (position courte)'} · divergence {TF_IN[tf]}", "action": action, "why": why, "trend": [],
+            "macro": [], "context": [], "news": [], "probs": [status["text"]], "risks": risks, "leverage": levinfo}
+    key = hashlib.md5(f"{symbol}{side}{tf}{skey(st)}{e['t']}".encode()).hexdigest()[:10]
+    return {"key": key, "symbol": symbol, "side": side, "kind": "divergence", "tf": tf, "place": "div", "state": skey(st), "stateName": STATES[st][0],
             "score": score, "grade": sg.grade(score), "entry": entry, "entryType": "marché", "stop": stop, "tp1": tp, "tp2": None,
             "rr1": round(abs(tp - entry) / risk, 2), "rr2": None, "atr": e["atr"], "atrPct": e["atr"] / entry * 100.0, "price": price, "distAtr": 0.0,
-            "zone": {"lo": min(entry, e["lvl"]), "hi": max(entry, e["lvl"])}, "zoneId": None, "validHours": TF_H[e["tf"]], "signalT": e["t"],
-            "tp1Kind": "3R", "tp2Kind": None, "align": None, "eligible": confirmed and validated, "hold": [], "gates": gates, "probs": None, "valid": None,
-            "st": {"S": 0.0, "n": 0, "items": []}, "comps": comps, "warn": [], "desc": desc, "confirm": conf, "level": e["lvl"], "levelName": e["src"],
-            "oiChg": e["oiChg"], "cvdImb": e["cvdImb"]}
+            "zone": {"lo": min(entry, e["lvl"]), "hi": max(entry, e["lvl"])}, "zoneId": None, "validHours": TF_H[tf], "signalT": e["t"],
+            "tp1Kind": kind, "tp2Kind": None, "align": None, "eligible": status["send"], "hold": [], "gates": gates, "probs": None, "valid": None,
+            "st": {"S": 0.0, "n": 0, "items": []}, "comps": comps, "warn": [], "desc": desc, "level": e["lvl"], "levelName": e["src"],
+            "oiChg": e["oiChg"], "cvdImb": e["cvdImb"], "status": status["level"]}
