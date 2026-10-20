@@ -104,6 +104,23 @@ class ApiTests(unittest.TestCase):
         return self.req("POST", path, body, **kw)
 
     # ---------- lecture ----------
+    def test_backtest_monte_carlo_and_sweep(self):
+        st, r = self.get("/api/backtest?minScore=35&days=3&evalFee=100&horizon=40")
+        self.assertEqual(st, 200)
+        self.assertTrue(r["ok"])
+        self.assertIn("passedOn", r["rules"])
+        if r["trades"]:
+            mc = r["monteCarlo"]
+            self.assertEqual(mc["horizon"], 40)
+            self.assertAlmostEqual(mc["pPass"] + mc["pBreach"] + mc["pTimeout"], 1.0, places=2)
+        st, w = self.get("/api/backtest/sweep?days=3")
+        self.assertEqual(st, 200)
+        self.assertTrue(w["ok"])
+        self.assertEqual(len(w["grid"]), 10)
+        for bad in ("minScore=nan", "slippage=inf", "risk=abc"):
+            st, _ = self.get("/api/backtest?" + bad)
+            self.assertEqual(st, 400, bad)
+
     def test_health_config_state(self):
         st, h = self.get("/api/health")
         self.assertEqual((st, h["ok"]), (200, True))

@@ -140,11 +140,12 @@ class BarMarket:
 class BtParams:
     tf: str = "1m"                   # unité de temps des signaux
     min_score: float = 40.0          # score minimal pour prendre un trade
-    slippage_ticks: float = 1.0      # glissement à l'entrée ET à la sortie (ticks)
+    slippage_ticks: float = 1.0      # glissement à l'entrée ET à la sortie au marché (ticks)
     max_hold_min: int = 20           # stop de temps : on sort après N minutes
     risk_usd: float = 100.0          # risque visé par trade (sert au dimensionnement)
     one_per_session: bool = False    # au plus un trade par séance régulière (discipline)
     target_index: int = 0            # objectif visé (0 = le premier)
+    limit_through_ticks: int = 1     # un objectif (ordre limite) n'est rempli que si le prix le DÉPASSE de N ticks (file d'attente) ; 0 = toucher suffit
     signal_params: signals.Params = field(default_factory=lambda: signals.Params())
 
 
@@ -156,25 +157,33 @@ def _size(stop_pts, inst, profile, risk_usd):
     return max(0, min(n, profile.max_minis))
 
 
-def run(base_bars, inst, profile: risk.PropProfile, params: BtParams = None, max_bars: int = 20000) -> dict:
-    """Rejoue `base_bars` (barres de base, footprint inclus) et renvoie trades, P&L par jour, statistiques et la conformité aux règles Lucid."""
-    params = params or BtParams()
-    if params.tf not in TF_MS:
-        raise ValueError(f"unité de temps inconnue : {params.tf}")
+class Tape:
+    """Décisions de setup pré-calculées pour CHAQUE barre de signal (à sa clôture, sans regarder le futur), indépendantes du score minimal, du
+    glissement, du stop de temps et du risque. Le coût (profil, niveaux, setups) est payé une fois ; `simulate` rejoue ensuite autant de réglages
+    qu'on veut en quelques millisecondes (test de robustesse)."""
+    def __init__(self, tf, step, bars, rows):
+        self.tf = tf
+        self.step = step
+        self.bars = bars            # barres de signal
+        self.rows = rows            # par barre : (now, jour, fermeture forcée, séance commencée, bloqué, meilleur setup ou None)
+
+    @property
+    def days(self):
+        return sorted({r[1] for r in self.rows})
+
+
+def prepare(base_bars, inst, tf="1m", signal_params: signals.Params = None, max_bars: int = 20000):
+    """Calcule la `Tape` d'un historique. None s'il y a trop peu de barres."""
+    if tf not in TF_MS:
+        raise ValueError(f"unité de temps inconnue : {tf}")
     base = list(base_bars)[-max_bars:]
     if len(base) < 30:
-        return {"ok": False, "msg": "pas assez de barres pour un backtest", "trades": [], "days": []}
-    step = TF_MS[params.tf]
-    sig_bars = base if step == TF_MS["1m"] and params.tf == "1m" else resample(base, step, with_fp=True)
+        return None
+    step = TF_MS[tf]
+    sig_bars = base if tf == "1m" else resample(base, step, with_fp=True)
     mk = BarMarket(inst, base)
-    sp = params.signal_params
-    sp = signals.Params(**{**sp.__dict__, "min_score": params.min_score})
+    sp = signals.Params(**{**(signal_params or signals.Params()).__dict__, "min_score": 0.0})   # on garde tout : le seuil est appliqué ensuite
     stats_cache = {}                                # partagé : évite de recalculer le profil de la veille à chaque barre
-
-    trades = []
-    pos = None                      # position ouverte : dict
-    traded_this_session = set()
-    tick = inst.tick
     window = max(sp.look + 20, 140)                 # on ne passe aux signaux que la fin : évite un coût quadratique
 
     cvd_cache, _acc, _key = [], 0.0, None           # CVD cumulé par journée Globex, construit incrémentalement (O(1) par barre)
@@ -185,109 +194,187 @@ def run(base_bars, inst, profile: risk.PropProfile, params: BtParams = None, max
         _acc += b.bv - b.sv
         cvd_cache.append(_acc)
 
-    for i in range(len(sig_bars) - 1):
-        bar = sig_bars[i]
-        nxt = sig_bars[i + 1]
+    rows = []
+    for i, bar in enumerate(sig_bars):
         now = bar.t + step                              # décision à la CLÔTURE de la barre i
         mk.advance(now, bar.c)
         day = clock.trading_day(now)
         ff = clock.forced_flat(day)
-        ph = clock.phase(now)
-        rth_a = clock.window(day, "rth")[0]
-        rth_started = now >= rth_a
-
-        # --- gérer une position ouverte sur la barre i+1 (déjà connue : on la vit tick-max/tick-min) ---
-        if pos:
-            exit_p, reason = None, None
-            if pos["side"] == "long":
-                if nxt.l <= pos["stop"]:
-                    exit_p, reason = pos["stop"], "stop"
-                elif nxt.h >= pos["target"]:
-                    exit_p, reason = pos["target"], "objectif"
-            else:
-                if nxt.h >= pos["stop"]:
-                    exit_p, reason = pos["stop"], "stop"
-                elif nxt.l <= pos["target"]:
-                    exit_p, reason = pos["target"], "objectif"
-            if exit_p is None and nxt.t + step >= ff > pos["t_entry"]:      # fermeture forcée 16 h 45
-                exit_p, reason = nxt.c, "16h45"
-            if exit_p is None and (nxt.t - pos["t_entry"]) >= params.max_hold_min * 60_000:
-                exit_p, reason = nxt.c, "temps"
-            if exit_p is not None:
-                sgn = 1 if pos["side"] == "long" else -1
-                # objectif = ordre limite posé au prix : pas de glissement. Stop / 16h45 / temps = sortie au marché, glissement défavorable.
-                fill = exit_p if reason == "objectif" else exit_p - sgn * params.slippage_ticks * tick
-                gross = (fill - pos["entry"]) * sgn * inst.point_value * pos["qty"]
-                fee = profile.fee_rt.get(inst.root, 0.0) * pos["qty"]
-                hold_s = (nxt.t - pos["t_entry"]) / 1000.0
-                trades.append({**pos, "exit": round(fill, 2), "reason": reason, "gross": round(gross, 2), "fee": round(fee, 2),
-                               "net": round(gross - fee, 2), "t_exit": nxt.t, "holdS": round(hold_s, 1),
-                               "day": clock.trading_day(pos["t_entry"])})
-                pos = None
-
-        if pos:                                         # toujours en position : pas de nouvelle entrée
-            continue
-
-        # --- chercher un setup (uniquement si à plat) ---
+        rth_started = now >= clock.window(day, "rth")[0]
+        top, blocked = None, False
         lv = levels_build(mk, zone_pts=6.0, stats_cache=stats_cache)
-        if lv["price"] is None:
+        if lv["price"] is not None:
+            near = levels_nearest(lv["levels"], lv["price"], 3)
+            lad = mk.ladder(day, "rth") if rth_started else mk.ladder(day, "gx")
+            prof = vp.stats(lad, min_row_ticks=4, cache=stats_cache) if lad is not None and not lad.empty() else None
+            lo = max(0, i - window + 1)
+            res = signals.evaluate(sig_bars[lo:i + 1], cvd_cache[lo:i + 1], prof, near, lv["zones"], inst, now, ff, clock.phase(now),
+                                   rth_started, acct=None, params=sp)
+            blocked = bool(res["blocked"])
+            if res["setups"]:
+                s = res["setups"][0]
+                top = {"side": s["side"], "kind": s["kind"], "score": s["score"], "stop": s["stop"], "targets": list(s["targets"])}
+        rows.append((now, day, ff, rth_started, blocked, top))
+    return Tape(tf, step, sig_bars, rows)
+
+
+def _exit_on(bar, pos, tick, through):
+    """Sortie éventuelle d'une position sur `bar` : (prix, raison) ou (None, None). Stop d'abord si les deux sont touchés (prudent). Un stop
+    sauté par un écart d'ouverture est exécuté à l'ouverture (plus mauvais que le stop). L'objectif doit être dépassé de `through` ticks."""
+    if pos["side"] == "long":
+        if bar.l <= pos["stop"]:
+            return (min(pos["stop"], bar.o), "stop")
+        if bar.h >= pos["target"] + through * tick:
+            return (pos["target"], "objectif")
+    else:
+        if bar.h >= pos["stop"]:
+            return (max(pos["stop"], bar.o), "stop")
+        if bar.l <= pos["target"] - through * tick:
+            return (pos["target"], "objectif")
+    return (None, None)
+
+
+def simulate(tape: Tape, inst, profile: risk.PropProfile, params: BtParams = None) -> dict:
+    """Rejoue la `Tape` avec des réglages donnés. Chaque barre : 1) on gère la position ouverte SUR cette barre (y compris la barre d'entrée :
+    l'entrée se fait à son ouverture, son plus haut / plus bas viennent après) ; 2) à la clôture, si à plat, on décide ; entrée à l'ouverture
+    de la barre suivante."""
+    params = params or BtParams()
+    sig_bars, rows, step = tape.bars, tape.rows, tape.step
+    sp = params.signal_params
+    tick = inst.tick
+    trades, pos, traded_this_session = [], None, set()
+
+    def close(bar, exit_p, reason):
+        sgn = 1 if pos["side"] == "long" else -1
+        # objectif = ordre limite posé au prix : pas de glissement. Stop / 16h45 / temps / fin = sortie au marché, glissement défavorable.
+        fill = exit_p if reason == "objectif" else exit_p - sgn * params.slippage_ticks * tick
+        gross = (fill - pos["entry"]) * sgn * inst.point_value * pos["qty"]
+        fee = profile.fee_rt.get(inst.root, 0.0) * pos["qty"]
+        same = bar.t == pos["t_entry"]                  # sortie dans la barre d'entrée : durée inconnue (0 à 1 barre)
+        trades.append({**pos, "exit": round(fill, 2), "reason": reason, "gross": round(gross, 2), "fee": round(fee, 2),
+                       "net": round(gross - fee, 2), "t_exit": bar.t + step,          # connu au plus tard à la clôture de la barre
+                       "holdS": round((bar.t - pos["t_entry"]) / 1000.0, 1), "sameBar": same, "day": clock.trading_day(pos["t_entry"])})
+
+    for i, bar in enumerate(sig_bars):
+        now, day, ff, rth_started, blocked, top = rows[i]
+        if pos:
+            exit_p, reason = _exit_on(bar, pos, tick, params.limit_through_ticks)
+            if exit_p is None and now >= ff > pos["t_entry"]:                        # fermeture forcée 16 h 45
+                exit_p, reason = bar.c, "16h45"
+            if exit_p is None and (now - pos["t_entry"]) >= params.max_hold_min * 60_000:
+                exit_p, reason = bar.c, "temps"
+            if exit_p is not None:
+                close(bar, exit_p, reason)
+                pos = None
+        if pos or i + 1 >= len(sig_bars):
             continue
-        near = levels_nearest(lv["levels"], lv["price"], 3)
-        lad = mk.ladder(day, "rth") if rth_started else mk.ladder(day, "gx")
-        prof = vp.stats(lad, min_row_ticks=4, cache=stats_cache) if lad is not None and not lad.empty() else None
-        lo = max(0, i - window + 1)
-        res = signals.evaluate(sig_bars[lo:i + 1], cvd_cache[lo:i + 1], prof, near, lv["zones"], inst, now, ff, ph, rth_started, acct=None, params=sp)
-        if res["blocked"] or not res["setups"]:
+        # --- décision à la clôture (uniquement si à plat) ---
+        if blocked or top is None or top["score"] < params.min_score:
             continue
         if params.one_per_session and rth_started and (day in traded_this_session):
             continue
-        s = res["setups"][0]
         if 0 <= (ff - now) / 60_000 <= sp.flat_guard_min:
             continue
-        # entrée à l'ouverture de i+1, avec glissement défavorable
-        sgn = 1 if s["side"] == "long" else -1
+        nxt = sig_bars[i + 1]
+        if clock.trading_day(nxt.t) != day or nxt.t - bar.t > 3 * step:     # trou de données / changement de journée : pas d'entrée à l'aveugle
+            continue
+        sgn = 1 if top["side"] == "long" else -1
         entry = nxt.o + sgn * params.slippage_ticks * tick
-        stop = s["stop"]
+        stop = top["stop"]
+        if (stop - entry) * sgn >= 0:                   # l'ouverture a déjà franchi le stop : setup invalidé
+            continue
         stop_pts = abs(entry - stop)
         if stop_pts < tick:
             continue
         qty = _size(stop_pts, inst, profile, params.risk_usd)
         if qty <= 0:
             continue
-        ti = min(params.target_index, len(s["targets"]) - 1)
-        pos = {"side": s["side"], "kind": s["kind"], "entry": round(entry, 2), "stop": round(stop, 2),
-               "target": s["targets"][ti], "qty": qty, "score": s["score"], "t_entry": nxt.t}
+        ti = min(params.target_index, len(top["targets"]) - 1)
+        target = top["targets"][ti]
+        if (target - entry) * sgn <= 0:                 # l'ouverture a déjà dépassé l'objectif : plus rien à gagner
+            continue
+        pos = {"side": top["side"], "kind": top["kind"], "entry": round(entry, 2), "stop": round(stop, 2),
+               "target": target, "qty": qty, "score": top["score"], "t_entry": nxt.t}
         traded_this_session.add(day)
 
-    return _summary(trades, inst, profile)
+    if pos:                                             # fin de l'historique : on clôture à la dernière clôture connue
+        close(sig_bars[-1], sig_bars[-1].c, "fin")
+    return _summary(trades, inst, profile, len(tape.days))
 
 
-def _summary(trades, inst, profile) -> dict:
-    by_day = {}
-    for t in trades:
-        by_day[t["day"]] = round(by_day.get(t["day"], 0.0) + t["net"], 2)
+def run(base_bars, inst, profile: risk.PropProfile, params: BtParams = None, max_bars: int = 20000) -> dict:
+    """Rejoue `base_bars` (barres de base, footprint inclus) et renvoie trades, P&L par jour, statistiques et la conformité aux règles Lucid."""
+    params = params or BtParams()
+    tape = prepare(base_bars, inst, params.tf, params.signal_params, max_bars)
+    if tape is None:
+        return {"ok": False, "msg": "pas assez de barres pour un backtest", "trades": [], "days": []}
+    return simulate(tape, inst, profile, params)
+
+
+def sweep(tape: Tape, inst, profile: risk.PropProfile, base: BtParams = None, scores=(30, 40, 50, 60, 70), slippages=(1, 2)) -> dict:
+    """Test de robustesse : rejoue la même `Tape` sur une grille score minimal × glissement, et sépare chaque résultat en DÉBUT d'historique
+    (« in-sample », ~2/3 des jours) et FIN (« out-of-sample », le reste). On choisit le meilleur réglage sur le début seulement, puis on regarde
+    ce qu'il donne sur la fin : s'il s'effondre, le « meilleur » réglage n'était que de la chance (sur-optimisation)."""
+    base = base or BtParams()
+    days = tape.days
+    if len(days) < 3:
+        return {"ok": False, "msg": "il faut au moins 3 journées pour séparer début et fin d'historique"}
+    cut = days[max(1, (2 * len(days)) // 3) - 1]         # dernier jour de la partie « début »
+    grid = []
+    for sl in slippages:
+        for sc in scores:
+            p = BtParams(**{**base.__dict__, "min_score": float(sc), "slippage_ticks": float(sl)})
+            r = simulate(tape, inst, profile, p)
+            ins = [t for t in r["trades"] if t["day"] <= cut]
+            oos = [t for t in r["trades"] if t["day"] > cut]
+            grid.append({"minScore": sc, "slippage": sl, "nTrades": r["nTrades"], "net": r["net"], "profitFactor": r["profitFactor"],
+                         "winRate": r["winRate"], "evalPassed": r["rules"]["evalPassed"], "floorBreach": bool(r["rules"]["floorBreach"]),
+                         "inNet": round(sum(t["net"] for t in ins), 2), "inN": len(ins),
+                         "outNet": round(sum(t["net"] for t in oos), 2), "outN": len(oos)})
+    ref = [g for g in grid if g["slippage"] == min(slippages)]
+    best = max(ref, key=lambda g: (g["inNet"], -g["minScore"]))
+    pos_out = sum(1 for g in grid if g["outNet"] > 0)
+    return {"ok": True, "grid": grid, "cut": cut, "inDays": len([d for d in days if d <= cut]), "outDays": len([d for d in days if d > cut]),
+            "best": best, "robust": best["inNet"] > 0 and best["outNet"] > 0, "positiveOut": pos_out, "total": len(grid)}
+
+
+def _summary(trades, inst, profile, n_days: int | None = None) -> dict:
+    by_day, low_day, run_day = {}, {}, {}
+    for t in sorted(trades, key=lambda x: x["t_exit"]):
+        d = t["day"]
+        by_day[d] = round(by_day.get(d, 0.0) + t["net"], 2)
+        run_day[d] = run_day.get(d, 0.0) + t["net"]
+        low_day[d] = round(min(low_day.get(d, 0.0), run_day[d]), 2)        # creux réalisé de la journée (≤ 0)
     days = sorted(by_day.items())
     day_pnls = [v for _, v in days]
 
-    # conformité aux règles d'évaluation
-    closed = [(d, v) for d, v in days]
-    floor_breach = None
+    # conformité aux règles d'évaluation, jour après jour (comme le vit le compte) : plancher touché en cours de journée si le creux réalisé
+    # l'atteint ; évaluation validée le premier jour où cible ET consistance sont réunies, avant toute violation
+    floor_breach, passed_on = None, None
     bal = profile.start_balance
     led_floor = profile.start_balance - profile.max_drawdown
     peak = profile.start_balance
+    lock = risk.locked_level(profile)
+    seen = []
     for d, v in days:
+        if floor_breach is None and bal + low_day.get(d, 0.0) <= led_floor + 1e-9:
+            floor_breach = {"day": d, "balance": round(bal + low_day[d], 2), "floor": led_floor, "intraday": True}
         bal = round(bal + v, 2)
+        seen.append(v)
         if bal <= led_floor + 1e-9 and floor_breach is None:
-            floor_breach = {"day": d, "balance": bal, "floor": led_floor}
-        peak = max(peak, bal)
-        nf = peak - profile.max_drawdown
-        lock = risk.locked_level(profile)
-        if lock is not None:
-            nf = min(nf, lock)
-        led_floor = max(led_floor, nf)
+            floor_breach = {"day": d, "balance": bal, "floor": led_floor, "intraday": False}
+        if floor_breach is None and passed_on is None and bal - profile.start_balance >= profile.profit_target - 1e-6 \
+                and risk.consistency(seen, profile)["ok"]:
+            passed_on = d
+        if profile.dd_mode == "eod_trailing":
+            peak = max(peak, bal)
+            nf = peak - profile.max_drawdown
+            if lock is not None:
+                nf = min(nf, lock)
+            led_floor = max(led_floor, nf)
     cons = risk.consistency(day_pnls, profile)
     profit = round(bal - profile.start_balance, 2)
-    eval_passed = floor_breach is None and profit >= profile.profit_target - 1e-6 and cons["ok"]
+    eval_passed = passed_on is not None
 
     wins = [t for t in trades if t["net"] > 0]
     losses = [t for t in trades if t["net"] <= 0]
@@ -312,16 +399,18 @@ def _summary(trades, inst, profile) -> dict:
 
     return {
         "ok": True, "trades": trades, "nTrades": len(trades),
-        "days": [{"day": d, "pnl": v} for d, v in days], "equity": equity,
+        "days": [{"day": d, "pnl": v, "low": low_day.get(d, 0.0)} for d, v in days], "equity": equity,
+        "nDays": n_days if n_days is not None else len(days),
         "net": round(sum(t["net"] for t in trades), 2), "fees": round(sum(t["fee"] for t in trades), 2),
         "winRate": round(len(wins) / len(trades), 3) if trades else 0.0,
         "avgWin": round(gw / len(wins), 2) if wins else 0.0, "avgLoss": round(-gl / len(losses), 2) if losses else 0.0,
         "expectancy": round(sum(t["net"] for t in trades) / len(trades), 2) if trades else 0.0,
         "profitFactor": round(gw / gl, 2) if gl > 0 else None,
         "byKind": by_kind, "byReason": _by_reason(trades),
-        "microShare": round(short_wins / gw, 3) if gw > 0 else None, "microLimit": risk.MICRO_PROFIT_SHARE,
+        # barres d'1 min : un trade sorti DANS sa barre d'entrée a duré entre 0 et 60 s, on le compte comme micro -> c'est un MAJORANT
+        "microShare": round(short_wins / gw, 3) if gw > 0 else None, "microLimit": risk.MICRO_PROFIT_SHARE, "microUpperBound": True,
         "rules": {
-            "profit": profit, "target": profile.profit_target, "evalPassed": eval_passed,
+            "profit": profit, "target": profile.profit_target, "evalPassed": eval_passed, "passedOn": passed_on,
             "floorBreach": floor_breach, "consistency": {"ok": cons["ok"], "best": cons["best"], "ratio": cons["ratio"], "needed": cons["needed"]},
             "daysTraded": len([v for v in day_pnls if v != 0]), "finalBalance": round(bal, 2),
         },

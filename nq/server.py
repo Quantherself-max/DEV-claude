@@ -1,6 +1,7 @@
 """Serveur local (bibliotheque standard uniquement) : API JSON et fichiers statiques de web/.
 Securite : n'ecoute que sur 127.0.0.1, refuse les en-tetes Host etrangers (DNS rebinding) et exige un jeton de session sur toutes les requetes qui
 modifient quelque chose (un autre site ne peut pas le lire : pas d'en-tete CORS)."""
+import math
 import json
 import logging
 import mimetypes
@@ -50,9 +51,12 @@ def _num(q: dict, key: str, default=None, cast=float):
     if v in (None, ""):
         return default
     try:
-        return cast(v)
-    except ValueError:
+        x = cast(v)
+    except (ValueError, OverflowError):
         raise ApiError(400, f"paramètre « {key} » invalide : {v}") from None
+    if isinstance(x, float) and not math.isfinite(x):
+        raise ApiError(400, f"paramètre « {key} » invalide : {v}")
+    return x
 
 
 def route_get(app: App, path: str, q: dict):
@@ -87,7 +91,14 @@ def route_get(app: App, path: str, q: dict):
     if path == "/api/backtest":
         try:
             return s.backtest(one("tf", "1m"), _num(q, "minScore", 40.0), _num(q, "slippage", 1.0), _num(q, "maxHold", 20, int),
-                              _num(q, "risk", 100.0), str(one("onePerSession", "")).lower() in ("1", "true", "on"), _num(q, "days", None, int))
+                              _num(q, "risk", 100.0), str(one("onePerSession", "")).lower() in ("1", "true", "on"), _num(q, "days", None, int),
+                              _num(q, "evalFee", None), _num(q, "horizon", 60, int))
+        except ValueError as e:
+            raise ApiError(400, str(e)) from None
+    if path == "/api/backtest/sweep":
+        try:
+            return s.backtest_sweep(one("tf", "1m"), _num(q, "maxHold", 20, int), _num(q, "risk", 100.0),
+                                    str(one("onePerSession", "")).lower() in ("1", "true", "on"), _num(q, "days", None, int))
         except ValueError as e:
             raise ApiError(400, str(e)) from None
     if path == "/api/context":

@@ -2,7 +2,7 @@
 // Les formulaires sont construits UNE fois (sinon un rafraichissement effacerait ce que tu es en train de taper) ; seules les zones dynamiques sont redessinees.
 const Panels = (() => {
   'use strict';
-  const {fmt, sign, usd, susd, pct, esc, cls, $, $$, api, toast, debounce, parseNum} = U;
+  const {fmt, sign, usd, susd, pct, esc, cls, $, $$, api, toast, debounce, parseNum, store} = U;
   let cb = {};
   let lastField = 'entry';
   let showRounds = false;
@@ -385,8 +385,26 @@ const Panels = (() => {
   const TAG_FR = {divergence: 'Divergence CVD', absorption: 'Absorption', stack: 'Pile de déséquilibres', va_edge: 'Bord de zone de valeur',
     vwap_band: 'Bande VWAP', zone: 'Zone de confluence', ib_break: 'Cassure IB', cvd_trend: 'Flux cumulé', phase: 'Phase'};
 
+  function buildSetups() {
+    const on = k => store.get(k, k === 'setupLines');
+    $('#tab-setups').innerHTML = `<div class="card"><h2>Alertes <small>même quand l'onglet est fermé</small></h2>
+      <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="optSetupLines" style="width:auto"${on('setupLines') ? ' checked' : ''}> Tracer le meilleur setup sur le graphique (entrée, stop, objectifs)</label>
+      <label class="small" style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="optAlerts" style="width:auto"${on('alerts') ? ' checked' : ''}> Son + notification quand un setup atteint le score
+        <input id="alertMin" inputmode="decimal" style="width:52px" value="${esc(String(store.get('alertMin', 55)))}"></label>
+      <div class="small muted" style="margin-top:4px">Une alerte par setup nouveau (sens, type, entrée), au plus une par minute et par sens. Jamais pendant un blocage (plancher, 16 h 45).</div></div>
+      <div id="setupOut"></div>`;
+    const push = () => { if (cb.onSetupOpts) cb.onSetupOpts(); };
+    $('#optSetupLines').onchange = e => { store.set('setupLines', e.target.checked); push(); };
+    $('#optAlerts').onchange = e => {
+      store.set('alerts', e.target.checked);
+      if (e.target.checked && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+      push();
+    };
+    $('#alertMin').onchange = e => { const v = parseNum(e.target.value); store.set('alertMin', isNaN(v) ? 55 : Math.max(0, Math.min(100, v))); e.target.value = store.get('alertMin', 55); push(); };
+  }
+
   function setups(d) {
-    const host = $('#tab-setups');
+    const host = $('#setupOut');
     if (!d || !d.ready) {
       host.innerHTML = `<div class="card muted">${esc(d && d.blocked && d.blocked[0] ? d.blocked[0] : 'En attente de barres suffisantes…')}</div>`;
       return;
@@ -423,7 +441,7 @@ const Panels = (() => {
         : '<div class="muted">Rien de notable.</div>')
       + (d.ruleNotes && d.ruleNotes.length ? d.ruleNotes.map(n => `<div class="small">${esc(n)}</div>`).join('') : '') + '</div>';
     host.innerHTML = html;
-    $$('#tab-setups [data-setup]').forEach(b => b.onclick = () => {
+    $$('#setupOut [data-setup]').forEach(b => b.onclick = () => {
       try { const s = JSON.parse(b.dataset.setup); fillPlan(s.side, s.entry, s.stop, s.targets); } catch (e) { /* ignore */ }
     });
   }
@@ -453,35 +471,103 @@ const Panels = (() => {
         <label>Stop de temps (min)<input name="maxHold" inputmode="decimal" value="20"></label>
         <label>Risque par trade ($)<input name="risk" inputmode="decimal" value="100"></label>
         <label>Jours (vide = tous)<input name="days" inputmode="decimal" placeholder="tous"></label>
+        <label>Prix de l'éval. ($, option)<input name="evalFee" inputmode="decimal" placeholder="ex. 100"></label>
+        <label>Horizon Monte Carlo (jours)<input name="horizon" inputmode="decimal" value="60"></label>
         <label class="wide" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="one" style="width:auto"> Au plus 1 trade par séance régulière</label>
-        <div class="row" style="grid-column:1/3"><button type="button" id="btRun" class="primary">Lancer le backtest</button></div>
+        <div class="row" style="grid-column:1/3"><button type="button" id="btRun" class="primary">Lancer le backtest</button>
+          <button type="button" id="btSweep" title="Rejoue une grille de réglages et compare début / fin d'historique">Robustesse</button>
+          <button type="button" id="btCsv" disabled title="Télécharger la liste des trades">Exporter CSV</button></div>
       </form>
       <div class="small" style="margin-top:6px">On rejoue les setups barre par barre, sans regarder le futur (décision à la clôture, entrée à l'ouverture suivante), avec frais et glissement. Puis le résultat passe dans les règles Lucid.</div>
       <div id="btErr" class="err"></div></div>
       <div id="btOut"></div>`;
     const f = $('#btForm');
     f.tf.innerHTML = (cb.tfs() || ['1m']).map(t => `<option${t === '1m' ? ' selected' : ''}>${t}</option>`).join('');
+    const num = (v, d) => { const x = parseNum(v); return isNaN(x) ? d : x; };
+    const query = () => {
+      const q = new URLSearchParams({tf: f.tf.value, minScore: num(f.minScore.value, 40), slippage: Math.max(0, num(f.slippage.value, 1)),
+        maxHold: Math.max(1, num(f.maxHold.value, 20)), risk: Math.max(1, num(f.risk.value, 100)), onePerSession: f.one.checked ? '1' : '0',
+        horizon: Math.max(5, Math.min(250, Math.round(num(f.horizon.value, 60))))});
+      const dv = parseNum(f.days.value); if (!isNaN(dv) && dv > 0) q.set('days', Math.round(dv));
+      const fee = parseNum(f.evalFee.value); if (!isNaN(fee) && fee > 0) q.set('evalFee', fee);
+      return q;
+    };
+    const busy = on => { $('#btRun').disabled = on; $('#btSweep').disabled = on; };
     $('#btRun').onclick = async () => {
       $('#btErr').textContent = '';
-      const q = new URLSearchParams({tf: f.tf.value, minScore: parseNum(f.minScore.value) || 40, slippage: parseNum(f.slippage.value) || 0,
-        maxHold: parseNum(f.maxHold.value) || 20, risk: parseNum(f.risk.value) || 100, onePerSession: f.one.checked ? '1' : '0'});
-      const dv = parseNum(f.days.value); if (!isNaN(dv) && dv > 0) q.set('days', Math.round(dv));
-      $('#btOut').innerHTML = '<div class="card muted">Backtest en cours… (quelques secondes selon le nombre de jours)</div>';
-      $('#btRun').disabled = true;
-      try { backtestResult(await api('/api/backtest?' + q)); }
+      $('#btOut').innerHTML = '<div class="card muted">Backtest en cours… (quelques secondes la première fois, instantané ensuite tant que l\'historique ne change pas)</div>';
+      busy(true);
+      try { backtestResult(await api('/api/backtest?' + query())); }
       catch (err) { $('#btErr').textContent = err.message; $('#btOut').innerHTML = ''; }
-      finally { $('#btRun').disabled = false; }
+      finally { busy(false); }
+    };
+    $('#btSweep').onclick = async () => {
+      $('#btErr').textContent = '';
+      $('#btOut').innerHTML = '<div class="card muted">Test de robustesse en cours…</div>';
+      busy(true);
+      try { sweepResult(await api('/api/backtest/sweep?' + query())); }
+      catch (err) { $('#btErr').textContent = err.message; $('#btOut').innerHTML = ''; }
+      finally { busy(false); }
+    };
+    $('#btCsv').onclick = () => {
+      if (!lastBt || !lastBt.trades || !lastBt.trades.length) return;
+      const cols = ['day', 'side', 'kind', 'score', 't_entry', 'entry', 'stop', 'target', 'qty', 't_exit', 'exit', 'reason', 'gross', 'fee', 'net', 'holdS', 'sameBar'];
+      const iso = ms => new Date(ms).toISOString();
+      const lines = [cols.join(',')].concat(lastBt.trades.map(t => cols.map(c => (c === 't_entry' || c === 't_exit') ? iso(t[c]) : (t[c] == null ? '' : String(t[c]))).join(',')));
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([lines.join('\n') + '\n'], {type: 'text/csv'}));
+      a.download = `backtest-nq-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
     };
   }
 
+  let lastBt = null;
+
+  function sweepResult(r) {
+    if (!r || !r.ok) { $('#btOut').innerHTML = `<div class="card muted">${esc(r && r.msg ? r.msg : 'Pas de résultat.')}</div>`; return; }
+    const b = r.best;
+    let html = `<div class="card"><h2>Robustesse <span class="badge ${r.robust ? 'ok' : 'bad'}">${r.robust ? 'TIENT HORS ÉCHANTILLON' : 'NE TIENT PAS'}</span></h2>`
+      + `<div class="small">Début d'historique : ${r.inDays} j (jusqu'au ${esc(r.cut)}) · fin : ${r.outDays} j. On choisit le meilleur score minimal sur le DÉBUT seulement, puis on regarde la FIN, jamais vue au moment du choix.</div>`
+      + kv('Meilleur score sur le début', `${b.minScore} <small>${susd(b.inNet)} sur ${b.inN} trade(s)</small>`, cls(b.inNet))
+      + kv('… le même sur la fin', `${susd(b.outNet)} <small>sur ${b.outN} trade(s)</small>`, cls(b.outNet))
+      + kv('Réglages positifs sur la fin', `${r.positiveOut} / ${r.total}`, r.positiveOut * 2 >= r.total ? 'pos' : 'neg')
+      + `<div class="small" style="margin-top:6px">${r.robust ? 'Le réglage choisi reste gagnant sur des jours qu\'il n\'a pas vus : bon signe (pas une preuve).' : 'Le « meilleur » réglage ne se confirme pas sur la fin : c\'était sans doute de la chance. Ne pas sur-optimiser ; il faut plus de journées.'}</div></div>`;
+    html += `<div class="card"><h2>Grille <small>score minimal × glissement</small></h2><table><tr><th>Score</th><th>Gliss.</th><th>N</th><th>Début</th><th>Fin</th><th>PF</th><th>Éval.</th></tr>`
+      + r.grid.map(g => `<tr${g === b || (g.minScore === b.minScore && g.slippage === b.slippage) ? ' style="outline:1px solid var(--acc)"' : ''}><td>${g.minScore}</td><td>${g.slippage}</td><td>${g.nTrades}</td>`
+        + `<td class="${cls(g.inNet)}">${susd(g.inNet)}</td><td class="${cls(g.outNet)}">${susd(g.outNet)}</td><td>${g.profitFactor == null ? '—' : fmt(g.profitFactor, 2)}</td>`
+        + `<td>${g.floorBreach ? '<b class="neg">plancher</b>' : g.evalPassed ? '<b class="pos">✓</b>' : '—'}</td></tr>`).join('') + '</table>'
+      + '<div class="small" style="margin-top:6px">Glissement 2 ticks = scénario pessimiste. Une stratégie qui ne survit qu\'à 1 tick est fragile en temps réel.</div></div>';
+    $('#btOut').innerHTML = html;
+  }
+
+  function monteCarlo(mc) {
+    if (!mc || !mc.ok) return '';
+    const d = mc.daysToPass;
+    const bar = (p, c) => `<span style="display:inline-block;height:8px;width:${Math.round(p * 100)}%;background:var(--${c})"></span>`;
+    return `<div class="card"><h2>Probabilité de valider l'éval. <small>Monte Carlo · ${mc.paths} évaluations simulées</small></h2>`
+      + `<div style="display:flex;width:100%;border-radius:4px;overflow:hidden;margin:4px 0 8px">${bar(mc.pPass, 'up')}${bar(mc.pTimeout, 'mut')}${bar(mc.pBreach, 'dn')}</div>`
+      + kv('Validée', pct(mc.pPass), 'pos') + kv('Plancher touché', pct(mc.pBreach), 'neg') + kv(`Ni l'un ni l'autre en ${mc.horizon} j`, pct(mc.pTimeout))
+      + (d.median != null ? kv('Jours pour valider', `${d.median} <small>(25 % : ${d.p25} j · 75 % : ${d.p75} j)</small>`) : '')
+      + (mc.consistencyDelayed ? kv('Validations retardées par la consistance', pct(mc.consistencyDelayed), 'amb') : '')
+      + (mc.attemptsPerPass != null ? kv('Tentatives par validation (moyenne)', fmt(mc.attemptsPerPass, 2)) : '')
+      + (mc.costPerPass != null ? kv('Coût moyen d\'une éval. validée', usd(mc.costPerPass), mc.costPerPass > 3 * mc.evalFee ? 'neg' : '') : '')
+      + kv('Pire creux d\'une journée (historique)', susd(mc.dayWorstLow), 'neg')
+      + `<div class="small" style="margin-top:6px">On tire au hasard, avec remise, les ${mc.sampleDays} journées du backtest (journées sans trade comprises) et on rejoue l'évaluation avec les règles du profil : plancher suiveur touché en cours de journée, cible, consistance.`
+      + (mc.fragile ? ` <b class="amb">Échantillon court (${mc.sampleDays} j) : chiffre très fragile, à refaire avec plus de jours enregistrés.</b>` : '') + '</div></div>';
+  }
+
   function backtestResult(r) {
+    lastBt = r && r.ok ? r : null;
+    if ($('#btCsv')) $('#btCsv').disabled = !(lastBt && lastBt.trades.length);
     if (!r || !r.ok) { $('#btOut').innerHTML = `<div class="card muted">${esc(r && r.msg ? r.msg : 'Pas de résultat.')}</div>`; return; }
     const ru = r.rules, cons = ru.consistency;
     const pass = ru.evalPassed;
     let html = `<div class="card"><h2>Conformité aux règles Lucid <span class="badge ${pass ? 'ok' : 'bad'}">ÉVAL. ${pass ? 'VALIDÉE' : 'NON VALIDÉE'}</span></h2>`
       + kv('Profit simulé', `${susd(ru.profit)} <small>sur ${usd(ru.target)}</small>`, cls(ru.profit))
       + kv('Solde final', usd(ru.finalBalance, 0))
-      + kv('Plancher touché', ru.floorBreach ? `<b class="neg">OUI le ${esc(ru.floorBreach.day)} (${usd(ru.floorBreach.balance, 0)})</b>` : '<b class="pos">non</b>')
+      + kv('Plancher touché', ru.floorBreach ? `<b class="neg">OUI le ${esc(ru.floorBreach.day)}${ru.floorBreach.intraday ? ' en séance' : ''} (${usd(ru.floorBreach.balance, 0)})</b>` : '<b class="pos">non</b>')
+      + (ru.passedOn ? kv('Validée le', esc(ru.passedOn), 'pos') : '')
       + kv('Consistance (meilleur jour ≤ 50 %)', cons.ratio == null ? '—' : `${pct(cons.ratio)} ${cons.ok ? '✓' : '✗ il faudrait ' + usd(cons.needed) + ' de profit'}`, cons.ok ? 'pos' : 'neg')
       + kv('Jours tradés', ru.daysTraded)
       + `<div class="small" style="margin-top:6px">${pass ? 'Sur cet historique et avec ces réglages, la stratégie aurait passé l\'évaluation.' : 'Ces réglages ne passent pas encore : ajuste le score minimal, le stop de temps ou le risque, et relance.'}</div></div>`;
@@ -493,8 +579,10 @@ const Panels = (() => {
       + kv('Gain moyen · perte moyenne', `${susd(r.avgWin)} · ${susd(r.avgLoss)}`)
       + kv('Espérance par trade', susd(r.expectancy), cls(r.expectancy))
       + kv('Facteur de profit', r.profitFactor == null ? '—' : fmt(r.profitFactor, 2))
-      + (r.microShare != null ? kv('Part micro-scalping (≤ 5 s)', `${pct(r.microShare)} <small>limite ${pct(r.microLimit)}</small>`, r.microShare >= r.microLimit ? 'neg' : '') : '')
+      + (r.microShare != null ? kv('Part micro-scalping (≤ 5 s)', `au plus ${pct(r.microShare)} <small>limite ${pct(r.microLimit)}</small>`, r.microShare >= r.microLimit ? 'neg' : '') : '')
+      + (r.microShare != null ? '<div class="small">« Au plus » : un trade sorti dans sa barre d\'entrée a duré entre 0 et 1 barre, on le compte comme micro par prudence.</div>' : '')
       + '</div>';
+    html += monteCarlo(r.monteCarlo);
 
     const kinds = Object.entries(r.byKind || {});
     if (kinds.length) html += `<div class="card"><h2>Par type de setup</h2><table><tr><th>Type</th><th>N</th><th>Réussite</th><th>Net</th></tr>`
@@ -510,7 +598,7 @@ const Panels = (() => {
         + r.days.map((d, i) => `<tr><td>${esc(d.day)}</td><td class="${cls(d.pnl)}">${susd(d.pnl)}</td><td>${usd(r.equity[i].balance, 0)}</td></tr>`).join('') + '</table></div>';
     }
     if (r.profile && r.profile.name && r.profile.name.toLowerCase().indexOf('simul') < 0) { /* reserved */ }
-    html += `<div class="card small muted">Un backtest sur-estime toujours un peu (pas de file d'attente réelle, glissement supposé constant). Il sert à comparer des réglages, pas à promettre un résultat. Sur données simulées, les prix sont fictifs : seuls comptent la mécanique et la conformité aux règles.</div>`;
+    html += `<div class="card small muted">Un backtest sur-estime toujours un peu, même prudent : ici un objectif n'est rempli que si le prix le dépasse d'un tick (file d'attente), un stop sauté par un écart est exécuté à l'ouverture, et la barre d'entrée est vérifiée. Il sert à comparer des réglages, pas à promettre un résultat. Sur données simulées, les prix sont fictifs : seuls comptent la mécanique et la conformité aux règles.</div>`;
     $('#btOut').innerHTML = html;
   }
 
@@ -535,6 +623,6 @@ const Panels = (() => {
       `<tr><td>${U.hm(t.t / 1000, cb.tz())}</td><td class="${t.s > 0 ? 'pos' : 'neg'}">${t.s > 0 ? '▲' : '▼'} ${t.q}</td><td>${fmt(t.p, 2)}</td></tr>`).join('')}</table>`;
   }
 
-  function init(callbacks) { cb = callbacks; buildAccount(); buildPlan(); buildBacktest(); buildFp(); }
+  function init(callbacks) { cb = callbacks; buildSetups(); buildAccount(); buildPlan(); buildBacktest(); buildFp(); }
   return {init, lecture, levels, account, footprint, planResult, setups, backtestResult};
 })();

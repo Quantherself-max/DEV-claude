@@ -16,7 +16,7 @@
   function every(fn, ms, name) {
     let busy = false;
     const run = async () => {
-      if (busy || document.hidden) return;
+      if (busy || (document.hidden && !(name === 'signals' && store.get('alerts', false)))) return;    // page cachée : seules les alertes continuent
       busy = true;
       try { await fn(); if (name === 'state') S.fails = 0; }
       catch (e) { if (name === 'state') { S.fails++; if (S.fails >= 3) banner(e.message, true); } }
@@ -105,9 +105,42 @@
     Panels.footprint(S.fp, S.state ? S.state.tape : [], S.tf);
   }
 
+  // les setups sont lus aussi onglet fermé si les alertes ou le tracé sur le graphique sont actifs
+  const setupOpts = () => ({lines: store.get('setupLines', true), alerts: store.get('alerts', false), min: Number(store.get('alertMin', 55)) || 0});
   async function pollSignals() {
-    if (S.tab !== 'setups') return;
-    Panels.setups(await api(`/api/signals?tf=${S.tf}` + (S.pos ? '&pos=' + encodeURIComponent(S.pos) : '')));
+    const o = setupOpts();
+    if (S.tab !== 'setups' && !o.lines && !o.alerts) { NQChart.setSetup(null); return; }
+    const d = await api(`/api/signals?tf=${S.tf}` + (S.pos ? '&pos=' + encodeURIComponent(S.pos) : ''));
+    if (S.tab === 'setups') Panels.setups(d);
+    const top = d && d.ready && d.setups && d.setups.length && !d.setups[0].suppressed ? d.setups[0] : null;
+    NQChart.setSetup(o.lines ? top : null);
+    if (o.alerts && top && top.score >= o.min) alertSetup(top, d.tf);
+  }
+
+  // ---------- alertes ----------
+  const lastAlert = {long: {k: '', t: 0}, short: {k: '', t: 0}};
+  let audio = null;
+  function beep(up) {
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      const t0 = audio.currentTime;
+      (up ? [660, 990] : [990, 660]).forEach((f, i) => {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.frequency.value = f; o.type = 'sine';
+        g.gain.setValueAtTime(0.0001, t0 + i * 0.16); g.gain.exponentialRampToValueAtTime(0.2, t0 + i * 0.16 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + i * 0.16 + 0.14);
+        o.connect(g).connect(audio.destination); o.start(t0 + i * 0.16); o.stop(t0 + i * 0.16 + 0.15);
+      });
+    } catch (e) { /* audio indisponible */ }
+  }
+  function alertSetup(s, tf) {
+    const k = `${s.kind}|${Math.round(s.entry)}`, la = lastAlert[s.side], now = Date.now();
+    if (la.k === k || now - la.t < 60_000) return;
+    lastAlert[s.side] = {k, t: now};
+    const msg = `${s.side === 'long' ? 'ACHAT' : 'VENTE'} ${s.kind === 'momentum' ? 'momentum' : 'retournement'} · score ${Math.round(s.score)} · entrée ${fmt(s.entry, 2)} · stop ${fmt(s.stop, 2)} (${tf || S.tf})`;
+    beep(s.side === 'long');
+    U.toast('Setup : ' + msg);
+    try { if ('Notification' in window && Notification.permission === 'granted') new Notification('NQ Scalp · setup', {body: msg, tag: 'nq-setup-' + s.side}); } catch (e) { /* ignore */ }
   }
 
   // ---------- interface ----------
@@ -160,7 +193,7 @@
     $$('#tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
     $('#acctChip').onclick = () => showTab('account');
 
-    Panels.init({getLast, getPos, setPos, tz: tzNow, showTab, tfs: () => (cfg.tfs || ['1m']),
+    Panels.init({getLast, getPos, setPos, tz: tzNow, showTab, tfs: () => (cfg.tfs || ['1m']), onSetupOpts: () => pollSignals().catch(() => {}),
       refreshAccount: () => pollAccount().catch(e => U.toast(e.message, true))});
     showTab(S.tab);
     every(pollState, 1000, 'state');

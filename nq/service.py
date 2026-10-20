@@ -9,13 +9,13 @@ from data.base import DataError
 from data.filefeed import CsvSource, selftest_file
 from data.simulated import SimulatedSource
 from engine import backtest as bt
-from engine import clock, context, cvd, events, footprint, levels, risk, signals, vp, vwap
+from engine import clock, context, cvd, events, footprint, levels, montecarlo, risk, signals, vp, vwap
 from engine.account import Account
 from engine.bars import TF_MS, resample
 from engine.instruments import INSTRUMENTS, front_contract
 from engine.market import Market
 
-VERSION = "0.3"
+VERSION = "0.4"
 log = logging.getLogger("nq")
 SIM_BASE = {"NQ": 25_000.0, "MNQ": 25_000.0, "ES": 6_700.0, "MES": 6_700.0}
 
@@ -58,6 +58,8 @@ class Service:
         self.source = source or make_source(cfg)
         self.account = account or Account(Path(cfg.data_dir) / "compte.json", now_ms=self.now_ms)
         self.events_path = Path(cfg.data_dir) / "events.json"
+        self._bt_lock = threading.Lock()
+        self._bt_cache = None                                # (clé, Tape) du dernier backtest
         self._events = (None, [])
         self.status = {"state": "loading", "msg": "Chargement de l'historique…"}
         self.loaded = False
@@ -283,23 +285,53 @@ class Service:
         res["tf"] = tf
         return res
 
-    def backtest(self, tf: str = "1m", min_score: float = 40.0, slippage_ticks: float = 1.0, max_hold_min: int = 20,
-                 risk_usd: float = 100.0, one_per_session: bool = False, days: int | None = None) -> dict:
-        """Rejoue les setups sur l'historique chargé (barres de base) et confronte le résultat aux règles Lucid du profil courant."""
+    def _tape(self, tf: str, days: int | None):
+        """`Tape` de backtest de l'historique chargé, mise en cache tant que l'historique (dernière barre) et les réglages ne changent pas."""
         mk = self.market
         with mk.lock:
             bars = list(mk.series.bars)
         if days:                                             # limite éventuelle au N dernières journées de trading
             keep = set(sorted({clock.trading_day(b.t) for b in bars})[-int(days):])
             bars = [b for b in bars if clock.trading_day(b.t) in keep]
-        params = bt.BtParams(tf=tf if tf in TF_MS else "1m", min_score=float(min_score), slippage_ticks=float(slippage_ticks),
-                             max_hold_min=int(max_hold_min), risk_usd=float(risk_usd), one_per_session=bool(one_per_session))
-        res = bt.run(bars, self.inst, self.account.profile, params)
+        tf = tf if tf in TF_MS else "1m"
+        key = (tf, int(days or 0), len(bars), bars[-1].t if bars else None, bars[-1].v if bars else None)
+        with self._bt_lock:
+            if self._bt_cache and self._bt_cache[0] == key:
+                return self._bt_cache[1], tf
+        tape = bt.prepare(bars, self.inst, tf)
+        with self._bt_lock:
+            self._bt_cache = (key, tape)
+        return tape, tf
+
+    def backtest(self, tf: str = "1m", min_score: float = 40.0, slippage_ticks: float = 1.0, max_hold_min: int = 20,
+                 risk_usd: float = 100.0, one_per_session: bool = False, days: int | None = None, eval_fee: float | None = None,
+                 horizon: int = 60) -> dict:
+        """Rejoue les setups sur l'historique chargé (barres de base) et confronte le résultat aux règles Lucid du profil courant, puis estime
+        par Monte Carlo la probabilité de valider l'évaluation."""
+        tape, tf = self._tape(tf, days)
+        if tape is None:
+            return {"ok": False, "msg": "pas assez de barres pour un backtest", "trades": [], "days": []}
+        params = bt.BtParams(tf=tf, min_score=float(min_score), slippage_ticks=max(0.0, float(slippage_ticks)),
+                             max_hold_min=max(1, int(max_hold_min)), risk_usd=max(1.0, float(risk_usd)), one_per_session=bool(one_per_session))
+        prof = self.account.profile
+        res = bt.simulate(tape, self.inst, prof, params)
         res["params"] = {"tf": params.tf, "minScore": params.min_score, "slippageTicks": params.slippage_ticks,
-                         "maxHoldMin": params.max_hold_min, "riskUsd": params.risk_usd, "onePerSession": params.one_per_session}
-        res["profile"] = {"name": self.account.profile.name, "start": self.account.profile.start_balance,
-                          "target": self.account.profile.profit_target, "maxDd": self.account.profile.max_drawdown}
+                         "maxHoldMin": params.max_hold_min, "riskUsd": params.risk_usd, "onePerSession": params.one_per_session,
+                         "limitThroughTicks": params.limit_through_ticks}
+        res["profile"] = {"name": prof.name, "start": prof.start_balance, "target": prof.profit_target, "maxDd": prof.max_drawdown}
+        samples = [(d["pnl"], d["low"]) for d in res["days"]] + [(0.0, 0.0)] * max(0, res["nDays"] - len(res["days"]))
+        fee = float(eval_fee) if eval_fee and eval_fee > 0 else None
+        res["monteCarlo"] = montecarlo.simulate_eval(samples, prof, horizon=max(5, min(250, int(horizon))), eval_fee=fee) if res["trades"] else None
         return res
+
+    def backtest_sweep(self, tf: str = "1m", max_hold_min: int = 20, risk_usd: float = 100.0, one_per_session: bool = False,
+                       days: int | None = None) -> dict:
+        """Test de robustesse : grille score minimal × glissement, avec séparation début / fin d'historique (voir engine/backtest.sweep)."""
+        tape, tf = self._tape(tf, days)
+        if tape is None:
+            return {"ok": False, "msg": "pas assez de barres pour un backtest"}
+        base = bt.BtParams(tf=tf, max_hold_min=max(1, int(max_hold_min)), risk_usd=max(1.0, float(risk_usd)), one_per_session=bool(one_per_session))
+        return bt.sweep(tape, self.inst, self.account.profile, base)
 
     def test_file(self, path: str) -> dict:
         ok, msg = selftest_file(path)

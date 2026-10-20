@@ -3,7 +3,7 @@ import unittest
 from datetime import datetime, timezone
 
 from data.simulated import SimulatedSource
-from engine import backtest, risk, signals, vp
+from engine import backtest, clock, montecarlo, risk, signals, vp
 from engine.bars import Bar
 from engine.instruments import NQ
 from engine.market import Market
@@ -127,7 +127,7 @@ class BacktestTests(unittest.TestCase):
                 self.assertLess(t["stop"], t["entry"])
             else:
                 self.assertGreater(t["stop"], t["entry"])
-            self.assertIn(t["reason"], ("stop", "objectif", "16h45", "temps"))
+            self.assertIn(t["reason"], ("stop", "objectif", "16h45", "temps", "fin"))
 
     def test_deterministic(self):
         a = backtest.run(self.bars, NQ, risk.PropProfile(), backtest.BtParams(min_score=40.0))
@@ -160,6 +160,139 @@ class BacktestTests(unittest.TestCase):
     def test_too_few_bars(self):
         r = backtest.run(self.bars[:10], NQ, risk.PropProfile())
         self.assertFalse(r["ok"])
+
+
+def tape_of(bars, tops):
+    """Tape synthétique : `tops[i]` = meilleur setup décidé à la clôture de la barre i (ou None)."""
+    rows = []
+    for b, top in zip(bars, tops):
+        now = b.t + 60_000
+        day = clock.trading_day(now)
+        rows.append((now, day, clock.forced_flat(day), True, False, top))
+    return backtest.Tape("1m", 60_000, bars, rows)
+
+
+class SimulateMechanicsTests(unittest.TestCase):
+    T0 = utc(2026, 10, 13, 14, 0)        # 10 h ET, mardi
+
+    def bars(self, spec):
+        """spec : liste de (o, h, l, c)."""
+        return [mkbar(self.T0 + i * 60_000, o, h, l, c, 5, 5) for i, (o, h, l, c) in enumerate(spec)]
+
+    def long_setup(self, stop, target, score=80.0):
+        return {"side": "long", "kind": "reversal", "score": score, "stop": stop, "targets": [target]}
+
+    def test_stop_hit_inside_the_entry_bar_is_seen(self):
+        # décision à la clôture de la barre 0, entrée à l'ouverture de la barre 1 (100), qui descend aussitôt sous le stop (97)
+        bars = self.bars([(100, 100, 99, 100), (100, 101, 94, 96), (96, 120, 96, 119)])
+        r = backtest.simulate(tape_of(bars, [self.long_setup(97.0, 110.0), None, None]), NQ, risk.PropProfile(),
+                              backtest.BtParams(min_score=10, slippage_ticks=0))
+        self.assertEqual(r["nTrades"], 1)
+        t = r["trades"][0]
+        self.assertEqual(t["reason"], "stop")
+        self.assertTrue(t["sameBar"])
+        self.assertLess(t["net"], 0)
+
+    def test_target_must_trade_through_to_fill(self):
+        # l'objectif (110) est seulement TOUCHÉ : pas rempli avec 1 tick de dépassement exigé, rempli si on accepte le simple contact
+        bars = self.bars([(100, 100, 99, 100), (100, 110, 99.5, 105), (105, 106, 104, 105)])
+        tape = tape_of(bars, [self.long_setup(97.0, 110.0), None, None])
+        strict = backtest.simulate(tape, NQ, risk.PropProfile(), backtest.BtParams(min_score=10, slippage_ticks=0, limit_through_ticks=1))
+        touch = backtest.simulate(tape, NQ, risk.PropProfile(), backtest.BtParams(min_score=10, slippage_ticks=0, limit_through_ticks=0))
+        self.assertNotEqual(strict["trades"][0]["reason"], "objectif")
+        self.assertEqual(touch["trades"][0]["reason"], "objectif")
+
+    def test_gap_through_stop_fills_at_the_open(self):
+        bars = self.bars([(100, 100, 99, 100), (100, 101, 99, 100), (90, 91, 89, 90)])
+        r = backtest.simulate(tape_of(bars, [self.long_setup(97.0, 110.0), None, None]), NQ, risk.PropProfile(),
+                              backtest.BtParams(min_score=10, slippage_ticks=0))
+        self.assertEqual(r["trades"][0]["reason"], "stop")
+        self.assertEqual(r["trades"][0]["exit"], 90.0)           # l'ouverture, pas le stop à 97
+
+    def test_open_beyond_stop_skips_the_entry(self):
+        bars = self.bars([(100, 100, 99, 100), (94, 95, 93, 94), (94, 95, 93, 94)])
+        r = backtest.simulate(tape_of(bars, [self.long_setup(97.0, 110.0), None, None]), NQ, risk.PropProfile(),
+                              backtest.BtParams(min_score=10, slippage_ticks=0))
+        self.assertEqual(r["nTrades"], 0)
+
+    def test_min_score_filters_from_the_same_tape(self):
+        bars = self.bars([(100, 100, 99, 100), (100, 112, 99.5, 111), (111, 112, 110, 111)])
+        tape = tape_of(bars, [self.long_setup(97.0, 110.0, score=50.0), None, None])
+        self.assertEqual(backtest.simulate(tape, NQ, risk.PropProfile(), backtest.BtParams(min_score=40))["nTrades"], 1)
+        self.assertEqual(backtest.simulate(tape, NQ, risk.PropProfile(), backtest.BtParams(min_score=60))["nTrades"], 0)
+
+    def test_open_position_is_closed_at_the_end(self):
+        bars = self.bars([(100, 100, 99, 100), (100, 101, 99, 100), (100, 101, 99, 100)])
+        r = backtest.simulate(tape_of(bars, [self.long_setup(97.0, 110.0), None, None]), NQ, risk.PropProfile(),
+                              backtest.BtParams(min_score=10, slippage_ticks=0))
+        self.assertEqual(r["trades"][-1]["reason"], "fin")
+
+
+class SummaryRulesTests(unittest.TestCase):
+    def trade(self, day, net, t):
+        return {"day": day, "net": net, "fee": 0.0, "holdS": 60.0, "kind": "reversal", "reason": "stop", "t_exit": t}
+
+    def test_intraday_breach_from_the_realized_low(self):
+        # journée qui finit à -200 mais a été à -1 050 en cours de séance : le plancher (24 000) est touché
+        tr = [self.trade("2026-10-13", -1050, 1), self.trade("2026-10-13", 850, 2)]
+        r = backtest._summary(tr, NQ, risk.PropProfile())
+        self.assertTrue(r["rules"]["floorBreach"])
+        self.assertTrue(r["rules"]["floorBreach"]["intraday"])
+
+    def test_static_floor_does_not_trail(self):
+        prof = risk.PropProfile.from_dict({**risk.PropProfile().to_dict(), "dd_mode": "static"})
+        tr = [self.trade("2026-10-13", 900, 1), self.trade("2026-10-14", -1000, 2)]
+        self.assertIsNone(backtest._summary(tr, NQ, prof)["rules"]["floorBreach"])          # 25 900 - 1 000 = 24 900 > 24 000
+        self.assertTrue(backtest._summary(tr, NQ, risk.PropProfile())["rules"]["floorBreach"])   # suiveur : plancher monté à 25 100
+
+    def test_passed_on_is_the_first_qualifying_day(self):
+        tr = [self.trade(f"2026-10-{13 + i}", 450, i) for i in range(4)]
+        r = backtest._summary(tr, NQ, risk.PropProfile())
+        self.assertEqual(r["rules"]["passedOn"], "2026-10-15")              # 1 350 $ après 3 jours, meilleur jour 33 %
+        self.assertTrue(r["rules"]["evalPassed"])
+
+
+class MonteCarloTests(unittest.TestCase):
+    def test_always_winning_days_always_pass(self):
+        mc = montecarlo.simulate_eval([(300.0, 0.0)], risk.PropProfile(), n_paths=200)
+        self.assertEqual(mc["pPass"], 1.0)
+        self.assertEqual(mc["daysToPass"]["median"], 5)                 # 5 × 300 = 1 500 ≥ 1 250, chaque jour à 20 %
+
+    def test_always_losing_days_always_breach(self):
+        mc = montecarlo.simulate_eval([(-300.0, -300.0)], risk.PropProfile(), n_paths=200)
+        self.assertEqual(mc["pBreach"], 1.0)
+
+    def test_consistency_delays_validation(self):
+        # un jour à +1 300 puis des jours à +100 : la cible est atteinte tout de suite mais la consistance 50 % impose d'attendre 2 600 $
+        mc = montecarlo.simulate_eval([(1300.0, 0.0), (100.0, 0.0)], risk.PropProfile(), n_paths=500, horizon=200)
+        self.assertGreater(mc["consistencyDelayed"], 0.0)
+
+    def test_intraday_low_can_breach(self):
+        mc = montecarlo.simulate_eval([(100.0, -1200.0)], risk.PropProfile(), n_paths=50)
+        self.assertEqual(mc["pBreach"], 1.0)
+
+    def test_deterministic_and_cost_per_pass(self):
+        s = [(400.0, -100.0), (-250.0, -300.0), (0.0, 0.0)]
+        a = montecarlo.simulate_eval(s, risk.PropProfile(), eval_fee=100.0)
+        b = montecarlo.simulate_eval(s, risk.PropProfile(), eval_fee=100.0)
+        self.assertEqual(a, b)
+        self.assertAlmostEqual(a["pPass"] + a["pBreach"] + a["pTimeout"], 1.0, places=2)
+        if a["pPass"]:
+            self.assertAlmostEqual(a["costPerPass"], round(100.0 / a["pPass"], 2), delta=1.0)
+
+
+class SweepTests(unittest.TestCase):
+    def test_sweep_splits_in_and_out_of_sample(self):
+        now = utc(2026, 10, 12, 20, 0)
+        mk = Market(NQ)
+        mk.ingest_many(SimulatedSource(days=3, now_fn=lambda: now).history(now))
+        tape = backtest.prepare(mk.series.bars, NQ)
+        r = backtest.sweep(tape, NQ, risk.PropProfile(), scores=(30, 60), slippages=(1, 2))
+        self.assertTrue(r["ok"])
+        self.assertEqual(len(r["grid"]), 4)
+        for g in r["grid"]:
+            self.assertEqual(g["inN"] + g["outN"], g["nTrades"])
+        self.assertGreaterEqual(r["outDays"], 1)
 
 
 if __name__ == "__main__":

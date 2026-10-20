@@ -174,6 +174,21 @@ const NQChart = (() => {
     });
   }
 
+  // setup proposé (onglet Setups) : entrée, stop et objectifs tracés sur le graphique
+  let setupLines = [], setupSig = '';
+  function setSetup(st) {
+    const s = st ? [st.side, st.entry, st.stop, (st.targets || []).join(',')].join('|') : '';
+    if (s === setupSig) return;
+    setupSig = s;
+    for (const l of setupLines) { try { candle.removePriceLine(l); } catch (e) { /* deja retiree */ } }
+    setupLines = [];
+    if (!st) return;
+    const L = (price, color, style, title) => candle.createPriceLine({price, color, lineWidth: 2, lineStyle: style, axisLabelVisible: true, title});
+    setupLines.push(L(st.entry, '#e5e7eb', 2, (st.side === 'long' ? 'ACHAT ' : 'VENTE ') + Math.round(st.score) + ''));
+    setupLines.push(L(st.stop, '#ef4444', 0, 'STOP'));
+    (st.targets || []).slice(0, 2).forEach((t, i) => setupLines.push(L(t, '#22c55e', i ? 2 : 0, 'OBJ ' + (i + 1))));
+  }
+
   // ---------- couche canvas ----------
   const psWidth = () => { try { return chart.priceScale('right').width() || 76; } catch (e) { return 76; } };
 
@@ -244,7 +259,7 @@ const NQChart = (() => {
     }
   }
 
-  return {init, apply, setTheme, setTz, setCvdScope, setOptions, setVpMode, setProfile, setZones, setLevels,
+  return {init, apply, setTheme, setTz, setCvdScope, setOptions, setVpMode, setProfile, setZones, setLevels, setSetup,
     onLegend: fn => { listeners.legend = fn; }, lastRow: () => rows[rows.length - 1] || null, count: () => rows.length,
     lastTime: () => rows.length ? rows[rows.length - 1].t : null};
 })();

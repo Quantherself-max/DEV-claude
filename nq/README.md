@@ -1,8 +1,10 @@
-# NQ Scalp Terminal (V0.2)
+# NQ Scalp Terminal (V0.4)
 
 Un terminal **local** (il tourne uniquement sur ton PC) pour scalper le **Nasdaq-100 en futures (NQ / MNQ)** avec un compte prop firm **Lucid 25K**. Même esprit que le terminal crypto (VP, CVD, VWAP, niveaux, lecture honnête), refait pour le scalping : horloge de New York, séances du CME, order flow à la transaction près, et un moteur de risque qui connaît les règles du compte.
 
-> **État actuel : une base solide, pas encore une stratégie.** Le terminal te donne la carte (niveaux, flux, profil, VWAP, risque du compte). Les *setups* et leur mesure viennent ensuite, ensemble (voir « Feuille de route »). Les données par défaut sont **simulées** : rien à l'écran ne dit quoi que ce soit du vrai marché tant que tu n'as pas branché de vraies transactions.
+> **État actuel : la carte, des setups mesurables, et l'outil pour les mesurer.** Le terminal te donne la carte (niveaux, flux, profil, VWAP, risque du compte), propose des **setups** scorés qui intègrent les règles Lucid, et les **rejoue** sur l'historique (backtest prudent, Monte Carlo de l'évaluation, test de robustesse). Les données par défaut sont **simulées** : rien à l'écran ne dit quoi que ce soit du vrai marché tant que tu n'as pas branché tes vraies transactions (NinjaTrader, voir plus bas). **Aucun setup n'est validé tant qu'il n'a pas été mesuré sur plusieurs semaines de vraies données.**
+
+**Nouveau en V0.4** : backtest plus réaliste (la barre d'entrée est vérifiée, un objectif doit être *dépassé* d'un tick pour être rempli, un stop sauté par un écart est exécuté à l'ouverture, plancher touché *en cours* de journée), **probabilité de valider l'évaluation** (Monte Carlo) et coût moyen d'une évaluation validée, **test de robustesse** début / fin d'historique, export CSV des trades, **alertes** (son + notification) et **tracé du setup** (entrée, stop, objectifs) sur le graphique.
 
 ## Démarrage
 
@@ -69,7 +71,24 @@ Pour que le terminal ait ses ticks, quatre voies (recherche d'octobre 2026, la p
 
 Écartés : l'API Tradovate (compte réel financé et frais CME, selon une source) et les API de CQG (non fournies aux comptes Lucid). Lucid autorise les systèmes automatiques (le trader reste responsable), mais ne dit rien d'un simple enregistreur de données : demande-lui une confirmation écrite.
 
-**À décider ensemble** : A, B ou C. L'indicateur NinjaScript d'enregistrement (voie A) n'est pas encore écrit.
+**Voie retenue : A (NinjaTrader 8 + flux CQG de Lucid).** L'enregistreur est fourni : `ninjatrader/NQTickLogger.cs`.
+
+### Brancher NinjaTrader (Windows)
+
+`NQTickLogger` est un indicateur NinjaScript **en lecture seule** : il n'envoie aucun ordre, ne se connecte à rien d'autre que ce que NinjaTrader reçoit déjà. À chaque transaction, il écrit une ligne `time,price,size,side,bid,ask` (heure en millisecondes UTC, côté `B`/`S` déduit du bid / ask du moment, vide si le prix tombe entre les deux).
+
+1. **Copier** `ninjatrader\NQTickLogger.cs` dans `Documents\NinjaTrader 8\bin\Custom\Indicators\`.
+2. Dans NinjaTrader : **New → NinjaScript Editor**, ouvrir *Indicators → NQTickLogger*, puis **Compile** (F5). Aucune erreur ne doit apparaître en bas.
+3. Ouvrir un **graphique du contrat NQ en cours** (ex. `NQ 12-26`), connecté à ton compte Lucid. Clic droit → **Indicators…** → ajouter **NQTickLogger**. Par défaut il écrit dans `Documents\NQ-Terminal\nq-ticks.csv` (réglable : « Chemin du fichier »). La fenêtre *Output* de NinjaTrader affiche « NQTickLogger : écriture dans … ».
+4. Dans le dossier du terminal, créer `.env` (copie de `config.example.env`) avec :
+   ```
+   NQ_SOURCE=csv
+   NQ_CSV_PATH=C:\Users\<toi>\Documents\NQ-Terminal\nq-ticks.csv
+   ```
+   puis lancer `Lancer-NQ-Windows.bat`. Le badge passe de « DONNÉES SIMULÉES » au nom de la source ; s'il indique « delta estimé », le côté n'arrive pas (vérifie que le graphique reçoit bien le bid / ask).
+5. **Test d'une journée** avant de t'y fier : laisse tourner une séance complète, puis compare le volume total et le delta d'une barre de 5 min avec ceux de NinjaTrader (Order Flow + si tu l'as). Un écart de quelques contrats est normal (transactions entre le bid et l'ask), un delta de signe opposé ne l'est pas.
+
+Bon à savoir : l'enregistreur écrit **le temps réel seulement** (option « Inclure l'historique » pour rejouer ce que NinjaTrader a en mémoire) ; il **ajoute** au fichier à chaque démarrage. Le terminal garde les 6 derniers jours du fichier : plus tu enregistres tôt, plus le backtest a de journées. Pour repartir de zéro, ferme NinjaTrader et renomme le fichier. Lucid ne dit rien d'un simple enregistreur de données : demande-lui une confirmation écrite.
 
 ## Compte Lucid 25K
 
@@ -114,6 +133,43 @@ Tout est modifiable dans **Compte → « Règles Lucid et limites personnelles �
 
 Sens, entrée, stop et objectifs **en prix ou en points** (l'autre se remplit), risque en dollars : taille NQ et MNQ, risque frais compris, R par objectif, avertissements. Un clic sur un niveau (onglet Niveaux) copie son prix dans le champ choisi. **Il ne passe aucun ordre.**
 
+## Setups (onglet Setups)
+
+À la clôture de chaque barre, le moteur (`engine/signals.py`) lit des **ingrédients** du flux et du profil, chacun avec un sens et une force entre 0 et 1 :
+
+| Ingrédient | Ce qui est mesuré |
+|---|---|
+| Divergence CVD | le prix fait un nouvel extrême sur la fenêtre, le CVD non |
+| Absorption | gros delta *contre* le sens de la barre, volume au-dessus de la normale |
+| Piles de déséquilibres | ≥ 3 déséquilibres diagonaux consécutifs dans le footprint de la barre |
+| Bord de zone de valeur | prix à quelques points de la VAH / VAL : rejet possible vers le POC |
+| Étirement VWAP | prix au-delà de ±1,6 σ du VWAP de séance (retour vers la moyenne) |
+| Zone de confluence | plusieurs niveaux superposés sous / au-dessus du prix |
+| Cassure de l'IB | clôture au-delà du high / low de la première heure avec un delta dans le même sens |
+| Pente du CVD | le flux agressif récent pousse dans un sens |
+
+Le **score** (0 – 100) est une somme pondérée **transparente** (chaque raison est listée sous le setup), modulée par la phase de séance (× 0,6 au creux de midi et la nuit). Le **stop** se place derrière le dernier extrême + une marge d'ATR (entre 8 et 60 ticks), les **objectifs** sur les niveaux suivants. Un setup n'est **jamais un ordre** : le bouton « Calculer la taille » le copie dans le Plan.
+
+**Règles Lucid intégrées** : aucun setup si le compte est au plancher ou si la limite journalière est atteinte ; plus de nouveau scalp dans les **12 dernières minutes avant 16 h 45 ET** ; en évaluation, rappel du **gain maximal du jour** qui garde la consistance ; avertissement **micro-scalping** si l'objectif est si proche qu'il serait tenu en quelques secondes ; palier de taille en compte financé.
+
+**Alertes** (en haut de l'onglet) : « Tracer le meilleur setup sur le graphique » dessine entrée, stop et objectifs ; « Son + notification » prévient quand un setup atteint le score choisi, **même onglet fermé** (le navigateur demande l'autorisation des notifications la première fois). Une alerte par setup nouveau, au plus une par minute et par sens, jamais pendant un blocage. Si la page du navigateur est en arrière-plan, Chrome peut espacer les vérifications : garde le terminal dans sa propre fenêtre.
+
+## Backtest (onglet Backtest)
+
+On rejoue les setups **barre par barre sans jamais regarder le futur** : à la clôture de la barre *i*, profil, niveaux et setups sont calculés à partir des seules barres ≤ *i* ; l'entrée se fait à l'**ouverture de la barre suivante**, avec glissement. Exécution **prudente** :
+- la **barre d'entrée est vérifiée** (un stop touché dans la minute même de l'entrée compte) ; si stop et objectif sont touchés dans la même barre, on suppose **le stop d'abord** ;
+- un **objectif** (ordre limite) n'est rempli que si le prix le **dépasse d'un tick** (ta place dans la file d'attente) ; un **stop sauté** par un écart est exécuté à l'ouverture, plus mal que le stop ;
+- si l'ouverture a déjà franchi le stop ou l'objectif, le setup est abandonné ; pas d'entrée à travers un trou de données ;
+- frais réels de Lucid, sortie forcée à 16 h 45 ET, stop de temps, taille calculée pour le risque choisi et plafonnée par le compte.
+
+Puis le résultat passe **dans les règles Lucid, jour après jour** : plancher suiveur (touché aussi **en cours de journée** si le creux réalisé l'atteint), cible, consistance 50 %, date de validation, part de micro-scalping (un **majorant** : un trade sorti dans sa barre d'entrée est compté comme micro).
+
+- **Probabilité de valider l'évaluation (Monte Carlo)** : un backtest n'est qu'*un* ordre possible des journées. On tire au hasard, avec remise, les journées du backtest (journées sans trade comprises) et on rejoue 2 000 évaluations avec les règles du profil. Résultat : % validées, % au plancher, % ni l'un ni l'autre dans l'horizon, jours nécessaires, part des validations retardées par la consistance. Renseigne le **prix de l'évaluation** : le terminal affiche le **coût moyen d'une évaluation validée** (prix ÷ probabilité). Moins de 15 journées : chiffre signalé comme fragile.
+- **Robustesse** : la même stratégie sur une grille score minimal (30 – 70) × glissement (1 – 2 ticks), séparée en **début** (≈ 2/3 des jours) et **fin** d'historique. On choisit le meilleur réglage sur le début seulement et on regarde ce qu'il donne sur la fin, qu'il n'a pas vue. S'il s'effondre, c'était de la sur-optimisation.
+- **Exporter CSV** : la liste des trades (heures en UTC) pour ton tableur.
+
+Les calculs lourds (profil, niveaux, setups de chaque barre) sont faits une fois puis gardés tant que l'historique ne change pas : relancer avec d'autres réglages est instantané.
+
 ## Annonces
 
 Pas encore de calendrier automatique. Tu peux en tenir un dans `data_local/events.json` (modèle : `events.example.json`) : la Lecture les affiche en heure de Paris et signale une **fenêtre à éviter** de 2 min avant à 3 min après une annonce de niveau 3.
@@ -122,7 +178,7 @@ Pas encore de calendrier automatique. Tu peux en tenir un dans `data_local/event
 
 Hérite du terminal crypto : **on mesure avant de croire**. Rien ici n'est présenté comme prédictif :
 - les zones, les poids et les seuils (3 fois pour un déséquilibre, 2 σ pour une absorption, 6 points pour une zone…) sont des **valeurs de départ** ;
-- avant qu'un setup soit proposé, il sera **rejoué sur l'historique** et comparé à des entrées au hasard, avec les frais (le scalping meurt de frais et de slippage) ;
+- chaque setup se **rejoue sur l'historique** avec frais et glissement (le scalping meurt de frais et de slippage), et se juge sur des jours **qu'il n'a pas vus** (Robustesse) ; la comparaison à des entrées au hasard reste à faire ;
 - les données simulées ne servent qu'à tester les calculs, jamais à juger une idée.
 
 ## Architecture
@@ -140,6 +196,10 @@ nq/
     market.py       état du marché : barres, profils par journée, ruban, gros ordres
     levels.py  context.py  events.py     niveaux et zones · lecture de séance · annonces
     risk.py  account.py  règles Lucid et dimensionnement · journal du compte
+    signals.py      setups de scalping : ingrédients du flux, score, stop / objectifs, règles Lucid
+    backtest.py     rejeu sans regard vers le futur (Tape pré-calculée) · exécution prudente · règles jour après jour · robustesse
+    montecarlo.py   probabilité de valider l'évaluation (bootstrap des journées)
+  ninjatrader/      NQTickLogger.cs : enregistreur de transactions NinjaTrader 8 -> CSV lu par le terminal
   data/             simulated.py (essai) · filefeed.py (CSV, par blocs, suivi) · base.py
   web/              interface (lightweight-charts v4.2.3, canvas pour le profil et les bulles)
   tools/            make_sample_csv.py
@@ -148,12 +208,14 @@ nq/
 
 Tests : `python -m unittest discover -s tests -t .` (depuis le dossier `nq`).
 
-## Limites connues (V0.2)
+## Limites connues (V0.4)
 
 - Données **simulées** par défaut ; pas de connexion directe à un courtier ni à un flux de données.
 - Barres de 1 minute au plus fin : pas encore de graphiques à la seconde, au tick ni au volume (il faut d'abord une vraie source de ticks).
 - Jours fériés de bourse non gérés (le terminal ne sait pas qu'un jour est férié) ; la **date de roll** du contrat est une estimation (8 jours avant l'échéance) : au moment du roll, regarde le volume réel de ta plateforme.
 - Compte : saisie manuelle ; règles de Lucid à confirmer (voir plus haut) ; le compte financé repart-il vraiment de 25 000 $ avec un plancher à 24 000 $ ? À confirmer. La phase **Live** (après 5 retraits) n'est pas modélisée.
-- Pas d'alertes (Telegram), pas de discussion avec Claude, pas de mise à jour automatique : ce sont des étapes suivantes.
+- Backtest sur barres de 1 minute : l'ordre des prix *dans* une minute est inconnu (d'où les hypothèses prudentes) ; pas de file d'attente réelle. Le côté de l'agresseur venant de NinjaTrader est déduit du bid / ask, pas fourni par le CME.
+- Le **GEX** (gamma exposure, niveaux HVL…) est reporté : il demande une source d'options payante.
+- Pas d'alertes Telegram, pas de discussion avec Claude, pas de mise à jour automatique : étapes suivantes.
 
 > Estimations et statistiques à titre informatif, ce n'est pas un conseil financier. Le trading de futures comporte un risque élevé de perte.
