@@ -5,6 +5,9 @@
 // single prints (rectangle gris), poor high / low (trait orange), queues (lettres sombres), POC vierges (pointillés prolongés). À droite :
 // profil composite des dernières séances et ses zones fortes (HVN) et faibles (LVN). Molette : zoom ; glisser : déplacer ; Maj + molette ou
 // glisser horizontalement : séances plus anciennes ; double-clic : recadrer. Les taux affichés viennent de la mesure sur l'historique.
+// V34 (comme Exocharts) : clic sur une séance pour la choisir (Maj + clic : toutes celles entre deux, Ctrl + clic : une de plus), puis
+// « Fusionner » (un seul profil pour plusieurs séances de suite : POC, zone de valeur, single prints et volume recalculés), « Séparer », et
+// « Déplier » (chaque tranche dans sa propre colonne, dans l'ordre du temps, au lieu d'être tassée contre le bord gauche). Gardé par paire.
 const TPO = (() => {
   'use strict';
   const KINDS = [['M', '1 mois', '1 jour'], ['W', '1 semaine', '4 heures'], ['D', '1 jour', '30 minutes'], ['4h', '4 heures', '5 minutes'], ['1h', '1 heure', '5 minutes']];
@@ -39,8 +42,9 @@ const TPO = (() => {
       `<label class="small" title="Volume échangé à chaque prix (bleu : acheteurs agressifs dominants, blanc : vendeurs)"><input type="checkbox" data-tpo-o="vol"> volume</label>` +
       `<label class="small" title="Profil composite des dernières séances terminées, avec ses zones fortes (HVN) et faibles (LVN)"><input type="checkbox" data-tpo-o="comp"> composite</label>` +
       `<label class="small" title="POC jamais retraversés depuis leur séance, prolongés jusqu'à l'échelle des prix"><input type="checkbox" data-tpo-o="naked"> POC vierges</label>` +
+      `<label class="small" title="Chaque tranche dans sa propre colonne, dans l'ordre du temps (le trajet du prix dans la séance) ; « Déplier » ou « Replier » sur une séance choisie l'inverse pour elle seule"><input type="checkbox" data-tpo-o="expand"> déplier</label>` +
       `<label class="small" title="Première heure (initial balance) et ses objectifs d'extension x1,5 et x2 : la première heure pour la séance d'1 jour, le lundi pour la semaine, la première semaine pour le mois"><input type="checkbox" data-tpo-o="ib"> première heure</label>` +
-      `<span class="spacer"></span><span class="muted small">molette : zoom · glisser : déplacer · Maj + molette : séances plus anciennes · double-clic : recadrer</span></div>` +
+      `<span class="spacer"></span><span class="muted small">clic : choisir une séance · Maj + clic : plusieurs · molette : zoom · glisser : déplacer · Maj + molette : séances plus anciennes · double-clic : recadrer</span></div>` +
       `<div class="tpocols"></div><details class="tpostudy"><summary>Ce que dit l'historique sur ces repères</summary><div class="tpostudybody muted small">Chargement…</div></details>`;
     window.addEventListener('mouseup', () => Object.values(view).forEach(v => { v.drag = null; }));
     root.querySelectorAll('[data-tpo-o]').forEach(el => {
@@ -54,6 +58,7 @@ const TPO = (() => {
       if (!t) return;
       const key = t.dataset.tpoO;
       opts()[key] = t.type === 'checkbox' ? t.checked : t.value;
+      if (key === 'expand') Object.keys(LT.st.tpoGroups).forEach(g => { if (g.startsWith(LT.st.symbol + '|')) LT.st.tpoGroups[g].exp = []; });
       LT.savePrefs();
       if (key === 'fine') { Object.keys(data).forEach(k => delete data[k]); load(); } else drawAll();
     });
@@ -64,10 +69,10 @@ const TPO = (() => {
     root.querySelectorAll('[data-tpo-k]').forEach(c => c.checked = !!LT.st.tpoKinds[c.dataset.tpoK]);
     cols.style.gridTemplateColumns = `repeat(${Math.max(1, ks.length)}, minmax(0, 1fr))`;
     cols.innerHTML = ks.length ? ks.map(([k, lab, br]) => `<section class="tpocol" data-k="${k}"><div class="mhead"><b>TPO ${lab}</b><span class="muted small">tranches de ${br}</span>` +
-      `<span class="spacer"></span><span class="muted small" data-info></span></div><div class="tpoctx" data-ctx></div>` +
+      `<span class="spacer"></span><span class="tpoact" data-act></span><span class="muted small" data-info></span></div><div class="tpoctx" data-ctx></div>` +
       `<div class="mbody"><canvas></canvas><div class="tip" hidden></div><div class="tpomsg" hidden></div></div><div class="tpofoot muted small" data-foot></div></section>`).join('') :
       '<div class="muted" style="padding:20px">Coche au moins un type de séance.</div>';
-    cols.querySelectorAll('.tpocol').forEach(sec => bind(sec));
+    cols.querySelectorAll('.tpocol').forEach(sec => { bind(sec); renderAct(sec.dataset.k); });
   }
   // ---------- interactions ----------
   function bind(sec) {
@@ -85,6 +90,10 @@ const TPO = (() => {
       }
       v.hover = p;
       schedule(k);
+    });
+    cv.addEventListener('mouseup', ev => {
+      const v = V(k), p = pos(ev), d0 = v.drag;
+      if (d0 && Math.abs(p.x - d0.x) < 4 && Math.abs(p.y - d0.y) < 4) pick(k, p.x, ev.shiftKey, ev.ctrlKey || ev.metaKey);
     });
     cv.addEventListener('mouseleave', () => { const v = V(k); v.hover = null; v.drag = null; sec.querySelector('.tip').hidden = true; schedule(k); });
     cv.addEventListener('mousedown', ev => { const v = V(k), p = pos(ev); v.drag = {x: p.x, y: p.y, center: v.center ?? (v.geo ? v.geo.center : null), offset: v.offset}; });
@@ -104,6 +113,141 @@ const TPO = (() => {
       }
       schedule(k);
     }, {passive: false});
+  }
+  // ---------- V34 : choisir, fusionner, séparer, déplier ----------
+  function groups(k) {
+    const key = LT.st.symbol + '|' + k;
+    return (LT.st.tpoGroups[key] = LT.st.tpoGroups[key] || {merge: [], exp: []});
+  }
+  function pick(k, x, range, add) {
+    const v = V(k), g = v.geo, sel = v.sel = v.sel || [];
+    const hit = g && g.placed ? g.placed.find(c => x >= c.x0 && x < c.x0 + c.wd) : null;
+    if (!hit) v.sel = [];
+    else if (range && sel.length) {
+      const ids = g.placed.map(c => c.id), a = ids.indexOf(sel[sel.length - 1]), b = ids.indexOf(hit.id);
+      v.sel = a < 0 ? [hit.id] : ids.slice(Math.min(a, b), Math.max(a, b) + 1);
+    } else if (add) v.sel = sel.includes(hit.id) ? sel.filter(i => i !== hit.id) : [...sel, hit.id];
+    else v.sel = sel.length === 1 && sel[0] === hit.id ? [] : [hit.id];
+    renderAct(k); schedule(k);
+  }
+  function chosen(k) {                                                  // séances choisies, encore à l'écran
+    const v = V(k), g = v.geo;
+    return g && g.placed ? g.placed.filter(c => (v.sel || []).includes(c.id)) : [];
+  }
+  function renderAct(k) {
+    const sec = root && root.querySelector(`.tpocol[data-k="${k}"]`);
+    if (!sec) return;
+    const ch = chosen(k), gr = groups(k), btn = (act, lab, title) => `<button class="tpobtn" data-a="${act}" title="${esc(title)}">${lab}</button>`;
+    const b = [];
+    if (ch.length) {
+      const n = ch.reduce((a, c) => a + c.n, 0);
+      if (ch.length > 1) b.push(btn('merge', `Fusionner (${n})`, 'Un seul profil pour ces séances et toutes celles entre elles : POC, zone de valeur, single prints et volume recalculés'));
+      if (ch.some(c => c.merged)) b.push(btn('split', 'Séparer', 'Revenir aux séances une par une'));
+      const allExp = ch.every(c => c.exp);
+      b.push(btn('expand', allExp ? 'Replier' : 'Déplier', allExp ? 'Toutes les tranches tassées contre le bord gauche (profil classique)' : 'Chaque tranche dans sa propre colonne, dans l\'ordre du temps'));
+      b.push(btn('clear', '✕', 'Ne plus rien choisir'));
+    } else if (gr.merge.length) b.push(btn('splitall', 'Tout séparer', 'Défaire toutes les fusions de ce type de séance'));
+    const box = sec.querySelector('[data-act]'), html = b.join('');
+    if (box.dataset.h !== html) { box.innerHTML = html; box.dataset.h = html; }       // pas réécrit à chaque image : le clic sur un bouton reste sûr
+    box.onclick = ev => { const t = ev.target.closest('[data-a]'); if (t) act(k, t.dataset.a); };
+  }
+  function act(k, a) {
+    const v = V(k), gr = groups(k), ch = chosen(k);
+    if (a === 'merge' && ch.length) {
+      const lo = Math.min(...ch.map(c => c.first)), hi = Math.max(...ch.map(c => c.last)), flip = ch.some(c => c.exp !== !!opts().expand);
+      gr.merge = gr.merge.filter(([x, y]) => y < lo || x > hi);
+      gr.merge.push([lo, hi]);
+      gr.exp = gr.exp.filter(t => t < lo || t > hi);
+      if (flip) gr.exp.push(lo);                                      // dépliée si une des séances l'était
+      v.sel = [lo];
+    } else if (a === 'split') {
+      const ids = ch.filter(c => c.merged).map(c => c.first);
+      gr.merge = gr.merge.filter(([x]) => !ids.includes(x));
+      v.sel = [];
+    } else if (a === 'splitall') gr.merge = [];
+    else if (a === 'expand' && ch.length) {
+      const allExp = ch.every(c => c.exp);
+      ch.forEach(c => {
+        const flip = allExp === c.exp;                                 // inverser seulement celles qui ne sont pas déjà dans l'état voulu
+        if (flip) gr.exp = gr.exp.includes(c.id) ? gr.exp.filter(t => t !== c.id) : [...gr.exp, c.id];
+      });
+    } else if (a === 'clear') v.sel = [];
+    gr.merge = gr.merge.slice(-40); gr.exp = gr.exp.slice(-80);
+    LT.savePrefs(); schedule(k); setTimeout(() => renderAct(k), 0);
+  }
+  // une séance ou une fusion de séances de suite (même grille de prix : le pas est commun à toutes les séances renvoyées)
+  function items(k, d, visible) {
+    const gr = groups(k), all = d.sessions, out = [], expand = !!opts().expand;
+    const isExp = id => expand !== gr.exp.includes(id);
+    for (let i = 0; i < visible.length; i++) {
+      const s = visible[i], m = gr.merge.find(([a, b]) => s.start >= a && s.start <= b);
+      const mem = [s];
+      if (m) while (i + 1 < visible.length && visible[i + 1].start <= m[1]) mem.push(visible[++i]);
+      if (mem.length === 1) { out.push({s, id: s.start, first: s.start, last: s.start, n: 1, merged: false, exp: isExp(s.start)}); continue; }
+      const id = mem[0].start, ck = id + ':' + mem.length;
+      d._merged = d._merged || {};
+      const ms = d._merged[ck] = d._merged[ck] || merge(mem, d.step, all.slice(all.indexOf(mem[mem.length - 1]) + 1), d.price);
+      out.push({s: ms, id, first: id, last: mem[mem.length - 1].start, n: mem.length, merged: true, exp: isExp(id)});
+    }
+    return out;
+  }
+  function vaOf(c, poc) {
+    const n = c.length, tot = c.reduce((a, x) => a + x, 0);
+    let acc = c[poc], up = poc, dn = poc;
+    while (acc < tot * 0.7 && (up < n - 1 || dn > 0)) {
+      const u = up < n - 1 ? c[up + 1] : -1, dd = dn > 0 ? c[dn - 1] : -1;
+      if (u >= dd) acc += c[++up]; else acc += c[--dn];
+    }
+    return [up, dn];
+  }
+  function merge(mem, step, after, price) {
+    const cnt = new Map(), vol = new Map(), dl = new Map(), seg = new Map(), br = [], cuts = [];
+    let cols = 0, hasD = false;
+    const add = (m, q, x) => m.set(q, (m.get(q) || 0) + x);
+    mem.forEach((s, j) => {
+      s.rows.forEach(r => {
+        const q = Math.round(r[0] / step);
+        add(cnt, q, r[1]); add(vol, q, r[3] || 0);
+        if (r[4] != null) { hasD = true; add(dl, q, r[4]); }
+        if (r[1]) { if (!seg.has(q)) seg.set(q, []); seg.get(q).push([j, r[1]]); }
+      });
+      cuts.push(cols);
+      (s.br || []).forEach(([i, h, l, c]) => br.push([cols + i, h, l, c, j, i]));
+      cols += s.br && s.br.length ? s.br[s.br.length - 1][0] + 1 : 1;
+    });
+    const ks = [...cnt.keys()].sort((a, b) => a - b), k0 = ks[0], n = ks[ks.length - 1] - k0 + 1;
+    const c = Array.from({length: n}, (_, j) => cnt.get(k0 + j) || 0), vv = Array.from({length: n}, (_, j) => vol.get(k0 + j) || 0);
+    const mid = (n - 1) / 2;
+    let poc = 0;
+    c.forEach((x, j) => { if (x > c[poc] || (x === c[poc] && Math.abs(j - mid) < Math.abs(poc - mid))) poc = j; });
+    const [up, dn] = vaOf(c, poc);
+    let vpoc = null;
+    vv.forEach((x, j) => { if (x > 0 && (vpoc == null || x > vv[vpoc])) vpoc = j; });
+    // single prints : prix touchés par une seule tranche de toute la fusion, à l'intérieur du profil (queues exclues), au moins 2 lignes
+    let top = 0, bot = 0;
+    while (top < n && c[n - 1 - top] === 1) top++;
+    while (bot < n && c[bot] === 1) bot++;
+    const singles = [];
+    for (let j = bot; j < n - top;) {
+      if (c[j] !== 1) { j++; continue; }
+      const s0 = j;
+      while (j < n - top && c[j] === 1) j++;
+      if (j - s0 >= 2) singles.push([(k0 + s0) * step, (k0 + j) * step]);
+    }
+    const last = mem[mem.length - 1], cur = !!(last.marks && last.marks.current);
+    let alo = Infinity, ahi = -Infinity;                               // fourchette du prix depuis la fin de la fusion
+    after.forEach(s => { alo = Math.min(alo, s.low); ahi = Math.max(ahi, s.high); });
+    if (after.length && price > 0) { alo = Math.min(alo, price); ahi = Math.max(ahi, price); }
+    const poP = (k0 + poc + 0.5) * step;
+    return {merged: true, nMem: mem.length, members: mem.map(s => s.start), start: mem[0].start, end: last.end, step, bracketMs: mem[0].bracketMs,
+      high: Math.max(...mem.map(s => s.high)), low: Math.min(...mem.map(s => s.low)), open: mem[0].open, close: last.close,
+      poc: poP, vah: (k0 + up + 1) * step, val: (k0 + dn) * step, vpoc: vpoc == null ? null : (k0 + vpoc + 0.5) * step,
+      rows: c.map((x, j) => [(k0 + j) * step, x, '', vv[j], hasD ? (dl.get(k0 + j) || 0) : null]), segs: c.map((_, j) => seg.get(k0 + j) || []),
+      br, cols, cuts, brackets: br.length, singles, tailHigh: top >= 2 ? [(k0 + n - top) * step, (k0 + n) * step] : null,
+      tailLow: bot >= 2 ? [k0 * step, (k0 + bot) * step] : null, poorHigh: false, poorLow: false, ctx: {},
+      exact: mem.every(s => s.exact != null) ? mem.reduce((a, s) => a + (s.exact || 0) * (s.volume || 0), 0) / Math.max(1e-12, mem.reduce((a, s) => a + (s.volume || 0), 0)) : null,
+      marks: {current: cur, singles: singles.map(([a, b]) => [a, b, !cur && alo <= a && ahi >= b]),
+        poc: {price: poP, naked: !cur && after.length > 0 && !(alo <= poP && poP <= ahi)}}};
   }
   const maxOffset = k => Math.max(0, ((data[k] && data[k].sessions) || []).length - 1);
   function schedule(k) {
@@ -214,26 +358,30 @@ const TPO = (() => {
     const axisW = 66, compW = comp ? Math.min(110, Math.max(70, w * 0.12)) : 0, top = 8, bottom = 30;
     const plotR = w - axisW - compW - (comp ? 8 : 0), plotH = h - top - bottom;
     // largeur des colonnes : lettres (7 px) si au moins 2 seances tiennent, sinon blocs (4 ou 3 px) ; volume : barres fines a droite des lettres
+    // V34 : une fusion tient au plus dans 45 % de la largeur (70 % dépliée) ; dépliée, une colonne par tranche au lieu d'une par lettre
     const maxC = s => Math.max(...s.rows.map(r => r[1]));
-    const volW = o.vol ? 22 : 0;
-    const visible = ss.slice(0, ss.length - v.offset);
+    const colsOf = s => s.merged ? s.cols : s.br && s.br.length ? s.br[s.br.length - 1][0] + 1 : 1;
+    const cnt = it => it.exp ? colsOf(it.s) : maxC(it.s);
+    const unit = (it, c) => Math.min(c, it.exp ? Math.max(160, plotR * 0.7) / cnt(it) : it.merged ? Math.max(140, plotR * 0.45) / cnt(it) : Infinity);
+    const volW = o.vol ? 22 : 0, wdOf = (it, c) => cnt(it) * unit(it, c) + 16 + volW;
+    const visible = items(k, d, ss.slice(0, ss.length - v.offset));
     let cw = 7, fit = [];
     const modes = o.mode === 'letters' ? [[7, 1]] : o.mode === 'blocks' ? [[4, 2], [3, 1]] : [[7, 2], [4, 3], [3, 1]];
     for (const [c, need] of modes) {
       cw = c; fit = []; let used = 0;
-      for (let i = visible.length - 1; i >= 0; i--) { const wd = maxC(visible[i]) * c + 16 + volW; if (used + wd > plotR - 4) break; used += wd; fit.unshift(visible[i]); }
+      for (let i = visible.length - 1; i >= 0; i--) { const wd = wdOf(visible[i], c); if (used + wd > plotR - 4) break; used += wd; fit.unshift(visible[i]); }
       if (fit.length >= Math.min(need, visible.length)) break;
     }
     // profils tres larges (semaine, mois : jusqu'a 42 lettres par prix) : si moins de 3 seances tiennent, histogramme compact a l'echelle commune
     const want = Math.min(3, visible.length);
     if (fit.length < want && o.mode !== 'letters') {
-      const ssw = visible.slice(-want), tot = ssw.reduce((a, s) => a + maxC(s), 0);
+      const ssw = visible.slice(-want), tot = ssw.reduce((a, it) => a + cnt(it), 0);
       cw = Math.max(0.6, (plotR - 4 - want * (16 + volW)) / Math.max(1, tot));
       fit = ssw;
     }
     if (!fit.length) fit = visible.slice(-1);
     // echelle des prix : fourchette des seances visibles (et du prix), puis zoom / deplacement
-    let lo = Math.min(...fit.map(s => s.low)), hi = Math.max(...fit.map(s => s.high));
+    let lo = Math.min(...fit.map(it => it.s.low)), hi = Math.max(...fit.map(it => it.s.high));
     if (d.price) { lo = Math.min(lo, d.price); hi = Math.max(hi, d.price); }
     lo -= step; hi += step;
     const fullSpan = hi - lo, span = fullSpan / v.zoom;
@@ -256,16 +404,22 @@ const TPO = (() => {
     // placement des seances (les plus recentes a droite)
     let x = plotR - 4;
     const placed = [];
-    for (let i = fit.length - 1; i >= 0; i--) { const s = fit[i], wd = maxC(s) * cw + 16 + volW, x0 = x - wd; placed.unshift({s, x0, wd}); x = x0; }
+    for (let i = fit.length - 1; i >= 0; i--) { const it = fit[i], u = unit(it, cw), wd = cnt(it) * u + 16 + volW, x0 = x - wd; placed.unshift({it, s: it.s, x0, wd, u}); x = x0; }
     v.geo.avgW = placed.length ? placed.reduce((a, c) => a + c.wd, 0) / placed.length : 80;
+    v.geo.placed = placed.map(({it, x0, wd}) => ({id: it.id, first: it.first, last: it.last, n: it.n, merged: it.merged, exp: it.exp, x0, wd}));
+    const sel = v.sel || [];
     // zones du composite (HVN / LVN) en fond, sur toute la largeur
     if (comp) {
       (comp.hvn || []).forEach(([a, b]) => { ctx.fillStyle = 'rgba(120,173,247,0.045)'; ctx.fillRect(0, Y(b), plotR, Y(a) - Y(b)); });
       (comp.lvn || []).forEach(([a, b]) => { ctx.fillStyle = 'rgba(255,179,0,0.04)'; ctx.fillRect(0, Y(b), plotR, Y(a) - Y(b)); });
     }
     const LI = l => LET.indexOf(l);
-    placed.forEach(({s, x0, wd}, idx) => {
-      const m = s.marks || {}, cur = !!m.current, n = s.brackets || 1, lx = x0 + 9, lettersW = maxC(s) * cw;
+    placed.forEach(({it, s, x0, wd, u}, idx) => {
+      const m = s.marks || {}, cur = !!m.current, n = s.brackets || 1, lx = x0 + 9, lettersW = cnt(it) * u, cw = u;
+      if (sel.includes(it.id)) {                                        // V34 : séance choisie
+        ctx.fillStyle = 'rgba(255,196,64,0.06)'; ctx.fillRect(x0 + 1, top, wd - 2, plotH);
+        ctx.strokeStyle = 'rgba(255,196,64,0.7)'; ctx.lineWidth = 1; ctx.strokeRect(Math.round(x0) + 1.5, top + 0.5, wd - 3, plotH - 1);
+      }
       const ibN = s.ibMs && s.bracketMs ? Math.ceil(s.ibMs / s.bracketMs) : 0;
       // separation et zone de valeur
       if (idx) { ctx.fillStyle = 'rgba(255,255,255,0.035)'; ctx.fillRect(Math.round(x0), top, 1, plotH); }
@@ -300,13 +454,22 @@ const TPO = (() => {
       const tailHi = s.tailHigh, tailLo = s.tailLow, fs = Math.min(11, Math.max(8, rowH - 1));
       ctx.font = `600 ${fs}px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       const showLetters = cw >= 7 && rowH >= 8;
-      s.rows.forEach(r => {
-        const p = r[0], cnt = r[1], lets = r[2], y1 = Y(p + step), y = Y(p + step / 2);
+      s.rows.forEach((r, ri) => {
+        const p = r[0], lets = r[2], y1 = Y(p + step), y = Y(p + step / 2);
         if (y1 > h - bottom || Y(p) < top) return;
         const poc = s.poc >= p && s.poc < p + step;
         const tail = (tailHi && p >= tailHi[0] - 1e-9) || (tailLo && p + step <= tailLo[1] + 1e-9);
         if (poc) { ctx.fillStyle = 'rgba(236,236,236,0.12)'; ctx.fillRect(x0 + 2, y1, wd - 4, rowH); }
-        for (let q = 0; q < lets.length; q++) {
+        if (s.merged && !it.exp) {                                      // fusion repliée : une barre par séance, de la plus ancienne (sombre) à la plus récente
+          let qx = lx;
+          s.segs[ri].forEach(([j, c]) => {
+            const f = s.nMem > 1 ? j / (s.nMem - 1) : 1;
+            ctx.fillStyle = poc ? rgba(t.vpPoc, 1) : tail ? rgba(t.vpGrey, 0.95) : `rgba(${Math.round(110 + 130 * f)},${Math.round(125 + 85 * f)},${Math.round(150 + 97 * f)},0.9)`;
+            ctx.fillRect(qx, y1 + (rowH > 3 ? 1 : 0), Math.max(0.6, c * cw), Math.max(1, rowH - (rowH > 3 ? 2 : 0)));
+            qx += c * cw;
+          });
+        }
+        for (let q = 0; q < (it.exp || s.merged ? 0 : lets.length); q++) {
           const idx2 = LI(lets[q]), f = n > 1 ? idx2 / (n - 1) : 1, isIb = idx2 < ibN, last = cur && idx2 === n - 1;
           ctx.fillStyle = last ? 'rgba(255,196,64,0.98)' : poc ? rgba(t.vpPoc, 1) : tail ? rgba(t.vpGrey, 0.95) : isIb && o.ib ? `rgba(${Math.round(80 + 60 * f)},${Math.round(190 + 30 * f)},${Math.round(140 + 40 * f)},0.95)`
             : `rgba(${Math.round(140 + 100 * f)},${Math.round(150 + 60 * f)},${Math.round(170 + 77 * f)},0.95)`;
@@ -319,6 +482,37 @@ const TPO = (() => {
           ctx.fillRect(vx, y1 + (rowH > 3 ? 1 : 0), bw, Math.max(1, rowH - (rowH > 3 ? 2 : 0)));
         }
       });
+      // V34 : profil déplié : chaque tranche dans sa colonne (sa lettre, ou un bloc), de son plus bas à son plus haut ; fusion : un trait par séance
+      if (it.exp) {
+        const brs = s.merged ? s.br : (s.br || []).map(([i, bh, bl, bc]) => [i, bh, bl, bc, 0, i]), nc = Math.max(1, cnt(it) - 1);
+        ctx.font = `600 ${fs}px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        if (s.merged) { ctx.fillStyle = 'rgba(255,255,255,0.06)'; s.cuts.slice(1).forEach(cx => ctx.fillRect(Math.round(lx + cx * cw) - 1, top, 1, plotH)); }
+        brs.forEach(([col, bh, bl, , j, i]) => {
+          const f = col / nc, xc = lx + col * cw, lastB = cur && j === (s.nMem || 1) - 1 && col === cnt(it) - 1;
+          const isIb = !s.merged && i < ibN && o.ib;
+          for (let q = Math.floor(bl / step + 1e-9); q <= Math.floor(bh / step + 1e-9); q++) {
+            const p = q * step, y1 = Y(p + step);
+            if (y1 > h - bottom || Y(p) < top) continue;
+            const poc = s.poc >= p && s.poc < p + step;
+            ctx.fillStyle = lastB ? 'rgba(255,196,64,0.98)' : poc ? rgba(t.vpPoc, 1) : isIb ? `rgba(${Math.round(80 + 60 * f)},${Math.round(190 + 30 * f)},${Math.round(140 + 40 * f)},0.95)`
+              : `rgba(${Math.round(140 + 100 * f)},${Math.round(150 + 60 * f)},${Math.round(170 + 77 * f)},0.95)`;
+            if (showLetters) ctx.fillText(LET[i % LET.length], xc, Y(p + step / 2) + 0.5);
+            else ctx.fillRect(xc, y1 + (rowH > 3 ? 1 : 0), cw >= 3 ? cw - 1 : Math.max(0.6, cw), Math.max(1, rowH - (rowH > 3 ? 2 : 0)));
+          }
+        });
+      }
+      if (s.merged) {                                                   // repère de la fusion : POC et nombre de séances (comme Exocharts)
+        const y = Math.round(Y(s.poc)) + 0.5;
+        ctx.strokeStyle = rgba(t.vpPoc, 0.55); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x0 + 4, y); ctx.lineTo(x0 + wd - 4, y); ctx.stroke();
+        const lab = `POC ${fmtP(s.poc)} (${s.nMem} séances)`;
+        ctx.font = `600 10.5px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+        const lw = Math.min(wd - 12, ctx.measureText(lab).width + 8);
+        ctx.fillStyle = 'rgba(11,14,17,0.88)'; ctx.fillRect(x0 + 6, y - 17, lw, 14);
+        ctx.fillStyle = '#ececec'; ctx.fillText(lab, x0 + 10, y - 4, lw - 8);
+        ctx.setLineDash([3, 3]); ctx.strokeStyle = 'rgba(120,173,247,0.5)'; ctx.lineWidth = 1;
+        [s.vah, s.val].forEach(px => { const yy = Math.round(Y(px)) + 0.5; ctx.beginPath(); ctx.moveTo(x0 + 2, yy); ctx.lineTo(x0 + wd - 2, yy); ctx.stroke(); });
+        ctx.setLineDash([]);
+      }
       // ouverture et cloture
       ctx.fillStyle = 'rgba(200,200,200,0.85)';
       const yo = Y(s.open);
@@ -365,8 +559,8 @@ const TPO = (() => {
     placed.forEach(({s, x0, wd}) => {
       const cur = s.marks && s.marks.current;
       ctx.fillStyle = cur ? rgba(t.vpBuy, 1) : t.label;
-      ctx.fillText(when(k, s.start) + (cur ? ' · en cours' : ''), x0 + 6, h - 16, wd - 8);
-      const c = s.ctx || {}, sub = [c.dayType ? c.dayType.label : null, s.shape ? 'forme ' + SHAPE_SHORT[s.shape] : null].filter(Boolean).join(' · ');
+      ctx.fillText((s.merged ? when(k, s.start) + ' → ' + when(k, s.members[s.members.length - 1]) : when(k, s.start)) + (cur ? ' · en cours' : ''), x0 + 6, h - 16, wd - 8);
+      const c = s.ctx || {}, sub = s.merged ? `fusion de ${s.nMem} séances` : [c.dayType ? c.dayType.label : null, s.shape ? 'forme ' + SHAPE_SHORT[s.shape] : null].filter(Boolean).join(' · ');
       if (sub) { ctx.fillStyle = 'rgba(150,150,150,0.8)'; ctx.fillText(sub, x0 + 6, h - 4, wd - 8); }
     });
     // echelle des prix
@@ -386,6 +580,7 @@ const TPO = (() => {
         ctx.fillStyle = t.priceText; ctx.font = `600 10px ${t.font}`; ctx.fillText(fmtP(d.price), ax, y);
       }
     }
+    renderAct(k);
     sec.querySelector('[data-info]').textContent = `${placed.length} séance${placed.length > 1 ? 's' : ''}${v.offset ? ` (−${v.offset})` : ''} · une ligne = ${fmtP(step)} $${v.zoom > 1 ? ' · zoom ×' + num(v.zoom, 1) : ''}`;
     // reticule et bulle
     const tip = sec.querySelector('.tip');
@@ -400,8 +595,10 @@ const TPO = (() => {
         if (sx) {
           const s = sx.s, r = s.rows.find(r => p >= r[0] && p < r[0] + step), c = s.ctx || {}, st = d.study;
           const sp = s.singles.find(([a, b]) => p >= a && p < b), mk = s.marks || {};
-          let html = `<b>${esc(when(k, s.start))}</b> · ${fmtP(Math.floor(p / step) * step)} – ${fmtP(Math.floor(p / step) * step + step)}<br>` +
-            (r ? `${r[1]} tranche${r[1] > 1 ? 's' : ''} : ${esc(r[2])}` + (r[3] ? `<br>volume ${num(r[3], 2)}${r[4] != null ? ` · delta ${r[4] >= 0 ? '+' : '−'}${num(Math.abs(r[4]), 2)}` : ''}` : '') : 'aucune tranche à ce prix');
+          const sg = s.merged && r ? s.segs[s.rows.indexOf(r)] : null;
+          let html = `<b>${esc(s.merged ? when(k, s.start) + ' → ' + when(k, s.members[s.members.length - 1]) : when(k, s.start))}</b> · ${fmtP(Math.floor(p / step) * step)} – ${fmtP(Math.floor(p / step) * step + step)}<br>` +
+            (sx.it.exp ? brTip(k, sx, hx) : '') +
+            (r ? `${r[1]} tranche${r[1] > 1 ? 's' : ''} : ${sg ? `sur ${sg.length} séance${sg.length > 1 ? 's' : ''} de la fusion` : esc(r[2])}` + (r[3] ? `<br>volume ${num(r[3], 2)}${r[4] != null ? ` · delta ${r[4] >= 0 ? '+' : '−'}${num(Math.abs(r[4]), 2)}` : ''}` : '') : 'aucune tranche à ce prix');
           const u = units(st), rc = st && st.singles.reaction;
           if (sp) html += `<br><span class="tipsp">single prints</span>${st ? ` : comblés dès ${u.next} ${pct(st.singles.rate)} du temps (témoin ${pct(st.singles.control)})` +
             (rc && rc.rate != null ? ` ; au retour du prix, tiennent ${pct(rc.rate)} (témoin ${pct(rc.control)})` : '') : ''}`;
@@ -415,6 +612,15 @@ const TPO = (() => {
       } else tip.hidden = true;
     } else tip.hidden = true;
   }
+  function brTip(k, sx, hx) {                                           // V34 : tranche survolée d'un profil déplié
+    const s = sx.s, col = Math.floor((hx - sx.x0 - 9) / sx.u);
+    const b = s.merged ? s.br.find(x => x[0] === col) : (s.br || []).find(x => x[0] === col);
+    if (!b) return '';
+    const i = s.merged ? b[5] : b[0], t0 = (s.merged ? s.members[b[4]] : s.start) + i * (s.bracketMs || 0);
+    const at = (s.bracketMs || 0) >= 86400000 ? DM.format(new Date(t0)) : PARIS.format(new Date(t0)) + ' ' + HOUR.format(new Date(t0));
+    return `tranche ${LET[i % LET.length]} (${esc(at)}) : ${fmtPx(b[2])} – ${fmtPx(b[1])}<br>`;
+  }
+  const fmtPx = p => LT.fmtP(p);
   function drawAll() { kinds().forEach(([k]) => draw(k)); }
   function show() {
     const was = on;
@@ -435,5 +641,5 @@ const TPO = (() => {
     if (now - lastTick < 500) return;
     lastTick = now; schedule();
   }
-  return {init, show, hide, refresh, onTick, redraw: drawAll, active: () => on};
+  return {init, show, hide, refresh, onTick, redraw: drawAll, active: () => on, _merge: merge};          // _merge : pour les tests
 })();

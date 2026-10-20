@@ -1,7 +1,8 @@
-# Liq Terminal (V33)
+# Liq Terminal (V34)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Fusionner et déplier les profils TPO, comme sur Exocharts** (V34) : plusieurs séances de suite en un seul profil (POC, zone de valeur, single prints et volume recalculés), et chaque tranche dans sa propre colonne pour lire le trajet du prix (voir « V34 » plus bas).
 - **Plus d'historique sur le graphique** (V33) : tout l'historique en journalier (depuis 2019 pour le BTC), 1 500 bougies dans les autres unités de temps (avant : 400) ; VWAP, intérêt ouvert et delta suivent sur toute la largeur ; l'intérêt ouvert remonte maintenant jusqu'à décembre 2021 (voir « V33 » plus bas).
 - **Seulement les divergences prix / intérêt ouvert / CVD, en journalier, 4 heures et 1 heure** (V32, voir « V32 » plus bas).
 - **Nouvelle stratégie d'idées de trade : prix, intérêt ouvert et CVD lus sur la liquidité et les VWAP** (V31) : l'ancienne note de confluence est remplacée ; 8 combinaisons, une réaction pour chacune, mesurée sur SOL, BTC et ETH depuis 2022 (voir « V31 » plus bas).
@@ -128,6 +129,18 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V34 : fusionner et déplier les profils TPO (comme sur Exocharts)
+
+Dans la vue **TPO** (bouton « TPO » du Desk) :
+
+- **Choisir des séances** : un clic sur une séance l'entoure en jaune. **Maj + clic** sur une autre choisit toutes celles entre les deux ; **Ctrl + clic** en ajoute ou en retire une. Un clic dans le vide ne choisit plus rien.
+- **Fusionner** : les séances choisies, et toutes celles entre elles, deviennent **un seul profil**. Le POC, la zone de valeur (70 % des lettres), les single prints et le volume à chaque prix sont recalculés sur l'ensemble. Le profil fusionné porte l'étiquette « POC … (n séances) » et ses bords de valeur en pointillés. Replié, chaque barre est coloriée de la séance la plus ancienne (sombre) à la plus récente (claire). Une fusion peut contenir la séance en cours : elle se met à jour en direct.
+- **Déplier** : chaque tranche (30 minutes pour la séance d'1 jour, 4 heures pour la semaine...) est posée dans **sa propre colonne**, dans l'ordre du temps, au lieu d'être tassée contre le bord gauche. On voit alors le trajet du prix dans la séance, ou sur toute la fusion (un trait sépare les séances). La bulle donne la lettre, l'heure et la fourchette de la tranche survolée.
+- **Séparer** revient aux séances une par une ; **Tout séparer** défait toutes les fusions de ce type de séance.
+- La case **déplier** de la barre du haut déplie tous les profils ; « Replier » sur une séance choisie l'inverse pour elle seule.
+- Les fusions et les profils dépliés sont **gardés** (par paire et par type de séance) d'une ouverture à l'autre.
+- Limite : on ne peut fusionner que les séances chargées dans la vue (30 jours, 26 semaines, 24 mois, 42 séances de 4 heures, 48 heures).
 
 ## Ce qui est nouveau en V33 : plus d'historique sur le graphique
 

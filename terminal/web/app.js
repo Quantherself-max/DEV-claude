@@ -94,7 +94,8 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
   theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, nodes: true, dpoc: true, npoc: true, tpoM: true, tpoW: true, tpoD: true, tpo4: false, tpo1: false, vwap: true, dom: false, big: true, bigMin: 2, bigLabels: 'top', absorb: true, absorbMode: 'fortes', gex: true,
     vwapW: false, vwapM: false, vwapY: false, avwap: false, vol: true, heat: false, liqmap: false, oi: false, delta: false, deltaCvd: true, zones: true}, flow: null,
   mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {M: true, W: true, D: true, '4h': false, '1h': false},
-  tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true}};
+  tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true, expand: false},
+  tpoGroups: {}};                                                    // V34 : séances TPO fusionnées et profils dépliés, par paire et type de séance
 async function api(path, body) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
   const r = await fetch(path, opt);
@@ -166,7 +167,7 @@ const panels = [];
 const LAYOUTS = {main: ['main'], blank: ['main'], heat: ['main'], '1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: [], pair: []};
 const needs = k => (LAYOUTS[st.layout] || LAYOUTS.main).includes(k) && st.page === 'desk';
 function savePrefs() {
-  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, planHide: st.planHide.slice(-80), planShow: st.planShow.slice(-80), expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds, tpoOpts: st.tpoOpts, ws: st.ws, instTab: st.instTab, v: 28})); } catch (e) { /* stockage indisponible */ }
+  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, planHide: st.planHide.slice(-80), planShow: st.planShow.slice(-80), expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds, tpoOpts: st.tpoOpts, tpoGroups: st.tpoGroups, ws: st.ws, instTab: st.instTab, v: 28})); } catch (e) { /* stockage indisponible */ }
 }
 function loadPrefs() {
   try {
@@ -195,6 +196,12 @@ function loadPrefs() {
     if (p.tpoOpts && typeof p.tpoOpts === 'object') Object.keys(st.tpoOpts).forEach(k => { if (typeof p.tpoOpts[k] === typeof st.tpoOpts[k]) st.tpoOpts[k] = p.tpoOpts[k]; });
     if (p.tpoKinds && typeof p.tpoKinds === 'object' && typeof p.tpoKinds.W === 'boolean') ['M', 'W', 'D', '4h', '1h'].forEach(k => { if (typeof p.tpoKinds[k] === 'boolean') st.tpoKinds[k] = p.tpoKinds[k]; });
     else if (p.tpoKinds && typeof p.tpoKinds === 'object' && typeof p.tpoKinds.D === 'boolean') st.tpoKinds.D = p.tpoKinds.D;
+    if (p.tpoGroups && typeof p.tpoGroups === 'object') Object.entries(p.tpoGroups).slice(-40).forEach(([key, g]) => {
+      if (!g || typeof g !== 'object') return;
+      const merge = (Array.isArray(g.merge) ? g.merge : []).filter(x => Array.isArray(x) && x.length === 2 && x.every(Number.isFinite)).slice(-40);
+      const exp = (Array.isArray(g.exp) ? g.exp : []).filter(Number.isFinite).slice(-80);
+      if (merge.length || exp.length) st.tpoGroups[key] = {merge, exp};
+    });
     if (p.mtf && Array.isArray(p.mtf.tfs)) st.mtf = {n: Math.max(2, Math.min(5, +p.mtf.n || 4)), tfs: p.mtf.tfs.slice(0, 5)};
   } catch (e) { /* preferences illisibles : valeurs par defaut */ }
 }

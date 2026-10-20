@@ -378,6 +378,7 @@ body.theme-nuit .mwthread{color:#bdbdbd}
 @media (max-width:700px){.mwgrid{grid-template-columns:1fr}}
 /* V19 : vue TPO refaite */
 .tpobar select{padding:2px 4px;font-size:11px}.tpsep{width:1px;height:16px;background:var(--line)}
+.tpoact{display:flex;gap:4px;margin-right:8px}.tpobtn{font-size:11px;padding:1px 8px;border-radius:5px;border:1px solid #ffc44070;background:#ffc44014;color:#ffd77a;cursor:pointer}.tpobtn:hover{background:#ffc44030}
 .tpoctx{display:flex;flex-wrap:wrap;gap:4px;padding:4px 6px;border-bottom:1px solid var(--line);min-height:24px}
 .tpochip{font-size:10.5px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:#b9bcc6;white-space:nowrap;cursor:help}
 .tpochip.type{color:#e6e6e6;border-color:#5a6478}.tpochip.up{color:var(--up);border-color:#3ddc9760}.tpochip.dn{color:#ff9a9a;border-color:#ff6b6b60}
