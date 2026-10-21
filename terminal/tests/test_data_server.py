@@ -249,8 +249,11 @@ class LiveServerTests(unittest.TestCase):
                 time.sleep(2)
 
         srv = FakeWSServer(script)
+        import shutil
         import tempfile
-        with tempfile.TemporaryDirectory() as d:
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)                     # des taches de fond peuvent encore ecrire pendant le nettoyage : on ignore
+        if True:
             cfg = Config(source="simulated", symbols=("BTCUSDT",), data_dir=d, port=0)
             app = App(cfg, env_path=__import__("pathlib").Path(d) / ".env", make_source=lambda c: SimulatedSource(now_ms=NOW),
                       make_feed=lambda c: LiveFeed(f"ws://127.0.0.1:{srv.port}/market", c.symbols, d))
