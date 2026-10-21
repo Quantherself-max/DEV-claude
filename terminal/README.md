@@ -1,4 +1,4 @@
-# Liq Terminal (V34)
+# Liq Terminal (V34.1)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
@@ -134,6 +134,7 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 
 Dans la vue **TPO** (bouton « TPO » du Desk) :
 
+- **Clic droit sur un profil** (V34.1) : un menu propose « Fusionner avec la séance précédente », « Fusionner avec la séance suivante », « Fusionner jusqu'à la séance en cours », « Fusionner depuis la plus ancienne affichée », « Déplier » ou « Replier » ce profil, « Séparer cette fusion », « Tout déplier » et « Tout séparer ». Les boutons (Fusionner, Déplier, Séparer) s'affichent aussi en haut à gauche du graphique : avec trois colonnes, ils étaient cachés dans l'en-tête, trop étroit.
 - **Choisir des séances** : un clic sur une séance l'entoure en jaune. **Maj + clic** sur une autre choisit toutes celles entre les deux ; **Ctrl + clic** en ajoute ou en retire une. Un clic dans le vide ne choisit plus rien.
 - **Fusionner** : les séances choisies, et toutes celles entre elles, deviennent **un seul profil**. Le POC, la zone de valeur (70 % des lettres), les single prints et le volume à chaque prix sont recalculés sur l'ensemble. Le profil fusionné porte l'étiquette « POC … (n séances) » et ses bords de valeur en pointillés. Replié, chaque barre est coloriée de la séance la plus ancienne (sombre) à la plus récente (claire). Une fusion peut contenir la séance en cours : elle se met à jour en direct.
 - **Déplier** : chaque tranche (30 minutes pour la séance d'1 jour, 4 heures pour la semaine...) est posée dans **sa propre colonne**, dans l'ordre du temps, au lieu d'être tassée contre le bord gauche. On voit alors le trajet du prix dans la séance, ou sur toute la fusion (un trait sépare les séances). La bulle donne la lettre, l'heure et la fourchette de la tranche survolée.

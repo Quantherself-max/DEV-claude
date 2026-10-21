@@ -329,7 +329,7 @@ class ServerTests(unittest.TestCase):
 
     def test_liquidation_map_on_the_whole_four_hour_chart(self):
         cfg = self.get("/api/config")
-        self.assertGreaterEqual(int(cfg["version"]), 29)
+        self.assertGreaterEqual(float(cfg["version"]), 29)
         self.assertEqual(cfg["liqmapSymbols"], ["BTCUSDT", "SOLUSDT"])
         self.assertEqual(cfg["heatmapDays"], 20)
         self.assertFalse(self.get("/api/liqmap?symbol=BTCUSDT&t0=1&t1=2&lo=1&hi=2")["ready"])   # pas encore construite

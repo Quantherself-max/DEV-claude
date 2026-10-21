@@ -18,6 +18,10 @@ class PageTests(unittest.TestCase):
     def test_controls(self):
         for k in ('data-a="${act}"', "btn('merge'", "btn('split'", "btn('expand'", "btn('splitall'", 'data-tpo-o="expand"', "function items(", "function merge(", "function pick("):
             self.assertIn(k, TPO_JS)
+        for k in ("addEventListener('contextmenu'", "function menu(", "Fusionner avec la séance précédente", "Fusionner avec la séance suivante", "Tout déplier", "Tout séparer"):
+            self.assertIn(k, TPO_JS)                                                           # V34.1 : menu du clic droit
+        self.assertNotIn('<span class="tpoact" data-act>', TPO_JS)                            # boutons sur le graphique, plus dans l'en-tête trop étroit
+        self.assertIn('<div class="tpoact" data-act>', TPO_JS)
         app = (WEB / "app.js").read_text(encoding="utf-8")
         self.assertIn("tpoGroups: st.tpoGroups", app)                                          # fusions gardées d'une ouverture à l'autre
         self.assertIn("expand: false", app)
@@ -32,7 +36,7 @@ class MergeTests(unittest.TestCase):
         cls.app.service.refresh_all()
 
     def run_merge(self, mem, step, after, price):
-        js = ("const Panel = {TH: {}}; " + TPO_JS + "\nconst a = JSON.parse(require('fs').readFileSync(0, 'utf8'));\n"
+        js = ("const Panel = {TH: {}}; const window = {addEventListener() {}}; " + TPO_JS + "\nconst a = JSON.parse(require('fs').readFileSync(0, 'utf8'));\n"
               "process.stdout.write(JSON.stringify(TPO._merge(a.mem, a.step, a.after, a.price)));")
         out = subprocess.run(["node", "-e", js], input=json.dumps({"mem": mem, "step": step, "after": after, "price": price}),
                              capture_output=True, text=True, timeout=60, check=True)

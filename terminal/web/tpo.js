@@ -8,6 +8,8 @@
 // V34 (comme Exocharts) : clic sur une séance pour la choisir (Maj + clic : toutes celles entre deux, Ctrl + clic : une de plus), puis
 // « Fusionner » (un seul profil pour plusieurs séances de suite : POC, zone de valeur, single prints et volume recalculés), « Séparer », et
 // « Déplier » (chaque tranche dans sa propre colonne, dans l'ordre du temps, au lieu d'être tassée contre le bord gauche). Gardé par paire.
+// V34.1 : clic droit sur un profil : menu (fusionner avec la précédente, la suivante, jusqu'à la séance en cours, déplier, séparer...) ;
+// les boutons sont posés sur le graphique (dans l'en-tête de la colonne, trop étroite avec trois colonnes, ils étaient cachés).
 const TPO = (() => {
   'use strict';
   const KINDS = [['M', '1 mois', '1 jour'], ['W', '1 semaine', '4 heures'], ['D', '1 jour', '30 minutes'], ['4h', '4 heures', '5 minutes'], ['1h', '1 heure', '5 minutes']];
@@ -44,7 +46,7 @@ const TPO = (() => {
       `<label class="small" title="POC jamais retraversés depuis leur séance, prolongés jusqu'à l'échelle des prix"><input type="checkbox" data-tpo-o="naked"> POC vierges</label>` +
       `<label class="small" title="Chaque tranche dans sa propre colonne, dans l'ordre du temps (le trajet du prix dans la séance) ; « Déplier » ou « Replier » sur une séance choisie l'inverse pour elle seule"><input type="checkbox" data-tpo-o="expand"> déplier</label>` +
       `<label class="small" title="Première heure (initial balance) et ses objectifs d'extension x1,5 et x2 : la première heure pour la séance d'1 jour, le lundi pour la semaine, la première semaine pour le mois"><input type="checkbox" data-tpo-o="ib"> première heure</label>` +
-      `<span class="spacer"></span><span class="muted small">clic : choisir une séance · Maj + clic : plusieurs · molette : zoom · glisser : déplacer · Maj + molette : séances plus anciennes · double-clic : recadrer</span></div>` +
+      `<span class="spacer"></span><span class="muted small">clic droit : fusionner ou déplier · clic : choisir une séance · Maj + clic : plusieurs · molette : zoom · glisser : déplacer · Maj + molette : séances plus anciennes · double-clic : recadrer</span></div>` +
       `<div class="tpocols"></div><details class="tpostudy"><summary>Ce que dit l'historique sur ces repères</summary><div class="tpostudybody muted small">Chargement…</div></details>`;
     window.addEventListener('mouseup', () => Object.values(view).forEach(v => { v.drag = null; }));
     root.querySelectorAll('[data-tpo-o]').forEach(el => {
@@ -69,8 +71,8 @@ const TPO = (() => {
     root.querySelectorAll('[data-tpo-k]').forEach(c => c.checked = !!LT.st.tpoKinds[c.dataset.tpoK]);
     cols.style.gridTemplateColumns = `repeat(${Math.max(1, ks.length)}, minmax(0, 1fr))`;
     cols.innerHTML = ks.length ? ks.map(([k, lab, br]) => `<section class="tpocol" data-k="${k}"><div class="mhead"><b>TPO ${lab}</b><span class="muted small">tranches de ${br}</span>` +
-      `<span class="spacer"></span><span class="tpoact" data-act></span><span class="muted small" data-info></span></div><div class="tpoctx" data-ctx></div>` +
-      `<div class="mbody"><canvas></canvas><div class="tip" hidden></div><div class="tpomsg" hidden></div></div><div class="tpofoot muted small" data-foot></div></section>`).join('') :
+      `<span class="spacer"></span><span class="muted small" data-info></span></div><div class="tpoctx" data-ctx></div>` +
+      `<div class="mbody"><canvas></canvas><div class="tpoact" data-act></div><div class="tip" hidden></div><div class="tpomsg" hidden></div></div><div class="tpofoot muted small" data-foot></div></section>`).join('') :
       '<div class="muted" style="padding:20px">Coche au moins un type de séance.</div>';
     cols.querySelectorAll('.tpocol').forEach(sec => { bind(sec); renderAct(sec.dataset.k); });
   }
@@ -97,6 +99,7 @@ const TPO = (() => {
     });
     cv.addEventListener('mouseleave', () => { const v = V(k); v.hover = null; v.drag = null; sec.querySelector('.tip').hidden = true; schedule(k); });
     cv.addEventListener('mousedown', ev => { const v = V(k), p = pos(ev); v.drag = {x: p.x, y: p.y, center: v.center ?? (v.geo ? v.geo.center : null), offset: v.offset}; });
+    cv.addEventListener('contextmenu', ev => { ev.preventDefault(); menu(k, pos(ev).x, ev.clientX, ev.clientY); });
     cv.addEventListener('dblclick', () => { Object.assign(V(k), {zoom: 1, center: null, offset: 0}); schedule(k); });
     cv.addEventListener('wheel', ev => {
       ev.preventDefault();
@@ -151,8 +154,8 @@ const TPO = (() => {
     if (box.dataset.h !== html) { box.innerHTML = html; box.dataset.h = html; }       // pas réécrit à chaque image : le clic sur un bouton reste sûr
     box.onclick = ev => { const t = ev.target.closest('[data-a]'); if (t) act(k, t.dataset.a); };
   }
-  function act(k, a) {
-    const v = V(k), gr = groups(k), ch = chosen(k);
+  function act(k, a, list) {
+    const v = V(k), gr = groups(k), ch = list || chosen(k);
     if (a === 'merge' && ch.length) {
       const lo = Math.min(...ch.map(c => c.first)), hi = Math.max(...ch.map(c => c.last)), flip = ch.some(c => c.exp !== !!opts().expand);
       gr.merge = gr.merge.filter(([x, y]) => y < lo || x > hi);
@@ -165,6 +168,12 @@ const TPO = (() => {
       gr.merge = gr.merge.filter(([x]) => !ids.includes(x));
       v.sel = [];
     } else if (a === 'splitall') gr.merge = [];
+    else if (a === 'expandall') {
+      opts().expand = !opts().expand;
+      Object.keys(LT.st.tpoGroups).forEach(g => { if (g.startsWith(LT.st.symbol + '|')) LT.st.tpoGroups[g].exp = []; });
+      const cb = root.querySelector('[data-tpo-o="expand"]'); if (cb) cb.checked = opts().expand;
+      LT.savePrefs(); drawAll(); return;
+    }
     else if (a === 'expand' && ch.length) {
       const allExp = ch.every(c => c.exp);
       ch.forEach(c => {
@@ -174,6 +183,47 @@ const TPO = (() => {
     } else if (a === 'clear') v.sel = [];
     gr.merge = gr.merge.slice(-40); gr.exp = gr.exp.slice(-80);
     LT.savePrefs(); schedule(k); setTimeout(() => renderAct(k), 0);
+  }
+  // ---------- V34.1 : menu du clic droit ----------
+  let menuEl = null;
+  function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; } }
+  window.addEventListener('mousedown', ev => { if (menuEl && !menuEl.contains(ev.target)) closeMenu(); }, true);
+  window.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeMenu(); });
+  window.addEventListener('wheel', closeMenu, {passive: true});
+  window.addEventListener('resize', closeMenu);
+  function menu(k, x, cx, cy) {
+    closeMenu();
+    const v = V(k), g = v.geo, all = (g && g.all) || [], gr = groups(k);
+    const hit = g && g.placed ? g.placed.find(c => x >= c.x0 && x < c.x0 + c.wd) : null;
+    if (hit && !(v.sel || []).includes(hit.id)) { v.sel = [hit.id]; renderAct(k); schedule(k); }
+    const ch = chosen(k), i = hit ? all.findIndex(c => c.id === hit.id) : -1, prev = i > 0 ? all[i - 1] : null, next = i >= 0 && i < all.length - 1 ? all[i + 1] : null;
+    const name = c => c.merged ? `ces ${c.n} séances` : 'cette séance';
+    const rows = [];
+    const add = (lab, fn, title = '') => rows.push({lab, fn, title});
+    if (ch.length > 1) add(`Fusionner les ${ch.reduce((a, c) => a + c.n, 0)} séances choisies`, () => act(k, 'merge', ch), 'Un seul profil : POC, zone de valeur, single prints et volume recalculés');
+    if (hit) {
+      if (prev) add('Fusionner avec la séance précédente', () => act(k, 'merge', [prev, hit]));
+      if (next) add('Fusionner avec la séance suivante', () => act(k, 'merge', [hit, next]));
+      if (next) add(`Fusionner jusqu'à la séance ${all[all.length - 1].current ? 'en cours' : 'la plus récente'} (${all.slice(i).reduce((a, c) => a + c.n, 0)} séances)`, () => act(k, 'merge', [hit, all[all.length - 1]]),
+        'Toutes les séances depuis celle-ci, en un seul profil qui se met à jour en direct');
+      if (i > 0) add(`Fusionner depuis la plus ancienne affichée (${all.slice(0, i + 1).reduce((a, c) => a + c.n, 0)} séances)`, () => act(k, 'merge', [all[0], hit]));
+      rows.push(null);
+      add(hit.exp ? `Replier ${name(hit)}` : `Déplier ${name(hit)}`, () => act(k, 'expand', [hit]), hit.exp ? 'Profil classique : les tranches tassées contre le bord gauche' : 'Chaque tranche dans sa propre colonne, dans l\'ordre du temps');
+      if (hit.merged) add('Séparer cette fusion', () => act(k, 'split', [hit]));
+      rows.push(null);
+    }
+    add(opts().expand ? 'Tout replier' : 'Tout déplier', () => act(k, 'expandall'));
+    if (gr.merge.length) add('Tout séparer', () => act(k, 'splitall'));
+    const el = menuEl = document.createElement('div');
+    el.className = 'tpomenu';
+    el.innerHTML = rows.map((r, j) => r ? `<button data-m="${j}" title="${esc(r.title)}">${esc(r.lab)}</button>` : '<hr>').join('') +
+      '<div class="muted small">Maj + clic : choisir plusieurs séances</div>';
+    el.addEventListener('click', ev => { const b = ev.target.closest('[data-m]'); if (!b) return; const r = rows[+b.dataset.m]; closeMenu(); r.fn(); });
+    el.addEventListener('contextmenu', ev => ev.preventDefault());
+    document.body.appendChild(el);
+    const r = el.getBoundingClientRect();
+    el.style.left = Math.max(4, Math.min(cx, window.innerWidth - r.width - 4)) + 'px';
+    el.style.top = Math.max(4, Math.min(cy, window.innerHeight - r.height - 4)) + 'px';
   }
   // une séance ou une fusion de séances de suite (même grille de prix : le pas est commun à toutes les séances renvoyées)
   function items(k, d, visible) {
@@ -407,6 +457,7 @@ const TPO = (() => {
     for (let i = fit.length - 1; i >= 0; i--) { const it = fit[i], u = unit(it, cw), wd = cnt(it) * u + 16 + volW, x0 = x - wd; placed.unshift({it, s: it.s, x0, wd, u}); x = x0; }
     v.geo.avgW = placed.length ? placed.reduce((a, c) => a + c.wd, 0) / placed.length : 80;
     v.geo.placed = placed.map(({it, x0, wd}) => ({id: it.id, first: it.first, last: it.last, n: it.n, merged: it.merged, exp: it.exp, x0, wd}));
+    v.geo.all = visible.map(it => ({id: it.id, first: it.first, last: it.last, n: it.n, merged: it.merged, exp: it.exp, current: !!(it.s.marks && it.s.marks.current)}));
     const sel = v.sel || [];
     // zones du composite (HVN / LVN) en fond, sur toute la largeur
     if (comp) {
@@ -631,7 +682,7 @@ const TPO = (() => {
     setTimeout(drawAll, 120);                                         // apres le changement de mise en page (panneau lateral...)
     window.addEventListener('resize', drawAll);
   }
-  function hide() { on = false; clearInterval(timer); timer = null; window.removeEventListener('resize', drawAll); }
+  function hide() { closeMenu(); on = false; clearInterval(timer); timer = null; window.removeEventListener('resize', drawAll); }
   function refresh() { Object.keys(data).forEach(k => delete data[k]); Object.keys(view).forEach(k => delete view[k]); if (on) { build(); load(); } }
   // prix en direct : seule la ligne du prix bouge entre deux chargements (redessin au plus toutes les 0,5 s)
   function onTick(price) {

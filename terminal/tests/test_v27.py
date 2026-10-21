@@ -65,7 +65,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.get("/macroweek.js")[0], 404)
         self.assertEqual(self.get("/api/plan?symbol=BTCUSDT&side=long&tp=2&sl=1&lev=10&h=24")[0], 404)
         cfg = json.loads(self.get("/api/config")[1])
-        self.assertGreaterEqual(int(cfg["version"]), 27)
+        self.assertGreaterEqual(float(cfg["version"]), 27)
 
 
 if __name__ == "__main__":
