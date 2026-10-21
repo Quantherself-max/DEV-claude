@@ -7,6 +7,7 @@
 Pourquoi c'est dans le terminal : c'est le seul filtre qui ressort du backtest (voir engine/study.py et le rapport « Backtest ») :
 sur BTC de 2013 a 2026, les idees DANS le sens de cette tendance ont rapporte en moyenne +0,15 fois le risque par trade apres frais,
 celles CONTRE elle -0,11. Module PUR, meme definition que backtest.regime_at (les deux sont verifies par un test)."""
+from __future__ import annotations
 
 FAST_DAYS = 50
 SLOW_DAYS = 200

@@ -1,4 +1,5 @@
 """ATR (moyenne de Wilder, comme ta.atr de Pine) et changement d'echelle de temps."""
+from __future__ import annotations
 from dataclasses import dataclass
 
 

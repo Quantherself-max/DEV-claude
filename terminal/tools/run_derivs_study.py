@@ -5,6 +5,7 @@
 
 Ces donnees n'ont pas d'historique libre : le terminal les enregistre toutes les 15 minutes (data_local/history/derivs/<PAIRE>.csv) tant qu'il tourne.
 Laisse-le tourner 3 a 4 semaines au moins. Les cours horaires viennent de l'API publique de Binance (internet requis). Methode : engine/derivstudy.py."""
+from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path

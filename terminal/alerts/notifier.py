@@ -1,5 +1,6 @@
 """Envoi des alertes : console (essai a blanc) ou Telegram (bot cree avec @BotFather).
 V25 : dernier envoi retenu (reussi ou non, avec la raison en clair) et diagnostic pas a pas du bot."""
+from __future__ import annotations
 import json
 import threading
 import time

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import unittest
 
 from engine.synth import flow_score, structure_score, synthesize

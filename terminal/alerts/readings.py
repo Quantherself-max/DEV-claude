@@ -3,6 +3,7 @@ macro, idee du moment), puis ce que le prix a fait ensuite (24 h, 3 jours, 7 jou
 
 Seule la tendance de fond est validee par le backtest : c'est elle qu'on note (le prix est-il alle dans son sens ?). Le reste est garde pour memoire.
 Le terminal n'enregistre que lorsqu'il tourne : un jour ou il est eteint n'a pas de lecture (rien n'est reconstruit apres coup)."""
+from __future__ import annotations
 import json
 import threading
 import time

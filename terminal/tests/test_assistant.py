@@ -1,3 +1,4 @@
+from __future__ import annotations
 import json
 import sys
 import tempfile
@@ -8,6 +9,8 @@ from pathlib import Path
 from alerts import assistant as A
 from engine import explain as ex
 from engine.atr import Candle
+
+TMP_KW = {"ignore_cleanup_errors": True} if sys.version_info >= (3, 10) else {}   # Python 3.9 (Mac) : option absente
 
 H = 3_600_000
 M5 = 300_000
@@ -241,7 +244,7 @@ class ServiceContextTests(unittest.TestCase):
         from data.simulated import SimulatedSource
         from server import App
         from tests.test_data_server import NOW
-        cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        cls.tmp = tempfile.TemporaryDirectory(**TMP_KW)
         c = cfg(data_dir=cls.tmp.name, port=0, telegram_token="", telegram_chat_id="")
         cls.app = App(c, env_path=Path(cls.tmp.name) / ".env", make_source=lambda c: SimulatedSource(now_ms=NOW), make_hub=lambda c, s: None)
         cls.app.service.refresh_all()

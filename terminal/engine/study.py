@@ -11,6 +11,7 @@ Ce que mesure le rapport (tout est calcule avec les seules donnees connues a cha
   5. LA TENDANCE journaliere (moyennes mobiles) sur tout l'historique, par grande periode.
 Module PUR (stdlib) : aucun reseau. Les gros calculs se parallelisent par trimestre (ProcessPoolExecutor) quand les donnees
 viennent d'un dossier (chaque processus recharge le dossier)."""
+from __future__ import annotations
 import math
 import random
 import time

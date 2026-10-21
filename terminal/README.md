@@ -1,4 +1,4 @@
-# Liq Terminal (V34.1)
+# Liq Terminal (V34.2)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
@@ -59,7 +59,7 @@ Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
    **Extrais tout le ZIP** (clic droit > « Extraire tout… », ou WinRAR > « Extraire ici ») : le lanceur ne marche pas si tu l'ouvres depuis l'intérieur du ZIP. Ouvre ensuite le dossier extrait, puis le dossier `terminal`.
 2. **Lancer.** Double-clique sur le lanceur de ton système :
    - Windows : `Lancer-Terminal-Windows.bat` ;
-   - Mac : `Lancer-Terminal-Mac.command`. La première fois, fais clic droit > Ouvrir.
+   - Mac : `Lancer-Terminal-Mac.command`. Si le Mac refuse de l'ouvrir la première fois (« développeur non identifié ») : **Réglages Système > Confidentialité et sécurité**, tout en bas, bouton **« Ouvrir quand même »**, puis double-clique de nouveau (sur les macOS plus anciens : clic droit > Ouvrir). Le lanceur choisit tout seul le Python le plus récent du Mac (version 3.9 au minimum, celle d'Apple suffit depuis la V34.2) et affiche lequel il utilise.
 
    Si Python n'est pas installé, le lanceur ouvre la page de téléchargement. Installe Python, en cochant **« Add Python to PATH »** sous Windows, puis double-clique de nouveau sur le lanceur.
 
@@ -129,6 +129,12 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V34.2 : le terminal démarre sur Mac
+
+- **Cause** : le Python livré avec macOS est en version 3.9, et le programme utilisait des écritures qui demandent Python 3.10. Il s'arrêtait dès le démarrage, avant d'ouvrir la page. Tout le programme tourne maintenant avec Python 3.9 ; un test le vérifie à chaque version (toute la suite de tests passe aussi sous Python 3.9).
+- **Le lanceur Mac** cherche le Python le plus récent installé (python.org, Homebrew, puis celui d'Apple), affiche lequel il utilise, et laisse la fenêtre ouverte avec le message d'erreur si le terminal s'arrête.
+- **Certificats de sécurité** : le Python téléchargé sur python.org n'a pas de certificats tant qu'on n'a pas lancé « Install Certificates.command » (dossier Python dans Applications) ; sans eux, Binance et Telegram restent injoignables. Le terminal reprend alors tout seul les certificats du trousseau du Mac.
 
 ## Ce qui est nouveau en V34 : fusionner et déplier les profils TPO (comme sur Exocharts)
 

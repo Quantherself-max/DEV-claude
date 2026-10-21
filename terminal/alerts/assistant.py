@@ -6,6 +6,7 @@ macro, autres marches, ou est l'argent...) et Claude repond en s'appuyant sur ce
   - module officiel `anthropic` (installe a la demande par le terminal : python -m pip install anthropic) ;
   - Telegram : SEULS les messages de TON chat id sont lus ; les autres sont ignores.
 Le contexte est construit localement : aucune donnee n'est envoyee ailleurs qu'a l'API de Claude au moment d'une question."""
+from __future__ import annotations
 import json
 import os
 import subprocess

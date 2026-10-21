@@ -5,6 +5,7 @@ autour de l'idee pour le graphique de la page Historique.
 Unite des resultats : le risque pris (distance entre l'entree et le stop). Un stop touche coute 1 fois le risque ; a l'objectif 1, la
 moitie de la position est encaissee, le reste sort a l'objectif 2 ou a l'entree si le prix revient. Les frais ne sont pas comptes.
 Tout ce qui est ecrit ici decrit ce qui s'est passe ; rien n'est deduit au-dela (une idee seule ne prouve rien sur la regle)."""
+from __future__ import annotations
 import math
 import time
 

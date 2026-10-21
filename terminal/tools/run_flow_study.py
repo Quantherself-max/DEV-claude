@@ -5,6 +5,7 @@
   python tools/run_flow_study.py SOLUSDT                              # rapport data_local/reports/flow_SOL.json
 
 Le calcul dure deux à quatre minutes. Aucune clé."""
+from __future__ import annotations
 import argparse
 import json
 import sys

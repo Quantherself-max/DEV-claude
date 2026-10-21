@@ -1,4 +1,5 @@
 """Grille de prix logarithmique : un bin = pct % de large (comme dans les scripts Pine)."""
+from __future__ import annotations
 import math
 
 

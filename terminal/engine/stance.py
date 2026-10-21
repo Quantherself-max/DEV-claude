@@ -8,6 +8,7 @@ Regles d'honnetete
 - Seuls les posts recents (48 h par defaut) qui parlent de l'actif comptent ; leur poids baisse de moitie toutes les 12 h.
 
 Module PUR : aucun acces reseau ni disque (voir data/social.py pour la lecture des posts)."""
+from __future__ import annotations
 import re
 
 ASSETS = {

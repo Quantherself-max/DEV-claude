@@ -2,6 +2,7 @@
 a verifier sur ton PC avec :  python run.py --selftest
 Bougies : /fapi/v1/klines (index 9 = volume acheteur agressif, index 7 = volume en dollars : prix moyen exact, V23) ; OI : /futures/data/openInterestHist
 (5 min, limite a 30 jours par Binance)."""
+from __future__ import annotations
 import json
 import time
 import urllib.error

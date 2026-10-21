@@ -1,4 +1,5 @@
 """Interface d'une source de donnees de marche."""
+from __future__ import annotations
 import time
 
 

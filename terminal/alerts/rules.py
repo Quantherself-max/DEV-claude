@@ -1,6 +1,7 @@
 """Regles d'alerte : une confluence qualifiante (assez de sources, assez proche du prix) declenche
 une alerte "nouvelle" une fois par cooldown, puis une alerte "approche" quand le prix s'en rapproche.
 Au demarrage on enregistre l'existant et on envoie UN resume (pas une rafale)."""
+from __future__ import annotations
 import json
 import os
 import time

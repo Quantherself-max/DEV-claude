@@ -2,6 +2,7 @@
 - dernier prix echange de chaque paire (aggTrade) : prix exact pour les alertes et le secours du navigateur ;
 - VRAIES liquidations (forceOrder) : journal en memoire + fichier, resume par fenetre.
 Deux connexions separees : le prix ne depend pas du flux de liquidations (best effort)."""
+from __future__ import annotations
 import json
 import threading
 import time

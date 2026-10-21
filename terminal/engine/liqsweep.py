@@ -10,6 +10,7 @@ ete pris, le prix n'a pas tenu au-dela. C'est le declencheur des « reprises » 
 
 Complement de l'estimation par l'Open Interest (liquidity.py, 29 jours seulement) : ces poches-ci existent sur tout
 l'historique, donc elles se TESTENT (backtest.py). Module PUR (aucun reseau)."""
+from __future__ import annotations
 from bisect import bisect_left, bisect_right
 
 from .fine import Bars

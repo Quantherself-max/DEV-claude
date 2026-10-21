@@ -7,6 +7,7 @@
 Etape 1 : reaction du prix apres chaque contact (4 / 24 / 48 h, probabilite d'aller d'abord d'1 ATR), pour des mouvements de 5, 8 et 12 %.
 Etape 2 : trades (12 sorties, 26 filtres, deux sens), protocole de engine/stratstudy.py : apprentissage / test, temoin au hasard.
 Resultat : data_local/reports/avwap_<ACTIF>.json, affiche dans la page « Backtest » (liste « Rapport »). Duree : de 5 a 20 minutes ; memoire : 2 a 4 Go."""
+from __future__ import annotations
 import argparse
 import json
 import os

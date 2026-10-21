@@ -10,6 +10,7 @@ Meme methode que le laboratoire d'indicateurs (engine/indstudy.py) mais en HEURE
     comparees a toutes les heures de la meme periode.
 Source : delta REEL (volume acheteur agressif, Binance) + interet ouvert + financement si disponibles ; sinon delta ESTIME depuis la position de la cloture dans chaque bougie 1 minute
 (Bitstamp, depuis 2013) : le rapport l'indique en toutes lettres. Module PUR."""
+from __future__ import annotations
 import math
 import time
 

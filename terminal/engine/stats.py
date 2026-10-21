@@ -12,6 +12,7 @@
 2) Probabilite d'atteinte : frequence historique a laquelle le prix a atteint une distance de d ATR (1h)
    au-dessus / en dessous dans les H heures suivantes.
 Les pourcentages viennent avec leur effectif n et un intervalle de confiance a 90 % (Wilson)."""
+from __future__ import annotations
 import math
 import random
 from bisect import bisect_left

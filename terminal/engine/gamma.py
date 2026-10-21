@@ -12,6 +12,7 @@ Limites, dites partout ou c'est affiche :
   - Deribit porte l'essentiel des options BTC mais pas tout (CME, OKX, Bybit, Binance n'y sont pas) ;
   - aucun historique gratuit des options par strike : l'effet n'est PAS mesure sur le passe. Le terminal enregistre ces niveaux toutes les
     15 minutes (data_local/history/derivs/BTCUSDT.csv) pour pouvoir le mesurer plus tard. Rien de tout cela n'entre dans le score des idees."""
+from __future__ import annotations
 
 VWAP_NAMES = {"dVWAP": "VWAP du jour", "wVWAP": "VWAP de la semaine", "mVWAP": "VWAP du mois", "yVWAP": "VWAP de l'année"}
 STALE_MS = 30 * 60_000

@@ -10,6 +10,7 @@ periode d'apprentissage, juge la meilleure sur la periode test, la compare au ha
 affiche dans la page « Backtest » (liste « Rapport »).
 
 Memoire : environ 3 a 6 Go pour 13 ans d'historique BTC (moins pour SOL). Duree : de 15 a 40 minutes selon les coeurs."""
+from __future__ import annotations
 import argparse
 import json
 import os

@@ -8,6 +8,7 @@
 
 Sans interet ouvert, seules les divergences de flux et de volume sont mesurees ; avec lui, les « carburants de squeeze » (shorts / longs qui s'accumulent) et les squeezes en cours.
 Le calcul dure de quelques secondes a une minute. Aucune cle."""
+from __future__ import annotations
 import argparse
 import json
 import sys

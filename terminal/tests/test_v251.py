@@ -1,6 +1,7 @@
 """V25.1 (remplacee par la V25.2 pour l'envoi des idees) : ce qui en reste. Le journal lit encore les idees fermees ou annulees pour
 « changer de sens » (resultats enregistres pendant les quelques heures de la V25.1), et la mesure sur l'historique (engine/sigtest.py :
 timeline, switch_study) sert toujours a comparer les facons de gerer une idee dans l'autre sens."""
+from __future__ import annotations
 import unittest
 
 from alerts import journal

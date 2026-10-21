@@ -10,6 +10,7 @@ Methode (la meme pour tous, fixee avant de regarder) :
   - temoin : le meme signal decale d'une duree au hasard (il garde sa forme et son autocorrelation, mais n'a plus aucun lien avec le prix) : la distribution de
     |t| ainsi obtenue donne le seuil au-dela duquel un resultat n'est plus du hasard.
 « informatif » = |t| d'apprentissage au-dessus du seuil du temoin (99 %) ET meme signe sur le test avec |t| >= 1,5. Module PUR."""
+from __future__ import annotations
 import bisect
 import math
 import random

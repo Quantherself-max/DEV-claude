@@ -1,6 +1,7 @@
 """V29 : la heatmap et la carte des liquidations sur tout le graphique (même en 4 heures) : mémoire longue de la heatmap (un quart d'heure
 par colonne), archives publiques de Binance (profondeur « bookDepth », intérêt ouvert « metrics »), carte des liquidations rejouée sur
 6 mois, adresse /api/liqmap."""
+from __future__ import annotations
 import base64
 import io
 import json

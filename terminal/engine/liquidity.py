@@ -4,6 +4,7 @@ VOLUME ACHETEUR AGRESSIF reel (taker buy) quand il est connu (sinon la direction
 levier ; prix de liquidation = formule isolee + marge de maintenance. Un niveau disparait quand le prix le
 touche (journal des balayages) ; quand l'OI baisse, les niveaux restants sont reduits d'autant.
 C'est une estimation (proxy), pas de vraies liquidations."""
+from __future__ import annotations
 import math
 from bisect import insort
 

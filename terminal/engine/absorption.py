@@ -18,6 +18,7 @@ d'1 ecart-type de zero) : meme mouvement du prix, meme meche, flux normal. On is
 le temps. V22 : la meche est appariee (sans elle, la longue meche basse d'une absorption acheteuse eloignait son plus bas du prix et le
 faisait « tenir » plus souvent par simple mecanique).
 Moities de la periode pour la stabilite, comme les autres mesures du terminal. Module PUR."""
+from __future__ import annotations
 import math
 from collections import deque
 

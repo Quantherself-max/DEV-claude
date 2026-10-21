@@ -1,5 +1,6 @@
 """V30 : intérêt ouvert en bougies et delta (avec le CVD) sous le graphique, marques TPO précises et épurées, panneau de droite réduit aux
 idées de trade."""
+from __future__ import annotations
 import json
 import tempfile
 import threading

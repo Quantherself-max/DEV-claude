@@ -9,6 +9,7 @@ en series fines pour le backtest. Le VOLUME ACHETEUR AGRESSIF y est reel : le CV
   python tools/fetch_history.py BTCUSDT --since 2021-12 --metrics --skip-klines   # seulement l'interet ouvert et le financement
 
 Les archives brutes sont gardees dans data_local/history/<SYMBOLE>/raw : relancer la commande ne retelecharge que ce qui manque."""
+from __future__ import annotations
 import argparse
 import calendar
 import sys

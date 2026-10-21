@@ -8,6 +8,7 @@ par le terminal a cote des absorptions du graphique (il remplace la mesure que l
   python tools/run_absorption_study.py SOLUSDT   # une a quelques minutes
 
 Aucune cle, aucun acces reseau. Refuse un historique au delta estime (Bitstamp) : une absorption n'a de sens qu'avec le vrai delta."""
+from __future__ import annotations
 import argparse
 import json
 import sys

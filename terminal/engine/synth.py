@@ -5,6 +5,7 @@ Regle d'or d'honnetete : seule la composante STATISTIQUE est une probabilite val
 macro, niveaux et dominance sont des lectures de contexte ponderees a priori : elles orientent le biais mais ne
 sont pas presentees comme des probabilites mesurees. La confiance reste « faible » tant que le modele
 statistique n'a pas prouve un avantage et qu'une annonce majeure est proche."""
+from __future__ import annotations
 
 
 def _clip(x, lo=-1.0, hi=1.0):

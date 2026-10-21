@@ -1,4 +1,5 @@
 """V34 : fusionner et déplier les profils TPO (comme sur Exocharts)."""
+from __future__ import annotations
 import json
 import shutil
 import subprocess

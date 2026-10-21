@@ -1,5 +1,6 @@
 """Source SIMULEE : marche synthetique deterministe (meme historique a chaque lancement), pour tester le
 terminal sans reseau. Les prix ne sont PAS reels."""
+from __future__ import annotations
 import math
 import random
 

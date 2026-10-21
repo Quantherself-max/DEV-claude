@@ -34,6 +34,7 @@ Honnêteté
   Le seuil d'intérêt ouvert (0,5 %) et la confirmation ont été repérés en regardant SOL et BTC sur TOUTE la période : leur période de test
   n'est donc pas totalement à l'aveugle. L'ETH, jamais regardé avant, sert de contrôle : la stratégie n'y gagne pas, pas plus que sur le BTC.
   Seul SOL est validé. Module PUR (aucun réseau)."""
+from __future__ import annotations
 import math
 import random
 import time

@@ -1,5 +1,6 @@
 """V21 : absorptions. Sur les bougies (delta fort contre le sens de la bougie, vrai delta), mesure appariee, rapport ; en direct au prix
 pres (ruban) ; service, Lecture, outil."""
+from __future__ import annotations
 import json
 import random
 import tempfile

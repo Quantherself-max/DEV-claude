@@ -14,6 +14,7 @@ et un pas de prix fixé SANS regarder le futur (médiane des amplitudes des 10 s
   6. MIGRATION DE LA VALEUR, POSITION DE L'OUVERTURE, TYPE DE JOURNÉE et FORME : ce qui suit (sens de la séance suivante), face au taux de base.
 Les résultats sont donnés pour toute la période et pour ses deux moitiés (stabilité). Plusieurs mesures étant faites, un écart isolé peut être
 dû à la chance : seuls les écarts nets ET de même signe dans les deux moitiés méritent d'être retenus."""
+from __future__ import annotations
 import math
 from array import array
 from bisect import bisect_left

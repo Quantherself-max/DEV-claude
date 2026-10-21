@@ -12,6 +12,7 @@
 Rien n'est invente : chaque phrase vient d'un chiffre mesure. Les regles de lecture sont classiques et non validees par le backtest du terminal ;
 l'estimation du terminal est volontairement simple (les economistes connaissent aussi ces tendances) : elle sert a reperer un consensus
 qui s'ecarte nettement des tendances, pas a battre le consensus."""
+from __future__ import annotations
 import math
 from bisect import bisect_right
 from datetime import datetime, timezone

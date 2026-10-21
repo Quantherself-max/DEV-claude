@@ -8,9 +8,9 @@ heure (tranches de 0,15 % du prix, ±30 % autour du prix de l'heure).
 
 Ce moteur est SÉPARÉ de celui des poches : les poches, les confluences, les idées de trade et leurs scores ne changent pas.
 C'est une estimation (on ne connaît ni les leviers réels ni les prix d'entrée), comme les cartes de liquidation des sites spécialisés."""
+from __future__ import annotations
 import array
 import base64
-import bisect
 import math
 import threading
 import time
@@ -24,7 +24,14 @@ GAP = 3 * H1                                  # trou dans l'intérêt ouvert au-
 
 
 def _at_or_after(s, t) -> int:
-    return bisect.bisect_left(s, t, key=lambda x: x[0])
+    lo, hi = 0, len(s)                                                 # recherche par moitiés (bisect avec key= demande Python 3.10)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if s[mid][0] < t:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
 
 
 class LiqMap:

@@ -6,6 +6,7 @@ du terminal, avec et sans le filtre de tendance de fond.
   python tools/run_hedge_study.py SOLUSDT BTCUSDT
 
 Ecrit data_local/reports/hedge_study.json et affiche les tableaux (multiples du risque, brut et apres 0,1 % de frais par aller-retour)."""
+from __future__ import annotations
 import argparse
 import json
 import sys

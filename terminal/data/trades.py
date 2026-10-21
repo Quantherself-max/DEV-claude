@@ -10,6 +10,7 @@ Trois sources, toutes publiques et sans cle, recollees sans trou par le NUMERO d
   - le flux en direct du terminal (aggTrade) : chaque transaction prolonge l'empreinte, numeros consecutifs verifies.
 Seules les periodes ou TOUTES les transactions sont presentes comptent comme exactes (couverture) ; ailleurs le terminal garde la repartition
 des bougies, et l'affiche."""
+from __future__ import annotations
 import gzip
 import io
 import json

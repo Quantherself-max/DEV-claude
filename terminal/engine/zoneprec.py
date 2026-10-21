@@ -7,6 +7,7 @@ de ses niveaux. Pour savoir OU agir dans la zone, on calcule :
     le prix ou le marche a reellement fait affaire ;
   - la LARGEUR en ATR et un libelle de precision.
 Les membres des zones ne changent pas : les idees de trade restent calculees exactement comme avant. Module PUR."""
+from __future__ import annotations
 import math
 
 from .sessionvp import fill

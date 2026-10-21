@@ -1,3 +1,4 @@
+from __future__ import annotations
 import math, random, unittest
 from datetime import datetime, timezone
 

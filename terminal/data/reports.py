@@ -1,5 +1,6 @@
 """Rapports de backtest (JSON) : ceux livres avec le terminal (dossier reports/) et ceux que tu as relances sur tes donnees (data_local/reports/).
 Nom des fichiers : backtest_<ACTIF>.json (BTC, SOL, ETH...)."""
+from __future__ import annotations
 import json
 import re
 from pathlib import Path

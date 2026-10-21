@@ -1,3 +1,4 @@
+from __future__ import annotations
 import math, random, unittest
 
 from engine.atr import Candle

@@ -1,4 +1,5 @@
 """V33 : plus d'historique sur le graphique (tout en journalier, 1 500 bougies ailleurs) et intérêt ouvert sur plusieurs années."""
+from __future__ import annotations
 import io
 import json
 import tempfile

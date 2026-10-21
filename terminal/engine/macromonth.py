@@ -4,6 +4,7 @@ courbe des taux, liquidite, dollar), et des scenarios avec leurs declencheurs ch
 
 Les rapports des banques (Goldman Sachs, JPMorgan...) ne sont pas publics en donnees : ils sont cherches sur le web par Claude, a la demande
 (service + alerts/assistant.py), et ranges a cote de cette analyse."""
+from __future__ import annotations
 import math
 from datetime import datetime, timezone
 

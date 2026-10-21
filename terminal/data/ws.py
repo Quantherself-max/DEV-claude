@@ -1,6 +1,7 @@
 """Client WebSocket minimal (bibliotheque standard uniquement) : handshake, trames texte, fragmentation,
 ping/pong, detection d'inactivite et reconnexion automatique avec attente progressive.
 Sert a lire les flux publics de Binance (transactions, liquidations) cote serveur ; aucun envoi de donnees."""
+from __future__ import annotations
 import base64
 import hashlib
 import os

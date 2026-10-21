@@ -1,4 +1,5 @@
 """V19 : profil de volume selon le trajet des bougies, noeuds, POC evolutif ; mesure TPO sur l'historique ; precision des zones ; adresses."""
+from __future__ import annotations
 import json
 import random
 import tempfile

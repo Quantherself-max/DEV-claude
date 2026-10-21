@@ -6,6 +6,7 @@
   python tools/run_div_study.py SOLUSDT BTCUSDT                       # d'autres actifs
 
 Le calcul dure quelques minutes. Aucune clé."""
+from __future__ import annotations
 import argparse
 import json
 import sys

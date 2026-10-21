@@ -1,4 +1,5 @@
 """V24 : historique des idees compris (journal detaille, recit en clair, statistiques par categorie, trajet du prix)."""
+from __future__ import annotations
 import copy
 import json
 import random

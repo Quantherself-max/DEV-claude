@@ -5,6 +5,7 @@
   2. TRADES : les memes contacts joues avec stop, objectif et duree (12 sorties), une vingtaine de filtres, dans les deux sens, protocole de stratstudy.run
      (sortie choisie sur la regle litterale, filtres classes sur l'apprentissage, jugement unique sur le test, temoin au hasard).
 Module PUR."""
+from __future__ import annotations
 import math
 import random
 import time

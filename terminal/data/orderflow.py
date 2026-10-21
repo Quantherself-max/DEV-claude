@@ -9,6 +9,7 @@
   (au-dessus du 99,7e centile des 5 000 dernieres transactions et d'un plancher par paire), volume echange par prix depuis la derniere
   remise a zero, latence (heure de l'evenement chez Binance -> reception ici).
 SimFlow fabrique les memes donnees en mode simule (prix fictifs) pour que l'ecran fonctionne hors ligne."""
+from __future__ import annotations
 import json
 import math
 import random

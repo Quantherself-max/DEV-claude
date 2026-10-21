@@ -7,6 +7,7 @@ fetch_history.py (perpetuels Binance) avec les regles des idees du terminal (rej
 
 Ecrit data_local/reports/<SYMBOLE>_switch.json et affiche le tableau : pour chaque politique, idees envoyees, executees, somme des
 multiples du risque (brute et apres 0,1 % de frais par aller-retour), creux maximal, et gain moyen d'un changement de sens."""
+from __future__ import annotations
 import argparse
 import json
 import sys

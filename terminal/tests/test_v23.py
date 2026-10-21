@@ -1,5 +1,6 @@
 """V23 : transactions exactes. Empreinte (volume acheteur / vendeur a chaque prix par 5 minutes), synchronisation archives + API + direct
 recollee par numero de transaction (jamais de trou ni de double compte), branchement sur les profils, VWAP exact."""
+from __future__ import annotations
 import io
 import math
 import random

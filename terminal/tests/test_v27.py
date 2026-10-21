@@ -1,5 +1,6 @@
 """V27 : terminal allégé. Lexique et plan de trade retirés, idées de trade sur une page à part (plus d'onglet Idées dans le panneau de
 droite), une seule page Macro. (Les menus déroulants du graphique de la V27 sont remplacés en V28 par le menu « ＋ Éléments » : test_v28.)"""
+from __future__ import annotations
 import json
 import re
 import tempfile

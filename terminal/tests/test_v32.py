@@ -1,4 +1,5 @@
 """V32 : seulement les divergences prix / intérêt ouvert / CVD, en journalier, 4 heures et 1 heure."""
+from __future__ import annotations
 import json
 import tempfile
 import unittest

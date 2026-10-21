@@ -1,4 +1,5 @@
 """Bilan macro de la semaine (V18) : donnees FRED, chiffre publie retrouve (et garde-fous), lectures par theme, mesure, archive, adresses, Telegram."""
+from __future__ import annotations
 import json
 import random
 import tempfile

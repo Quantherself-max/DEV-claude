@@ -1,3 +1,4 @@
+from __future__ import annotations
 import json, tempfile, threading, time, unittest, urllib.error, urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse

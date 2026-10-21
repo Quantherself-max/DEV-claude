@@ -1,3 +1,4 @@
+from __future__ import annotations
 import json, tempfile, threading, time, unittest
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer

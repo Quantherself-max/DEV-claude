@@ -4,6 +4,7 @@ variation de l'interet ouvert, ratio put / call, distance au « max pain », vol
 Ces series n'ont pas d'historique libre : le terminal les enregistre toutes les 15 minutes depuis qu'il tourne. Il faut donc laisser tourner le terminal
 quelques semaines avant que cette mesure ait un sens. Meme methode que engine/indstudy.py (rang percentile sur fenetre croissante, rendement futur,
 Newey-West, apprentissage / test, temoin par decalage), au pas de l'HEURE : horizons 4 h, 24 h, 72 h. Module PUR."""
+from __future__ import annotations
 import csv
 import time
 from pathlib import Path

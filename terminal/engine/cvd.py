@@ -8,6 +8,7 @@ delta d'une bougie = volume acheteur agressif - volume vendeur agressif. Le CVD 
     baissiere : l'inverse.
 Les series viennent de fine.Bars (delta reel Binance, ou proxy par minute sinon : voir fine.py).
 Module PUR."""
+from __future__ import annotations
 from .fine import Bars
 
 

@@ -4,6 +4,7 @@ Un mouvement = la plus forte baisse (sommet puis creux) et la plus forte hausse 
 Pour chacun, les FAITS mesures par le terminal pendant la meme fenetre : variation de l'interet ouvert, flux d'ordres agressifs (CVD), volume par rapport a
 la normale, liquidations reelles (longs / shorts), mouvements du dollar, des taux, des actions, de l'or et de la volatilite, annonces macro proches.
 Aucune interpretation ici : l'assistant (Claude) s'en charge a partir de ces faits. Module PUR (stdlib)."""
+from __future__ import annotations
 import calendar
 import time
 from bisect import bisect_right

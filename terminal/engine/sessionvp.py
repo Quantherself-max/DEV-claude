@@ -6,6 +6,7 @@ V19 : le volume d'une bougie n'est plus etale uniformement entre son plus bas et
 recoivent deux fois plus de volume, ce qui rapproche le profil du temps reellement passe a chaque prix. S'y ajoutent les noeuds de volume fort
 (HVN, zones d'acceptation) et faible (LVN, zones de rejet que le prix traverse vite) et le POC / VAH / VAL EVOLUTIFS (leur valeur au fil de la
 seance). Module PUR."""
+from __future__ import annotations
 import math
 
 VA_PCT = 0.70

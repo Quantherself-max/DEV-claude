@@ -1,6 +1,7 @@
 """Projections du Fonds monetaire international (V25) : Perspectives de l'economie mondiale (avril et octobre, mises a jour en janvier et
 juillet), par l'API publique DataMapper, sans cle. Croissance du produit interieur brut reel, inflation (moyenne annuelle) et chomage, pour
 les Etats-Unis, la zone euro, la Chine, le Japon et le monde. Module PUR (le telechargement passe par data/external.py)."""
+from __future__ import annotations
 from datetime import datetime, timezone
 
 IMF = "https://www.imf.org/external/datamapper/api/v1"

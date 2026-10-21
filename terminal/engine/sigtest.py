@@ -12,6 +12,7 @@ amplitudes d'heure) places a des heures tirees au hasard. Seul l'ecart au temoin
 
 Limites assumees : l'historique des poches de liquidation (29 jours), des annonces et du flux d'ordres n'existe pas sur
 7 ans : le rejeu mesure la structure seule. Les ordres sont supposes executes au prix limite, sans frais ni glissement."""
+from __future__ import annotations
 import random
 import time
 

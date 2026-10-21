@@ -17,6 +17,7 @@ Tranches : 30 min pour la seance d'1 jour (00 h UTC), 5 min pour les seances de 
 V20 : seances de HAUTE UNITE DE TEMPS, la SEMAINE (lundi 00 h UTC, tranches de 4 heures, « premiere heure » = le lundi) et le MOIS (mois
 calendaire, tranches d'1 jour, « premiere heure » = la premiere semaine), sur bougies 1 h : une single print y marque un prix qu'une seule
 tranche de 4 heures (ou une seule journee) a touche de toute la semaine (du mois). Module PUR."""
+from __future__ import annotations
 import math
 from bisect import bisect_left
 from datetime import datetime, timezone

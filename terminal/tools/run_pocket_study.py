@@ -8,6 +8,7 @@ page « Backtest » (rapport « poches ») et utilise pour expliquer le score d'
 
 Poches mesurees : plus hauts / plus bas de la veille, de la semaine, du mois precedents, creux / sommets confirmes sur 1 h, extremes egaux.
 Les poches estimees par l'interet ouvert ne sont pas testables (29 jours d'historique chez Binance). Quelques secondes de calcul. Aucune cle."""
+from __future__ import annotations
 import argparse
 import json
 import sys

@@ -11,6 +11,7 @@ Ne sont JAMAIS touches : data_local/ (tes donnees, journaux, rapports), .env (te
 d'utilisation ne sont pas remplaces pendant que le terminal tourne (Windows lit le .bat au fil de l'eau) : la nouvelle copie attend dans .update/lanceurs/.
 Depot public : aucun jeton necessaire (60 requetes par heure, les commits deja vus sont gardes en memoire) ; s'il redevient prive : jeton GitHub en LECTURE SEULE
 (Reglages -> Mises a jour), garde dans .env. Bibliotheque standard uniquement."""
+from __future__ import annotations
 import json
 import os
 import py_compile

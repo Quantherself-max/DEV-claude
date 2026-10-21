@@ -4,6 +4,7 @@ Chaque serie est une liste [(date d'observation en ms UTC, valeur)]. La date d'o
 septembre publiee mi-octobre), pas la date de publication : `lag` donne le delai minimal habituel entre les deux (sert seulement a reconstruire
 un bilan d'une semaine passee sans utiliser un chiffre qui n'etait pas encore publie). Les series peuvent etre revisees apres coup (emplois, PIB) :
 FRED donne la derniere valeur connue. Module sans dependance."""
+from __future__ import annotations
 import math
 import urllib.error
 import urllib.request

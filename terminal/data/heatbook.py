@@ -19,6 +19,7 @@ tranches de 0,1 % du prix, gardée 180 jours (TERMINAL_HEATMAP_DAYS), un fichier
     et 5 % du prix, perpétuel Binance seulement. Chaque tranche est répartie à parts égales sur sa largeur : on voit de quel côté
     et à quelle distance le carnet est épais, pas les murs précis. 0,5 Mo par jour d'archive (90 Mo pour 180 jours, une seule fois).
 SimHeat fabrique des carnets avec des murs persistants pour le mode « données simulées », sim_depth_rows des archives plausibles."""
+from __future__ import annotations
 import array
 import base64
 import bisect
@@ -66,7 +67,14 @@ def ymd(t_ms: int) -> str:
 
 def _at_or_after(s, t) -> int:
     """Indice du premier élément (t, ...) d'une liste triée dont le temps est >= t."""
-    return bisect.bisect_left(s, t, key=lambda x: x[0])
+    lo, hi = 0, len(s)                                                 # recherche par moitiés (bisect avec key= demande Python 3.10)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if s[mid][0] < t:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
 
 
 def nice(raw: float) -> float:

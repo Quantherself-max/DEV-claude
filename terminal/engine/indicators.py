@@ -7,6 +7,7 @@ Chaque indicateur : une serie alignee sur les jours UTC [start, end]. Une valeur
   Macro / geopolitique : VIX, petrole (Brent), gaz naturel, indice dollar reconstruit ;
   Prix : momentum, distance a la moyenne 200 jours (le filtre de tendance du terminal), baisse depuis le plus haut, volatilite realisee.
 « attendu » = le sens suppose AVANT de mesurer (+1 : plus haut = hausse ensuite) ; il sert a dire si la mesure confirme l'intuition."""
+from __future__ import annotations
 import math
 
 DAY = 86_400_000

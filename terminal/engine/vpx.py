@@ -5,6 +5,7 @@ VAL et HVN : ce sont des niveaux supplementaires pour les confluences, en plus d
 
 « Selon la timeframe » : le choix « auto » prend trois fenetres glissantes adaptees a l'echelle du graphique
 (5 min -> 3, 7, 14 jours ; 1 h -> 30, 90, 180 jours ; 1 j -> 1, 2 et 4 ans...)."""
+from __future__ import annotations
 from bisect import bisect_left
 from datetime import datetime, timedelta, timezone
 

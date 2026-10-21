@@ -1,5 +1,6 @@
 """Confluences : zones ou plusieurs niveaux de SOURCES DIFFERENTES se regroupent (meme regle que le
 tableau Pine : tri par prix, fenetre gloutonne <= tolerance, au moins 2 groupes distincts)."""
+from __future__ import annotations
 from dataclasses import dataclass, field
 
 

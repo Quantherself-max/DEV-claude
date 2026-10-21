@@ -6,6 +6,7 @@
   - jours de choc de l'or (± 1,5 %) : que fait le BTC le meme jour, le lendemain, dans les 5 jours qui suivent ;
   - avance / retard : le rendement de l'or sur les k jours precedents explique-t-il le rendement du BTC du jour ?
 Module PUR (stdlib)."""
+from __future__ import annotations
 import math
 
 

@@ -1,9 +1,13 @@
+from __future__ import annotations
+import sys
 import math
 import random
 import unittest
 
 from engine import fine, history, squeeze as sq, squeezestudy as ss
 from engine.backtest import ms
+
+TMP_KW = {"ignore_cleanup_errors": True} if sys.version_info >= (3, 10) else {}   # Python 3.9 (Mac) : option absente
 
 H = 3_600_000
 
@@ -231,7 +235,7 @@ class ServiceView(unittest.TestCase):
         from data.simulated import SimulatedSource
         from server import App
         from tests.test_data_server import NOW
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        with tempfile.TemporaryDirectory(**TMP_KW) as tmp:
             cfg = Config(source="simulated", symbols=("BTCUSDT",), data_dir=tmp, port=0)
             app = App(cfg, env_path=Path(tmp) / ".env", make_source=lambda c: SimulatedSource(now_ms=NOW))
             app.service.refresh_all()

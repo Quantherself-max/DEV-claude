@@ -6,6 +6,7 @@ publie est donc lu a travers la reaction du marche lui-meme (rendement 10 ans + 
 suivantes) : c'est la mesure la plus fiable de la « surprise » (restrictive si les taux et le dollar montent,
 accommodante s'ils baissent). Les regles ci-dessous sont des a priori de lecture, ensuite corriges par ce
 qui a ete reellement mesure sur BTC / la paire affichee."""
+from __future__ import annotations
 import math
 import re
 from bisect import bisect_right

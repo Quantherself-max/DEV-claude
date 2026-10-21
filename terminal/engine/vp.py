@@ -1,5 +1,6 @@
 """Volume Profile : POC, Value Area (VAH/VAL), HVN. Port fidele du moteur Pine (grille fine 0.03 %,
 regroupement en lignes d'affichage, Value Area par paires de lignes, HVN sur profil lisse)."""
+from __future__ import annotations
 import math
 from .grid import Grid, rnd
 

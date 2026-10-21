@@ -18,6 +18,7 @@ Le journal est le test le plus honnete : il enregistre ce qui s'est PASSE apres 
 Journal detaille (V24) : pour chaque idee, l'heure de chaque etape (execution, objectif 1, fin), le prix le plus favorable et le plus defavorable
 atteints pendant la position, le point le plus proche de l'entree pour un ordre jamais execute, et les raisons du score au moment de l'envoi.
 Les idees d'avant V24 sont completees en rejouant les memes regles sur les bougies 5 min encore disponibles (sans jamais changer leur resultat)."""
+from __future__ import annotations
 import json
 import threading
 import time

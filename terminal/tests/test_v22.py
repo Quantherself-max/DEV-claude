@@ -1,5 +1,6 @@
 """V22 : mesures refaites sur l'historique Binance (perpetuels BTC et SOL, vrai volume acheteur agressif). Le rapport d'absorptions livre
 avec le terminal (outil, de 5 min a 4 h) est utilise quand tu n'as pas lance l'outil toi-meme."""
+from __future__ import annotations
 import json
 import random
 import tempfile

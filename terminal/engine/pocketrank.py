@@ -15,6 +15,7 @@ Pourquoi ces poids : etude engine/pocketstudy.py sur BTC 2014-2026 (rapport « p
 Les poches estimees par l'interet ouvert (29 jours chez Binance) ne sont pas testables : on leur applique les memes regles.
 Module PUR (aucun reseau, aucune horloge) : utilise en direct (service.py) et par l'etude.
 """
+from __future__ import annotations
 import math
 
 PERIOD_W = {"y": 10.0, "m": 9.0, "w": 7.0, "d": 4.0}

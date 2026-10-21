@@ -18,6 +18,7 @@ Principe
 
 Ce module est PUR : il ne lit ni reseau ni disque. Le rejeu historique (sigtest.py) utilise la meme construction
 d'idees pour mesurer ce que la structure des niveaux aurait donne depuis 2019."""
+from __future__ import annotations
 import math
 import re
 

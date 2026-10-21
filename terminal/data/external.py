@@ -2,6 +2,7 @@
 (dollar, taux US, indices, or, VIX via Yahoo), dominance du Bitcoin (CoinGecko, repli CoinPaprika), indice
 Fear & Greed, et paires alt/BTC de Binance spot (historique reel de la force des altcoins face au BTC).
 Chaque element peut tomber en panne sans arreter les autres : l'erreur est gardee et affichee."""
+from __future__ import annotations
 import hashlib
 import json
 import math

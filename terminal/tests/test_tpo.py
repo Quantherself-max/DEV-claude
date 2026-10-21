@@ -1,4 +1,5 @@
 """TPO (V17) : lettres par tranche, POC, zone de valeur, single prints, queues, poor high / low, marques comblees ou non, seances."""
+from __future__ import annotations
 import unittest
 
 from engine import tpo

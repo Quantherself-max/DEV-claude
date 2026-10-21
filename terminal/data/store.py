@@ -1,6 +1,7 @@
 """Historique d'un symbole en memoire : bougies 1h (depuis l'ancre / l'annee precedente), bougies 5 min +
 Open Interest sur ~29 jours, et contexte derives (funding, base, ratio long/short, prix spot / Coinbase).
 refresh() ne telecharge que ce qui manque ; le contexte est optionnel (ses erreurs n'arretent rien)."""
+from __future__ import annotations
 import gzip
 import json
 import os

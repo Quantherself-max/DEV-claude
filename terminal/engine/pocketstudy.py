@@ -14,6 +14,7 @@ Deux questions, bougies 1 h fermees, uniquement avec ce qui etait connu a chaque
 Chaque mesure est decoupee par nombre de confluences (niveaux d'autres sources a moins de 0,3 amplitude), par confluences ponderees
 (pocketrank : annee > mois > semaine > jour), par age, par type de poche ; apprentissage / test separes ; erreurs-types REGROUPEES PAR
 JOUR (plusieurs poches touchees le meme jour ne sont pas des preuves independantes). Module PUR."""
+from __future__ import annotations
 import math
 import random
 from bisect import bisect_right

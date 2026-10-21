@@ -1,6 +1,7 @@
 """Periodes calendaires UTC (Jour, Semaine lundi, Mois, Annee) : VWAP + ecart-type, open, plus haut /
 plus bas, profil de volume, et memoire de la periode precedente. Meme logique que les scripts Pine :
 le profil n'utilise que les bougies fermees ; VWAP / high / low integrent la bougie en cours."""
+from __future__ import annotations
 import math
 from datetime import datetime, timezone
 

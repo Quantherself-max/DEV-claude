@@ -6,6 +6,7 @@
   python tools/run_study.py --folder mon_dossier --label MONACTIF
 
 Le calcul est long (quelques minutes a une demi-heure selon l'historique et le nombre de coeurs) : il peut tourner pendant que le terminal fonctionne."""
+from __future__ import annotations
 import argparse
 import json
 import os

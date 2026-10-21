@@ -1,5 +1,6 @@
 """V20 : TPO de haute unite de temps (semaine du lundi, mois calendaire) ; single prints mesurees face a des seances semblables, reaction au
 premier retour du prix, elan ; adresses et marques."""
+from __future__ import annotations
 import json
 import random
 import tempfile

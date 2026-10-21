@@ -1,5 +1,6 @@
 """V25 : macro de la semaine (vision d'ensemble : regime, surprises face au consensus, ce que le marche attend de la Fed, estimation du terminal
 pour chaque annonce) et macro du mois (Fed, projections, moyen terme, scenarios, rapports des banques). Sources : FRED, site de la Fed, FMI."""
+from __future__ import annotations
 import json
 import math
 import tempfile

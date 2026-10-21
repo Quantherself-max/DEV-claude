@@ -6,6 +6,7 @@ levier plafonne), puis on mesure :
   - le portefeuille « principale + w x couverture » : rendement annualise, baisse maximale, Sharpe, pire periode ;
   - quelle couverture, a quel poids, reduit le plus la baisse maximale SANS faire passer l'esperance sous zero.
 Module PUR."""
+from __future__ import annotations
 import math
 
 DAY = 86_400_000

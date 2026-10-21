@@ -8,6 +8,7 @@ Deux sortes d'ancres, toutes deux issues d'un mouvement d'au moins X % :
   - « L » : VWAP ancre sur le CREUX de la baisse (fin de la baisse, apres un rebond d'au moins X %) ; le prix est dessus, le VWAP joue le role de support.
 Un « contact » est une bougie 1 h qui touche le VWAP ancre ; son sens est le cote de la CLOTURE (meme convention que vwapstrat).
 Les evenements ont le meme format que vwapstrat.build_events (sorties et selection partagees). Module PUR."""
+from __future__ import annotations
 from . import backtest as bt
 from .backtest import DAY, HOUR
 

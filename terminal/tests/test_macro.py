@@ -1,3 +1,4 @@
+from __future__ import annotations
 import math, random, unittest
 
 from data.external import ExternalHub, SimProviders, normalize_event

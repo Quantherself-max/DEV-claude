@@ -1,5 +1,6 @@
 """V24.1 : gros ordres agressifs et absorptions lisibles. Logique de regroupement des bulles (web/panels.js), executee avec Node
 quand il est installe (sinon ces tests sont sautes : le reste du terminal n'a pas besoin de Node)."""
+from __future__ import annotations
 import json
 import shutil
 import subprocess

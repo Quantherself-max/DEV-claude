@@ -2,6 +2,7 @@
 (« metrics », data.binance.vision, une valeur toutes les 5 minutes depuis décembre 2021), gardées dans data_local/history/<PAIRE>/raw_metrics
 (le même dossier que tools/fetch_history.py : ce qui y est déjà n'est pas retéléchargé). 11 Ko par jour, 2 Mo pour 180 jours.
 SimOiArchive fabrique un intérêt ouvert plausible pour le mode « données simulées » (rien n'est écrit sur le disque)."""
+from __future__ import annotations
 import json
 import math
 import os

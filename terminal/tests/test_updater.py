@@ -1,3 +1,5 @@
+from __future__ import annotations
+import sys
 import io
 import json
 import tempfile
@@ -9,6 +11,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from updater import LAUNCHERS, Updater, UpdateError
+
+TMP_KW = {"ignore_cleanup_errors": True} if sys.version_info >= (3, 10) else {}   # Python 3.9 (Mac) : option absente
 
 TOKEN = "github_pat_TEST123"
 BASE_FILES = {"run.py": "print('v')\n", "server.py": "X = 1\n", "service.py": "Y = 1\n", "config.py": "Z = 1\n", "updater.py": "U = 1\n",
@@ -243,7 +247,7 @@ class AppUpdateTests(unittest.TestCase):
         from server import App
         from tests.test_data_server import NOW
         self.gh = FakeGitHub()
-        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.tmp = tempfile.TemporaryDirectory(**TMP_KW)
         self.root = Path(self.tmp.name) / "terminal"
         self.root.mkdir()
         install_v1(self.root)

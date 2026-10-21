@@ -1,6 +1,7 @@
 """Indicateurs sous le graphique (V30) : l'INTÉRÊT OUVERT en bougies (ouverture, plus haut, plus bas, clôture de chaque bougie du
 graphique, à partir des relevés toutes les 5 minutes de Binance) et le DELTA de chaque bougie (volume acheteur agressif moins volume
 vendeur agressif) avec son cumul, le CVD. Module PUR."""
+from __future__ import annotations
 from bisect import bisect_right
 
 

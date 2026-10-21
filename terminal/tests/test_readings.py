@@ -1,3 +1,5 @@
+from __future__ import annotations
+import sys
 import json
 import tempfile
 import unittest
@@ -5,6 +7,8 @@ from pathlib import Path
 
 from alerts import readings as R
 from config import Config
+
+TMP_KW = {"ignore_cleanup_errors": True} if sys.version_info >= (3, 10) else {}   # Python 3.9 (Mac) : option absente
 
 H = 3_600_000
 DAY0 = 1_790_000_000_000 - (1_790_000_000_000 % (24 * H))
@@ -74,7 +78,7 @@ class HistoryApiTests(unittest.TestCase):
         from data.simulated import SimulatedSource
         from server import App
         from tests.test_data_server import NOW
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        with tempfile.TemporaryDirectory(**TMP_KW) as tmp:
             cfg = Config(source="simulated", symbols=("BTCUSDT",), data_dir=tmp, port=0)
             app = App(cfg, env_path=Path(tmp) / ".env", make_source=lambda c: SimulatedSource(now_ms=NOW), make_hub=lambda c, s: None)
             app.service.refresh_all()

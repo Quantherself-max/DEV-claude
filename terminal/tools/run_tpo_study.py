@@ -9,6 +9,7 @@ journée, forme) tiennent-ils leurs promesses sur l'historique ? Rapport affich�
   python tools/run_tpo_study.py SOLUSDT                                                  # même mesure sur SOL
 
 Quelques secondes à une minute de calcul. Aucune clé, aucun accès réseau."""
+from __future__ import annotations
 import argparse
 import json
 import sys

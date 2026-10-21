@@ -6,6 +6,7 @@ Chaque element porte son NIVEAU DE PREUVE :
   - « indice »  : meme signe sur l'apprentissage et le test, sans depasser le seuil du hasard (laboratoire d'indicateurs) ;
   - « contexte »: information de lecture, aucun avantage demontre (financement, options, flux...). Aucun de ces elements n'entre dans le score des idees.
 Module PUR : entrees = dictionnaires deja construits par le service ; sortie = dictionnaire serialisable."""
+from __future__ import annotations
 from . import indicators as ind
 from data import derivs
 

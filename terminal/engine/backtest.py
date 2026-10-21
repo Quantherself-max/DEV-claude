@@ -13,6 +13,7 @@ Principe (aucune triche sur l'avenir)
   4. VERDICT : rendement compose a risque fixe, drawdown, facteur de profit, Sharpe, intervalle de confiance, comparaison a
      l'achat-conservation et a des TRADES AU HASARD de meme forme (memes distances en ATR, memes frais).
 Les donnees d'entree sont des fine.Bars. Module PUR (aucun reseau)."""
+from __future__ import annotations
 import math
 import random
 import time

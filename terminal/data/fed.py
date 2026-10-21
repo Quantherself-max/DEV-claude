@@ -4,6 +4,7 @@ et ton du communique (restrictif / accommodant) par un lexique simple et affiche
 
 Module PUR (aucun acces reseau : le telechargement passe par les fournisseurs de data/external.py). Les pages de la Fed n'ont pas
 de format garanti : chaque lecture est tolerante, et un echec laisse la derniere copie gardee."""
+from __future__ import annotations
 import difflib
 import html as html_mod
 import re

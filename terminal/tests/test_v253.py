@@ -1,5 +1,7 @@
 """V25.3 : chaque configuration du moment dit si elle est partie sur Telegram (et quand, niveaux figes) ou la regle exacte qui la
 retient (meme logique que l'envoi) ; le message Telegram porte l'heure d'envoi ; le serveur ajoute cet etat sans toucher au cache."""
+from __future__ import annotations
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +9,8 @@ from pathlib import Path
 from alerts.trades import TradeDesk
 from config import Config
 from tests.test_trades import FakeNotifier, idea, sigs, H, MON
+
+TMP_KW = {"ignore_cleanup_errors": True} if sys.version_info >= (3, 10) else {}   # Python 3.9 (Mac) : option absente
 
 
 class SendStateTests(unittest.TestCase):
@@ -94,7 +98,7 @@ class ServerStateTests(unittest.TestCase):
         from data.simulated import SimulatedSource
         from server import App
         from tests.test_data_server import NOW
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        with tempfile.TemporaryDirectory(**TMP_KW) as tmp:
             cfg = Config(source="simulated", symbols=("BTCUSDT",), data_dir=tmp, port=0)
             app = App(cfg, env_path=Path(tmp) / ".env", make_source=lambda c: SimulatedSource(now_ms=NOW), make_hub=lambda c, s: None)
             cached = {"ready": True, "warm": True, "symbol": "BTCUSDT", "ideas": [idea(key="x")]}       # ce que le service garde en cache

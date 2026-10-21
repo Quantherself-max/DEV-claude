@@ -1,4 +1,5 @@
 """Lanceur (V17.1) : port deja pris par une autre version du terminal, relance automatique quand une nouvelle version est copiee."""
+from __future__ import annotations
 import contextlib
 import io
 import json

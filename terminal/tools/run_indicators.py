@@ -6,6 +6,7 @@
   python tools/run_indicators.py --start 2014-01-01 --split 2021-01-01
 
 Aucune cle, aucun compte : uniquement des fichiers CSV publics. Methode et seuils : engine/indstudy.py. Duree : quelques secondes."""
+from __future__ import annotations
 import argparse
 import sys
 import time

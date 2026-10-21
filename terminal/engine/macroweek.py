@@ -12,6 +12,7 @@ Une semaine = du lundi 00 h UTC au lundi suivant. Le bilan rassemble :
   5. la SEMAINE PROCHAINE : les annonces a surveiller, avec ce qu'un chiffre au-dessus ou en dessous du consensus impliquerait.
 
 Les regles de lecture ne sont pas validees par le backtest du terminal ; la mesure le dit franchement quand un moteur ne se distingue pas du hasard."""
+from __future__ import annotations
 import math
 import re
 from bisect import bisect_right

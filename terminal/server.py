@@ -1,6 +1,7 @@
 """Serveur local (bibliotheque standard uniquement) : API JSON, reglages et fichiers statiques de web/.
 Securite : n'ecoute que sur 127.0.0.1, refuse les en-tetes Host etrangers (DNS rebinding) et exige un jeton
 de session sur toutes les requetes qui modifient quelque chose (un autre site ne peut pas le lire)."""
+from __future__ import annotations
 import gzip
 import hashlib
 import json
@@ -33,7 +34,7 @@ from service import TFS, Service, chart_bars
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "34.1"
+VERSION = "34.2"
 API_LEVEL = 33                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 

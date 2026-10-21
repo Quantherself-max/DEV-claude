@@ -6,6 +6,7 @@
   Pour le limiter, les posts ne sont lus QU'AU MOMENT D'ENVOYER UNE IDEE (5 par semaine au maximum par défaut) ou quand tu cliques
   sur « Voir l'avis », puis gardes 30 minutes en memoire. Maximum 10 comptes x 5 a 20 posts.
 - Un echec (jeton, credits, reseau) n'a jamais d'effet sur les idees : l'avis est simplement indisponible."""
+from __future__ import annotations
 import json
 import re
 import threading

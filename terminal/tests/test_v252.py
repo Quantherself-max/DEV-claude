@@ -1,6 +1,8 @@
 """V25.2 : une idee dans l'autre sens peut arriver pendant une idee en cours ; elle la couvre sans l'annuler (message « COUVERTURE »,
 gain ou perte du moment, niveaux qui se genent sur la meme paire, mode couverture de la plateforme). Reglage hedge / never, journal,
 et mesure sur l'historique avec BTC et SOL rejoues ensemble."""
+from __future__ import annotations
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +12,8 @@ from config import Config
 from engine import sigtest
 from engine.atr import Candle
 from tests.test_trades import FakeNotifier, idea, H, M5, MON
+
+TMP_KW = {"ignore_cleanup_errors": True} if sys.version_info >= (3, 10) else {}   # Python 3.9 (Mac) : option absente
 
 
 def market(px, *ideas):
@@ -141,7 +145,7 @@ class SettingTests(unittest.TestCase):
         from data.simulated import SimulatedSource
         from server import App
         from tests.test_data_server import NOW
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        with tempfile.TemporaryDirectory(**TMP_KW) as tmp:
             cfg = Config(source="simulated", symbols=("BTCUSDT",), data_dir=tmp, port=0)
             app = App(cfg, env_path=Path(tmp) / ".env", make_source=lambda c: SimulatedSource(now_ms=NOW), make_hub=lambda c, s: None)
             self.assertEqual(app.settings()["signalOpposite"], "hedge")

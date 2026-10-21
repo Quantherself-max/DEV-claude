@@ -10,6 +10,7 @@ PROTOCOLE FIXE avant de regarder les resultats (sinon on trouve toujours « quel
      poids et couverture choisis sur l'apprentissage, juges sur le test.
 
 Module PUR : prend les evenements deja construits (vwapstrat.build_events + attach), renvoie un dictionnaire serialisable."""
+from __future__ import annotations
 import math
 import time
 from datetime import datetime, timezone

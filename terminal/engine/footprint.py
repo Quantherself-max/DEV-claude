@@ -10,6 +10,7 @@ Pas de prix : le pas de cotation de la bourse, ou un multiple « rond » de celu
 (BTC : 5 $ ; SOL : 0,01 $, le pas de cotation lui-meme). Un prix de l'empreinte est donc exact (SOL) ou connu a un demi-pas pres (BTC : 2,5 $).
 Couverture : intervalles de temps ou TOUTES les transactions sont presentes (journees d'archive completes, rattrapage contigu par numero de
 transaction, flux en direct sans trou). Module PUR (aucun acces reseau ou disque ; un verrou pour le flux en direct)."""
+from __future__ import annotations
 import json
 import math
 import threading

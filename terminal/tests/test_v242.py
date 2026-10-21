@@ -1,4 +1,6 @@
 """V24.2 : Telegram fiable (reglages lus quoi qu'il arrive, diagnostic pas a pas, badge explique, bot qui repond sans Claude)."""
+from __future__ import annotations
+import sys
 import json
 import os
 import tempfile
@@ -12,6 +14,8 @@ import config as config_mod
 from alerts import assistant as A
 from alerts import notifier as N
 from config import Config, chat_ok, clean_chat, clean_token, load_config, token_ok
+
+TMP_KW = {"ignore_cleanup_errors": True} if sys.version_info >= (3, 10) else {}   # Python 3.9 (Mac) : option absente
 
 TOKEN = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
 BAD = "987654321:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsXX"
@@ -194,7 +198,7 @@ class AppTelegramTests(unittest.TestCase):
         from tests.test_data_server import NOW
         cls.srv = HTTPServer(("127.0.0.1", 0), FakeTelegram)
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
-        cls.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        cls.tmp = tempfile.TemporaryDirectory(**TMP_KW)
         cls.env = mock.patch.dict(os.environ, {})
         cls.env.start()
         for k in [k for k in os.environ if k.startswith(("TELEGRAM_", "TERMINAL_"))]:

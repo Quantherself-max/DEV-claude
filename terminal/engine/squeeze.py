@@ -11,6 +11,7 @@ Divergences mesurees : prix contre flux (le prix fait mieux ou moins bien que ce
 
 Toutes les series sont HORAIRES et calculees sans regarder le futur (fenetres passees seulement) ; les ecarts sont exprimes en « z » (nombre d'ecarts-types par rapport aux 30 derniers jours),
 donc comparables d'un marche et d'une epoque a l'autre. Module PUR (stdlib)."""
+from __future__ import annotations
 import math
 
 HOUR = 3_600_000

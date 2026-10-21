@@ -7,6 +7,7 @@
 - Regime = (direction du BTC) x (direction du panier) sur 5 jours ; probabilite de continuation mesuree sur
   ~2,7 ans de bougies quotidiennes (le panier surperforme-t-il encore le BTC le jour / les 3 jours suivants ?).
 - Beta de la paire affichee face au BTC (30 j) : de combien elle bouge pour 1 % de mouvement du BTC."""
+from __future__ import annotations
 import math
 from bisect import bisect_right
 

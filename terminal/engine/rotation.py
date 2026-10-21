@@ -9,6 +9,7 @@ Le panier n'est pas TOUT le marche (quelques centaines d'actifs en plus) : il se
 
 Ce module construit (1) les series de parts et de rotation, (2) les indicateurs journaliers de rotation, (3) les cibles a predire (rendement du bitcoin,
 altcoins contre bitcoin, or contre bitcoin). La mesure elle-meme est dans engine/rotationstudy.py. Module PUR."""
+from __future__ import annotations
 import math
 
 from data.opendata import ALT_BASKET

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import json, os, subprocess, tempfile, threading, time, unittest
 
 from data.live import LiveFeed

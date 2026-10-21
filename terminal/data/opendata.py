@@ -6,6 +6,7 @@
     un indice dollar), toutes ces series etant mises a jour par leurs depots.
 
 Telechargement dans data_local/opendata/ (ecriture atomique, repli sur la copie locale si internet manque). Module sans dependance, series en (jour UTC en ms, valeur)."""
+from __future__ import annotations
 import csv
 import io
 import math

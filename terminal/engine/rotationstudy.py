@@ -2,6 +2,7 @@
 futur a 7 / 14 / 30 jours avec un jour de decalage, Newey-West, apprentissage / test, temoin par decalage), appliquee a TROIS cibles :
   - le bitcoin (ou va son prix ?), - les altcoins contre le bitcoin (le capital va-t-il vers les alts ?), - l'or contre le bitcoin (vers l'or ?),
 plus l'etude de l'asymetrie bitcoin / or (engine/goldbtc.py) et la carte du capital d'aujourd'hui. Module PUR."""
+from __future__ import annotations
 import time
 
 from . import goldbtc

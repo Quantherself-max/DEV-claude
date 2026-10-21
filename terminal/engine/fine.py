@@ -9,6 +9,7 @@ Chaque bougie porte aussi un « delta » (volume acheteur agressif - volume vend
   - sinon (ex. Bitstamp) : PROXY par minute, volume x (2 x cloture - haut - bas) / (haut - bas), tick rule si haut = bas.
     C'est une approximation (indiquee partout ou elle sert) : seule la source reelle donne le vrai CVD.
 Module sans reseau (stdlib uniquement)."""
+from __future__ import annotations
 import csv
 import gzip
 import math

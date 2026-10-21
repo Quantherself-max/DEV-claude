@@ -1,5 +1,6 @@
 """Service de marche : relie les donnees, les moteurs (niveaux, poches, confluences, probabilites) et
 fabrique l'etat JSON envoye a l'interface et aux alertes."""
+from __future__ import annotations
 import base64
 import hashlib
 import json

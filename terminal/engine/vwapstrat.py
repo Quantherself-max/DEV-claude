@@ -9,6 +9,7 @@ Description de depart
 
 Le module est PUR : il fabrique les evenements (tout ce qui est connu a la cloture de la bougie), joue chaque trade sur les bougies 5 minutes avec
 les memes frais que backtest.py, et fournit les adaptateurs pour backtest.select / metrics."""
+from __future__ import annotations
 import random
 from bisect import bisect_left
 from datetime import datetime, timezone

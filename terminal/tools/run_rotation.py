@@ -6,6 +6,7 @@
   python tools/run_rotation.py --start 2020-07-01 --split 2023-01-01
 
 Donnees : capitalisations estimees quotidiennes depuis juin 2019 (BTC, ETH, 10 altcoins, SOL), offre de stablecoins, or tokenise PAXG depuis fevrier 2020. Aucune cle."""
+from __future__ import annotations
 import argparse
 import json
 import sys

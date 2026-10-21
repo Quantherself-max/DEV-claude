@@ -11,6 +11,7 @@
 4) Calibration de Platt sur ces predictions hors echantillon : la probabilite affichee est celle qui s'est
    reellement realisee. Si le modele ne bat pas le hasard, on l'affiche tel quel (« pas d'avantage prouve »).
 5) Tables conditionnelles (tiers de chaque variable) et « first passage » (TP avant SL) pour le plan de trade."""
+from __future__ import annotations
 import json
 import math
 import os

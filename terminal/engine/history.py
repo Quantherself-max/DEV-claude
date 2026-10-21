@@ -2,6 +2,7 @@
 
 Les archives Binance contiennent le VOLUME ACHETEUR AGRESSIF reel de chaque minute : le CVD est alors reel, pas estime.
 Module PUR pour tout ce qui n'est pas le telechargement (analyse des lignes, comblement des trous, construction des dossiers de series)."""
+from __future__ import annotations
 import csv
 import io
 import json

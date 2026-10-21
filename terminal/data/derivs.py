@@ -8,6 +8,7 @@ le prix d'aimants (max pain) a l'approche de l'echeance ; le DVOL dit ce que le 
 Les fonctions de calcul sont PURES (testees sans reseau) ; les classes reseau levent DataError : le hub garde l'erreur et reessaie plus tard.
 Format des reponses : documentation publique des bourses ; non verifie ici contre les vrais serveurs (aucun acces) : toute reponse inattendue donne une erreur lisible,
 jamais un faux chiffre."""
+from __future__ import annotations
 import json
 import math
 import re

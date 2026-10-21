@@ -1,4 +1,5 @@
 """V31 : prix, intérêt ouvert et CVD lus sur la liquidité et les VWAP (mesure gardée en archive ; le direct passe aux divergences en V32)."""
+from __future__ import annotations
 import json
 import tempfile
 import unittest

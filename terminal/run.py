@@ -7,6 +7,7 @@
   python run.py --telegram-chatid   affiche ton chat id (apres avoir ecrit un message a ton bot)
   python run.py --telegram-test  envoie un message de test
 """
+from __future__ import annotations
 import argparse
 import os
 import subprocess
@@ -18,6 +19,31 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+if sys.version_info < (3, 9):                                       # V34.2 : message clair au lieu d'une erreur illisible
+    print(f"Ce Python est trop ancien ({sys.version.split()[0]}) : le terminal demande Python 3.9 ou plus recent (https://www.python.org/downloads/).")
+    sys.exit(1)
+
+
+def mac_certificates() -> None:
+    """V34.2 : le Python de python.org sur Mac n'a pas de certificats tant que « Install Certificates.command » n'a pas ete lance : toutes les
+    connexions securisees (Binance, Telegram...) echouent alors. Dans ce cas, on reprend les certificats racine du trousseau du Mac."""
+    if sys.platform != "darwin" or os.environ.get("SSL_CERT_FILE"):
+        return
+    import ssl
+    vp = ssl.get_default_verify_paths()
+    if (vp.cafile and os.path.isfile(vp.cafile)) or (vp.capath and os.path.isdir(vp.capath) and os.listdir(vp.capath)):
+        return
+    try:
+        pem = subprocess.run(["/usr/bin/security", "find-certificate", "-a", "-p", "/System/Library/Keychains/SystemRootCertificates.keychain"],
+                             capture_output=True, text=True, timeout=30).stdout
+        if "BEGIN CERTIFICATE" not in pem:
+            return
+        out = Path.home() / ".liq-terminal-certificats.pem"
+        out.write_text(pem, encoding="utf-8")
+        os.environ["SSL_CERT_FILE"] = str(out)                      # lu par chaque connexion securisee (et par le processus relance)
+        print("Certificats de securite repris du trousseau du Mac (Python sans certificats installes).")
+    except Exception as e:                                         # pas bloquant : le terminal s'ouvre, seules les donnees en ligne manqueront
+        print(f"Certificats de securite introuvables ({e}) : lance « Install Certificates.command » du dossier Python dans Applications.")
 # les modules du terminal sont importes plus bas, dans le processus qui fait tourner le terminal : le processus de relance (supervise) ne depend que
 # d'updater.py, si bien qu'une version cassee ne peut pas l'empecher de remettre la precedente en place
 
@@ -120,6 +146,7 @@ def main() -> int:
     ap.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--no-supervisor", action="store_true", help="sans relance automatique (ni mise a jour automatique)")
     a = ap.parse_args()
+    mac_certificates()
     if not (a.child or a.no_supervisor or a.selftest or a.telegram_chatid or a.telegram_test):
         return supervise([x for x in sys.argv[1:] if x != "--child"])
     if os.environ.get("LIQ_NO_BROWSER"):

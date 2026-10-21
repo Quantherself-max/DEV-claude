@@ -1,10 +1,14 @@
 """V26 : gamma des options BTC (calcul sur le carnet Deribit deja lu), niveaux et confluences avec les VWAP / VWAP ancres, Lecture."""
+from __future__ import annotations
+import sys
 import math
 import unittest
 from datetime import datetime, timezone
 
 from data.derivs import bs_gamma, gex_view, with_gex, options_view, MONTHS, DAY
 from engine import gamma, lecture
+
+TMP_KW = {"ignore_cleanup_errors": True} if sys.version_info >= (3, 10) else {}   # Python 3.9 (Mac) : option absente
 
 NOW = 1_759_104_000_000                     # lundi 29/09/2025 00:00 UTC
 
@@ -94,7 +98,7 @@ class ServiceTests(unittest.TestCase):
         from data.simulated import SimulatedSource
         from server import App
         from tests.test_data_server import NOW as N
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        with tempfile.TemporaryDirectory(**TMP_KW) as tmp:
             cfg = Config(source="simulated", symbols=("BTCUSDT", "SOLUSDT"), data_dir=tmp, port=0)
             app = App(cfg, env_path=Path(tmp) / ".env", make_source=lambda c: SimulatedSource(now_ms=N), make_hub=lambda c, s: None)
 

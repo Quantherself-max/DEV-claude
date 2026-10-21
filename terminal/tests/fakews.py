@@ -1,4 +1,5 @@
 """Faux serveur WebSocket (tests) : poignee de main RFC 6455, trames scriptees, TLS optionnel."""
+from __future__ import annotations
 import base64
 import hashlib
 import socket

@@ -1,5 +1,6 @@
 """V28 : note de confluence sur 14 (sept piliers), heatmap du carnet (photos rangées par tranche de prix, priorité du carnet en direct
 sur le carnet profond d'une même bourse, sauvegarde), adresse /api/heatmap ; graphique à éléments et onglets d'instrument."""
+from __future__ import annotations
 import base64
 import json
 import math

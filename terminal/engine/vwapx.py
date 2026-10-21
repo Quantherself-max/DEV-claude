@@ -1,6 +1,7 @@
 """Series VWAP (jour / semaine / mois / annee, avec ecart-type) et VWAP ancrees, alignees sur les bougies du graphique.
 Calcul sur les bougies 1h (historique complet, bougie en cours incluse) : une valeur par bougie du graphique,
 prise a la fin de cette bougie. Une remise a zero de la periode coupe la ligne (valeur nulle sur la 1re bougie)."""
+from __future__ import annotations
 import math
 from bisect import bisect_right
 from datetime import datetime, timezone
