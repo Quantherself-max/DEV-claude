@@ -1,7 +1,8 @@
-# Liq Terminal (V34.2)
+# Liq Terminal (V35)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Le funding sous le graphique et tes propres onglets de graphiques** (V35) : élément « Funding » (barres, % par 8 heures ou par an, estimation de la période en cours) et bouton « ＋ » pour ajouter des graphiques vierges que tu construis à ta façon (voir « V35 » plus bas).
 - **Fusionner et déplier les profils TPO, comme sur Exocharts** (V34) : plusieurs séances de suite en un seul profil (POC, zone de valeur, single prints et volume recalculés), et chaque tranche dans sa propre colonne pour lire le trajet du prix (voir « V34 » plus bas).
 - **Plus d'historique sur le graphique** (V33) : tout l'historique en journalier (depuis 2019 pour le BTC), 1 500 bougies dans les autres unités de temps (avant : 400) ; VWAP, intérêt ouvert et delta suivent sur toute la largeur ; l'intérêt ouvert remonte maintenant jusqu'à décembre 2021 (voir « V33 » plus bas).
 - **Seulement les divergences prix / intérêt ouvert / CVD, en journalier, 4 heures et 1 heure** (V32, voir « V32 » plus bas).
@@ -129,6 +130,22 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V35 : le funding comme élément, et tes propres onglets de graphiques
+
+### Le funding sous le graphique
+- Dans « ＋ Éléments », famille « Flux d'ordres » : **Funding**. Il s'affiche en barres dans sa propre fenêtre sous les bougies, comme l'intérêt ouvert et le delta, et se cumule avec eux.
+- **Une barre par bougie** : le taux payé par les positions à levier sur le perpétuel Binance, en **% par 8 heures**. Une bougie de 5 minutes, 15 minutes, 1 heure ou 4 heures prend le taux de sa période de 8 heures ; une bougie journalière prend la moyenne de ses trois versements. Quand Binance verse plus souvent (toutes les 4 heures ou toutes les heures), le taux est ramené à 8 heures pour rester comparable.
+- **Couleurs** : vert au-dessus de 0 (les acheteurs à levier paient les vendeurs), rouge en dessous (les vendeurs paient). Couleur pleine quand le taux est fort : 0,03 % par 8 heures ou plus, ou −0,01 % ou moins (foule à levier d'un seul côté, terrain des purges). La dernière barre, plus pâle, est l'**estimation de la période en cours**, qui bouge jusqu'au versement.
+- **Option** dans le menu : « % par 8 h » ou « % par an » (ce que coûterait la position tenue un an : taux × 3 × 365).
+- **En haut de la fenêtre** : le taux de la bougie sous le curseur, son équivalent annuel, la lecture (neutre, les vendeurs paient, acheteurs à levier nombreux…), le temps avant le prochain versement et la moyenne sur 7 jours.
+- **Historique** : tout l'historique Binance couvert par le graphique (jusqu'à plusieurs années en journalier), téléchargé une fois puis gardé en mémoire ; seuls les nouveaux versements sont redemandés, toutes les 5 minutes. Rien n'est demandé tant que l'élément n'est pas affiché.
+
+### Tes propres onglets de graphiques
+- Dans la barre du Desk, le bouton **« ＋ »** (après TPO) ajoute un onglet : **« Graphique vierge »** (rien de dessiné ; le menu « ＋ Éléments » s'ouvre tout de suite pour le construire) ou **« Copie de … »** (les éléments du graphique affiché, que tu modifies ensuite).
+- Chaque onglet garde **ses éléments, leurs options et son unité de temps**. Il est le même sur BTC et sur SOL : tu le construis une fois, il sert pour les deux.
+- Sur l'onglet ouvert : **✎** pour le renommer (ou double-clic sur son nom), **✕** pour le supprimer. Douze onglets au plus.
+- Les onglets sont gardés par le navigateur, comme tes autres réglages : ils sont là au prochain lancement.
 
 ## Ce qui est nouveau en V34.2 : le terminal démarre sur Mac
 

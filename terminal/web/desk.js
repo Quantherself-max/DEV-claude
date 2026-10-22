@@ -4,6 +4,8 @@
 // par défaut), Vierge (vide, à construire) et Heatmap (carnet d'ordres, BTC). Les confluences ne sont dessinées qu'à partir d'une note
 // sur 14 (9 par défaut). La heatmap du carnet (/api/heatmap) et la carte des liquidations (/api/liqmap, V29) sont dessinées sous les
 // bougies, sur tout le graphique : V29, mémoire longue (archives Binance avant le premier lancement) et 6 mois de liquidations estimées.
+// V35 : TES ONGLETS : « ＋ » dans la barre du Desk ajoute un graphique vierge (ou une copie du graphique affiché), que tu nommes et
+// construis avec « ＋ Éléments » ; il garde ses éléments et son unité de temps, les mêmes sur BTC et SOL. Élément « Funding » en barres.
 const Desk = (() => {
   'use strict';
   let LT = null, chooser = null, chooserBtn = null, heatTimer = null, legendMin = null;
@@ -33,6 +35,7 @@ const Desk = (() => {
     avwap: ['VWAP ancrés', 'début d\'année, mois précédent et tes ancres', 'VWAP'],
     vol: ['Volume', 'barres de volume sous les bougies', 'Flux d\'ordres'],
     oi: ['Intérêt ouvert', 'en bougies, dans une fenêtre sous le graphique (Binance, relevé toutes les 5 minutes)', 'Flux d\'ordres'],
+    fund: ['Funding', 'en barres sous le graphique : le financement payé entre acheteurs et vendeurs à levier (Binance, % par 8 heures ; la dernière barre est l\'estimation en cours) ; au-dessus de 0, les acheteurs paient', 'Flux d\'ordres'],
     delta: ['Delta', 'en barres sous le graphique : acheteurs moins vendeurs agressifs de chaque bougie ; CVD (le cumul) en option', 'Flux d\'ordres'],
     heat: ['Heatmap du carnet', 'ordres en attente dans le temps (Binance, OKX, Bybit, Coinbase) ; avant tes propres photos : archives Binance, par tranches de 1 %', 'Flux d\'ordres', true],
     dom: ['Carnet d\'ordres', 'taille en attente et nombre d\'ordres à chaque prix, à droite', 'Flux d\'ordres'],
@@ -46,16 +49,21 @@ const Desk = (() => {
   const PRESET = {main: {zones: true, sess: true, vwap: true, vol: true, plan: true}, blank: {}, heat: {heat: true, liqmap: false, big: true, vol: true, plan: true}};
   const VIEW_TF = {heat: '5m'};                                   // unité de temps de départ d'une vue (ensuite : la dernière choisie dans cette vue)
   const MO_KEYS = ['sess', 'sessW', 'sessM', 'nodes', 'dpoc', 'npoc', 'tpoM', 'tpoW', 'tpoD', 'tpo4', 'tpo1', 'vwap', 'vwapW', 'vwapM', 'vwapY', 'avwap',
-    'vol', 'heat', 'liqmap', 'oi', 'delta', 'dom', 'big', 'absorb', 'gex', 'zones'];
+    'vol', 'heat', 'liqmap', 'oi', 'fund', 'delta', 'dom', 'big', 'absorb', 'gex', 'zones'];
   const freshSet = view => ({els: {...PRESET[view]}, minGrade: 9, bigMin: 2, absorbMode: 'fortes', bigLabels: 'top', heatEx: EX.map(e => e[0]), tf: VIEW_TF[view] || null});
 
   // ---------- espaces par instrument ----------
   const st = () => LT.st;
+  const MAX_TABS = 12;
+  const userTab = id => typeof id === 'string' && /^u\d{1,4}$/.test(id) ? (st().utabs || []).find(u => u.id === id) || null : null;
+  const isView = l => !!(VIEWS[l] || userTab(l));
+  const viewName = v => VIEWS[v] || (userTab(v) || {}).name || 'Graphique';
   function wsOf(sym) {
     const S = st();
     S.ws = S.ws || {};
     if (!S.ws[sym]) S.ws[sym] = {layout: 'main', sets: {}};
     const w = S.ws[sym];
+    if (/^u\d/.test(w.layout || '') && !userTab(w.layout)) w.layout = 'main';      // onglet personnel supprimé depuis
     Object.keys(VIEWS).forEach(v => { if (!w.sets[v] || typeof w.sets[v].els !== 'object') w.sets[v] = freshSet(v); });
     if (!w.v29) {                                     // V29 : la carte des liquidations apparaît (masquée) dans la légende de la vue Heatmap
       if (!('liqmap' in w.sets.heat.els)) w.sets.heat.els.liqmap = false;
@@ -65,15 +73,15 @@ const Desk = (() => {
   }
   const heatSyms = () => (st().cfg && st().cfg.heatmapSymbols) || ['BTCUSDT'];
   const isBtc = sym => /^BTC/.test(sym || '');
-  const viewOf = layout => VIEWS[layout] ? layout : 'main';
-  function curSet() { const S = st(); return wsOf(S.symbol || (S.cfg && S.cfg.symbols[0]) || 'BTCUSDT').sets[viewOf(S.layout)]; }
+  const viewOf = layout => isView(layout) ? layout : 'main';
+  function curSet() { const S = st(), u = userTab(S.layout); if (u) return u.set; return wsOf(S.symbol || (S.cfg && S.cfg.symbols[0]) || 'BTCUSDT').sets[viewOf(S.layout)]; }
   const allowed = k => !(EL[k] && EL[k][3]) || (k === 'heat' ? heatSyms().includes(st().symbol) : isBtc(st().symbol));
   // éléments du jeu courant -> anciens réglages lus par le dessin (panels.js)
   function apply() {
     const S = st(), s = curSet(), on = k => s.els[k] === true && allowed(k);
     S.pools = on('pools'); S.ppools = on('ppools'); S.planOn = on('plan'); S.mode = 'ess';
     MO_KEYS.forEach(k => { S.mainOpts[k] = on(k); });
-    Object.assign(S.mainOpts, {bigMin: s.bigMin, absorbMode: s.absorbMode, bigLabels: s.bigLabels, deltaCvd: s.deltaCvd !== false});
+    Object.assign(S.mainOpts, {bigMin: s.bigMin, absorbMode: s.absorbMode, bigLabels: s.bigLabels, deltaCvd: s.deltaCvd !== false, fundMode: s.fundMode === 'an' ? 'an' : '8h'});
     S.minGrade = s.minGrade; S.heatEx = s.heatEx;
   }
   function changed(reset) {
@@ -144,9 +152,9 @@ const Desk = (() => {
     const s = curSet(), keys = Object.keys(EL).filter(k => k in s.els), view = viewOf(st().layout);
     if (legendMin === null) legendMin = window.innerWidth < 700;           // replié d'office sur un petit écran
     const head = `<div class="lg-head"><button class="lg-fold" data-lfold title="${legendMin ? 'Déplier la légende' : 'Replier la légende'}">${legendMin ? '▸' : '▾'}</button>` +
-      `<b>${esc((st().symbol || '').replace('USDT', ''))}</b> <span>${esc(st().tf)}</span> <span class="lg-view">${VIEWS[view]}</span>${legendMin ? ` <span class="lg-st">${keys.length} élément${keys.length > 1 ? 's' : ''}</span>` : ''}</div>`;
+      `<b>${esc((st().symbol || '').replace('USDT', ''))}</b> <span>${esc(st().tf)}</span> <span class="lg-view">${esc(viewName(view))}</span>${legendMin ? ` <span class="lg-st">${keys.length} élément${keys.length > 1 ? 's' : ''}</span>` : ''}</div>`;
     el.innerHTML = head + (legendMin ? '' : keys.length ? keys.map(k => legendItem(k, s.els[k] === true, s)).join('') :
-      `<div class="lg-empty">${view === 'blank' ? 'Graphique vierge : ajoute ce que tu veux avec « ＋ Éléments ».' : 'Aucun élément : « ＋ Éléments » pour en ajouter.'}</div>`);
+      `<div class="lg-empty">${view === 'blank' || userTab(view) ? 'Graphique vierge : ajoute ce que tu veux avec « ＋ Éléments ».' : 'Aucun élément : « ＋ Éléments » pour en ajouter.'}</div>`);
     el.hidden = false;
     if (!el.dataset.wired) {
       el.dataset.wired = '1';
@@ -159,7 +167,7 @@ const Desk = (() => {
       });
       el.addEventListener('change', e => { if (e.target.matches('[data-lgrade]')) { curSet().minGrade = +e.target.value; changed(false); } });
     }
-    const vn = p.host.querySelector('.viewname'); if (vn) vn.textContent = VIEWS[view];
+    const vn = p.host.querySelector('.viewname'); if (vn) vn.textContent = viewName(view);
   }
 
   // ---------- menu « ＋ Éléments » ----------
@@ -167,6 +175,7 @@ const Desk = (() => {
     if (k === 'zones') return `<select class="mini" data-copt="minGrade" title="Note minimale (sur 14) pour qu'une zone soit dessinée">${[5, 6, 7, 8, 9, 10, 11, 12].map(v => `<option value="${v}"${v === s.minGrade ? ' selected' : ''}>≥ ${v}/14</option>`).join('')}</select>`;
     if (k === 'big') return `<select class="mini" data-copt="bigMin" title="Taille minimale d'une bulle">${Panel.bigSteps(st().symbol).map((v, i) => `<option value="${i}"${i === s.bigMin ? ' selected' : ''}>≥ ${LT.fmtUsdShort(v)} $</option>`).join('')}</select>`;
     if (k === 'delta') return `<select class="mini" data-copt="deltaCvd" title="Ajouter le CVD (cumul du delta) en ligne"><option value="1"${s.deltaCvd !== false ? ' selected' : ''}>barres + CVD</option><option value="0"${s.deltaCvd === false ? ' selected' : ''}>barres seules</option></select>`;
+    if (k === 'fund') return `<select class="mini" data-copt="fundMode" title="Taux par période de 8 heures, ou ramené à une année (ce que coûte la position tenue un an)"><option value="8h"${s.fundMode !== 'an' ? ' selected' : ''}>% par 8 h</option><option value="an"${s.fundMode === 'an' ? ' selected' : ''}>% par an</option></select>`;
     if (k === 'absorb') return `<select class="mini" data-copt="absorbMode"><option value="fortes"${s.absorbMode === 'fortes' ? ' selected' : ''}>fortes</option><option value="toutes"${s.absorbMode === 'toutes' ? ' selected' : ''}>toutes</option></select>`;
     return '';
   }
@@ -182,7 +191,7 @@ const Desk = (() => {
   }
   function fillChooser() {
     const s = curSet(), view = viewOf(st().layout);
-    chooser.innerHTML = `<div class="chhead"><b>Éléments · ${VIEWS[view]} ${esc((st().symbol || '').replace('USDT', ''))}</b><span class="spacer"></span>` +
+    chooser.innerHTML = `<div class="chhead"><b>Éléments · ${esc(viewName(view))} ${esc((st().symbol || '').replace('USDT', ''))}</b><span class="spacer"></span>` +
       `<button class="mini" data-preset="${view === 'heat' ? 'heat' : 'main'}" title="Le réglage conseillé, sans bruit">Conseillé</button><button class="mini" data-preset="blank" title="Tout retirer : graphique vierge">Tout retirer</button></div>` +
       CATS.map(c => {
         const ks = Object.keys(EL).filter(k => EL[k][2] === c);
@@ -192,7 +201,9 @@ const Desk = (() => {
             (k === 'plan' && present ? `<div class="ddplans">${planList()}</div>` : '');
         }).join('');
       }).join('') +
-      '<div class="ddnote">Chaque instrument et chaque vue (Graphique, Vierge, Heatmap) gardent leurs éléments. Dans le graphique, l\'œil masque un élément sans le retirer, la croix le retire.</div>' +
+      (userTab(view) ? '<div class="ddnote">Ton onglet garde ses éléments et son unité de temps, les mêmes sur chaque instrument. Le « ＋ » de la barre du Desk en ajoute un autre ; ✎ le renomme, ✕ le supprime.</div>' :
+        '<div class="ddnote">Chaque instrument et chaque vue (Graphique, Vierge, Heatmap) gardent leurs éléments. Le « ＋ » de la barre du Desk ajoute tes propres onglets.</div>') +
+      '<div class="ddnote">Dans le graphique, l\'œil masque un élément sans le retirer, la croix le retire.</div>' +
       '<a class="ddlink" href="#/signals">Page Idées de trade →</a>';
   }
   function placeChooser() {
@@ -214,7 +225,7 @@ const Desk = (() => {
     chooser.addEventListener('change', e => {
       const t = e.target, s = curSet();
       if (t.dataset.chel) { if (t.checked) s.els[t.dataset.chel] = true; else delete s.els[t.dataset.chel]; changed(['sess', 'sessW', 'sessM', 'dom'].includes(t.dataset.chel)); }
-      else if (t.dataset.copt) { s[t.dataset.copt] = t.dataset.copt === 'absorbMode' ? t.value : t.dataset.copt === 'deltaCvd' ? t.value === '1' : +t.value; changed(false); }
+      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode'].includes(t.dataset.copt) ? t.value : t.dataset.copt === 'deltaCvd' ? t.value === '1' : +t.value; changed(false); }
       else if (t.dataset.ptog != null) { LT.togglePlan(t.dataset.ptog); fillChooser(); }
     });
     chooser.addEventListener('click', e => {
@@ -261,7 +272,98 @@ const Desk = (() => {
     const tf = curSet().tf;
     if (tf && tf !== S.tf) LT.setTf(tf);
   }
-  function rememberTf(tf) { if (VIEWS[st().layout]) curSet().tf = tf; }
+  function rememberTf(tf) { if (isView(st().layout)) curSet().tf = tf; }
+
+  // ---------- V35 : tes onglets (graphiques vierges à construire), dans la barre du Desk ----------
+  function renderUserTabs() {
+    const box = document.getElementById('layouts'); if (!box || !LT) return;
+    box.querySelectorAll('.utab,.uadd').forEach(b => b.remove());
+    const S = st(), tabs = S.utabs || [];
+    tabs.forEach(u => {
+      const b = document.createElement('button');
+      b.className = 'utab' + (S.layout === u.id ? ' on' : ''); b.dataset.layout = u.id;
+      b.title = `${u.name} : ton graphique (« ＋ Éléments » pour le construire) · double-clic : renommer`;
+      b.innerHTML = `<span class="uname">${esc(u.name)}</span><span class="uact" data-uren="${u.id}" title="Renommer">✎</span><span class="uact" data-udel="${u.id}" title="Supprimer cet onglet">✕</span>`;
+      box.appendChild(b);
+    });
+    const add = document.createElement('button');
+    add.className = 'uadd'; add.dataset.uadd = '1'; add.textContent = '＋';
+    add.title = tabs.length >= MAX_TABS ? `${MAX_TABS} onglets au plus` : 'Ajouter un onglet : un graphique vierge à construire à ta façon, ou une copie du graphique affiché';
+    add.disabled = tabs.length >= MAX_TABS;
+    box.appendChild(add);
+  }
+  function addTab(copy) {
+    const S = st(), tabs = S.utabs = S.utabs || [];
+    if (tabs.length >= MAX_TABS) return null;
+    let n = 1; while (tabs.some(u => u.id === 'u' + n)) n++;
+    let k = tabs.length + 1; while (tabs.some(u => u.name === `Mon graphique ${k}`)) k++;
+    const src = copy && isView(S.layout) ? curSet() : null;
+    const set = src ? JSON.parse(JSON.stringify(src)) : freshSet('blank');
+    set.tf = S.tf;
+    const u = {id: 'u' + n, name: src ? `${viewName(viewOf(S.layout))} (copie)`.slice(0, 24) : `Mon graphique ${k}`, set};
+    tabs.push(u);
+    openTab(u.id);
+    if (!src) setTimeout(() => {                       // graphique vierge : le menu des éléments s'ouvre tout de suite
+      const p = LT.panels().find(x => x.kind === 'main'), btn = p && p.host.querySelector('[data-elbtn]');
+      if (btn && chooser.hidden) toggleChooser(btn);
+    }, 250);
+    return u;
+  }
+  function openTab(id) {
+    const S = st();
+    if (S.page !== 'desk') location.hash = '#/desk';
+    rememberTf(S.tf);
+    S.layout = id; onLayout(id); renderUserTabs(); LT.applyLayout();
+  }
+  function renameTab(id, name) {
+    const u = userTab(id); if (!u) return;
+    const v = String(name == null ? '' : name).replace(/\s+/g, ' ').trim().slice(0, 24);
+    if (!v) return;
+    u.name = v; renderUserTabs(); renderLegend(); LT.applyLayout();
+  }
+  function deleteTab(id) {
+    const S = st(), u = userTab(id); if (!u) return;
+    S.utabs = S.utabs.filter(x => x !== u);
+    Object.values(S.ws || {}).forEach(w => { if (w && w.layout === id) w.layout = 'main'; });
+    if (S.layout === id) { S.layout = 'blank'; onLayout('blank'); }
+    renderUserTabs(); LT.applyLayout();
+  }
+  let addMenu = null;
+  function closeAddMenu() { if (addMenu) addMenu.hidden = true; }
+  function showAddMenu(btn) {
+    if (!addMenu) {
+      addMenu = document.createElement('div'); addMenu.className = 'ddp umenu'; addMenu.hidden = true;
+      document.body.appendChild(addMenu);
+      addMenu.addEventListener('click', e => { const b = e.target.closest('[data-unew]'); if (b) { closeAddMenu(); addTab(b.dataset.unew === 'copy'); } });
+      document.addEventListener('mousedown', e => { if (addMenu && !addMenu.hidden && !addMenu.contains(e.target) && !e.target.closest('[data-uadd]')) closeAddMenu(); });
+      document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAddMenu(); });
+      window.addEventListener('resize', closeAddMenu);
+    }
+    if (!addMenu.hidden) { closeAddMenu(); return; }
+    const S = st(), canCopy = isView(S.layout);
+    addMenu.innerHTML = '<div class="ddh">Nouvel onglet</div><button class="mini" data-unew="blank">Graphique vierge<small>rien de dessiné : tu ajoutes tes éléments</small></button>' +
+      (canCopy ? `<button class="mini" data-unew="copy">Copie de « ${esc(viewName(viewOf(S.layout)))} »<small>les mêmes éléments, que tu modifies ensuite</small></button>` : '');
+    addMenu.hidden = false;
+    const r = btn.getBoundingClientRect();
+    addMenu.style.top = (r.bottom + 4) + 'px';
+    addMenu.style.left = Math.max(6, Math.min(r.left, window.innerWidth - addMenu.offsetWidth - 6)) + 'px';
+  }
+  function wireUserTabs() {
+    const box = document.getElementById('layouts'); if (!box) return;
+    box.addEventListener('click', e => {                // avant le clic d'onglet de app.js : ✎, ✕ et ＋ ne changent pas de vue
+      const ren = e.target.closest('[data-uren]'), del = e.target.closest('[data-udel]'), add = e.target.closest('[data-uadd]');
+      if (!ren && !del && !add) return;
+      e.stopPropagation(); e.preventDefault();
+      if (add) { if (!add.disabled) showAddMenu(add); return; }
+      if (ren) { const u = userTab(ren.dataset.uren); if (u) renameTab(u.id, window.prompt('Nom de l\'onglet (24 caractères au plus) :', u.name)); return; }
+      const u = userTab(del.dataset.udel);
+      if (u && window.confirm(`Supprimer l'onglet « ${u.name} » et ses éléments ?`)) deleteTab(u.id);
+    }, true);
+    box.addEventListener('dblclick', e => {
+      const b = e.target.closest('.utab'); const u = b && userTab(b.dataset.layout);
+      if (u) renameTab(u.id, window.prompt('Nom de l\'onglet (24 caractères au plus) :', u.name));
+    });
+  }
 
   // ---------- couches sous les bougies : heatmap du carnet et carte des liquidations ----------
   // une palette par couche : carnet = bleu nuit, bleu, cyan, jaune, orange, rouge (comme les écrans de carnet) ; liquidations = violet,
@@ -336,17 +438,17 @@ const Desk = (() => {
       renderLegend();
     } catch (e) { /* le prochain passage reessaiera */ } finally { ls.busy = false; }
   }
-  // V30 : intérêt ouvert en bougies, delta et CVD (sous-fenêtres) : relus à chaque nouvelle bougie, et toutes les 30 secondes
+  // V30 : intérêt ouvert en bougies, delta et CVD (sous-fenêtres) ; V35 : funding : relus à chaque nouvelle bougie, et toutes les 30 secondes
   const indState = {key: '', busy: false};
   async function pollInd(force) {
     const S = st(), d = S.data;
-    if (!mainVisible() || !(S.mainOpts.oi || S.mainOpts.delta) || !d || !d.candles || !d.candles.length || indState.busy) return;
-    const key = [S.symbol, S.tf, d.candles[d.candles.length - 1][0]].join('|');
+    if (!mainVisible() || !(S.mainOpts.oi || S.mainOpts.delta || S.mainOpts.fund) || !d || !d.candles || !d.candles.length || indState.busy) return;
+    const fund = !!S.mainOpts.fund, key = [S.symbol, S.tf, d.candles[d.candles.length - 1][0], fund].join('|');
     if (!force && key === indState.key && S.ind && Date.now() - (S.ind.at || 0) < 30000) return;
     indState.busy = true;
     try {
-      const r = await LT.api(`/api/indicators?symbol=${S.symbol}&tf=${S.tf}`);
-      if (r.symbol !== S.symbol || r.tf !== S.tf) return;
+      const r = await LT.api(`/api/indicators?symbol=${S.symbol}&tf=${S.tf}${fund ? '&fund=1' : ''}`);   // V35 : avec le funding
+      if (r.symbol !== S.symbol || r.tf !== S.tf || fund !== !!S.mainOpts.fund) return;
       r.at = Date.now(); indState.key = key; S.ind = r; S.version++;
     } catch (e) { /* le prochain passage reessaiera */ } finally { indState.busy = false; }
   }
@@ -403,11 +505,11 @@ const Desk = (() => {
 
   function init(lt) {
     LT = lt;
-    wireChooser();
+    wireChooser(); wireUserTabs(); renderUserTabs();
     document.addEventListener('click', e => {
       const b = e.target.closest('#instTabs [data-inst]');
       if (b) setTab(b.dataset.inst);
     });
   }
-  return {init, apply, curSet, wsOf, rememberTf, renderLegend, toggleChooser, closeChooser, renderTabs, setTab, onLayout, pollHeat, tick, heatTip, viewOf, VIEWS, EL, PRESET, freshSet};
+  return {init, apply, curSet, wsOf, rememberTf, isView, userTab, viewName, addTab, renameTab, deleteTab, renderUserTabs, renderLegend, toggleChooser, closeChooser, renderTabs, setTab, onLayout, pollHeat, tick, heatTip, viewOf, VIEWS, EL, PRESET, freshSet};
 })();

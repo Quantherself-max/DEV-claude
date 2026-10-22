@@ -1,6 +1,7 @@
 """V32 : seulement les divergences prix / intérêt ouvert / CVD, en journalier, 4 heures et 1 heure."""
 from __future__ import annotations
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -124,7 +125,7 @@ class PageTests(unittest.TestCase):
         self.assertNotIn("function flowBox(", self.SIG)
         for k in ("function divVerdict(", "function divTf(", "Anciennes mesures", "r.kind === 'div'"):
             self.assertIn(k, self.BT)
-        self.assertIn("NEED_API = 33", self.APP)
+        self.assertGreaterEqual(int(re.search(r"NEED_API = (\d+)", self.APP).group(1)), 33)   # V35 : 34
         self.assertIn("div", reports_mod.KINDS)
 
 

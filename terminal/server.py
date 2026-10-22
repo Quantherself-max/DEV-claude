@@ -34,8 +34,8 @@ from service import TFS, Service, chart_bars
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "34.2"
-API_LEVEL = 33                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "35"
+API_LEVEL = 34                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -225,6 +225,7 @@ class App:
         self.wake = threading.Event()
         self.reload_lock = threading.Lock()
         self.price_lock = threading.Lock()
+        self.fund_lock = threading.Lock()
         self._install(cfg)
 
     def _install(self, cfg):
@@ -243,6 +244,7 @@ class App:
         self.feed = feed
         self.price_cache = {}
         self._ind_cache = {}
+        self._fund = {}                                   # V35 : versements de funding par symbole (historique Binance)
         self.assistant = Assistant(cfg, lambda: self.service, cfg.data_dir)
         self.readings = readings_mod.ReadingLog(cfg)
         old_trades = getattr(self, "trades", {})
@@ -451,7 +453,34 @@ class App:
         if self.tgchat:
             self.tgchat.close()
 
-    def indicators(self, sym: str, tf: str) -> dict:
+    def funding_rows(self, sym: str, t0: int) -> tuple:
+        """V35 : versements de funding de Binance depuis t0 (ms), gardés en mémoire : on ne redemande que la suite (toutes les 5 minutes)
+        ou le début manquant. Rend (versements, erreur)."""
+        with self.fund_lock:
+            c = self._fund.get(sym) or {"rows": [], "from": None, "at": 0.0, "err": None, "tried": 0.0}
+            self._fund[sym] = c
+            wall = time.time()
+            if wall - c["tried"] < (60 if c["err"] else 0):
+                return c["rows"], c["err"]
+            try:
+                now = self.source.now_ms()
+                if c["from"] is None or t0 < c["from"]:
+                    old = c["rows"]
+                    got = self.source.funding_history(sym, t0, (old[0][0] - 1) if old else now)
+                    c["rows"] = sorted({t: r for t, r in list(got) + list(old)}.items())
+                    c["from"], c["at"] = t0, wall
+                elif wall - c["at"] > 300:
+                    last = c["rows"][-1][0] if c["rows"] else t0
+                    got = self.source.funding_history(sym, last + 1, now)
+                    c["rows"] = sorted({t: r for t, r in list(c["rows"]) + list(got)}.items())
+                    c["at"] = wall
+                c["err"] = None
+            except Exception as e:                                   # réseau, source sans historique : on garde ce qu'on a
+                c["err"] = f"{type(e).__name__}: {str(e)[:120]}"
+            c["tried"] = wall
+            return c["rows"], c["err"]
+
+    def indicators(self, sym: str, tf: str, fund: bool = False) -> dict:
         """V30 : sous le graphique, l'interet ouvert en bougies (releves de l'adresse Binance, 29 jours, des archives de la carte des
         liquidations, plusieurs mois, et V33 : des archives depuis decembre 2021, une valeur par heure) et le delta de chaque bougie avec son cumul (CVD), pour les memes bougies que le graphique."""
         from engine import subcharts
@@ -466,13 +495,15 @@ class App:
         with self.service.lock:
             cs = m.chart_candles(tf)[-chart_bars(tf):]
             live = dict(m.store.oi)
+            prem = dict(m.store.ctx.get("premium") or {})
+        fr, ferr = self.funding_rows(sym, cs[0].t) if (fund and cs) else ([], None)
         kp = self.liqmaps.get(sym)
         arch = kp.archive.points() if kp is not None and kp.archive is not None else {}
         deep = kp.deep.points() if kp is not None and kp.deep is not None else {}
         if deep:                                                     # V33 : années précédentes, une valeur par heure (les relevés 5 minutes passent devant)
             arch = {**deep, **arch}
-        key = (sym, tf, len(cs), cs[-1].t if cs else 0, cs[-1].c if cs else 0, len(live), len(arch))
-        hit = self._ind_cache.get((sym, tf))
+        key = (sym, tf, len(cs), cs[-1].t if cs else 0, cs[-1].c if cs else 0, len(live), len(arch), fund, len(fr), prem.get("funding"), ferr)
+        hit = self._ind_cache.get((sym, tf, fund))
         if hit and hit[0] == key:
             return hit[1]
         ts, vs = subcharts.merge_points(live, arch)
@@ -481,7 +512,10 @@ class App:
         d, cvd = subcharts.deltas(cs)
         out = {"symbol": sym, "tf": tf, "ready": True, "unit": sym.replace("USDT", ""), "times": [t // 1000 for t in times],
                "oi": oi, "delta": d, "cvd": cvd, "oiSince": ts[0] if ts else None, "realDelta": any(x is not None for x in d)}
-        self._ind_cache[(sym, tf)] = (key, out)
+        if fund:                                                     # V35 : funding de chaque bougie (% par 8 h), barre en cours estimée
+            out.update(subcharts.funding_bars(times, INTERVAL_MS[tf], fr, prem.get("funding") if fr else None, self.source.now_ms()))
+            out.update(fundNext=prem.get("next_funding"), fundErr=ferr, fundEx="Binance")
+        self._ind_cache[(sym, tf, fund)] = (key, out)
         return out
 
     def live_price(self, sym: str) -> dict:
@@ -1064,7 +1098,7 @@ def make_handler(app: App):
                     return self._json(out)
                 if u.path == "/api/indicators":                      # V30 : interet ouvert en bougies, delta et CVD sous le graphique
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
-                    return self._json(app.indicators(sym, (q.get("tf") or ["1h"])[0]))
+                    return self._json(app.indicators(sym, (q.get("tf") or ["1h"])[0], (q.get("fund") or ["0"])[0] == "1"))
                 if u.path == "/api/liqmap":                          # V29 : carte des liquidations sur plusieurs mois (estimée)
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     kp = app.liqmaps.get(sym)

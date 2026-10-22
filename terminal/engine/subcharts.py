@@ -2,7 +2,7 @@
 graphique, à partir des relevés toutes les 5 minutes de Binance) et le DELTA de chaque bougie (volume acheteur agressif moins volume
 vendeur agressif) avec son cumul, le CVD. Module PUR."""
 from __future__ import annotations
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 
 
 def oi_candles(times, step_ms: int, pt_t: list, pt_v: list) -> list:
@@ -44,3 +44,47 @@ def merge_points(live: dict, archive: dict) -> tuple:
         pts[k + 300_000] = v
     ts = sorted(pts)
     return ts, [pts[t] for t in ts]
+
+
+FUND_LAG_MS = 60_000                                       # un versement arrive quelques millisecondes après l'heure ronde : il clôt la période d'avant
+
+
+def _per8h(rows) -> list:
+    """[(heure du versement, taux de la période)] -> taux ramenés à une période de 8 heures (Binance verse parfois toutes les 4 heures
+    ou toutes les heures quand le marché s'emballe : on compare des taux de même durée)."""
+    out = []
+    for i, (t, r) in enumerate(rows):
+        gap = (t - rows[i - 1][0]) if i else (rows[1][0] - t if len(rows) > 1 else 8 * 3_600_000)
+        hours = min(8.0, max(1.0, round(gap / 3_600_000)))
+        out.append(r * 8.0 / hours)
+    return out
+
+
+def funding_bars(times, step_ms: int, rows, now_rate=None, now_ms=None) -> dict:
+    """V35 : le FUNDING (financement payé entre acheteurs et vendeurs à levier) pour chaque bougie du graphique, en % par 8 heures.
+    rows : versements [(heure du versement ms, taux de la période)] triés ; now_rate : estimation du taux de la période en cours.
+    Une bougie plus courte que la période prend le taux du versement qui clôt sa période ; une bougie plus longue, la moyenne de ses
+    versements. Après le dernier versement : l'estimation en cours (« est » = indice de la première bougie estimée)."""
+    rows = sorted(rows)
+    ks = [t - FUND_LAG_MS for t, _ in rows]
+    rs = [r * 100.0 for r in _per8h(rows)]
+    nr = None
+    if now_rate is not None:
+        hours = min(8.0, max(1.0, round((rows[-1][0] - rows[-2][0]) / 3_600_000))) if len(rows) > 1 else 8.0
+        nr = now_rate * 100.0 * 8.0 / hours
+    last = ks[-1] if ks else None
+    vals, est = [], None
+    for idx, t in enumerate(times):
+        i0, i1 = bisect_left(ks, t), bisect_left(ks, t + step_ms)
+        part = rs[i0:i1]
+        live = nr is not None and last is not None and t + step_ms > last and (now_ms is None or t <= now_ms)
+        if not part and i0 < len(ks):                       # bougie plus courte que la période : le versement qui clôt sa période
+            part = [rs[i0]] if ks[i0] - t <= 8 * 3_600_000 + FUND_LAG_MS else []
+            live = False
+        if live and (not part or i1 >= len(ks)):
+            part = part + [nr]
+            est = idx if est is None else est
+        vals.append(sum(part) / len(part) if part else None)
+    week = [r for k, r in zip(ks, rs) if last is not None and k > last - 7 * 86_400_000]
+    return {"funding": vals, "fundEst": est, "fundNow": nr, "fundAvg7": sum(week) / len(week) if week else None,
+            "fundSince": rows[0][0] if rows else None}

@@ -621,3 +621,16 @@ ul.recent li{padding:3px 0;border-bottom:1px solid #1b2030}
 .tpomenu{position:fixed;z-index:60;min-width:240px;padding:4px;background:#15181f;border:1px solid #3a4258;border-radius:8px;box-shadow:0 10px 30px #000c;font-size:12.5px}
 .tpomenu button{display:block;width:100%;text-align:left;padding:6px 10px;border:0;border-radius:5px;background:none;color:#e6e6e6;cursor:pointer;font:inherit}
 .tpomenu button:hover{background:#ffc44024;color:#ffd77a}.tpomenu hr{border:0;border-top:1px solid #2a3040;margin:4px 2px}.tpomenu .small{padding:4px 10px 2px}
+/* V35 : tes onglets de graphiques dans la barre du Desk (✎ renommer, ✕ supprimer quand l'onglet est ouvert) et le menu « ＋ » */
+#deskbar .seg{flex-wrap:wrap}
+#deskbar .seg button.utab{display:inline-flex;align-items:center;gap:4px;border-style:dashed;max-width:220px}
+#deskbar .seg button.utab.on{border-style:solid}
+#deskbar .seg button.utab .uname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#deskbar .seg button.utab .uact{display:none;font-size:11px;opacity:.7;padding:0 2px;border-radius:3px}
+#deskbar .seg button.utab.on .uact{display:inline}
+#deskbar .seg button.utab .uact:hover{opacity:1;background:rgba(255,255,255,.12)}
+#deskbar .seg button.uadd{padding:4px 9px;font-weight:600;color:var(--acc)}
+#deskbar .seg button.uadd:disabled{opacity:.4;cursor:default}
+.umenu{min-width:230px}
+.umenu button.mini{display:flex;flex-direction:column;align-items:flex-start;text-align:left;padding:6px 8px;margin:2px 0;width:100%}
+.umenu button.mini small{color:var(--mut);font-size:11px;margin-top:2px}
