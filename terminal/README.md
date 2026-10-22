@@ -1,4 +1,4 @@
-# Liq Terminal (V35)
+# Liq Terminal (V35.1)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
@@ -130,6 +130,15 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V35.1 : déplacer et supprimer les onglets du Desk
+- **Tous les onglets** de la barre du Desk (Graphique, Vierge, Heatmap, Grille, Multi-unités, TPO et les tiens) se rangent comme tu veux :
+  - **glisser-déposer** : attrape un onglet et pose-le avant ou après un autre (un trait bleu montre où il va) ;
+  - **clic droit** sur un onglet : « Déplacer à gauche », « Déplacer à droite », « Mettre en premier », « Mettre en dernier », « Renommer » (tes onglets), « Supprimer » ou « Retirer de la barre » ;
+  - **menu « ＋ »**, partie « Ranger la barre » : chaque onglet avec ◀ ▶ pour le déplacer et ✕ pour l'enlever (pratique sans souris).
+- **Supprimer** : sur l'onglet ouvert, le **✕** à côté de son nom. Un de tes onglets est supprimé pour de bon, avec ses éléments, après confirmation. Un onglet d'origine est seulement retiré de la barre : il se remet avec « ＋ » > « Onglets retirés ». Il reste toujours au moins un onglet.
+- « ＋ » > **« Remettre la barre d'origine »** remet les onglets d'origine dans leur ordre ; tes onglets restent, à la fin.
+- L'ordre et les onglets retirés sont gardés avec tes réglages.
 
 ## Ce qui est nouveau en V35 : le funding comme élément, et tes propres onglets de graphiques
 

@@ -95,7 +95,7 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
     vwapW: false, vwapM: false, vwapY: false, avwap: false, vol: true, heat: false, liqmap: false, oi: false, fund: false, fundMode: '8h', delta: false, deltaCvd: true, zones: true}, flow: null,
   mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {M: true, W: true, D: true, '4h': false, '1h': false},
   tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true, expand: false},
-  tpoGroups: {}, utabs: []};                                         // V35 : tes onglets de graphiques (nom, éléments, unité de temps)                                                    // V34 : séances TPO fusionnées et profils dépliés, par paire et type de séance
+  tpoGroups: {}, utabs: [], tabOrder: [], tabHide: []};                                         // V35 : tes onglets de graphiques (nom, éléments, unité de temps)                                                    // V34 : séances TPO fusionnées et profils dépliés, par paire et type de séance
 async function api(path, body) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
   const r = await fetch(path, opt);
@@ -167,7 +167,7 @@ const panels = [];
 const LAYOUTS = {main: ['main'], blank: ['main'], heat: ['main'], '1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: [], pair: []};
 const needs = k => (LAYOUTS[st.layout] || LAYOUTS.main).includes(k) && st.page === 'desk';
 function savePrefs() {
-  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, planHide: st.planHide.slice(-80), planShow: st.planShow.slice(-80), expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds, tpoOpts: st.tpoOpts, tpoGroups: st.tpoGroups, utabs: st.utabs, ws: st.ws, instTab: st.instTab, v: 28})); } catch (e) { /* stockage indisponible */ }
+  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, planHide: st.planHide.slice(-80), planShow: st.planShow.slice(-80), expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds, tpoOpts: st.tpoOpts, tpoGroups: st.tpoGroups, utabs: st.utabs, tabOrder: st.tabOrder, tabHide: st.tabHide, ws: st.ws, instTab: st.instTab, v: 28})); } catch (e) { /* stockage indisponible */ }
 }
 function loadPrefs() {
   try {
@@ -205,6 +205,8 @@ function loadPrefs() {
     if (Array.isArray(p.utabs)) st.utabs = p.utabs.filter(u => u && typeof u === 'object' && /^u\d{1,4}$/.test(u.id) && typeof u.name === 'string' && u.set && typeof u.set === 'object' && u.set.els && typeof u.set.els === 'object')
       .filter((u, i, a) => a.findIndex(x => x.id === u.id) === i).slice(0, 12)
       .map(u => ({id: u.id, name: u.name.slice(0, 24) || 'Mon graphique', set: {...Desk.freshSet('blank'), ...u.set, els: Object.fromEntries(Object.entries(u.set.els).filter(([k, v]) => Desk.EL[k] && typeof v === 'boolean'))}}));
+    if (Array.isArray(p.tabOrder)) st.tabOrder = p.tabOrder.filter(x => typeof x === 'string' && x.length < 12).slice(0, 40);      // V35.1 : ordre de la barre
+    if (Array.isArray(p.tabHide)) st.tabHide = p.tabHide.filter(x => typeof x === 'string' && x.length < 12).slice(0, 20);        // et onglets retirés
     if (p.mtf && Array.isArray(p.mtf.tfs)) st.mtf = {n: Math.max(2, Math.min(5, +p.mtf.n || 4)), tfs: p.mtf.tfs.slice(0, 5)};
   } catch (e) { /* preferences illisibles : valeurs par defaut */ }
 }
@@ -218,7 +220,7 @@ function syncRange() {
 }
 function applyLayout() {
   const heatOk = !st.cfg || (st.cfg.heatmapSymbols || ['BTCUSDT']).includes(st.symbol);
-  if (st.layout === 'heat' && !heatOk) st.layout = 'main';
+  if (st.layout === 'heat' && !heatOk) st.layout = Desk.firstTab();
   if (st.layout === 'pair' && st.instTab !== 'PAIR') st.layout = 'main';
   if (!LAYOUTS[st.layout] && !Desk.userTab(st.layout)) st.layout = 'main';
   const want = LAYOUTS[st.layout] || LAYOUTS.main;                     // V35 : tes onglets sont le graphique principal avec leurs éléments

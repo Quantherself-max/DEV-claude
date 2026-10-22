@@ -64,6 +64,7 @@ const Desk = (() => {
     if (!S.ws[sym]) S.ws[sym] = {layout: 'main', sets: {}};
     const w = S.ws[sym];
     if (/^u\d/.test(w.layout || '') && !userTab(w.layout)) w.layout = 'main';      // onglet personnel supprimé depuis
+    if (BUILTIN && hiddenTabs().includes(w.layout)) w.layout = firstTab();             // V35.1 : onglet d'origine retiré de la barre
     Object.keys(VIEWS).forEach(v => { if (!w.sets[v] || typeof w.sets[v].els !== 'object') w.sets[v] = freshSet(v); });
     if (!w.v29) {                                     // V29 : la carte des liquidations apparaît (masquée) dans la légende de la vue Heatmap
       if (!('liqmap' in w.sets.heat.els)) w.sets.heat.els.liqmap = false;
@@ -275,23 +276,44 @@ const Desk = (() => {
   function rememberTf(tf) { if (isView(st().layout)) curSet().tf = tf; }
 
   // ---------- V35 : tes onglets (graphiques vierges à construire), dans la barre du Desk ----------
-  function renderUserTabs() {
-    const box = document.getElementById('layouts'); if (!box || !LT) return;
-    box.querySelectorAll('.utab,.uadd').forEach(b => b.remove());
-    const S = st(), tabs = S.utabs || [];
-    tabs.forEach(u => {
-      const b = document.createElement('button');
-      b.className = 'utab' + (S.layout === u.id ? ' on' : ''); b.dataset.layout = u.id;
-      b.title = `${u.name} : ton graphique (« ＋ Éléments » pour le construire) · double-clic : renommer`;
-      b.innerHTML = `<span class="uname">${esc(u.name)}</span><span class="uact" data-uren="${u.id}" title="Renommer">✎</span><span class="uact" data-udel="${u.id}" title="Supprimer cet onglet">✕</span>`;
+  // V35.1 : TOUS les onglets de la barre (ceux d'origine et les tiens) se déplacent (glisser-déposer, clic droit, ou menu « ＋ ») et se
+  // retirent ; un onglet d'origine retiré se remet depuis le menu « ＋ » ; ordre et onglets retirés gardés avec les réglages.
+  let BUILTIN = null;                                  // onglets d'origine, lus dans la page au démarrage : [{id, name, title}]
+  const builtin = id => (BUILTIN || []).find(x => x.id === id) || null;
+  const heatOk = () => heatSyms().includes(st().symbol);
+  const hiddenTabs = () => (st().tabHide || []).filter(id => builtin(id));
+  function tabOrder() {                               // ordre de la barre : l'ordre gardé, puis ce qui manque (nouveaux onglets à la fin)
+    const S = st(), ids = [...(BUILTIN || []).map(x => x.id), ...(S.utabs || []).map(u => u.id)];
+    const out = (S.tabOrder || []).filter((id, i, arr) => ids.includes(id) && arr.indexOf(id) === i);
+    ids.forEach(id => { if (!out.includes(id)) out.push(id); });
+    S.tabOrder = out;
+    return out;
+  }
+  const shownTabs = () => { const hid = hiddenTabs(); return tabOrder().filter(id => !hid.includes(id) && (id !== 'heat' || heatOk())); };
+  const firstTab = () => shownTabs()[0] || 'main';
+  const tabName = id => (userTab(id) || {}).name || (builtin(id) || {}).name || id;
+  function renderBar() {
+    const box = document.getElementById('layouts'); if (!box || !LT || !BUILTIN) return;
+    const S = st(), hid = hiddenTabs(), tabs = S.utabs || [];
+    box.innerHTML = '';
+    tabOrder().forEach(id => {
+      if (hid.includes(id)) return;
+      const u = userTab(id), bi = builtin(id), b = document.createElement('button');
+      b.dataset.layout = id; b.draggable = true;
+      b.className = (u ? 'utab' : 'btab') + (S.layout === id ? ' on' : '');
+      b.title = (u ? `${u.name} : ton graphique (« ＋ Éléments » pour le construire) · double-clic : renommer` : bi.title) + ' · glisser pour déplacer · clic droit : déplacer ou supprimer';
+      b.innerHTML = `<span class="uname">${esc(u ? u.name : bi.name)}</span>` + (u ? `<span class="uact" data-uren="${id}" title="Renommer">✎</span>` : '') +
+        `<span class="uact" data-udel="${id}" title="${u ? 'Supprimer cet onglet' : 'Retirer cet onglet de la barre (il se remet avec « ＋ »)'}">✕</span>`;
+      if (id === 'heat' && !heatOk()) b.hidden = true;
       box.appendChild(b);
     });
     const add = document.createElement('button');
     add.className = 'uadd'; add.dataset.uadd = '1'; add.textContent = '＋';
-    add.title = tabs.length >= MAX_TABS ? `${MAX_TABS} onglets au plus` : 'Ajouter un onglet : un graphique vierge à construire à ta façon, ou une copie du graphique affiché';
-    add.disabled = tabs.length >= MAX_TABS;
+    add.title = 'Ajouter un onglet (graphique vierge ou copie), remettre un onglet retiré, ranger la barre';
     box.appendChild(add);
+    if (tabs.length >= MAX_TABS) add.title += ` · ${MAX_TABS} onglets personnels au plus`;
   }
+  const renderUserTabs = renderBar;
   function addTab(copy) {
     const S = st(), tabs = S.utabs = S.utabs || [];
     if (tabs.length >= MAX_TABS) return null;
@@ -313,56 +335,162 @@ const Desk = (() => {
     const S = st();
     if (S.page !== 'desk') location.hash = '#/desk';
     rememberTf(S.tf);
-    S.layout = id; onLayout(id); renderUserTabs(); LT.applyLayout();
+    S.layout = id; onLayout(id); renderBar(); LT.applyLayout();
   }
   function renameTab(id, name) {
     const u = userTab(id); if (!u) return;
     const v = String(name == null ? '' : name).replace(/\s+/g, ' ').trim().slice(0, 24);
     if (!v) return;
-    u.name = v; renderUserTabs(); renderLegend(); LT.applyLayout();
+    u.name = v; renderBar(); renderLegend(); LT.applyLayout();
+  }
+  function leave(id) {                                // l'onglet ouvert disparaît : on passe au premier de la barre
+    const S = st();
+    Object.values(S.ws || {}).forEach(w => { if (w && w.layout === id) w.layout = firstTab(); });
+    if (S.layout === id) openTab(firstTab()); else { renderBar(); LT.applyLayout(); }
   }
   function deleteTab(id) {
-    const S = st(), u = userTab(id); if (!u) return;
+    const S = st(), u = userTab(id);
+    if (!u) return hideTab(id);
     S.utabs = S.utabs.filter(x => x !== u);
-    Object.values(S.ws || {}).forEach(w => { if (w && w.layout === id) w.layout = 'main'; });
-    if (S.layout === id) { S.layout = 'blank'; onLayout('blank'); }
-    renderUserTabs(); LT.applyLayout();
+    S.tabOrder = tabOrder().filter(x => x !== id);
+    leave(id);
+    return true;
   }
-  let addMenu = null;
-  function closeAddMenu() { if (addMenu) addMenu.hidden = true; }
-  function showAddMenu(btn) {
-    if (!addMenu) {
-      addMenu = document.createElement('div'); addMenu.className = 'ddp umenu'; addMenu.hidden = true;
-      document.body.appendChild(addMenu);
-      addMenu.addEventListener('click', e => { const b = e.target.closest('[data-unew]'); if (b) { closeAddMenu(); addTab(b.dataset.unew === 'copy'); } });
-      document.addEventListener('mousedown', e => { if (addMenu && !addMenu.hidden && !addMenu.contains(e.target) && !e.target.closest('[data-uadd]')) closeAddMenu(); });
+  function hideTab(id) {                              // onglet d'origine : retiré de la barre, remis depuis « ＋ »
+    const S = st();
+    if (!builtin(id) || hiddenTabs().includes(id)) return false;
+    if (shownTabs().filter(x => x !== id).length < 1) { window.alert('Garde au moins un onglet dans la barre.'); return false; }
+    S.tabHide = [...hiddenTabs(), id];
+    leave(id);
+    return true;
+  }
+  function restoreTab(id) {
+    const S = st();
+    S.tabHide = hiddenTabs().filter(x => x !== id);
+    openTab(id);
+  }
+  function moveTab(id, to, after) {                   // to : un autre onglet (avant lui, ou après si after), ou -1 / +1 (voisin visible)
+    const order = tabOrder().filter(x => x !== id), vis = shownTabs();
+    if (to === -1 || to === 1) {
+      const i = vis.indexOf(id), t = vis[i + to];
+      if (i < 0 || !t) return false;
+      after = to === 1; to = t;
+    } else if (to === 'first' || to === 'last') { after = to === 'last'; to = to === 'first' ? vis[0] : vis[vis.length - 1]; }
+    if (!to || to === id) return false;
+    const j = order.indexOf(to); if (j < 0) return false;
+    order.splice(after ? j + 1 : j, 0, id);
+    st().tabOrder = order;
+    renderBar(); LT.applyLayout();
+    return true;
+  }
+  function resetBar() { const S = st(); S.tabOrder = []; S.tabHide = []; renderBar(); LT.applyLayout(); }
+  let pop = null, popFor = null;
+  function closeAddMenu() { if (pop) pop.hidden = true; popFor = null; }
+  function showPop(html, x, y, key) {
+    if (!pop) {
+      pop = document.createElement('div'); pop.className = 'ddp umenu'; pop.hidden = true;
+      document.body.appendChild(pop);
+      pop.addEventListener('click', e => {
+        const b = e.target.closest('button'); if (!b || b.disabled) return;
+        const d = b.dataset, keep = d.tm === 'left' || d.tm === 'right';
+        if (d.unew) { closeAddMenu(); addTab(d.unew === 'copy'); }
+        else if (d.urest) { closeAddMenu(); restoreTab(d.urest); }
+        else if (d.ureset != null) { closeAddMenu(); resetBar(); }
+        else if (d.tm) {
+          const id = d.tid;
+          if (!keep) closeAddMenu();
+          if (d.tm === 'open') openTab(id);
+          else if (d.tm === 'left' || d.tm === 'right') { moveTab(id, d.tm === 'left' ? -1 : 1); if (popFor === 'add') fillAdd(); }
+          else if (d.tm === 'first' || d.tm === 'last') moveTab(id, d.tm);
+          else if (d.tm === 'ren') { const u = userTab(id); if (u) renameTab(id, window.prompt('Nom de l\'onglet (24 caractères au plus) :', u.name)); }
+          else if (d.tm === 'del') askDelete(id);
+        }
+      });
+      document.addEventListener('mousedown', e => { if (pop && !pop.hidden && !pop.contains(e.target) && !e.target.closest('[data-uadd]')) closeAddMenu(); });
       document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAddMenu(); });
       window.addEventListener('resize', closeAddMenu);
     }
-    if (!addMenu.hidden) { closeAddMenu(); return; }
-    const S = st(), canCopy = isView(S.layout);
-    addMenu.innerHTML = '<div class="ddh">Nouvel onglet</div><button class="mini" data-unew="blank">Graphique vierge<small>rien de dessiné : tu ajoutes tes éléments</small></button>' +
-      (canCopy ? `<button class="mini" data-unew="copy">Copie de « ${esc(viewName(viewOf(S.layout)))} »<small>les mêmes éléments, que tu modifies ensuite</small></button>` : '');
-    addMenu.hidden = false;
+    pop.innerHTML = html; pop.hidden = false; popFor = key;
+    pop.style.maxHeight = Math.max(200, window.innerHeight - y - 12) + 'px';
+    pop.style.top = y + 'px';
+    pop.style.left = Math.max(6, Math.min(x, window.innerWidth - pop.offsetWidth - 6)) + 'px';
+  }
+  function askDelete(id) {
+    const u = userTab(id);
+    if (u) { if (window.confirm(`Supprimer l'onglet « ${u.name} » et ses éléments ?`)) deleteTab(id); }
+    else hideTab(id);
+  }
+  function addHtml() {
+    const S = st(), canCopy = isView(S.layout), full = (S.utabs || []).length >= MAX_TABS, hid = hiddenTabs(), vis = shownTabs();
+    return '<div class="ddh">Nouvel onglet</div>' +
+      `<button class="mini" data-unew="blank"${full ? ' disabled' : ''}>Graphique vierge<small>${full ? `${MAX_TABS} onglets personnels au plus : supprimes-en un` : 'rien de dessiné : tu ajoutes tes éléments'}</small></button>` +
+      (canCopy ? `<button class="mini" data-unew="copy"${full ? ' disabled' : ''}>Copie de « ${esc(viewName(viewOf(S.layout)))} »<small>les mêmes éléments, que tu modifies ensuite</small></button>` : '') +
+      (hid.length ? '<div class="ddh">Onglets retirés</div>' + hid.map(id => `<button class="mini" data-urest="${id}">Remettre « ${esc(tabName(id))} »</button>`).join('') : '') +
+      '<div class="ddh">Ranger la barre</div><div class="uorder">' + vis.map((id, i) =>
+        `<div class="urow"><span>${esc(tabName(id))}</span><button class="mini" data-tm="left" data-tid="${id}" title="Vers la gauche"${i ? '' : ' disabled'}>◀</button>` +
+        `<button class="mini" data-tm="right" data-tid="${id}" title="Vers la droite"${i < vis.length - 1 ? '' : ' disabled'}>▶</button>` +
+        `<button class="mini" data-tm="del" data-tid="${id}" title="${userTab(id) ? 'Supprimer' : 'Retirer de la barre'}"${vis.length > 1 ? '' : ' disabled'}>✕</button></div>`).join('') + '</div>' +
+      '<button class="mini" data-ureset title="Tous les onglets d\'origine, dans leur ordre d\'origine (tes onglets restent, à la fin)">Remettre la barre d\'origine</button>' +
+      '<div class="ddnote">Tu peux aussi glisser un onglet pour le déplacer, ou faire un clic droit dessus.</div>';
+  }
+  let addBtn = null;
+  function fillAdd() { if (pop && !pop.hidden && popFor === 'add' && addBtn) { const r = addBtn.getBoundingClientRect(); showPop(addHtml(), r.left, r.bottom + 4, 'add'); } }
+  function showAddMenu(btn) {
+    if (pop && !pop.hidden && popFor === 'add') { closeAddMenu(); return; }
+    addBtn = btn;
     const r = btn.getBoundingClientRect();
-    addMenu.style.top = (r.bottom + 4) + 'px';
-    addMenu.style.left = Math.max(6, Math.min(r.left, window.innerWidth - addMenu.offsetWidth - 6)) + 'px';
+    showPop(addHtml(), r.left, r.bottom + 4, 'add');
+  }
+  function showTabMenu(id, x, y) {
+    const vis = shownTabs(), i = vis.indexOf(id), u = userTab(id), nm = esc(tabName(id));
+    const btn = (tm, label, off) => `<button class="mini" data-tm="${tm}" data-tid="${id}"${off ? ' disabled' : ''}>${label}</button>`;
+    showPop(`<div class="ddh">Onglet « ${nm} »</div>` + btn('open', 'Ouvrir', st().layout === id) +
+      btn('left', 'Déplacer à gauche', i <= 0) + btn('right', 'Déplacer à droite', i < 0 || i >= vis.length - 1) +
+      btn('first', 'Mettre en premier', i <= 0) + btn('last', 'Mettre en dernier', i < 0 || i >= vis.length - 1) +
+      (u ? btn('ren', 'Renommer') : '') + btn('del', u ? 'Supprimer cet onglet' : 'Retirer de la barre', vis.length <= 1) +
+      (u ? '' : '<div class="ddnote">Un onglet retiré se remet avec le « ＋ ».</div>'), x, y, 'tab');
   }
   function wireUserTabs() {
     const box = document.getElementById('layouts'); if (!box) return;
+    BUILTIN = [...box.querySelectorAll('button[data-layout]')].map(b => ({id: b.dataset.layout, name: b.textContent.trim(), title: b.title}));
     box.addEventListener('click', e => {                // avant le clic d'onglet de app.js : ✎, ✕ et ＋ ne changent pas de vue
       const ren = e.target.closest('[data-uren]'), del = e.target.closest('[data-udel]'), add = e.target.closest('[data-uadd]');
       if (!ren && !del && !add) return;
       e.stopPropagation(); e.preventDefault();
-      if (add) { if (!add.disabled) showAddMenu(add); return; }
+      if (add) { showAddMenu(add); return; }
       if (ren) { const u = userTab(ren.dataset.uren); if (u) renameTab(u.id, window.prompt('Nom de l\'onglet (24 caractères au plus) :', u.name)); return; }
-      const u = userTab(del.dataset.udel);
-      if (u && window.confirm(`Supprimer l'onglet « ${u.name} » et ses éléments ?`)) deleteTab(u.id);
+      askDelete(del.dataset.udel);
     }, true);
     box.addEventListener('dblclick', e => {
       const b = e.target.closest('.utab'); const u = b && userTab(b.dataset.layout);
       if (u) renameTab(u.id, window.prompt('Nom de l\'onglet (24 caractères au plus) :', u.name));
     });
+    box.addEventListener('contextmenu', e => {
+      const b = e.target.closest('button[data-layout]'); if (!b) return;
+      e.preventDefault(); showTabMenu(b.dataset.layout, e.clientX, e.clientY + 4);
+    });
+    // glisser-déposer : l'onglet se pose avant ou après celui qu'il survole (moitié gauche / moitié droite)
+    let drag = null;
+    const clear = () => box.querySelectorAll('.dropl,.dropr,.dragging').forEach(x => x.classList.remove('dropl', 'dropr', 'dragging'));
+    const side = (b, e) => { const r = b.getBoundingClientRect(); return e.clientX > r.left + r.width / 2; };
+    box.addEventListener('dragstart', e => {
+      const b = e.target.closest && e.target.closest('button[data-layout]'); if (!b) return;
+      drag = b.dataset.layout; b.classList.add('dragging');
+      try { e.dataTransfer.setData('text/plain', drag); e.dataTransfer.effectAllowed = 'move'; } catch (err) { /* rien */ }
+    });
+    box.addEventListener('dragover', e => {
+      const b = e.target.closest('button[data-layout]'); if (!drag || !b || b.dataset.layout === drag) return;
+      e.preventDefault();
+      box.querySelectorAll('.dropl,.dropr').forEach(x => x.classList.remove('dropl', 'dropr'));
+      b.classList.add(side(b, e) ? 'dropr' : 'dropl');
+    });
+    box.addEventListener('drop', e => {
+      const b = e.target.closest('button[data-layout]'); if (!drag || !b) return;
+      e.preventDefault();
+      const id = drag; drag = null; clear();
+      if (b.dataset.layout !== id) moveTab(id, b.dataset.layout, side(b, e));
+    });
+    box.addEventListener('dragend', () => { drag = null; clear(); });
   }
 
   // ---------- couches sous les bougies : heatmap du carnet et carte des liquidations ----------
@@ -505,11 +633,11 @@ const Desk = (() => {
 
   function init(lt) {
     LT = lt;
-    wireChooser(); wireUserTabs(); renderUserTabs();
+    wireChooser(); wireUserTabs(); renderBar();
     document.addEventListener('click', e => {
       const b = e.target.closest('#instTabs [data-inst]');
       if (b) setTab(b.dataset.inst);
     });
   }
-  return {init, apply, curSet, wsOf, rememberTf, isView, userTab, viewName, addTab, renameTab, deleteTab, renderUserTabs, renderLegend, toggleChooser, closeChooser, renderTabs, setTab, onLayout, pollHeat, tick, heatTip, viewOf, VIEWS, EL, PRESET, freshSet};
+  return {init, apply, curSet, wsOf, rememberTf, isView, userTab, viewName, addTab, renameTab, deleteTab, hideTab, restoreTab, moveTab, resetBar, renderBar, renderUserTabs, firstTab, shownTabs, renderLegend, toggleChooser, closeChooser, renderTabs, setTab, onLayout, pollHeat, tick, heatTip, viewOf, VIEWS, EL, PRESET, freshSet};
 })();

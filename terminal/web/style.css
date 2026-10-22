@@ -626,9 +626,19 @@ ul.recent li{padding:3px 0;border-bottom:1px solid #1b2030}
 #deskbar .seg button.utab{display:inline-flex;align-items:center;gap:4px;border-style:dashed;max-width:220px}
 #deskbar .seg button.utab.on{border-style:solid}
 #deskbar .seg button.utab .uname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#deskbar .seg button.utab .uact{display:none;font-size:11px;opacity:.7;padding:0 2px;border-radius:3px}
-#deskbar .seg button.utab.on .uact{display:inline}
-#deskbar .seg button.utab .uact:hover{opacity:1;background:rgba(255,255,255,.12)}
+#deskbar .seg button .uact{display:none;font-size:11px;opacity:.7;padding:0 2px;border-radius:3px}
+#deskbar .seg button.on .uact{display:inline}
+#deskbar .seg button .uact:hover{opacity:1;background:rgba(255,255,255,.12)}
+/* V35.1 : déplacer les onglets (glisser-déposer) et les ranger depuis le menu « ＋ » */
+#deskbar .seg button.btab{display:inline-flex;align-items:center;gap:4px}
+#deskbar .seg button.dragging{opacity:.4}
+#deskbar .seg button.dropl{box-shadow:inset 3px 0 0 var(--acc)}
+#deskbar .seg button.dropr{box-shadow:inset -3px 0 0 var(--acc)}
+.umenu .uorder{display:flex;flex-direction:column;gap:2px;margin:2px 0 4px}
+.umenu .urow{display:flex;align-items:center;gap:4px}
+.umenu .urow span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 4px}
+.umenu .urow button.mini{width:auto;margin:0;padding:2px 7px;display:inline-block}
+.umenu button.mini:disabled{opacity:.35;cursor:default}
 #deskbar .seg button.uadd{padding:4px 9px;font-weight:600;color:var(--acc)}
 #deskbar .seg button.uadd:disabled{opacity:.4;cursor:default}
 .umenu{min-width:230px}
