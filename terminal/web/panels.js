@@ -182,7 +182,7 @@ class Panel {
         ctx.fillStyle = col; ctx.fillRect(0, yb, xr, Math.max(1, ya - yb));
       }));
     }
-    if (o.dpoc && D && D.developing && D.developing.length > 1 && st.tf !== '1d') {
+    if (o.dpoc && D && D.developing && D.developing.length > 1 && !['1d', '1w', '1M'].includes(st.tf)) {
       const pts = D.developing.map(([tm, poc, vah, val]) => ({x: this.timeX(tm / 1000, L), poc, vah, val})).filter(p => p.x != null && p.x <= xr);
       const line = (key, col, dash, wdt) => {
         ctx.strokeStyle = col; ctx.lineWidth = wdt; ctx.setLineDash(dash); ctx.beginPath();
@@ -484,9 +484,8 @@ class Panel {
     const st = LT.st, lb = st.lastBarObj, el = this.cd, per = LT.TF_SEC[st.tf];
     const y = lb && per ? this.series.priceToCoordinate(lb.close) : null, t = this.th(), tag = this.ptag;
     if (y == null || !this.visible()) { if (!el.hidden) el.hidden = true; if (!tag.hidden) tag.hidden = true; return; }
-    const now = LT.serverNow() / 1000, left = Math.max(0, Math.ceil(Math.floor(now / per) * per + per - now));       // les bougies sont alignees sur l'epoque UTC
-    const two = n => String(n).padStart(2, '0');
-    const txt = left >= 3600 ? `${Math.floor(left / 3600)}:${two(Math.floor(left % 3600 / 60))}:${two(left % 60)}` : `${two(Math.floor(left / 60))}:${two(left % 60)}`;
+    const now = LT.serverNow() / 1000, left = Math.max(0, Math.ceil(LT.barEnd(now, st.tf) - now));       // V36 : semaine du lundi, mois calendaire
+    const txt = LT.leftTxt(left);
     const w = this.chart.priceScale('right').width(), top = Math.round(y + (t.ownTag ? 9 : 11)), bg = t.cd || (lb.close >= lb.open ? '#26a69a' : '#ef5350');
     const key = [txt, w, top, bg, t.ownTag ? lb.close : ''].join('|');
     if (key === this.cdKey) return;
@@ -1055,7 +1054,7 @@ class Panel {
     // V24.1 : absorption en direct = « mur » au prix (trait horizontal sur la largeur de la bougie, pattes vers le cote ou le prix est
     // retenu : vers le haut = soutien, vers le bas = plafond) ; pointille = en cours, double trait = ordre reapprovisionne, pale et barre = cassee
     live.forEach(e => {
-      let x = this.timeX(Math.floor(e.t / per) * per / 1000, L);
+      let x = this.timeX(LT.barStart(Math.floor(e.t / 1000), st.tf), L);
       const y = this.series.priceToCoordinate(e.price + e.step / 2);
       const bull = e.side === 'bull', col = bull ? UP : DN, broken = e.status === 'cassée';
       const w = Math.max(10, Math.min(24, L.barW + 4 + 3 * Math.log2(1 + e.usd / thr))), cap = bull ? -5 : 5;   // a peine plus large que la bougie

@@ -14,7 +14,7 @@ from pathlib import Path
 from config import Config, ROOT
 from data import reports as reports_mod
 from data.store import DataStore, H1, M5, DAY, OI_DAYS
-from engine.atr import INTERVAL_MS, avg_price, resample, rma_atr
+from engine.atr import CALENDAR, INTERVAL_MS, avg_price, resample, resample_cal, rma_atr
 from engine import bias as bias_engine
 from engine import cvd as cvd_engine
 from engine import fine, liqsweep, pocketrank, sessionvp
@@ -40,7 +40,8 @@ from engine.liquidity import LiqEngine
 from engine.periods import AnchoredVWAP, KINDS, NakedPocs, PeriodTracker
 from engine.stats import atr_series, reach_prob, reach_table, reaction_stats, round_step, sweep_outcomes
 
-TFS = ("5m", "15m", "1h", "4h", "1d")
+TFS = ("1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M")       # V36 : 1 minute, semaine et mois en plus
+ALERT_TFS = ("5m", "15m", "1h", "4h", "1d")                    # unités possibles pour les alertes (inchangées)
 NAMES = {"D": "d", "W": "w", "M": "m", "Y": "y"}
 PREV_HL = {"D": ("PDH", "PDL"), "W": ("PWH", "PWL"), "M": ("PMH", "PML"), "Y": ("PYH", "PYL")}
 BASELINE = "Hasard (témoin)"
@@ -87,7 +88,7 @@ def bisect_left_t(candles, t_ms):
     return lo
 
 
-CHART_BARS = {"1d": 3000}  # V33 : bougies envoyées au graphique : tout l'historique en journalier (depuis 2019 pour le BTC), 1 500 ailleurs
+CHART_BARS = {"1d": 3000, "1w": 3000, "1M": 3000}  # V33 : bougies envoyées au graphique : tout l'historique en journalier (depuis 2019 pour le BTC), 1 500 ailleurs
 CHART_DEFAULT = 1500       # (250 jours en 4 heures, 2 mois en 1 heure, 15 jours en 15 minutes, 5 jours en 5 minutes)
 
 
@@ -241,6 +242,10 @@ class Market:
     # ---------- donnees pour un timeframe ----------
     def chart_candles(self, tf: str):
         s = self.store
+        if tf == "1m":                                           # V36
+            return s.m1
+        if tf in CALENDAR:                                       # V36 : semaine (lundi 00 h UTC) et mois calendaire
+            return resample_cal(s.h1, tf)
         if tf == "5m":
             return s.m5
         if tf == "15m":

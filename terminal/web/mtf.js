@@ -7,9 +7,9 @@
 // dessinees a leurs niveaux, et en tete les setups qui vont ensemble (une idee et sa couverture sur l'autre instrument).
 const MTF = (() => {
   'use strict';
-  const TFS = ['5m', '15m', '1h', '4h', '1d'];
-  const SEC = {'5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400};
-  const NAME = {'5m': '5 min', '15m': '15 min', '1h': '1 heure', '4h': '4 heures', '1d': '1 jour'};
+  const TFS = ['1m', '5m', '15m', '1h', '4h', '1d', '1w', '1M'];                      // V36 : 1 minute, semaine et mois
+  const SEC = {'1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800, '1M': 2678400};
+  const NAME = {'1m': '1 min', '5m': '5 min', '15m': '15 min', '1h': '1 heure', '4h': '4 heures', '1d': '1 jour', '1w': '1 semaine', '1M': '1 mois'};
   const DEF = ['5m', '15m', '1h', '4h', '1d'];
   let LT = null, root = null, cells = null, charts = [], timer = null, on = false, raf = 0, alignAt = 0, pair = null;
 
@@ -106,7 +106,7 @@ const MTF = (() => {
     // bougie en cours mise a jour a chaque transaction (meme flux que le graphique principal)
     onTick(price, tms) {
       if (!this.bars.length || (this.sym && this.sym !== LT.st.symbol)) return;
-      const per = SEC[this.tf], bt = Math.floor(tms / 1000 / per) * per, last = this.bars[this.bars.length - 1];
+      const bt = LT.barStart(Math.floor(tms / 1000), this.tf), last = this.bars[this.bars.length - 1];
       if (bt < last.time) return;
       let b;
       if (bt === last.time) { b = last; b.high = Math.max(b.high, price); b.low = Math.min(b.low, price); b.close = price; }
@@ -154,8 +154,8 @@ const MTF = (() => {
           ctx.fillStyle = t.label; ctx.fillText(lab, dc.x - W - 4, y);
         });
       }
-      const per = SEC[this.tf], ts = this.chart.timeScale();
-      const xOf = ms => { const bt = Math.floor(ms / 1000 / per) * per, x = ts.timeToCoordinate(bt); return x != null ? x : (this.bars.length && bt < this.bars[0].time ? 0 : null); };
+      const ts = this.chart.timeScale();
+      const xOf = ms => { const bt = LT.barStart(Math.floor(ms / 1000), this.tf), x = ts.timeToCoordinate(bt); return x != null ? x : (this.bars.length && bt < this.bars[0].time ? 0 : null); };
       Panel.drawTpo(ctx, this.series, xOf, d.tpo, Panel.tpoKinds(o), plotW - (r.cols.length ? r.used + 22 : 0) - 4, h, t, true);
       if (o.absorb && d.absorb) Panel.absMarks(ctx, this.series, xOf, Panel.absShown(d.absorb, LT.st), plotW - (r.cols.length ? r.used + 22 : 0) - 4, h, t, true);   // V21
     }
@@ -165,9 +165,8 @@ const MTF = (() => {
         Panel.profKinds(LT.st.mainOpts).join('') + Panel.tpoKinds(LT.st.mainOpts).join('') + (LT.st.mainOpts.absorb ? 'A' + (LT.st.mainOpts.absorbMode || '') : ''),
         (() => { const r = this.chart.timeScale().getVisibleLogicalRange(); return r ? r.from.toFixed(1) + ':' + r.to.toFixed(1) : ''; })()].join();
       if (s !== this.sig) { this.sig = s; this.draw(); }
-      const per = SEC[this.tf], now = LT.serverNow() / 1000, left = Math.max(0, Math.ceil(Math.floor(now / per) * per + per - now));
-      const two = n => String(n).padStart(2, '0');
-      const txt = 'clôture dans ' + (left >= 86400 ? Math.floor(left / 3600) + ' h' : left >= 3600 ? `${Math.floor(left / 3600)}:${two(Math.floor(left % 3600 / 60))}:${two(left % 60)}` : `${two(Math.floor(left / 60))}:${two(left % 60)}`);
+      const now = LT.serverNow() / 1000, left = Math.max(0, Math.ceil(LT.barEnd(now, this.tf) - now));
+      const txt = 'clôture dans ' + LT.leftTxt(left);
       if (txt !== this.cdKey) { this.cdKey = txt; this.host.querySelector('.mcd').textContent = txt; }
     }
     destroy() { this.chart.remove(); this.host.remove(); }
@@ -183,7 +182,7 @@ const MTF = (() => {
       charts.forEach(c => {
         if (c === src) return;
         if (price == null || time == null || !c.bars.length) { c.chart.clearCrosshairPosition(); return; }
-        const bt = Math.floor(time / SEC[c.tf]) * SEC[c.tf];
+        const bt = LT.barStart(time, c.tf);
         if (bt < c.bars[0].time || bt > c.bars[c.bars.length - 1].time) { c.chart.clearCrosshairPosition(); return; }
         c.chart.setCrosshairPosition(price, bt, c.series);
       });

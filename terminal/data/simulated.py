@@ -84,6 +84,19 @@ class SimulatedSource(Source):
         self._gen(symbol)
         if interval == "5m":
             data = self._m5[symbol]
+        elif interval == "1m":                                   # V36 : chaque bougie 5 min découpée en 5 bougies d'une minute (même plus haut, plus bas)
+            out = []
+            for k in self._m5[symbol]:
+                if k.t + M5 <= start_ms or k.t > end_ms:
+                    continue
+                up = k.c >= k.o
+                path = [k.o, k.l if up else k.h, (k.o + k.c) / 2, k.h if up else k.l, ((k.h if up else k.l) + k.c) / 2, k.c]
+                for i in range(5):
+                    a, b = path[i], path[i + 1]
+                    t = k.t + i * 60_000
+                    if start_ms <= t <= end_ms:
+                        out.append(Candle(t, a, max(a, b), min(a, b), b, k.v / 5, k.tb / 5, k.q / 5))
+            return out
         else:
             key = (symbol, interval)
             if key not in self._rs:

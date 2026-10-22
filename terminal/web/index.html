@@ -297,6 +297,16 @@
         </div>
         <p class="muted small">La clé reste dans ton fichier <code>.env</code>. Les données du terminal ne partent vers Claude qu'au moment où tu poses une question.</p>
       </section>
+      <section id="syncSec">
+        <h4><span class="step">8</span> Mêmes réglages sur tous tes ordinateurs <small id="syncState"></small></h4>
+        <p class="muted small">Tes onglets et leur ordre, les éléments de chaque graphique, les unités de temps, les TPO fusionnés, la grille multi-unités et les réglages de cette fenêtre sont <b>gardés sur ce disque</b> à chaque changement. Choisis un <b>dossier synchronisé par ton cloud</b> (iCloud Drive, Google Drive, OneDrive ou Dropbox) et le même sur ton autre ordinateur : le terminal y recopie tout, et chaque ordinateur reprend la version la plus récente. Les secrets (Telegram, clés, jetons) ne partent jamais dans le cloud.</p>
+        <label class="field">Dossier synchronisé <select id="syncPick"></select></label>
+        <label class="field" id="syncOtherBox" hidden>Chemin du dossier <input id="syncOther" placeholder="ex. C:\Users\toi\Dropbox ou /Users/toi/Dropbox" autocomplete="off" spellcheck="false"></label>
+        <div class="line"><button id="syncUse" type="button">Utiliser ce dossier</button><span id="syncRes" class="muted small"></span></div>
+        <div id="syncInfo" class="muted small"></div>
+        <div class="line"><button id="syncExport" type="button" title="Un fichier avec tous tes réglages (sans les secrets), à ouvrir sur l'autre ordinateur avec « Importer »">Exporter mes réglages</button>
+          <button id="syncImportBtn" type="button">Importer un fichier</button><input id="syncImport" type="file" accept=".json,application/json" hidden></div>
+      </section>
     </div>
     <div class="mfoot"><span id="saveRes" class="muted"></span><button id="cancelSettings">Annuler</button><button id="saveSettings" class="primary">Enregistrer</button></div>
   </div>

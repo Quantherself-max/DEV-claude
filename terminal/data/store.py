@@ -13,6 +13,8 @@ from engine.atr import Candle
 
 H1 = 3_600_000
 M5 = 300_000
+M1 = 60_000
+M1_BARS = 1500     # V36 : bougies 1 minute gardées (25 heures) pour l'unité de temps 1m
 DAY = 86_400_000
 OI_DAYS = 29       # Binance ne donne l'OI 5 min que sur ~30 jours
 M5_FINE_DAYS = 70  # bougies 5 min gardees pour les profils de volume du jour, de la semaine et du mois (courants et precedents)
@@ -42,6 +44,8 @@ class DataStore:
         self._saved_n = 0
         self.h1: list[Candle] = []
         self.m5: list[Candle] = []
+        self.m1: list[Candle] = []                         # V36 : bougies 1 minute récentes (unité 1m)
+        self.m1_error = None
         self.m5_old: list[Candle] = []                       # bougies 5 min plus anciennes que m5 (profils de volume precis)
         self._m5_old_try = 0.0
         self.oi: dict[int, float] = {}                       # ouverture de la bougie 5 min -> OI a sa fin
@@ -94,6 +98,14 @@ class DataStore:
         s5 -= s5 % M5
         merge(self.m5, self.source.candles(self.symbol, "5m", s5, now))
         self._load_old_m5(now)
+        try:                                                     # V36 : bougies 1 minute ; un échec n'arrête rien (le reste continue)
+            sm = self.m1[-1].t if self.m1 else now - M1_BARS * M1
+            merge(self.m1, self.source.candles(self.symbol, "1m", sm - sm % M1, now))
+            if len(self.m1) > M1_BARS + 300:
+                del self.m1[:-M1_BARS]
+            self.m1_error = None
+        except Exception as e:
+            self.m1_error = f"{type(e).__name__}: {str(e)[:120]}"
         so = (self.oi_t[-1] + M5 + M5) if self.oi_t else now - OI_DAYS * DAY
         for ts, v in self.source.open_interest(self.symbol, "5m", so, now):
             k = ts - M5

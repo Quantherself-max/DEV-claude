@@ -10,8 +10,9 @@ def oi_candles(times, step_ms: int, pt_t: list, pt_v: list) -> list:
     Rend [ouverture, plus haut, plus bas, clôture] par bougie (None sans relevé). L'ouverture est le dernier relevé d'avant la bougie
     (comme un graphique en bougies : chaque bougie part de la clôture de la précédente)."""
     out = []
-    for t in times:
-        i0, i1 = bisect_right(pt_t, t), bisect_right(pt_t, t + step_ms)
+    for j, t in enumerate(times):                          # V36 : une bougie finit à l'ouverture de la suivante (mois de 28 à 31 jours)
+        end = min(t + step_ms, times[j + 1]) if j + 1 < len(times) else t + step_ms
+        i0, i1 = bisect_right(pt_t, t), bisect_right(pt_t, end)
         if i1 <= i0:                                       # pas encore de relevé dans la bougie (bougie en cours) : la dernière valeur
             p = pt_v[i0 - 1] if i0 > 0 and t - pt_t[i0 - 1] <= 3 * max(step_ms, 300_000) else None
             out.append([p, p, p, p] if p is not None else None)
@@ -75,9 +76,10 @@ def funding_bars(times, step_ms: int, rows, now_rate=None, now_ms=None) -> dict:
     last = ks[-1] if ks else None
     vals, est = [], None
     for idx, t in enumerate(times):
-        i0, i1 = bisect_left(ks, t), bisect_left(ks, t + step_ms)
+        end = min(t + step_ms, times[idx + 1]) if idx + 1 < len(times) else t + step_ms
+        i0, i1 = bisect_left(ks, t), bisect_left(ks, end)
         part = rs[i0:i1]
-        live = nr is not None and last is not None and t + step_ms > last and (now_ms is None or t <= now_ms)
+        live = nr is not None and last is not None and end > last and (now_ms is None or t <= now_ms)
         if not part and i0 < len(ks):                       # bougie plus courte que la période : le versement qui clôt sa période
             part = [rs[i0]] if ks[i0] - t <= 8 * 3_600_000 + FUND_LAG_MS else []
             live = False

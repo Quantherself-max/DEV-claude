@@ -1,7 +1,8 @@
-# Liq Terminal (V35.1)
+# Liq Terminal (V36)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Le même terminal sur ton PC et ton Mac, et les unités 1 minute, semaine et mois** (V36) : tes réglages sont gardés sur le disque et, avec un dossier iCloud, Google Drive, OneDrive ou Dropbox, recopiés sur tes autres ordinateurs (voir « V36 » plus bas).
 - **Le funding sous le graphique et tes propres onglets de graphiques** (V35) : élément « Funding » (barres, % par 8 heures ou par an, estimation de la période en cours) et bouton « ＋ » pour ajouter des graphiques vierges que tu construis à ta façon (voir « V35 » plus bas).
 - **Fusionner et déplier les profils TPO, comme sur Exocharts** (V34) : plusieurs séances de suite en un seul profil (POC, zone de valeur, single prints et volume recalculés), et chaque tranche dans sa propre colonne pour lire le trajet du prix (voir « V34 » plus bas).
 - **Plus d'historique sur le graphique** (V33) : tout l'historique en journalier (depuis 2019 pour le BTC), 1 500 bougies dans les autres unités de temps (avant : 400) ; VWAP, intérêt ouvert et delta suivent sur toute la largeur ; l'intérêt ouvert remonte maintenant jusqu'à décembre 2021 (voir « V33 » plus bas).
@@ -130,6 +131,22 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V36 : le même terminal sur tous tes ordinateurs, et les unités 1 minute, semaine et mois
+
+### Mêmes réglages sur ton PC et ton Mac
+- **Tout est gardé à chaque changement** : onglets et leur ordre, éléments de chaque graphique et leurs options, unité de temps de chaque vue, instrument ouvert, TPO fusionnés et dépliés, grille multi-unités, style nuit ou classique, sections ouvertes de la page Macro, et les réglages de la fenêtre Réglages. Une copie est écrite sur le disque (dossier des données) : vider le navigateur ou en changer ne perd plus rien.
+- **Pour retrouver le même terminal sur l'autre ordinateur** : Réglages, partie 8 « Mêmes réglages sur tous tes ordinateurs », choisis un **dossier synchronisé par ton cloud**, puis « Utiliser ce dossier ». Le terminal trouve tout seul iCloud Drive, Google Drive, OneDrive et Dropbox (sinon « Autre dossier… »). Fais la même chose sur l'autre ordinateur, avec le même service : par exemple iCloud Drive sur le Mac et l'application iCloud pour Windows sur le PC, ou Google Drive sur les deux.
+- Le terminal écrit dans `LiqTerminal/reglages.json` de ce dossier. Au démarrage, quand tu reviens sur la fenêtre, et toutes les 30 secondes si tu ne touches à rien, chaque ordinateur reprend **la version la plus récente** et la page se recharge toute seule.
+- **Les secrets ne partent jamais dans le cloud** : token et chat Telegram, clé Claude, jeton GitHub, jeton X. Chaque ordinateur garde les siens dans son `.env`, de même que le dossier des données et le port.
+- **Sans cloud** : « Exporter mes réglages » télécharge un fichier (sans les secrets) ; sur l'autre ordinateur, « Importer un fichier » le reprend.
+
+### Unités de temps 1 minute, semaine et mois
+- Les boutons d'unité de temps vont maintenant de **1m** (1 minute) à **1W** (semaine) et **1M** (mois) : 1m 5m 15m 1h 4h 1D 1W 1M.
+- **1 minute** : les 25 dernières heures (1 500 bougies), au vrai volume acheteur de Binance (delta et CVD réels).
+- **Semaine** : du lundi 00 h UTC au dimanche, comme sur Binance et TradingView. **Mois** : du 1er au dernier jour du mois. Tout l'historique est affiché (depuis 2019 pour le BTC).
+- Tout suit : bougie en direct, compte à rebours de la bougie (« 3 j 09:42 » en semaine), VWAP, profils de volume automatiques (1, 3 et 7 jours en 1 minute ; 2, 4 et 8 ans en semaine ; 4, 8 et 12 ans en mois), intérêt ouvert, delta, funding, grille multi-unités.
+- Les alertes gardent leurs unités d'avant (5 minutes à 1 jour).
 
 ## Ce qui est nouveau en V35.1 : déplacer et supprimer les onglets du Desk
 - **Tous les onglets** de la barre du Desk (Graphique, Vierge, Heatmap, Grille, Multi-unités, TPO et les tiens) se rangent comme tu veux :

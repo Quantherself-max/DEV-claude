@@ -105,7 +105,26 @@ async function api(path, body) {
 }
 
 // ---------- etat partage, aides de dessin, panneaux ----------
-const TF_SEC = {'5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400};
+const TF_SEC = {'1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800, '1M': 2678400};   // V36 : 1M = 31 jours au plus
+const TF_LABEL = {'1d': '1D', '1w': '1W', '1M': '1M'};
+const TF_TITLE = {'1m': '1 minute (les 25 dernières heures)', '5m': '5 minutes', '15m': '15 minutes', '1h': '1 heure', '4h': '4 heures', '1d': '1 jour',
+  '1w': '1 semaine (du lundi 00 h UTC, comme Binance)', '1M': '1 mois (calendaire)'};
+// V36 : ouverture (secondes, UTC) de la bougie qui contient sec, et sa fin : semaine du lundi, mois calendaire, sinon durée fixe
+function barStart(sec, tf) {
+  if (tf === '1w') return sec - (((sec - 345600) % 604800) + 604800) % 604800;
+  if (tf === '1M') { const d = new Date(sec * 1000); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000; }
+  const per = TF_SEC[tf] || 3600; return Math.floor(sec / per) * per;
+}
+function barEnd(sec, tf) {
+  if (tf === '1M') { const d = new Date(sec * 1000); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) / 1000; }
+  return barStart(sec, tf) + (TF_SEC[tf] || 3600);
+}
+// compte à rebours d'une bougie : jours et heures au-delà d'un jour, sinon hh:mm:ss ou mm:ss
+function leftTxt(left) {
+  const two = n => String(n).padStart(2, '0');
+  if (left >= 86400) return `${Math.floor(left / 86400)} j ${two(Math.floor(left % 86400 / 3600))}:${two(Math.floor(left % 3600 / 60))}`;
+  return left >= 3600 ? `${Math.floor(left / 3600)}:${two(Math.floor(left % 3600 / 60))}:${two(left % 60)}` : `${two(Math.floor(left / 60))}:${two(left % 60)}`;
+}
 function rgba(c, a) { return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
 const COL_L = [61, 220, 151], COL_S = [255, 107, 107];
 const byId = (arr, k = 'id') => Object.fromEntries(arr.map(x => [x[k], x]));
@@ -166,7 +185,46 @@ const panels = [];
 // 3 = Grille (principal + liquidité + VWAP·VP) ; pair = onglet « BTC + SOL » (deux instruments côte à côte, setups liés)
 const LAYOUTS = {main: ['main'], blank: ['main'], heat: ['main'], '1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: [], pair: []};
 const needs = k => (LAYOUTS[st.layout] || LAYOUTS.main).includes(k) && st.page === 'desk';
+// ---------- V36 : mêmes réglages sur tous tes ordinateurs : la page envoie ses réglages au terminal (copie sur le disque et, si
+// choisi, dans un dossier synchronisé par le cloud) et reprend la version la plus récente au démarrage et quand tu reviens sur la fenêtre ----------
+const SYNC_KEYS = ['liqPrefs', 'liqTab', 'liqPage', 'liqMacroOpen', 'lt.histRiskUsd'];
+const sync = {last: null, timer: null, busy: false, input: 0, state: null, ok: true};
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* stockage indisponible */ } };
+function syncCollect() { const o = {}; SYNC_KEYS.forEach(k => { const v = lsGet(k); if (v != null) o[k] = v; }); return o; }
+function syncApply(data) { SYNC_KEYS.forEach(k => { if (typeof data[k] === 'string') lsSet(k, data[k]); }); }
+async function syncPull(initial) {                    // true : la page va se recharger avec les réglages venus d'ailleurs
+  let r;
+  try { r = await api('/api/prefs'); } catch (e) { sync.ok = false; return false; }
+  sync.ok = true; sync.state = r;
+  const localT = +lsGet('liqPrefsT') || 0;
+  if (r.uiData && r.ui && r.ui.t > localT && JSON.stringify(r.uiData) !== JSON.stringify(syncCollect())) {
+    syncApply(r.uiData); lsSet('liqPrefsT', String(r.ui.t));
+    if (!initial) { toast('Réglages repris de ton autre ordinateur : rechargement…'); setTimeout(() => location.reload(), 600); return true; }
+  } else if (r.ui && r.ui.t > localT) lsSet('liqPrefsT', String(r.ui.t));
+  if (r.envApplied && !initial) { toast('Réglages repris de ton autre ordinateur : rechargement…'); setTimeout(() => location.reload(), 600); return true; }
+  if (initial) sync.last = r.ui && r.ui.t >= localT ? JSON.stringify(syncCollect()) : '';     // réglages d'ici plus récents : envoyés
+  return false;
+}
+async function syncPush(force) {
+  if (!st.cfg || sync.busy || sync.last == null) return;
+  const data = syncCollect(), cur = JSON.stringify(data);
+  if (!force && cur === sync.last) return;
+  sync.busy = true;
+  try {
+    const t = Date.now();
+    const r = await api('/api/prefs', {data, t});
+    sync.last = cur; lsSet('liqPrefsT', String(r.t));
+    if (r.data && !r.mine && r.t > t) { syncApply(r.data); toast('Réglages plus récents sur ton autre ordinateur : rechargement…'); setTimeout(() => location.reload(), 600); }
+  } catch (e) { /* le prochain passage réessaiera */ } finally { sync.busy = false; }
+}
+function syncSoon() { clearTimeout(sync.timer); sync.timer = setTimeout(() => syncPush(false), 1200); }
+['pointerdown', 'keydown', 'wheel'].forEach(ev => window.addEventListener(ev, () => { sync.input = Date.now(); }, {passive: true, capture: true}));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncPull(false); else syncPush(false); });
+setInterval(() => syncPush(false), 5000);
+setInterval(() => { if (document.visibilityState === 'visible' && Date.now() - sync.input > 20000 && M.hidden) syncPull(false); }, 30000);
 function savePrefs() {
+  syncSoon();
   try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, planHide: st.planHide.slice(-80), planShow: st.planShow.slice(-80), expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds, tpoOpts: st.tpoOpts, tpoGroups: st.tpoGroups, utabs: st.utabs, tabOrder: st.tabOrder, tabHide: st.tabHide, ws: st.ws, instTab: st.instTab, v: 28})); } catch (e) { /* stockage indisponible */ }
 }
 function loadPrefs() {
@@ -288,7 +346,7 @@ function onTick(price, tms, src) {
   if (live.sym === st.symbol) { MTF.onTick(price, tms); TPO.onTick(price); }
   const d = st.data;
   if (!d || d.symbol !== live.sym || !st.lastBarObj) return;
-  const per = TF_SEC[st.tf], bt = Math.floor(tms / 1000 / per) * per;
+  const bt = barStart(Math.floor(tms / 1000), st.tf);           // V36 : semaine et mois de calendrier
   if (bt < st.lastBar) return;                                  // transaction plus ancienne que la derniere bougie
   let b = live.bar && live.bar.time === bt ? live.bar : null;
   if (!b) b = st.lastBarObj.time === bt ? {...st.lastBarObj} : {time: bt, open: price, high: price, low: price, close: price};
@@ -665,7 +723,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 34;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators)
+const NEED_API = 35;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -779,7 +837,7 @@ function buildControls(cfg) {
   if (vt && cfg.tfs.includes(vt)) st.tf = vt;
   Desk.renderTabs();
   const box = $('#tfs');
-  box.innerHTML = cfg.tfs.map(t => `<button data-tf="${t}" class="${t === st.tf ? 'on' : ''}">${t}</button>`).join('');
+  box.innerHTML = cfg.tfs.map(t => `<button data-tf="${t}" class="${t === st.tf ? 'on' : ''}" title="${TF_TITLE[t] || t}">${TF_LABEL[t] || t}</button>`).join('');
   box.onclick = e => { const b = e.target.closest('button'); if (b) setTf(b.dataset.tf); };
   updateBanner(st.data);
   if (!live.ws || live.sym !== st.symbol || !cfg.wsBase) liveConnect();
@@ -1116,8 +1174,62 @@ function renderFpState(tr, source) {
 }
 
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, 4500); }
+// V36 : partie « Mêmes réglages sur tous tes ordinateurs » des Réglages
+function renderSync(r) {
+  if (!r) { $('#syncInfo').textContent = 'Le terminal lancé est trop ancien pour cette option : redémarre-le.'; return; }
+  const cands = r.candidates || [], known = cands.some(c => c.path === r.syncDir);
+  $('#syncPick').innerHTML = `<option value="">Aucun : seulement sur cet ordinateur</option>` +
+    cands.map(c => `<option value="${esc(c.path)}"${c.path === r.syncDir ? ' selected' : ''}>${esc(c.label)} · ${esc(c.path)}</option>`).join('') +
+    `<option value="__other"${r.syncDir && !known ? ' selected' : ''}>Autre dossier…</option>`;
+  $('#syncOtherBox').hidden = !(r.syncDir && !known);
+  if (r.syncDir && !known) $('#syncOther').value = r.syncDir;
+  const when = e => e ? `${parisAt(e.t)} sur ${e.mine ? 'cet ordinateur' : `ton autre ordinateur (${esc(e.from || '?')})`}` : 'pas encore';
+  $('#syncState').textContent = !r.syncDir ? 'sur cet ordinateur seulement' : r.error || !r.syncOk ? '✗ dossier inaccessible' : '✓ synchronisé';
+  $('#syncState').className = !r.syncDir ? '' : r.error || !r.syncOk ? 'dn' : 'up';
+  $('#syncInfo').innerHTML = `Cet ordinateur : <b>${esc(r.device)}</b> · page modifiée le ${when(r.ui)} · réglages modifiés le ${when(r.env)}` +
+    (r.syncFile ? `<br>Fichier partagé : <code>${esc(r.syncFile)}</code>` : '') + (r.error ? `<br><span class="dn">${esc(r.error)}</span>` : '') +
+    (!cands.length ? '<br>Aucun dossier de cloud trouvé sur cet ordinateur : installe iCloud, Google Drive, OneDrive ou Dropbox, ou choisis « Autre dossier… ».' : '');
+}
+async function syncSettings() {
+  $('#syncRes').textContent = '';
+  try { await syncPush(true); renderSync(await api('/api/prefs')); } catch (e) { renderSync(null); }
+}
+$('#syncPick').onchange = () => { $('#syncOtherBox').hidden = $('#syncPick').value !== '__other'; };
+$('#syncUse').onclick = async () => {
+  const v = $('#syncPick').value, dir = v === '__other' ? $('#syncOther').value.trim() : v;
+  $('#syncRes').textContent = 'enregistrement…';
+  try {
+    await syncPush(true);
+    const r = await api('/api/prefs/syncdir', {dir});
+    renderSync(r);
+    $('#syncRes').textContent = dir ? 'dossier enregistré : fais la même chose sur ton autre ordinateur' : 'synchronisation arrêtée';
+    if (r.uiData && r.ui && !r.ui.mine && r.ui.t > (+lsGet('liqPrefsT') || 0)) { syncApply(r.uiData); lsSet('liqPrefsT', String(r.ui.t)); toast('Réglages repris de ton autre ordinateur : rechargement…'); setTimeout(() => location.reload(), 900); }
+    else if (r.envApplied) setTimeout(() => location.reload(), 900);
+  } catch (e) { $('#syncRes').textContent = '✗ ' + (e.message || e); }
+};
+$('#syncExport').onclick = async () => {
+  try {
+    await syncPush(true);
+    const doc = await api('/api/prefs/export'), a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 1)], {type: 'application/json'}));
+    a.download = `liq-terminal-reglages-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    $('#syncRes').textContent = 'fichier téléchargé : ouvre-le sur l\'autre ordinateur avec « Importer un fichier »';
+  } catch (e) { $('#syncRes').textContent = '✗ ' + (e.message || e); }
+};
+$('#syncImportBtn').onclick = () => $('#syncImport').click();
+$('#syncImport').onchange = async () => {
+  const f = $('#syncImport').files[0]; if (!f) return;
+  try {
+    const doc = JSON.parse(await f.text()), r = await api('/api/prefs/import', {doc});
+    if (r.uiData) { syncApply(r.uiData); lsSet('liqPrefsT', String(r.ui ? r.ui.t : Date.now())); }
+    toast('Réglages importés : rechargement…'); setTimeout(() => location.reload(), 700);
+  } catch (e) { $('#syncRes').textContent = '✗ fichier illisible : ' + (e.message || e); }
+  $('#syncImport').value = '';
+};
 async function openSettings() {
   M.hidden = false;
+  syncSettings();
   ['#binanceRes', '#chatRes', '#tgRes', '#saveRes'].forEach(k => $(k).textContent = '');
   $('#binanceList').innerHTML = '';
   try {
@@ -1135,7 +1247,7 @@ async function openSettings() {
     $('#tgFile').textContent = s.telegram.envFile ? 'Réglages enregistrés dans : ' + s.telegram.envFile : '';
     $('#tgDiag').innerHTML = '';
     $('#aScore').value = String(s.alertMinScore);
-    $('#aTf').innerHTML = (st.cfg ? st.cfg.tfs : ['1h']).map(t => `<option${t === s.alertTf ? ' selected' : ''}>${t}</option>`).join('');
+    $('#aTf').innerHTML = (st.cfg ? st.cfg.alertTfs || st.cfg.tfs : ['1h']).map(t => `<option${t === s.alertTf ? ' selected' : ''}>${t}</option>`).join('');
     $('#aCool').value = s.alertCooldownHours;
     $('#aSweep').checked = !!s.alertSweep;
     $('#aZones').checked = s.alertZones !== false;
@@ -1349,10 +1461,11 @@ function openSymbol(sym, page) {
   location.hash = page === 'analysis' ? '#/analysis/synth' : page === 'signals' ? '#/signals' : '#/desk';
 }
 (async () => {
+  await syncPull(true);                               // V36 : la version la plus récente (cet ordinateur ou un autre) avant de tout lire
   loadPrefs();
   let cfg;
   try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
-  window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
+  window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, TF_LABEL, TF_TITLE, barStart, barEnd, leftTxt, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
     serverOld, LAUNCHER, OPEN_ST, shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, oppOf, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan, togglePlan, planReset, planVisible,
     panels: () => panels, switchSymbol, applyLayout, setTf};
   Desk.init(window.LT);

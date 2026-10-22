@@ -142,6 +142,7 @@ class Config:
     # mise a jour automatique (V11) : nouvelle version publiee sur GitHub -> installee et terminal relance, sans fermer la fenetre
     update_auto: bool = True
     update_repo: str = "Quantherself-max/DEV-claude"
+    sync_dir: str = ""                   # V36 : dossier synchronisé (iCloud, Google Drive, OneDrive, Dropbox) : mêmes réglages sur tous tes ordinateurs
     update_branch: str = "auto"           # « auto » = la branche la plus recemment mise a jour qui contient le terminal
     update_token: str = ""                # jeton GitHub en LECTURE SEULE (depot prive)
     update_minutes: int = 30
@@ -233,6 +234,7 @@ def load_config(env_path: Path | None = None) -> Config:
     c.telegram_token = clean_token(g("TELEGRAM_BOT_TOKEN", ""))
     c.telegram_chat_id = clean_chat(g("TELEGRAM_CHAT_ID", ""))
     c.telegram_api_base = g("TELEGRAM_API_BASE", c.telegram_api_base)
+    c.sync_dir = g("TERMINAL_SYNC_DIR", c.sync_dir).strip()
     c.data_dir = g("TERMINAL_DATA_DIR", c.data_dir)
     return c
 

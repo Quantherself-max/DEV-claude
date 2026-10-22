@@ -30,12 +30,13 @@ from data.live import LiveFeed
 from data.orderflow import OrderFlow, SimFlow
 from data.social import Influencers, clean_handles
 from data.simulated import SimulatedSource
-from service import TFS, Service, chart_bars
+from service import ALERT_TFS, TFS, Service, chart_bars
+from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "35.1"
-API_LEVEL = 34                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "36"
+API_LEVEL = 35                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -226,6 +227,9 @@ class App:
         self.reload_lock = threading.Lock()
         self.price_lock = threading.Lock()
         self.fund_lock = threading.Lock()
+        self.prefs_lock = threading.Lock()
+        self._env_check = 0.0
+        cfg = self._pull_env_at_start(cfg)
         self._install(cfg)
 
     def _install(self, cfg):
@@ -452,6 +456,100 @@ class App:
                 pass
         if self.tgchat:
             self.tgchat.close()
+
+    # ---------- V36 : mêmes réglages sur tous tes ordinateurs (prefsync.py) ----------
+    def _pull_env_at_start(self, cfg):
+        """Au démarrage : les réglages (sans secret) changés sur un autre ordinateur depuis la dernière fois sont repris."""
+        self.prefs = PrefSync(cfg.data_dir, self.env_path, cfg.sync_dir)
+        try:
+            self.prefs.align()
+            upd = self.prefs.env_to_apply()
+            if upd and self.env_path.exists():
+                write_env(self.env_path, upd)
+                new = load_config(self.env_path)
+                new.port, new.host, new.data_dir = cfg.port, cfg.host, cfg.data_dir
+                self.prefs.align()
+                return new
+        except Exception:                                            # une copie illisible n'empêche jamais le démarrage
+            pass
+        return cfg
+
+    def pull_env(self, force: bool = False) -> bool:
+        """Réglages changés sur un autre ordinateur : appliqués ici (au plus toutes les 20 secondes). True s'il y a eu un changement."""
+        if not force and time.time() - self._env_check < 20:
+            return False
+        self._env_check = time.time()
+        with self.prefs_lock:
+            upd = self.prefs.env_to_apply()
+            if not upd or not self.env_path.exists():
+                return False
+            write_env(self.env_path, upd)
+        cfg = load_config(self.env_path)
+        cfg.port, cfg.host, cfg.data_dir = self.cfg.port, self.cfg.host, self.cfg.data_dir
+        self.reload(cfg)
+        return True
+
+    def prefs_state(self) -> dict:
+        applied = False
+        try:
+            applied = self.pull_env()
+        except Exception:
+            pass
+        ui = self.prefs.newest("ui")
+        return {**self.prefs.status(), "envApplied": applied, "uiData": ui["data"] if ui else None}
+
+    def prefs_put(self, body: dict) -> dict:
+        data = body.get("data")
+        if not isinstance(data, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in data.items()):
+            raise ValueError("réglages illisibles")
+        with self.prefs_lock:
+            e = self.prefs.put("ui", data, body.get("t"))
+        return {"t": e["t"], "from": e["from"], "mine": e["from"] == self.prefs.device, "data": None if e["from"] == self.prefs.device else e["data"]}
+
+    def prefs_sync_dir(self, body: dict) -> dict:
+        """Choix du dossier synchronisé (vide : plus de synchronisation). Les deux copies prennent ensuite la version la plus récente."""
+        d = str(body.get("dir") or "").strip()
+        if d:
+            p = Path(os.path.expanduser(d))
+            if not p.is_dir():
+                raise ValueError("dossier introuvable sur cet ordinateur : vérifie le chemin (ou installe l'application de ton cloud)")
+            try:
+                (p / "LiqTerminal").mkdir(exist_ok=True)
+            except OSError as e:
+                raise ValueError(f"impossible d'écrire dans ce dossier : {e.strerror or e}")
+            d = str(p)
+        write_env(self.env_path, {"TERMINAL_SYNC_DIR": d})
+        self.cfg.sync_dir = d
+        with self.prefs_lock:
+            self.prefs.sync_dir = d
+            self.prefs.align()
+            if d and not self.prefs.newest("env"):
+                self.prefs.push_env()
+        self._env_check = 0.0
+        return self.prefs_state()
+
+    def prefs_export(self) -> dict:
+        ui = self.prefs.newest("ui")
+        from prefsync import read_env
+        return {"v": 1, "app": "Liq Terminal", "exported": int(time.time() * 1000), "from": self.prefs.device,
+                "ui": ui["data"] if ui else {}, "env": read_env(self.env_path)}
+
+    def prefs_import(self, body: dict) -> dict:
+        doc = body.get("doc")
+        if not isinstance(doc, dict) or not isinstance(doc.get("ui"), dict):
+            raise ValueError("ce fichier n'est pas un export des réglages du terminal")
+        ui = {k: v for k, v in doc["ui"].items() if isinstance(k, str) and isinstance(v, str)}
+        env = {k: str(v) for k, v in (doc.get("env") or {}).items() if isinstance(k, str) and env_shareable(k) and "\n" not in str(v)}
+        with self.prefs_lock:
+            self.prefs.put("ui", ui)
+            if env:
+                write_env(self.env_path, env)
+                self.prefs.push_env()
+        if env:
+            cfg = load_config(self.env_path)
+            cfg.port, cfg.host, cfg.data_dir = self.cfg.port, self.cfg.host, self.cfg.data_dir
+            self.reload(cfg)
+        return self.prefs_state()
 
     def funding_rows(self, sym: str, t0: int) -> tuple:
         """V35 : versements de funding de Binance depuis t0 (ms), gardés en mémoire : on ne redemande que la suite (toutes les 5 minutes)
@@ -880,7 +978,7 @@ class App:
             upd["TERMINAL_ALERT_MIN_SCORE"] = str(max(2, min(6, int(body["alertMinScore"]))))
         if body.get("alertCooldownHours") is not None:
             upd["TERMINAL_ALERT_COOLDOWN_HOURS"] = str(max(0.5, min(48.0, float(body["alertCooldownHours"]))))
-        if body.get("alertTf") in TFS:
+        if body.get("alertTf") in ALERT_TFS:
             upd["TERMINAL_ALERT_TF"] = body["alertTf"]
         if body.get("alertSweep") is not None:
             upd["TERMINAL_ALERT_SWEEP"] = "1" if body["alertSweep"] else "0"
@@ -957,6 +1055,11 @@ class App:
                 raise ValueError("nom de branche invalide")
             upd["TERMINAL_UPDATE_BRANCH"] = br
         write_env(self.env_path, upd)
+        try:                                                         # V36 : les réglages sans secret partent vers tes autres ordinateurs
+            with self.prefs_lock:
+                self.prefs.push_env()
+        except Exception:
+            pass
         cfg = load_config(self.env_path)
         cfg.port, cfg.host, cfg.data_dir = self.cfg.port, self.cfg.host, self.cfg.data_dir
         self.reload(cfg)
@@ -1001,7 +1104,7 @@ def make_handler(app: App):
                     return self._json(app.service.get_state(sym, tf))
                 if u.path == "/api/config":
                     c = app.cfg
-                    return self._json({"symbols": list(c.symbols), "tfs": list(TFS), "source": c.source,
+                    return self._json({"symbols": list(c.symbols), "tfs": list(TFS), "alertTfs": list(ALERT_TFS), "source": c.source,
                                        "heatmapSymbols": sorted(app.heat), "liqmapSymbols": sorted(app.liqmaps), "heatmapDays": c.heatmap_days,
                                        "telegram": c.telegram_on, "telegramState": app.telegram_state(), "alertTf": c.alert_tf, "alertMinScore": c.alert_min_score,
                                        "alertMaxDistAtr": c.alert_max_dist_atr, "refresh": c.refresh_seconds,
@@ -1138,6 +1241,10 @@ def make_handler(app: App):
                     return self._json(app.live_price((q.get("symbol") or [app.cfg.symbols[0]])[0].upper()))
                 if u.path == "/api/settings":
                     return self._json(app.settings())
+                if u.path == "/api/prefs":                           # V36
+                    return self._json(app.prefs_state())
+                if u.path == "/api/prefs/export":
+                    return self._json(app.prefs_export())
                 if u.path == "/api/update":
                     return self._json(app.update_status())
                 if u.path == "/api/history":
@@ -1173,10 +1280,17 @@ def make_handler(app: App):
                 return self._json({"error": "requete refusee"}, 403)
             try:
                 n = int(self.headers.get("Content-Length", "0") or 0)
-                body = json.loads(self.rfile.read(min(n, 20000)).decode("utf-8") or "{}") if n else {}
                 path = urlparse(self.path).path
+                cap = 1_000_000 if path.startswith("/api/prefs") else 20000      # V36 : les réglages de la page peuvent dépasser 20 Ko
+                body = json.loads(self.rfile.read(min(n, cap)).decode("utf-8") or "{}") if n else {}
                 if path == "/api/settings":
                     return self._json(app.save_settings(body))
+                if path == "/api/prefs":                             # V36 : réglages de la page, gardés et partagés entre ordinateurs
+                    return self._json(app.prefs_put(body))
+                if path == "/api/prefs/syncdir":
+                    return self._json(app.prefs_sync_dir(body))
+                if path == "/api/prefs/import":
+                    return self._json(app.prefs_import(body))
                 if path == "/api/chat":
                     return self._json(app.assistant.ask(str(body.get("question") or ""), src="web"))
                 if path == "/api/macroweek/comment":
