@@ -129,7 +129,7 @@ class PageTests(unittest.TestCase):
     def test_funding_element(self):
         self.assertIn("fund: ['Funding'", self.DESK)
         self.assertIn("'oi', 'fund', 'delta'", self.DESK)                      # dans la liste des éléments passés au dessin
-        self.assertIn("data-copt=\"fundMode\"", self.DESK)
+        self.assertIn("sel('fundMode'", self.DESK)                                 # V37 : menus des options construits par sel()
         self.assertIn("&fund=1", self.DESK)
         self.assertIn("['oi', 'delta', 'fund'].filter", self.PAN)
         self.assertIn("priceScaleId: 'fd'", self.PAN)

@@ -14,6 +14,7 @@ class Candle:
     v: float = 0.0  # volume (coin)
     tb: float = 0.0  # volume acheteur agressif (taker buy), 0 si inconnu
     q: float = 0.0   # V23 : volume en dollars (somme prix x quantite de chaque transaction) : q / v = prix moyen EXACT de la bougie ; 0 si inconnu
+    bq: float = 0.0  # V37 : volume acheteur agressif en dollars (delta en dollars EXACT : 2 x bq - q) ; 0 si inconnu
 
 
 def rma_atr(candles, n: int = 14) -> float:
@@ -48,7 +49,7 @@ def resample(candles, interval_ms: int):
         if cur is None or cur.t != bucket:
             if cur is not None:
                 out.append(cur)
-            cur = Candle(bucket, k.o, k.h, k.l, k.c, k.v, k.tb, k.q)
+            cur = Candle(bucket, k.o, k.h, k.l, k.c, k.v, k.tb, k.q, k.bq)
         else:
             cur.h = max(cur.h, k.h)
             cur.l = min(cur.l, k.l)
@@ -56,6 +57,7 @@ def resample(candles, interval_ms: int):
             cur.v += k.v
             cur.tb += k.tb
             cur.q += k.q
+            cur.bq += k.bq
     if cur is not None:
         out.append(cur)
     return out
@@ -90,7 +92,7 @@ def resample_cal(candles, tf: str):
                 nxt = int(datetime(d.year + (d.month == 12), d.month % 12 + 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
             else:
                 nxt = b + INTERVAL_MS["1w"]
-            cur = Candle(b, k.o, k.h, k.l, k.c, k.v, k.tb, k.q)
+            cur = Candle(b, k.o, k.h, k.l, k.c, k.v, k.tb, k.q, k.bq)
         else:
             cur.h = max(cur.h, k.h)
             cur.l = min(cur.l, k.l)
@@ -98,6 +100,7 @@ def resample_cal(candles, tf: str):
             cur.v += k.v
             cur.tb += k.tb
             cur.q += k.q
+            cur.bq += k.bq
     if cur is not None:
         out.append(cur)
     return out

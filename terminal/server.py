@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "36"
-API_LEVEL = 35                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "37"
+API_LEVEL = 37                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -249,6 +249,7 @@ class App:
         self.price_cache = {}
         self._ind_cache = {}
         self._fund = {}                                   # V35 : versements de funding par symbole (historique Binance)
+        self._spot = {}                                   # V37 : bougies spot par (symbole, unité de temps) : CVD du spot
         self.assistant = Assistant(cfg, lambda: self.service, cfg.data_dir)
         self.readings = readings_mod.ReadingLog(cfg)
         old_trades = getattr(self, "trades", {})
@@ -578,7 +579,52 @@ class App:
             c["tried"] = wall
             return c["rows"], c["err"]
 
-    def indicators(self, sym: str, tf: str, fund: bool = False) -> dict:
+    def spot_rows(self, sym: str, tf: str, t0: int) -> tuple:
+        """V37 : bougies SPOT de la même paire depuis t0, gardées en mémoire ; on ne redemande que la fin (au plus toutes les 20 secondes)
+        ou le début manquant. Rend (bougies, erreur)."""
+        from data.store import merge
+        with self.fund_lock:
+            c = self._spot.get((sym, tf)) or {"rows": [], "from": None, "at": 0.0, "err": None, "tried": 0.0}
+            self._spot[(sym, tf)] = c
+            wall = time.time()
+            if wall - c["tried"] < (60 if c["err"] else 20):
+                return c["rows"], c["err"]
+            c["tried"] = wall
+        try:
+            now = self.source.now_ms()
+            rows = list(c["rows"])
+            if c["from"] is None or t0 < c["from"]:
+                rows = self.source.spot_candles(sym, tf, t0, now)
+                frm = t0
+            else:
+                tail = self.source.spot_candles(sym, tf, rows[-1].t if rows else t0, now)
+                merge(rows, tail)
+                frm = c["from"]
+            rows = rows[-6000:]
+            with self.fund_lock:
+                c.update(rows=rows, err=None, at=wall, **{"from": frm})
+        except Exception as e:                                       # spot injoignable : le perpétuel reste affiché
+            with self.fund_lock:
+                c["err"] = f"{type(e).__name__}: {str(e)[:120]}"
+        return c["rows"], c["err"]
+
+    def agg_funding(self, sym: str, prem: dict, oi_now, hours) -> dict | None:
+        """V37 : funding en cours de Binance, Bybit, OKX et Hyperliquid, pondéré par l'intérêt ouvert (dollars) de chacune."""
+        from engine import subcharts
+        rows = []
+        if prem.get("funding") is not None and oi_now and prem.get("mark"):
+            rows.append({"ex": "Binance", "funding": prem["funding"], "intervalH": hours or 8.0, "oiUsd": oi_now[1] * prem["mark"]})
+        ext = getattr(self.service, "ext", None)
+        try:
+            snap = ((ext.derivs.get("perps") or {}).get(sym) or {}) if ext is not None else {}
+            rows += [r for r in snap.get("rows") or [] if isinstance(r, dict)]
+        except Exception:
+            pass
+        return subcharts.aggregate_funding(rows)
+
+    POS_WINDOW = {"1m": 60, "5m": 48, "15m": 32, "1h": 24, "4h": 18, "1d": 14, "1w": 8, "1M": 6}
+
+    def indicators(self, sym: str, tf: str, fund: bool = False, spot: bool = False) -> dict:
         """V30 : sous le graphique, l'interet ouvert en bougies (releves de l'adresse Binance, 29 jours, des archives de la carte des
         liquidations, plusieurs mois, et V33 : des archives depuis decembre 2021, une valeur par heure) et le delta de chaque bougie avec son cumul (CVD), pour les memes bougies que le graphique."""
         from engine import subcharts
@@ -593,27 +639,42 @@ class App:
         with self.service.lock:
             cs = m.chart_candles(tf)[-chart_bars(tf):]
             live = dict(m.store.oi)
+            oi_now = m.store.oi_now
             prem = dict(m.store.ctx.get("premium") or {})
         fr, ferr = self.funding_rows(sym, cs[0].t) if (fund and cs) else ([], None)
+        sp, serr = self.spot_rows(sym, tf, cs[0].t) if (spot and cs) else ([], None)
         kp = self.liqmaps.get(sym)
         arch = kp.archive.points() if kp is not None and kp.archive is not None else {}
         deep = kp.deep.points() if kp is not None and kp.deep is not None else {}
         if deep:                                                     # V33 : années précédentes, une valeur par heure (les relevés 5 minutes passent devant)
             arch = {**deep, **arch}
-        key = (sym, tf, len(cs), cs[-1].t if cs else 0, cs[-1].c if cs else 0, len(live), len(arch), fund, len(fr), prem.get("funding"), ferr)
-        hit = self._ind_cache.get((sym, tf, fund))
+        key = (sym, tf, len(cs), cs[-1].t if cs else 0, cs[-1].c if cs else 0, cs[-1].v if cs else 0, len(live), len(arch), fund, len(fr),
+               prem.get("funding"), ferr, tuple(oi_now) if oi_now else None, spot, len(sp), sp[-1].v if sp else 0, serr)
+        hit = self._ind_cache.get((sym, tf, fund, spot))
         if hit and hit[0] == key:
             return hit[1]
-        ts, vs = subcharts.merge_points(live, arch)
+        now = self.source.now_ms()
+        ts, vs = subcharts.merge_points(live, arch, oi_now, now)     # V37 : + l'intérêt ouvert à l'instant
         times = [k.t for k in cs]
         oi = subcharts.oi_candles(times, INTERVAL_MS[tf], ts, vs)
         d, cvd = subcharts.deltas(cs)
+        du, exact = subcharts.deltas_usd(cs)                         # V37 : delta en dollars (exact quand Binance le donne)
+        win = self.POS_WINDOW.get(tf, 24)
+        pos = subcharts.positions(cs, oi, d, win)                    # V37 : qui ouvre, qui ferme
         out = {"symbol": sym, "tf": tf, "ready": True, "unit": sym.replace("USDT", ""), "times": [t // 1000 for t in times],
-               "oi": oi, "delta": d, "cvd": cvd, "oiSince": ts[0] if ts else None, "realDelta": any(x is not None for x in d)}
+               "oi": oi, "delta": d, "cvd": cvd, "deltaUsd": du, "deltaExact": exact, "close": [k.c for k in cs],
+               "oiSince": ts[0] if ts else None, "realDelta": any(x is not None for x in d),
+               "oiLive": bool(oi_now and ts and ts[-1] == int(oi_now[0])), "oiAt": ts[-1] if ts else None, **pos}
+        if spot:                                                     # V37 : delta et CVD du marché spot (Binance)
+            sd, sdu = subcharts.align_spot(times, sp)
+            out.update(spotDelta=sd, spotDeltaUsd=sdu, spotErr=serr, spotOk=any(x is not None for x in sd))
         if fund:                                                     # V35 : funding de chaque bougie (% par 8 h), barre en cours estimée
-            out.update(subcharts.funding_bars(times, INTERVAL_MS[tf], fr, prem.get("funding") if fr else None, self.source.now_ms()))
-            out.update(fundNext=prem.get("next_funding"), fundErr=ferr, fundEx="Binance")
-        self._ind_cache[(sym, tf, fund)] = (key, out)
+            out.update(subcharts.funding_bars(times, INTERVAL_MS[tf], fr, prem.get("funding") if fr else None, now, prem.get("next_funding")))
+            out.update(fundNext=prem.get("next_funding"), fundErr=ferr, fundEx="Binance",
+                       fundAgg=self.agg_funding(sym, prem, oi_now, out.get("fundHours")))
+            last_f = next((v for v in reversed(out["funding"]) if v is not None), None)
+            out["posNote"] = subcharts.crowding(pos["posSum"], last_f)
+        self._ind_cache[(sym, tf, fund, spot)] = (key, out)
         return out
 
     def live_price(self, sym: str) -> dict:
@@ -1201,7 +1262,8 @@ def make_handler(app: App):
                     return self._json(out)
                 if u.path == "/api/indicators":                      # V30 : interet ouvert en bougies, delta et CVD sous le graphique
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
-                    return self._json(app.indicators(sym, (q.get("tf") or ["1h"])[0], (q.get("fund") or ["0"])[0] == "1"))
+                    return self._json(app.indicators(sym, (q.get("tf") or ["1h"])[0], (q.get("fund") or ["0"])[0] == "1",
+                                                     (q.get("spot") or ["0"])[0] == "1"))
                 if u.path == "/api/liqmap":                          # V29 : carte des liquidations sur plusieurs mois (estimée)
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     kp = app.liqmaps.get(sym)

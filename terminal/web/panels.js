@@ -111,18 +111,30 @@ class Panel {
   static get FUND_UP() { return '#26a69a'; }         // V35 : funding positif (les acheteurs paient) / négatif (les vendeurs paient)
   static get FUND_DN() { return '#ef5350'; }
   // V35 : texte de la sous-fenêtre funding pour la bougie idx : taux, équivalent annuel, moyenne 7 jours, prochain versement
-  static fundText(I, idx, an) {
-    const F = I.funding || [], v = F[idx], f = (x, d) => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(d).replace('.', ',') + ' %';
+  static fundText(I, idx, mode) {
+    const F = I.funding || [], v = F[idx], an = mode === 'an' || mode === true, f = (x, d) => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(d).replace('.', ',') + ' %';
     if (I.fundErr && !F.some(x => x != null)) return 'Funding · historique Binance injoignable pour l\'instant';
     if (v == null) return 'Funding · pas de versement pour cette bougie';
-    const est = I.fundEst != null && idx >= I.fundEst, out = [an ? `Funding ${f(v * 1095, 1)} par an (${f(v, 4)} / 8 h)` : `Funding ${f(v, 4)} / 8 h (${f(v * 1095, 1)} par an)`];
+    const est = I.fundEst != null && idx >= I.fundEst, out = [];
+    if (mode === 'cum') {                                                 // V37 : cumulé depuis le début du graphique
+      const c = (I.fundCum || [])[idx];
+      out.push(c == null ? 'Funding cumulé · -' : `Funding cumulé ${f(c, 3)} : ${c >= 0 ? 'un acheteur a payé, un vendeur a reçu' : 'un vendeur a payé, un acheteur a reçu'} cette part de sa position`);
+      out.push(`bougie ${f(v, 4)} / 8 h`);
+    } else out.push(an ? `Funding ${f(v * 1095, 1)} par an (${f(v, 4)} / 8 h)` : `Funding ${f(v, 4)} / 8 h (${f(v * 1095, 1)} par an)`);
     out.push(v >= 0.03 ? 'acheteurs à levier nombreux : ils paient cher' : v <= -0.01 ? 'vendeurs à levier nombreux : ils paient' : v < 0 ? 'les vendeurs paient' : 'neutre');
     if (est && I.fundNext) {
       const left = Math.max(0, I.fundNext - LT.serverNow()), hh = Math.floor(left / 3.6e6), mm = Math.floor(left % 3.6e6 / 6e4);
-      out.push(`estimation en cours, versement dans ${hh} h ${String(mm).padStart(2, '0')}`);
+      out.push(`estimation en cours, versement dans ${hh} h ${String(mm).padStart(2, '0')}` + (I.fundHours && I.fundHours !== 8 ? ` (période de ${I.fundHours} h)` : ''));
     } else if (est) out.push('estimation en cours');
     if (I.fundAvg7 != null) out.push(`moyenne 7 j ${f(I.fundAvg7, 4)}`);
     return out.join(' · ');
+  }
+  // V37 : funding de toutes les bourses pondéré par l'intérêt ouvert, et la lecture des positions confirmée par le funding
+  static fundAggText(I) {
+    const g = I.fundAgg, f = x => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(4).replace('.', ',') + ' %', out = [];
+    if (g && g.n > 1) out.push(`${g.n} bourses pondérées par l'intérêt ouvert ${f(g.rate8h)} / 8 h (` + g.rows.map(r => `${r.ex} ${Math.round(r.share * 100)} %`).join(', ') + ')');
+    if (I.posNote) out.push({txt: I.posNote, col: '#f5c26b'});
+    return out.length ? out : null;
   }
   static tpoKinds(o) { return ['M', 'W', 'D', '4h', '1h'].filter(k => o && o[{M: 'tpoM', W: 'tpoW', D: 'tpoD', '4h': 'tpo4', '1h': 'tpo1'}[k]]); }
   // V17 : profils de volume colles a droite, une colonne par periode (jour au bord de l'echelle, puis semaine, puis mois)
@@ -518,53 +530,131 @@ class Panel {
     }
   }
   // ---- V30 : sous-fenêtres sous les bougies (intérêt ouvert en bougies, delta en barres et CVD), chacune sur sa propre échelle ;
-  // V35 : funding en barres (% par 8 h ou par an), la dernière barre plus pâle (estimation de la période en cours) ----
+  // V35 : funding en barres (% par 8 h ou par an), la dernière barre plus pâle (estimation de la période en cours) ;
+  // V37 : intérêt ouvert en bougies ou en variation, coloré selon QUI OUVRE ou QUI FERME (prix x intérêt ouvert x delta) ; delta en coin
+  // ou en dollars exacts ; CVD du perpétuel, du spot ou des deux, cumulé sur le graphique ou remis à zéro chaque jour, semaine ou mois ;
+  // funding par 8 h, par an ou cumulé ; lectures chiffrées en tête de chaque fenêtre ----
   panes() {
     const o = LT.st.mainOpts || {};
     return this.kind === 'main' ? ['oi', 'delta', 'fund'].filter(k => o[k]) : [];
   }
+  static get POS_COL() { return {0: '#7b8394', 1: '#26c281', 2: '#ff4d6d', 3: '#6ec8ff', 4: '#ffa64d'}; }
+  static get POS_TXT() { return {0: 'intérêt ouvert stable', 1: 'acheteurs qui ouvrent', 2: 'vendeurs qui ouvrent', 3: 'vendeurs qui rachètent', 4: 'acheteurs qui sortent'}; }
+  // montant court et signé : 1,2 k · 3,4 M · 1,25 Md
+  static big(v, sign = true) {
+    if (v == null || isNaN(v)) return '-';
+    const x = Math.abs(v), sg = sign ? (v >= 0 ? '+' : '−') : (v < 0 ? '−' : ''), f = (n, d) => n.toFixed(d).replace('.', ',');
+    const t = x >= 1e9 ? f(x / 1e9, 2) + ' Md' : x >= 1e6 ? f(x / 1e6, x >= 1e8 ? 0 : 1) + ' M' : x >= 1e4 ? f(x / 1e3, 0) + ' k' : x >= 1e3 ? f(x / 1e3, 1) + ' k' : x >= 10 ? f(x, 0) : f(x, 2);
+    return sg + t;
+  }
+  // V37 : CVD remis à zéro au début de chaque jour / semaine / mois (UTC) ; sans effet si la bougie est déjà aussi longue que la période
+  static cvdReset(I) {
+    const r = (LT.st.mainOpts || {}).cvdReset, per = {D: ['1d', 86400], W: ['1w', 604800], M: ['1M', 2419200]}[r];
+    return per && (LT.TF_SEC[I.tf] || 0) < per[1] ? per[0] : null;
+  }
+  static cvdLine(I, vals) {
+    const rs = Panel.cvdReset(I);
+    let run = 0, prev = null;
+    return I.times.map((tm, i) => {
+      if (rs) { const k = LT.barStart(tm, rs); if (prev !== null && k !== prev) run = 0; prev = k; }
+      const v = vals[i]; if (v != null) run += v;
+      return run;
+    });
+  }
   candleBottom(h) { return Math.max(40, (h - 26) * (1 - this.panes().length * Panel.PANE)); }
   syncSubcharts(d) {
-    const st = LT.st, I = st.ind, panes = this.panes(), n = panes.length, P = Panel.PANE, t = this.th();
+    const st = LT.st, I = st.ind, o = st.mainOpts || {}, panes = this.panes(), n = panes.length, P = Panel.PANE, t = this.th();
     const ok = !!(I && I.ready && d && I.symbol === d.symbol && I.tf === d.tf);
-    const want = {oi: ok && panes.includes('oi'), delta: ok && panes.includes('delta'), cvd: ok && panes.includes('delta') && !!st.mainOpts.deltaCvd,
-      fund: ok && panes.includes('fund') && Array.isArray(I.funding)};
-    const drop = k => { if (this[k]) { this.chart.removeSeries(this[k]); this[k] = null; } };
-    if (!want.oi) drop('oiS');
-    if (!want.delta) drop('dS');
-    if (!want.cvd) drop('cvdS');
-    if (!want.fund) drop('fdS');
+    const cvdM = o.cvdMode || (o.deltaCvd ? 'perp' : 'off'), dOn = ok && panes.includes('delta'), fOn = ok && panes.includes('fund') && Array.isArray(I.funding);
+    const want = {oiS: ok && panes.includes('oi') && o.oiMode !== 'chg', oiH: ok && panes.includes('oi') && o.oiMode === 'chg', dS: dOn,
+      cvdS: dOn && (cvdM === 'perp' || cvdM === 'both'), spS: dOn && (cvdM === 'spot' || cvdM === 'both') && Array.isArray(I.spotDelta),
+      fdS: fOn && o.fundMode !== 'cum', fdC: fOn && o.fundMode === 'cum' && Array.isArray(I.fundCum)};
+    for (const k of Object.keys(want)) if (!want[k] && this[k]) { this.chart.removeSeries(this[k]); this[k] = null; }
     const base = {lastValueVisible: false, priceLineVisible: false, priceFormat: {type: 'volume'}};
-    if (want.oi && !this.oiS) this.oiS = this.chart.addCandlestickSeries({...base, priceScaleId: 'oi', borderVisible: false,
+    if (want.oiS && !this.oiS) this.oiS = this.chart.addCandlestickSeries({...base, priceScaleId: 'oi', borderVisible: false,
       upColor: '#4fc3f7', downColor: '#ffa64d', wickUpColor: '#4fc3f7', wickDownColor: '#ffa64d'});
-    if (want.delta && !this.dS) this.dS = this.chart.addHistogramSeries({...base, priceScaleId: 'dl'});
-    if (want.fund && !this.fdS) this.fdS = this.chart.addHistogramSeries({lastValueVisible: false, priceLineVisible: false, priceScaleId: 'fd', priceFormat: {type: 'price', precision: 4, minMove: 0.0001}});
-    if (want.cvd && !this.cvdS) this.cvdS = this.chart.addLineSeries({...base, priceScaleId: 'cvd', color: '#e8eaf0', lineWidth: 1.5, crosshairMarkerVisible: false});
-    const lk = [n, !!this.vol, !!this.oiS, !!this.dS, !!this.cvdS, !!this.fdS].join();
+    if (want.oiH && !this.oiH) this.oiH = this.chart.addHistogramSeries({...base, priceScaleId: 'oi'});
+    if (want.dS && !this.dS) this.dS = this.chart.addHistogramSeries({...base, priceScaleId: 'dl'});
+    const fpf = {type: 'price', precision: 4, minMove: 0.0001};
+    if (want.fdS && !this.fdS) this.fdS = this.chart.addHistogramSeries({lastValueVisible: false, priceLineVisible: false, priceScaleId: 'fd', priceFormat: fpf});
+    if (want.fdC && !this.fdC) this.fdC = this.chart.addLineSeries({lastValueVisible: false, priceLineVisible: false, priceScaleId: 'fd', priceFormat: fpf, color: '#f5c26b', lineWidth: 1.5, crosshairMarkerVisible: false});
+    if (want.cvdS && !this.cvdS) this.cvdS = this.chart.addLineSeries({...base, priceScaleId: 'cvd', color: '#e8eaf0', lineWidth: 1.5, crosshairMarkerVisible: false});
+    if (want.spS && !this.spS) this.spS = this.chart.addLineSeries({...base, priceScaleId: 'cvds', color: '#ffb74d', lineWidth: 1.5, crosshairMarkerVisible: false});
+    const lk = [n, !!this.vol, ...Object.keys(want).map(k => !!this[k])].join();
     if (lk !== this.paneKey) {
       this.paneKey = lk;
       this.chart.priceScale('right').applyOptions({scaleMargins: {top: 0.08, bottom: 0.08 + n * P}});
       if (this.vol) this.chart.priceScale('vol').applyOptions({scaleMargins: {top: Math.max(0.3, 0.84 - n * P), bottom: n * P}});
-      const pos = k => { const i = n - 1 - panes.indexOf(k); return {top: 1 - (i + 1) * P + 0.03, bottom: i * P + 0.012}; };
-      if (this.oiS) this.chart.priceScale('oi').applyOptions({scaleMargins: pos('oi'), visible: false});
-      if (this.fdS) this.chart.priceScale('fd').applyOptions({scaleMargins: pos('fund'), visible: false});
-      for (const id of ['dl', 'cvd']) if ((id === 'dl' && this.dS) || (id === 'cvd' && this.cvdS)) this.chart.priceScale(id).applyOptions({scaleMargins: pos('delta'), visible: false});
+      const pos = k => { const i = n - 1 - panes.indexOf(k); return {top: 1 - (i + 1) * P + 0.05, bottom: i * P + 0.012}; };   // V37 : place pour deux lignes de lecture
+      if (this.oiS || this.oiH) this.chart.priceScale('oi').applyOptions({scaleMargins: pos('oi'), visible: false});
+      if (this.fdS || this.fdC) this.chart.priceScale('fd').applyOptions({scaleMargins: pos('fund'), visible: false});
+      for (const [id, k] of [['dl', 'dS'], ['cvd', 'cvdS'], ['cvds', 'spS']]) if (this[k]) this.chart.priceScale(id).applyOptions({scaleMargins: pos('delta'), visible: false});
       this.indKey = '';
     }
     if (!ok) return;
-    const F = I.funding || [], an = st.mainOpts.fundMode === 'an';
-    const dk = [I.symbol, I.tf, I.times.length, I.times[I.times.length - 1], JSON.stringify(I.oi[I.oi.length - 1]), I.delta[I.delta.length - 1], F.length, F[F.length - 1], I.fundEst, an, st.theme, lk].join('|');
+    const F = I.funding || [], an = o.fundMode === 'an', usd = o.deltaUnit === 'usd', SD = I.spotDelta || [], L = I.times.length - 1;
+    const dk = [I.symbol, I.tf, I.times.length, I.times[L], JSON.stringify(I.oi[L]), I.delta[L], (I.pos || [])[L], SD.length, SD[SD.length - 1], F.length, F[F.length - 1], I.fundEst,
+      o.fundMode, o.oiMode, o.oiColor, o.deltaUnit, cvdM, o.cvdReset, st.theme, lk].join('|');
     if (dk === this.indKey) return;
     this.indKey = dk;
     const up = t.up, dn = t.down, a = (c, al) => /^#[0-9a-f]{6}$/i.test(c) ? `rgba(${parseInt(c.slice(1, 3), 16)},${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${al})` : c;
-    if (this.oiS) this.oiS.setData(I.times.map((tm, i) => { const c = I.oi[i]; return c ? {time: tm, open: c[0], high: c[1], low: c[2], close: c[3]} : {time: tm}; }));
-    if (this.dS) this.dS.setData(I.times.map((tm, i) => { const v = I.delta[i]; return v == null ? {time: tm} : {time: tm, value: v, color: v >= 0 ? a(up, 0.8) : a(dn, 0.8)}; }));
-    if (this.cvdS) this.cvdS.setData(I.times.map((tm, i) => ({time: tm, value: I.cvd[i]})));
+    const posOn = o.oiColor !== 'dir' && Array.isArray(I.pos), PC = Panel.POS_COL;
+    const pcol = i => { const c = posOn ? I.pos[i] : null; return c == null ? null : PC[c]; };
+    if (this.oiS) this.oiS.setData(I.times.map((tm, i) => {
+      const c = I.oi[i]; if (!c) return {time: tm};
+      const col = pcol(i), b = {time: tm, open: c[0], high: c[1], low: c[2], close: c[3]};
+      return col ? {...b, color: col, wickColor: col, borderColor: col} : b;
+    }));
+    if (this.oiH) this.oiH.setData(I.times.map((tm, i) => {
+      const c = I.oi[i]; if (!c || c[0] == null) return {time: tm};
+      const v = c[3] - c[0]; return {time: tm, value: v, color: pcol(i) || (v >= 0 ? '#4fc3f7' : '#ffa64d')};
+    }));
+    const DV = usd && Array.isArray(I.deltaUsd) ? I.deltaUsd : I.delta, SV = usd && Array.isArray(I.spotDeltaUsd) ? I.spotDeltaUsd : SD;
+    if (this.dS) this.dS.setData(I.times.map((tm, i) => { const v = DV[i]; return v == null ? {time: tm} : {time: tm, value: v, color: v >= 0 ? a(up, 0.8) : a(dn, 0.8)}; }));
+    if (this.cvdS) { const c = Panel.cvdLine(I, DV); this.cvdS.setData(I.times.map((tm, i) => ({time: tm, value: c[i]}))); }
+    if (this.spS) { const c = Panel.cvdLine(I, SV); this.spS.setData(I.times.map((tm, i) => SV[i] == null && !c[i] ? {time: tm} : {time: tm, value: c[i]})); }
     if (this.fdS) this.fdS.setData(I.times.map((tm, i) => {               // fort (≥ 0,03 % ou ≤ −0,01 % par 8 h) : couleur pleine
       const v = F[i]; if (v == null) return {time: tm};
       const est = I.fundEst != null && i >= I.fundEst, strong = v >= 0.03 || v <= -0.01;
       return {time: tm, value: an ? v * 3 * 365 : v, color: a(v >= 0 ? Panel.FUND_UP : Panel.FUND_DN, est ? 0.35 : strong ? 0.95 : 0.55)};
     }));
+    if (this.fdC) this.fdC.setData(I.times.map((tm, i) => I.fundCum[i] == null ? {time: tm} : {time: tm, value: I.fundCum[i]}));
+  }
+  // V37 : lectures en tête de chaque fenêtre (ligne 1 : la bougie visée ; ligne 2 : le résumé)
+  paneLines(k, I, idx) {
+    const o = LT.st.mainOpts || {}, unit = I.unit, pct = (x, d = 2) => (x >= 0 ? '+' : '−') + Math.abs(x * 100).toFixed(d).replace('.', ',') + ' %';
+    if (k === 'fund') return [Panel.fundText(I, idx, o.fundMode), Panel.fundAggText(I)];
+    if (k === 'oi') {
+      const c = I.oi[idx];
+      if (!c) return ['Intérêt ouvert · pas de relevé pour cette bougie'];
+      const px = (I.close || [])[idx], first = I.oi.find(x => x), code = (I.pos || [])[idx], cf = (I.posConf || [])[idx];
+      const l1 = [`Intérêt ouvert ${Panel.big(c[3], false)} ${unit}` + (px ? ` ≈ ${Panel.big(c[3] * px, false)} $` : '')];
+      if (c[0]) l1.push(`bougie ${Panel.big(c[3] - c[0])} (${pct(c[3] / c[0] - 1)})`);
+      if (code != null) l1.push({txt: Panel.POS_TXT[code] + (code && cf === false ? ' (contre le delta : ordres passifs)' : ''), col: Panel.POS_COL[code]});
+      if (idx === I.times.length - 1 && I.oiLive) l1.push('relevé à l\'instant');
+      else if (first && idx === I.times.length - 1) l1.push(`depuis le début du graphique ${pct(c[3] / first[3] - 1, 1)}`);
+      const S = I.posSum;
+      if (!S || !S.bars) return [l1];
+      const l2 = [`${S.bars} dernières bougies${S.oiChg != null ? ` (intérêt ouvert ${pct(S.oiChg, 1)})` : ''}`];
+      [[1, S.longsOpen], [2, S.shortsOpen], [3, S.shortsClose], [4, S.longsClose]].forEach(([cd, v]) => { if (v) l2.push({txt: `${Panel.POS_TXT[cd]} ${Panel.big(v)}`, col: Panel.POS_COL[cd], strong: cd === S.dominant}); });
+      return [l1, l2];
+    }
+    const usd = o.deltaUnit === 'usd' && Array.isArray(I.deltaUsd), u = usd ? '$' : unit, cvdM = o.cvdMode || (o.deltaCvd ? 'perp' : 'off');
+    if (!I.realDelta) return ['Delta · volume acheteur agressif inconnu'];
+    const DV = usd ? I.deltaUsd : I.delta, v = DV[idx], rs = Panel.cvdReset(I), lab = rs ? {['1d']: ' du jour', ['1w']: ' de la semaine', ['1M']: ' du mois'}[rs] : '';
+    const l1 = [`Delta ${v == null ? '-' : Panel.big(v) + ' ' + u}` + (usd ? (I.deltaExact >= 0.99 ? ' (exact)' : ` (${Math.round(I.deltaExact * 100)} % exact)`) : '')];
+    let pc = null, sc = null;
+    if (cvdM === 'perp' || cvdM === 'both') { pc = Panel.cvdLine(I, DV); l1.push({txt: `CVD perp${lab} ${Panel.big(pc[idx])} ${u}`, col: '#e8eaf0'}); }
+    if (cvdM === 'spot' || cvdM === 'both') {
+      if (!Array.isArray(I.spotDelta)) l1.push('CVD spot · chargement…');
+      else if (!I.spotOk) l1.push(I.spotErr ? 'CVD spot · Binance spot injoignable' : 'CVD spot · pas de bougie spot');
+      else { const SV = usd && I.spotDeltaUsd ? I.spotDeltaUsd : I.spotDelta; sc = Panel.cvdLine(I, SV); l1.push({txt: `CVD spot${lab} ${Panel.big(sc[idx])} ${u}`, col: '#ffb74d'}); }
+    }
+    if (!(pc && sc)) return [l1];
+    const N = Math.min(idx, (I.posSum && I.posSum.bars) || 24), dp = pc[idx] - pc[idx - N], ds = sc[idx] - sc[idx - N];
+    const lead = dp > 0 && ds > 0 ? 'spot et perpétuel achètent ensemble : mouvement sain' : dp < 0 && ds < 0 ? 'spot et perpétuel vendent ensemble' :
+      dp > 0 ? 'le levier achète, le spot vend : hausse fragile' : 'le spot achète, le levier vend : les vendeurs à levier s\'exposent';
+    return [l1, [`${N} dernières bougies : ${lead}`]];
   }
   drawPanes(L, w, h) {
     const panes = this.panes();
@@ -573,28 +663,30 @@ class Panel {
     const ok = !!(I && I.ready && I.symbol === L.d.symbol && I.tf === L.d.tf);
     let idx = ok ? I.times.length - 1 : -1;
     if (ok && this.crossT != null) { const k = I.times.indexOf(this.crossT); if (k >= 0) idx = k; }
-    const unit = ok ? I.unit : '', q = v => (v >= 0 ? '+' : '−') + LT.fmtQty(Math.abs(v));
     ctx.font = `500 11px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    const fit = parts => {                                                // petit écran : on garde les premiers morceaux qui tiennent
+      const out = []; let wsum = 0;
+      for (const p of parts) { const s = typeof p === 'string' ? p : p.txt, ww = ctx.measureText((out.length ? ' · ' : '') + s).width; if (out.length && wsum + ww > plotW - 16) break; out.push(p); wsum += ww; }
+      return out;
+    };
     panes.forEach((k, j) => {
-      const y0 = Math.round(H * (1 - (n - j) * P)) + 0.5;
+      const y0 = Math.round(H * (1 - (n - j) * P)) + 0.5, ph = H * P;
       ctx.strokeStyle = 'rgba(120,130,150,.35)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(plotW, y0); ctx.stroke();
-      let txt;
-      if (!ok || (k === 'fund' && !Array.isArray(I.funding))) txt = ({oi: 'Intérêt ouvert', delta: 'Delta', fund: 'Funding'})[k] + ' · chargement…';
-      else if (k === 'fund') txt = Panel.fundText(I, idx, st.mainOpts.fundMode === 'an');
-      else if (k === 'oi') {
-        const c = I.oi[idx], first = I.oi.find(x => x);
-        txt = c ? `Intérêt ouvert ${LT.fmtQty(c[3])} ${unit}` + (c[0] ? ` · bougie ${q(c[3] - c[0])} (${((c[3] / c[0] - 1) * 100).toFixed(2).replace('.', ',')} %)` : '') +
-          (first ? ` · depuis le début du graphique ${((c[3] / first[3] - 1) * 100).toFixed(1).replace('.', ',')} %` : '') : 'Intérêt ouvert · pas de relevé pour cette bougie';
-      } else {
-        const v = I.delta[idx];
-        txt = !I.realDelta ? 'Delta · volume acheteur agressif inconnu' :
-          `Delta ${v == null ? '-' : q(v) + ' ' + unit}` + (st.mainOpts.deltaCvd ? ` · CVD ${q(I.cvd[idx])} ${unit}` : '');
-      }
-      if (ctx.measureText(txt).width > plotW - 16) txt = txt.split(' · ').slice(0, 2).join(' · ');   // petit écran : l'essentiel
-      if (ctx.measureText(txt).width > plotW - 16) txt = txt.split(' · ')[0];
-      const tw = ctx.measureText(txt).width;
-      ctx.fillStyle = 'rgba(10,12,16,.6)'; ctx.fillRect(4, y0 + 2, tw + 10, 16);
-      ctx.fillStyle = k === 'oi' ? '#8fd3f4' : k === 'fund' ? '#f5c26b' : '#cfd3dc'; ctx.fillText(txt, 9, y0 + 4);
+      const lines = !ok || (k === 'fund' && !Array.isArray(I.funding)) ? [({oi: 'Intérêt ouvert', delta: 'Delta', fund: 'Funding'})[k] + ' · chargement…'] : this.paneLines(k, I, idx);
+      const base = k === 'oi' ? '#8fd3f4' : k === 'fund' ? '#f5c26b' : '#cfd3dc';
+      lines.filter(Boolean).slice(0, ph > 46 ? 2 : 1).forEach((ln, li) => {
+        const parts = fit(typeof ln === 'string' ? ln.split(' · ') : ln), y = y0 + 2 + li * 16;
+        const tw = parts.reduce((s2, p, i) => s2 + ctx.measureText((i ? ' · ' : '') + (typeof p === 'string' ? p : p.txt)).width, 0);
+        ctx.fillStyle = 'rgba(10,12,16,.78)'; ctx.fillRect(4, y, tw + 10, 16);
+        let x = 9;
+        parts.forEach((p, i) => {
+          if (i) { ctx.fillStyle = base; ctx.font = `500 11px ${t.font}`; ctx.fillText(' · ', x, y + 2); x += ctx.measureText(' · ').width; }
+          const s2 = typeof p === 'string' ? p : p.txt;
+          ctx.font = `${p.strong ? 700 : 500} 11px ${t.font}`; ctx.fillStyle = (typeof p === 'object' && p.col) || (li ? 'rgba(207,211,220,.85)' : base);
+          ctx.fillText(s2, x, y + 2); x += ctx.measureText(s2).width;
+        });
+        ctx.font = `500 11px ${t.font}`;
+      });
     });
     ctx.textBaseline = 'middle';
   }

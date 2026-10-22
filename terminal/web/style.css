@@ -538,6 +538,7 @@ details.mxmore{margin:4px 0}details.mxmore>summary{cursor:pointer;color:#9db4ff;
 .ddp .ddh{font-size:10.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin:6px 4px 2px}
 .ddp .ddh:first-child{margin-top:0}
 .ddp .ddrow{display:flex;align-items:flex-start;gap:6px}.ddp .ddrow label{flex:1}.ddp .ddrow select,.ddp .ddrow button{margin-top:3px}
+.ddp .ddopts{display:flex;flex-direction:column;gap:3px;align-items:stretch}.ddp .ddopts select{margin-top:0}.ddp .ddopts select:first-child{margin-top:3px}
 .ddp .ddsel{flex-direction:row;align-items:center;justify-content:space-between;color:var(--mut)}
 .ddp .ddplans{display:flex;flex-direction:column;gap:2px;border-top:1px solid var(--line);margin-top:4px;padding-top:4px}
 .ddp .ddplans span.up{color:#9fe6c5}.ddp .ddplans span.dn{color:#ffb3b3}

@@ -21,6 +21,14 @@ class Source:
         """[(timestamp ms de fin de periode, OI en coin), ...] (Binance : 30 derniers jours seulement)."""
         raise NotImplementedError
 
+    def open_interest_now(self, symbol: str) -> tuple:
+        """V37 : intérêt ouvert À L'INSTANT (heure ms, OI en coin) ; les relevés 5 min arrivent avec plusieurs minutes de retard."""
+        raise NotImplementedError
+
+    def spot_candles(self, symbol: str, interval: str, start_ms: int, end_ms: int):
+        """V37 : bougies du marché SPOT (même paire), avec le volume acheteur agressif : CVD du spot."""
+        raise NotImplementedError
+
     # --- contexte (V2) : optionnel, une source peut ne pas le fournir ---
     def premium_index(self, symbol: str) -> dict:
         raise NotImplementedError

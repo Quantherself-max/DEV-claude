@@ -19,7 +19,7 @@ DAY = 86_400_000
 OI_DAYS = 29       # Binance ne donne l'OI 5 min que sur ~30 jours
 M5_FINE_DAYS = 70  # bougies 5 min gardees pour les profils de volume du jour, de la semaine et du mois (courants et precedents)
 EARLIEST = 1_567_296_000_000      # 2019-09-01 : debut des futures perpetuels Binance (BTC)
-CACHE_VERSION = 2       # V23 : volume en dollars de chaque bougie (VWAP exact) ; l'ancien cache est retelecharge une fois
+CACHE_VERSION = 3       # V23 : volume en dollars de chaque bougie (VWAP exact) ; V37 : volume acheteur en dollars (delta exact) ; l'ancien cache est retelecharge une fois
 
 
 def merge(lst: list, new: list) -> None:
@@ -51,6 +51,7 @@ class DataStore:
         self.oi: dict[int, float] = {}                       # ouverture de la bougie 5 min -> OI a sa fin
         self.oi_t: list[int] = []                            # memes donnees, triees (recherche par date)
         self.oi_v: list[float] = []
+        self.oi_now = None                                   # V37 : (heure ms, OI) à l'instant, plus récent que les relevés 5 min
         self.ctx = {"premium": None, "funding": [], "ls_global": [], "ls_top": [], "spot": None,
                     "coinbase": None, "errors": {}}
         self._ctx_due = {"funding": 0.0, "ls": 0.0, "px": 0.0}
@@ -67,7 +68,7 @@ class DataStore:
             if d.get("v") != CACHE_VERSION or d.get("symbol") != self.symbol or not d["rows"] \
                     or d.get("start", 0) > self.history_start + 2 * DAY:
                 return                                       # autre version / paire, ou cache demande avec moins d'historique
-            self.h1 = [Candle(int(r[0]), r[1], r[2], r[3], r[4], r[5], r[6], r[7]) for r in d["rows"]]
+            self.h1 = [Candle(int(r[0]), r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8] if len(r) > 8 else 0.0) for r in d["rows"]]   # V37 : 9e valeur facultative
             self._saved_n = len(self.h1)
         except (OSError, ValueError, KeyError, IndexError, EOFError):
             self.h1 = []
@@ -81,7 +82,7 @@ class DataStore:
         try:
             self.cache.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.cache.with_suffix(".tmp")
-            rows = [[k.t, k.o, k.h, k.l, k.c, k.v, k.tb, k.q] for k in closed]
+            rows = [[k.t, k.o, k.h, k.l, k.c, k.v, k.tb, k.q, k.bq] for k in closed]
             with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=3) as f:
                 json.dump({"v": CACHE_VERSION, "symbol": self.symbol, "start": self.history_start, "rows": rows}, f)
             os.replace(tmp, self.cache)
@@ -114,6 +115,10 @@ class DataStore:
                 if not self.oi_t or k > self.oi_t[-1]:
                     self.oi_t.append(k)
                     self.oi_v.append(v)
+        try:                                                     # V37 : intérêt ouvert à l'instant (la bougie en cours n'attend plus le relevé 5 min)
+            self.oi_now = self.source.open_interest_now(self.symbol)
+        except Exception:
+            pass
         self.last_refresh = now
         self.last_error = None
         self._save_cache()

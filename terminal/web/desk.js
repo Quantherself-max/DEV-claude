@@ -6,6 +6,8 @@
 // bougies, sur tout le graphique : V29, mémoire longue (archives Binance avant le premier lancement) et 6 mois de liquidations estimées.
 // V35 : TES ONGLETS : « ＋ » dans la barre du Desk ajoute un graphique vierge (ou une copie du graphique affiché), que tu nommes et
 // construis avec « ＋ Éléments » ; il garde ses éléments et son unité de temps, les mêmes sur BTC et SOL. Élément « Funding » en barres.
+// V37 : options de l'intérêt ouvert (bougies ou variation, couleur « qui ouvre / qui ferme »), du delta (coin ou dollars exacts, CVD perpétuel,
+// spot ou les deux, remis à zéro chaque jour, semaine ou mois) et du funding (par 8 h, par an ou cumulé).
 const Desk = (() => {
   'use strict';
   let LT = null, chooser = null, chooserBtn = null, heatTimer = null, legendMin = null;
@@ -34,9 +36,9 @@ const Desk = (() => {
     vwapY: ['VWAP de l\'année', '', 'VWAP'],
     avwap: ['VWAP ancrés', 'début d\'année, mois précédent et tes ancres', 'VWAP'],
     vol: ['Volume', 'barres de volume sous les bougies', 'Flux d\'ordres'],
-    oi: ['Intérêt ouvert', 'en bougies, dans une fenêtre sous le graphique (Binance, relevé toutes les 5 minutes)', 'Flux d\'ordres'],
-    fund: ['Funding', 'en barres sous le graphique : le financement payé entre acheteurs et vendeurs à levier (Binance, % par 8 heures ; la dernière barre est l\'estimation en cours) ; au-dessus de 0, les acheteurs paient', 'Flux d\'ordres'],
-    delta: ['Delta', 'en barres sous le graphique : acheteurs moins vendeurs agressifs de chaque bougie ; CVD (le cumul) en option', 'Flux d\'ordres'],
+    oi: ['Intérêt ouvert', 'en bougies ou en variation, sous le graphique (Binance, relevé toutes les 5 minutes et à l\'instant pour la bougie en cours) ; en option, la couleur dit qui ouvre et qui ferme ses positions', 'Flux d\'ordres'],
+    fund: ['Funding', 'en barres sous le graphique : le financement payé entre acheteurs et vendeurs à levier (Binance, % par 8 heures, pondéré par la durée ; la dernière barre est l\'estimation en cours) ; au-dessus de 0, les acheteurs paient ; en option, par an ou cumulé', 'Flux d\'ordres'],
+    delta: ['Delta et CVD', 'en barres sous le graphique : acheteurs moins vendeurs agressifs de chaque bougie, en coin ou en dollars exacts ; CVD (le cumul) du perpétuel et du spot, remis à zéro chaque jour, semaine ou mois au choix', 'Flux d\'ordres'],
     heat: ['Heatmap du carnet', 'ordres en attente dans le temps (Binance, OKX, Bybit, Coinbase) ; avant tes propres photos : archives Binance, par tranches de 1 %', 'Flux d\'ordres', true],
     dom: ['Carnet d\'ordres', 'taille en attente et nombre d\'ordres à chaque prix, à droite', 'Flux d\'ordres'],
     big: ['Gros ordres agressifs', 'bulles : vert = acheteurs, rouge = vendeurs', 'Flux d\'ordres'],
@@ -78,11 +80,15 @@ const Desk = (() => {
   function curSet() { const S = st(), u = userTab(S.layout); if (u) return u.set; return wsOf(S.symbol || (S.cfg && S.cfg.symbols[0]) || 'BTCUSDT').sets[viewOf(S.layout)]; }
   const allowed = k => !(EL[k] && EL[k][3]) || (k === 'heat' ? heatSyms().includes(st().symbol) : isBtc(st().symbol));
   // éléments du jeu courant -> anciens réglages lus par le dessin (panels.js)
+  const cvdOf = s => ['off', 'perp', 'spot', 'both'].includes(s.cvdMode) ? s.cvdMode : s.deltaCvd === false ? 'off' : 'perp';   // V37 (avant : deltaCvd oui / non)
   function apply() {
     const S = st(), s = curSet(), on = k => s.els[k] === true && allowed(k);
     S.pools = on('pools'); S.ppools = on('ppools'); S.planOn = on('plan'); S.mode = 'ess';
     MO_KEYS.forEach(k => { S.mainOpts[k] = on(k); });
-    Object.assign(S.mainOpts, {bigMin: s.bigMin, absorbMode: s.absorbMode, bigLabels: s.bigLabels, deltaCvd: s.deltaCvd !== false, fundMode: s.fundMode === 'an' ? 'an' : '8h'});
+    const cvd = cvdOf(s);
+    Object.assign(S.mainOpts, {bigMin: s.bigMin, absorbMode: s.absorbMode, bigLabels: s.bigLabels, deltaCvd: cvd !== 'off', cvdMode: cvd,
+      cvdReset: ['D', 'W', 'M'].includes(s.cvdReset) ? s.cvdReset : 'all', deltaUnit: s.deltaUnit === 'usd' ? 'usd' : 'coin',
+      oiMode: s.oiMode === 'chg' ? 'chg' : 'candles', oiColor: s.oiColor === 'dir' ? 'dir' : 'pos', fundMode: ['an', 'cum'].includes(s.fundMode) ? s.fundMode : '8h'});
     S.minGrade = s.minGrade; S.heatEx = s.heatEx;
   }
   function changed(reset) {
@@ -175,8 +181,17 @@ const Desk = (() => {
   function optsHtml(k, s) {
     if (k === 'zones') return `<select class="mini" data-copt="minGrade" title="Note minimale (sur 14) pour qu'une zone soit dessinée">${[5, 6, 7, 8, 9, 10, 11, 12].map(v => `<option value="${v}"${v === s.minGrade ? ' selected' : ''}>≥ ${v}/14</option>`).join('')}</select>`;
     if (k === 'big') return `<select class="mini" data-copt="bigMin" title="Taille minimale d'une bulle">${Panel.bigSteps(st().symbol).map((v, i) => `<option value="${i}"${i === s.bigMin ? ' selected' : ''}>≥ ${LT.fmtUsdShort(v)} $</option>`).join('')}</select>`;
-    if (k === 'delta') return `<select class="mini" data-copt="deltaCvd" title="Ajouter le CVD (cumul du delta) en ligne"><option value="1"${s.deltaCvd !== false ? ' selected' : ''}>barres + CVD</option><option value="0"${s.deltaCvd === false ? ' selected' : ''}>barres seules</option></select>`;
-    if (k === 'fund') return `<select class="mini" data-copt="fundMode" title="Taux par période de 8 heures, ou ramené à une année (ce que coûte la position tenue un an)"><option value="8h"${s.fundMode !== 'an' ? ' selected' : ''}>% par 8 h</option><option value="an"${s.fundMode === 'an' ? ' selected' : ''}>% par an</option></select>`;
+    const sel = (key, title, opts, cur) => `<select class="mini" data-copt="${key}" title="${esc(title)}">${opts.map(([v, n]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
+    const unit = esc((st().symbol || '').replace('USDT', '')) || 'coin';
+    if (k === 'oi') return '<span class="ddopts">' +
+      sel('oiMode', 'Bougies de l\'intérêt ouvert, ou sa variation pendant chaque bougie (en barres)', [['candles', 'bougies'], ['chg', 'variation']], s.oiMode === 'chg' ? 'chg' : 'candles') +
+      sel('oiColor', 'Couleur selon qui ouvre et qui ferme (prix et intérêt ouvert ensemble), ou simplement hausse / baisse', [['pos', 'qui ouvre / ferme'], ['dir', 'hausse / baisse']], s.oiColor === 'dir' ? 'dir' : 'pos') + '</span>';
+    if (k === 'delta') return '<span class="ddopts">' +
+      sel('deltaUnit', 'Delta en coin, ou en dollars (exact : volume acheteur en dollars de Binance)', [['coin', `en ${unit}`], ['usd', 'en dollars']], s.deltaUnit === 'usd' ? 'usd' : 'coin') +
+      sel('cvdMode', 'CVD (cumul du delta) : celui du perpétuel, celui du spot Binance, ou les deux pour voir qui mène le mouvement', [['perp', 'CVD perpétuel'], ['spot', 'CVD spot'], ['both', 'CVD perp + spot'], ['off', 'barres seules']], cvdOf(s)) +
+      sel('cvdReset', 'Le CVD repart de zéro au début de chaque jour, semaine ou mois (UTC), ou cumule tout le graphique', [['all', 'cumul du graphique'], ['D', 'CVD du jour'], ['W', 'CVD de la semaine'], ['M', 'CVD du mois']], ['D', 'W', 'M'].includes(s.cvdReset) ? s.cvdReset : 'all') + '</span>';
+    if (k === 'fund') return sel('fundMode', 'Taux par période de 8 heures, ramené à une année, ou cumulé depuis le début du graphique (ce qu\'un acheteur a réellement payé)',
+      [['8h', '% par 8 h'], ['an', '% par an'], ['cum', 'cumulé']], ['an', 'cum'].includes(s.fundMode) ? s.fundMode : '8h');
     if (k === 'absorb') return `<select class="mini" data-copt="absorbMode"><option value="fortes"${s.absorbMode === 'fortes' ? ' selected' : ''}>fortes</option><option value="toutes"${s.absorbMode === 'toutes' ? ' selected' : ''}>toutes</option></select>`;
     return '';
   }
@@ -226,7 +241,7 @@ const Desk = (() => {
     chooser.addEventListener('change', e => {
       const t = e.target, s = curSet();
       if (t.dataset.chel) { if (t.checked) s.els[t.dataset.chel] = true; else delete s.els[t.dataset.chel]; changed(['sess', 'sessW', 'sessM', 'dom'].includes(t.dataset.chel)); }
-      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode'].includes(t.dataset.copt) ? t.value : t.dataset.copt === 'deltaCvd' ? t.value === '1' : +t.value; changed(false); }
+      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset'].includes(t.dataset.copt) ? t.value : t.dataset.copt === 'deltaCvd' ? t.value === '1' : +t.value; changed(false); }
       else if (t.dataset.ptog != null) { LT.togglePlan(t.dataset.ptog); fillChooser(); }
     });
     chooser.addEventListener('click', e => {
@@ -571,12 +586,13 @@ const Desk = (() => {
   async function pollInd(force) {
     const S = st(), d = S.data;
     if (!mainVisible() || !(S.mainOpts.oi || S.mainOpts.delta || S.mainOpts.fund) || !d || !d.candles || !d.candles.length || indState.busy) return;
-    const fund = !!S.mainOpts.fund, key = [S.symbol, S.tf, d.candles[d.candles.length - 1][0], fund].join('|');
+    const fund = !!S.mainOpts.fund, spot = !!S.mainOpts.delta && ['spot', 'both'].includes(S.mainOpts.cvdMode);
+    const key = [S.symbol, S.tf, d.candles[d.candles.length - 1][0], fund, spot].join('|');
     if (!force && key === indState.key && S.ind && Date.now() - (S.ind.at || 0) < 30000) return;
     indState.busy = true;
     try {
-      const r = await LT.api(`/api/indicators?symbol=${S.symbol}&tf=${S.tf}${fund ? '&fund=1' : ''}`);   // V35 : avec le funding
-      if (r.symbol !== S.symbol || r.tf !== S.tf || fund !== !!S.mainOpts.fund) return;
+      const r = await LT.api(`/api/indicators?symbol=${S.symbol}&tf=${S.tf}${fund ? '&fund=1' : ''}${spot ? '&spot=1' : ''}`);   // V35 : funding ; V37 : CVD spot
+      if (r.symbol !== S.symbol || r.tf !== S.tf || fund !== !!S.mainOpts.fund || spot !== (!!S.mainOpts.delta && ['spot', 'both'].includes(S.mainOpts.cvdMode))) return;
       r.at = Date.now(); indState.key = key; S.ind = r; S.version++;
     } catch (e) { /* le prochain passage reessaiera */ } finally { indState.busy = false; }
   }

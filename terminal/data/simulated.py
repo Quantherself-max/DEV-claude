@@ -63,8 +63,10 @@ class SimulatedSource(Source):
         out = []
         for k, (o, h, l, c, v, tb) in enumerate(raw):
             vv = v * 40 * qty
+            avg = (o + h + l + c) / 4 * scale
+            buy_px = avg * (1 + 0.15 * (c - o) / max(o, 1e-12))         # V37 : les achats agressifs se font un peu plus haut quand la bougie monte
             out.append(Candle(SIM_START + k * M5, o * scale, h * scale, l * scale, c * scale, vv, tb * 40 * qty,
-                              vv * (o + h + l + c) / 4 * scale))    # V23 : volume en dollars (prix moyen dans la bougie)
+                              vv * avg, tb * 40 * qty * buy_px))    # V23 : volume en dollars (prix moyen dans la bougie) ; V37 : acheteurs en dollars
         self._m5[symbol] = out
         # Open Interest sur 30 jours (comme l'API Binance) : tendance + rafales de nouvelles positions + purges
         base = OI_BASE.get(symbol, 1e5)
@@ -95,7 +97,7 @@ class SimulatedSource(Source):
                     a, b = path[i], path[i + 1]
                     t = k.t + i * 60_000
                     if start_ms <= t <= end_ms:
-                        out.append(Candle(t, a, max(a, b), min(a, b), b, k.v / 5, k.tb / 5, k.q / 5))
+                        out.append(Candle(t, a, max(a, b), min(a, b), b, k.v / 5, k.tb / 5, k.q / 5, k.bq / 5))
             return out
         else:
             key = (symbol, interval)
@@ -107,6 +109,30 @@ class SimulatedSource(Source):
     def open_interest(self, symbol, period, start_ms, end_ms):
         self._gen(symbol)
         return [(t, v) for t, v in self._oi[symbol] if start_ms <= t <= end_ms]
+
+    def open_interest_now(self, symbol):
+        """V37 : le dernier relevé, prolongé jusqu'à l'instant (petite dérive déterministe)."""
+        self._gen(symbol)
+        t, v = self._oi[symbol][-1]
+        now = self.now_ms()
+        return now, v * (1 + 0.0004 * math.sin(now / 4e5))
+
+    def spot_candles(self, symbol, interval, start_ms, end_ms):
+        """V37 : spot simulé : même prix, 40 % du volume du perpétuel, acheteurs agressifs un peu différents (CVD du spot distinct)."""
+        if interval in ("1w", "1M"):
+            from engine.atr import resample_cal
+            base = resample_cal(self.candles(symbol, "1h", start_ms - 32 * 86_400_000, end_ms), interval)
+            base = [k for k in base if start_ms <= k.t <= end_ms]
+        else:
+            base = self.candles(symbol, interval, start_ms, end_ms)
+        out = []
+        for k in base:
+            share = k.tb / k.v if k.v > 0 else 0.5
+            r = min(0.95, max(0.05, 0.5 + 0.7 * (share - 0.5) + 0.06 * math.sin(k.t / 7.3e6)))
+            v = 0.4 * k.v
+            px = k.q / k.v if k.v > 0 else k.c
+            out.append(Candle(k.t, k.o, k.h, k.l, k.c, v, v * r, v * px, v * r * px))
+        return out
 
     # --- contexte derives (V2), deterministes et plausibles ---
     def _last_close(self, symbol):

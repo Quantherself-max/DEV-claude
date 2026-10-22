@@ -135,7 +135,7 @@ class PageTests(unittest.TestCase):
 
     def test_open_interest_and_delta_elements(self):
         self.assertIn("oi: ['Intérêt ouvert'", self.DESK)
-        self.assertIn("delta: ['Delta'", self.DESK)
+        self.assertIn("delta: ['Delta", self.DESK)                                       # V37 : « Delta et CVD »
         self.assertIn("/api/indicators?symbol=", self.DESK)
         self.assertIn("this.oiS = this.chart.addCandlestickSeries(", self.PANELS)        # intérêt ouvert en bougies
         self.assertIn("this.dS = this.chart.addHistogramSeries(", self.PANELS)           # delta en barres

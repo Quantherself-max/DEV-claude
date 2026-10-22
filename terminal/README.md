@@ -1,7 +1,8 @@
-# Liq Terminal (V36)
+# Liq Terminal (V37)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Intérêt ouvert, delta, CVD et funding plus précis, et lus ensemble** (V37) : qui ouvre et qui ferme ses positions à chaque bougie, delta en dollars exacts, CVD du spot à côté de celui du perpétuel, funding pondéré par la durée, cumulé et toutes bourses (voir « V37 » plus bas).
 - **Le même terminal sur ton PC et ton Mac, et les unités 1 minute, semaine et mois** (V36) : tes réglages sont gardés sur le disque et, avec un dossier iCloud, Google Drive, OneDrive ou Dropbox, recopiés sur tes autres ordinateurs (voir « V36 » plus bas).
 - **Le funding sous le graphique et tes propres onglets de graphiques** (V35) : élément « Funding » (barres, % par 8 heures ou par an, estimation de la période en cours) et bouton « ＋ » pour ajouter des graphiques vierges que tu construis à ta façon (voir « V35 » plus bas).
 - **Fusionner et déplier les profils TPO, comme sur Exocharts** (V34) : plusieurs séances de suite en un seul profil (POC, zone de valeur, single prints et volume recalculés), et chaque tranche dans sa propre colonne pour lire le trajet du prix (voir « V34 » plus bas).
@@ -131,6 +132,28 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V37 : intérêt ouvert, delta, CVD et funding plus précis, et lus ensemble
+
+Les options se règlent dans « ＋ Éléments », à côté de chaque élément coché.
+
+**Intérêt ouvert**
+- *bougies* ou *variation* (combien l'intérêt ouvert a monté ou baissé pendant chaque bougie, en barres) ;
+- couleur *qui ouvre / ferme* (par défaut) : prix et intérêt ouvert ensemble disent qui agit. Vert : le prix monte et l'OI monte, des **acheteurs ouvrent**. Rouge : le prix baisse et l'OI monte, des **vendeurs ouvrent**. Bleu clair : le prix monte et l'OI baisse, des **vendeurs rachètent** (rachats forcés compris). Orange : le prix baisse et l'OI baisse, des **acheteurs sortent** (liquidations comprises). Gris : OI quasi stable (moins du quart de la variation habituelle du graphique). Quand le corps de la bougie est minuscule, c'est le delta qui donne le sens. Si le delta va contre le mouvement, la lecture le dit (« contre le delta : ordres passifs ») ;
+- *hausse / baisse* : les couleurs d'avant ;
+- plus précis : la bougie en cours utilise l'intérêt ouvert **à l'instant** (Binance publie les relevés 5 minutes avec plusieurs minutes de retard) ; la lecture donne aussi la valeur en dollars et le résumé des dernières bougies (24 en 1 heure, 48 en 5 minutes, 18 en 4 heures…) : combien d'OI chaque camp a ouvert ou fermé.
+
+**Delta et CVD**
+- delta *en coin* ou *en dollars* : en dollars, il est **exact** (volume acheteur agressif en dollars donné par Binance), et non plus « delta × prix de clôture », qui se trompe quand le prix bouge beaucoup dans la bougie (semaine, mois) ;
+- CVD *perpétuel*, *spot* (Binance spot, même paire), *les deux* ou *barres seules*. Avec les deux, la lecture dit qui mène : « spot et perpétuel achètent ensemble : mouvement sain », « le levier achète, le spot vend : hausse fragile »… Les deux lignes ont chacune leur échelle (le spot échange moins) : compare leur pente, pas leur hauteur ;
+- CVD *cumulé sur le graphique*, ou remis à zéro **chaque jour, semaine ou mois** (UTC), comme un CVD de séance. Sans effet si la bougie est déjà aussi longue que la période.
+
+**Funding**
+- *% par 8 h*, *% par an* ou *cumulé* : ce qu'un acheteur a réellement payé (un vendeur reçu) depuis le début du graphique, en % de sa position ;
+- plus précis : une bougie qui couvre plusieurs périodes compte chacune **pour sa durée** (Binance passe parfois à 4 h ou 1 h quand le marché s'emballe ; avant, chaque versement comptait pareil) ; la période en cours prend sa vraie durée, jusqu'au prochain versement annoncé ;
+- deuxième ligne : le funding de **Binance, Bybit, OKX et Hyperliquid pondéré par l'intérêt ouvert** de chacune, et la lecture des positions confirmée par le funding (« vendeurs à levier entassés et qui paient : un rachat forcé est possible »…).
+
+Limites : la couleur « qui ouvre / ferme » est une lecture, pas une mesure de gain ; l'OI d'une bougie est celui de Binance seulement ; le CVD spot vient de Binance spot seulement. Une fois, au premier lancement de la V37, les bougies 1 heure sont retéléchargées (nouveau champ : volume acheteur en dollars).
 
 ## Ce qui est nouveau en V36 : le même terminal sur tous tes ordinateurs, et les unités 1 minute, semaine et mois
 

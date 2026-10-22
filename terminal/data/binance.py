@@ -56,7 +56,11 @@ class BinanceSource(Source):
                 q = float(r[7])                                   # volume en dollars : prix moyen exact de la bougie (V23)
             except (TypeError, ValueError, IndexError):
                 q = 0.0
-            out.append(Candle(int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]), float(r[9]), q))
+            try:
+                bq = float(r[10])                                 # V37 : volume acheteur agressif en dollars (delta en dollars exact)
+            except (TypeError, ValueError, IndexError):
+                bq = 0.0
+            out.append(Candle(int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]), float(r[9]), q, bq))
         return out
 
     @staticmethod
@@ -90,6 +94,27 @@ class BinanceSource(Source):
                 t = max(t + step, int(rows[-1]["timestamp"]) + step)
             else:
                 t += 500 * step
+            time.sleep(self.pause)
+        return out
+
+    def open_interest_now(self, symbol):
+        """V37 : /fapi/v1/openInterest, l'intérêt ouvert à l'instant (les relevés 5 min de openInterestHist ont plusieurs minutes de retard)."""
+        r = self._get("/fapi/v1/openInterest", {"symbol": symbol}, retries=1)
+        return int(r.get("time") or self.now_ms()), float(r["openInterest"])
+
+    def spot_candles(self, symbol, interval, start_ms, end_ms):
+        """V37 : bougies spot (/api/v3/klines : index 9 et 10 = volume acheteur agressif en coin et en dollars), 1000 par appel."""
+        step = INTERVAL_MS[interval]
+        out, t = [], start_ms
+        while t <= end_ms:
+            rows = self._get("/api/v3/klines", {"symbol": symbol, "interval": interval, "startTime": t, "endTime": end_ms, "limit": 1000},
+                             host=self.spot_base)
+            if not rows:
+                break
+            out += self.parse_klines(rows)
+            t = int(rows[-1][0]) + step
+            if len(rows) < 1000:
+                break
             time.sleep(self.pause)
         return out
 
