@@ -118,9 +118,15 @@ def options_view(summaries: list[dict], now_ms: int, max_expiries: int = 4) -> d
     return {"spot": spot, "putCall": puts / calls if calls > 0 else None, "oiUsd": (calls + puts) * spot, "expiries": exps}
 
 
-# ---------- V26 : exposition gamma (GEX) des options, BTC ----------
+# ---------- V26 : exposition gamma (GEX) des options, BTC ; V38 : plusieurs bourses, choix des echeances, nouveaux niveaux ----------
 YEAR_MS = 365.0 * DAY
 SQRT2PI = math.sqrt(2.0 * math.pi)
+BYBIT_OPT_RE = re.compile(r"^([A-Z]+)-(\d{1,2})([A-Z]{3})(\d{2})-(\d+(?:\.\d+)?)-([CP])(?:-[A-Z]+)?$")     # Bybit : suffixe -USDT possible
+OKX_OPT_RE = re.compile(r"^([A-Z]+)-USD-(\d{2})(\d{2})(\d{2})-(\d+(?:\.\d+)?)-([CP])$")                     # OKX : BTC-USD-261030-100000-C
+GEX_SRCS = ("all", "deribit")                      # toutes les bourses lues / Deribit seul
+GEX_SCOPES = ("all", "week", "front")              # toutes les echeances / 7 prochains jours / prochaine echeance
+FRONT_MIN_MS = 2 * HOUR                            # une echeance a moins de 2 heures de sa fin ne compte plus comme « prochaine » : son gamma n'a plus de sens
+FLOW_PCTS = (1.0, 2.0, 5.0)
 
 
 def bs_gamma(f: float, k: float, iv: float, t: float) -> float:
@@ -132,66 +138,220 @@ def bs_gamma(f: float, k: float, iv: float, t: float) -> float:
     return math.exp(-0.5 * d1 * d1) / (SQRT2PI * f * s)
 
 
-def gex_view(summaries: list[dict], now_ms: int, band: float = 0.25, grid: int = 101) -> dict:
-    """Exposition gamma des options (get_book_summary_by_currency, kind=option : interet ouvert, volatilite implicite mark_iv en %, prix a terme
-    underlying_price par echeance). Pour chaque option : gamma de Black x interet ouvert x prix^2 x 1 %, soit les dollars que les teneurs de
-    marche devraient acheter ou vendre pour rester neutres si le prix bouge de 1 %.
+def _opt_row(ex, strike, kind, oi, iv, f, expiry, now_ms, index=None):
+    """Ligne commune a toutes les bourses (iv en fraction : 0,5 = 50 %) ; None si inexploitable."""
+    if not oi or oi <= 0 or not iv or iv <= 0 or not f or f <= 0 or not strike or strike <= 0 or expiry is None or expiry <= now_ms:
+        return None
+    return {"ex": ex, "strike": float(strike), "kind": kind, "oi": float(oi), "iv": float(iv), "f": float(f), "expiry": int(expiry), "index": index}
+
+
+def norm_deribit(summaries: list[dict], now_ms: int) -> list[dict]:
+    """get_book_summary_by_currency(kind=option) : open_interest en BTC, mark_iv en %, underlying_price = prix a terme de l'echeance,
+    estimated_delivery_price = indice (le prix du moment)."""
+    out = []
+    for s in summaries:
+        o = parse_option(s.get("instrument_name", ""))
+        iv = num(s.get("mark_iv"))
+        r = o and _opt_row("Deribit", o["strike"], o["kind"], num(s.get("open_interest")), iv / 100.0 if iv else None, num(s.get("underlying_price")),
+                           o["expiry"], now_ms, num(s.get("estimated_delivery_price")))
+        if r:
+            out.append(r)
+    return out
+
+
+def norm_bybit(items: list[dict], now_ms: int) -> list[dict]:
+    """/v5/market/tickers?category=option : symbol BTC-30OCT26-100000-C(-USDT), openInterest en BTC, markIv en fraction, underlyingPrice, indexPrice."""
+    out = []
+    for it in items or []:
+        m = BYBIT_OPT_RE.match(str(it.get("symbol") or ""))
+        if not m:
+            continue
+        iv = num(it.get("markIv"))
+        if iv and iv > 5:                                           # au cas ou la volatilite arriverait en %
+            iv /= 100.0
+        r = _opt_row("Bybit", float(m.group(5)), m.group(6), num(it.get("openInterest")), iv, num(it.get("underlyingPrice")) or num(it.get("indexPrice")),
+                     parse_expiry(m.group(2), m.group(3), m.group(4)), now_ms, num(it.get("indexPrice")))
+        if r:
+            out.append(r)
+    return out
+
+
+def norm_okx(summary: list[dict], oi_rows: list[dict], now_ms: int) -> list[dict]:
+    """/api/v5/public/opt-summary (markVol en fraction, fwdPx) + /api/v5/public/open-interest?instType=OPTION (oiCcy : interet ouvert en BTC)."""
+    oi_by = {str(r.get("instId")): num(r.get("oiCcy")) for r in oi_rows or []}
+    out = []
+    for s in summary or []:
+        inst = str(s.get("instId") or "")
+        m = OKX_OPT_RE.match(inst)
+        if not m:
+            continue
+        try:
+            exp = int(datetime(2000 + int(m.group(2)), int(m.group(3)), int(m.group(4)), 8, tzinfo=timezone.utc).timestamp() * 1000)
+        except ValueError:
+            continue
+        r = _opt_row("OKX", float(m.group(5)), m.group(6), oi_by.get(inst), num(s.get("markVol")), num(s.get("fwdPx")), exp, now_ms)
+        if r:
+            out.append(r)
+    return out
+
+
+def ref_spot(rows: list[dict]) -> float:
+    """Prix du moment : mediane des indices recus (Deribit, Bybit), sinon prix a terme de la plus proche echeance."""
+    idx = sorted(r["index"] for r in rows if r.get("index"))
+    if idx:
+        return idx[len(idx) // 2]
+    return min(rows, key=lambda r: r["expiry"])["f"]
+
+
+def atm_iv(rows: list[dict], now_ms: int) -> list[tuple[float, float]]:
+    """Volatilite implicite au prix (strike le plus proche du prix a terme, moyenne call / put) pour chaque echeance : [(annees restantes, iv)]."""
+    by: dict[int, list] = {}
+    for r in rows:
+        by.setdefault(r["expiry"], []).append(r)
+    out = []
+    for e, rs in sorted(by.items()):
+        f = rs[0]["f"]
+        k = min({r["strike"] for r in rs}, key=lambda x: abs(x - f))
+        ivs = [r["iv"] for r in rs if r["strike"] == k]
+        out.append(((e - now_ms) / YEAR_MS, sum(ivs) / len(ivs)))
+    return out
+
+
+def expected_moves(rows: list[dict], now_ms: int, spot: float) -> dict | None:
+    """Mouvement attendu par les options a 1 jour et 7 jours (un ecart-type) : prix x iv x racine(duree). La volatilite d'une duree est lue
+    entre les deux echeances qui l'encadrent (interpolation de la variance totale iv^2 x t, la methode habituelle)."""
+    pts = [(t, iv) for t, iv in atm_iv(rows, now_ms) if t * YEAR_MS >= FRONT_MIN_MS]
+    if not pts:
+        return None
+    out = {}
+    for key, days in (("day", 1.0), ("week", 7.0)):
+        h = days / 365.0
+        if h <= pts[0][0]:
+            iv = pts[0][1]
+        elif h >= pts[-1][0]:
+            iv = pts[-1][1]
+        else:
+            (t0, v0), (t1, v1) = next((a, b) for a, b in zip(pts, pts[1:]) if a[0] <= h <= b[0])
+            w = v0 * v0 * t0 + (v1 * v1 * t1 - v0 * v0 * t0) * (h - t0) / (t1 - t0)
+            iv = math.sqrt(max(w, 0.0) / h)
+        mv = spot * iv * math.sqrt(h)
+        out[key] = {"iv": iv, "move": mv, "pct": mv / spot * 100.0, "up": spot + mv, "down": spot - mv}
+    return out
+
+
+def _scales(band: float, grid: int) -> list[float]:
+    """Prix testes (en multiple du prix du moment) : grille reguliere sur +/- band, plus fine (0,25 %) sur +/- 6 %, et les pas des flux."""
+    s = {round(1 - band + 2 * band * i / (grid - 1), 6) for i in range(grid)}
+    s |= {round(1 + j * 0.0025, 6) for j in range(-24, 25)}
+    s |= {round(1 + sg * p / 100.0, 6) for p in FLOW_PCTS for sg in (-1, 1)}
+    return sorted(s)
+
+
+def _hedge(curve: list, spot: float, target: float) -> float:
+    """Dollars que les teneurs de marche devraient acheter (+) ou vendre (-) pour rester couverts si le prix va de spot a target.
+    Le gamma en dollars par 1 % G(p) donne la variation de leur delta en dollars : d(delta$) = G(p) x (dp / p) / 1 % ; ils font l'inverse."""
+    lo, hi = min(spot, target), max(spot, target)
+    pts = [(p, v) for p, v in curve if lo - 1e-9 <= p <= hi + 1e-9]
+    d = sum((v0 + v1) / 2.0 * ((p1 - p0) / ((p0 + p1) / 2.0)) / 0.01 for (p0, v0), (p1, v1) in zip(pts, pts[1:]))
+    return -d if target > spot else d
+
+
+def _flips(curve: list) -> list[float]:
+    """Prix ou le gamma total change de signe (les points exactement nuls, loin de tout strike, sont ignores)."""
+    pts = [(p, v) for p, v in curve if v != 0]
+    return [round(p0 + (p1 - p0) * (0 - v0) / (v1 - v0), 2) for (p0, v0), (p1, v1) in zip(pts, pts[1:]) if (v0 < 0) != (v1 < 0)]
+
+
+def gex_sets(rows: list[dict], now_ms: int, band: float = 0.25, grid: int = 101) -> dict:
+    """Exposition gamma des options pour chaque source (toutes les bourses lues, Deribit seul) et chaque choix d'echeances (toutes, 7 prochains
+    jours, prochaine echeance), en une seule passe. Pour chaque option : gamma de Black x interet ouvert x prix^2 x 1 %, soit les dollars que les
+    teneurs de marche devraient acheter ou vendre pour rester neutres si le prix bouge de 1 %.
     Convention habituelle (non verifiable) : les teneurs de marche sont ACHETEURS des calls et VENDEURS des puts que le public detient,
     donc calls +, puts -. Gamma total positif au prix : ils vendent les hausses et achetent les baisses (marche amorti, aimante par les gros
     strikes) ; negatif : ils suivent le mouvement (marche amplifie). La bascule (« zero gamma ») est le prix ou le total change de signe.
-    Renvoie aussi le profil par strike (+/- band autour du prix), le mur de calls et le mur de puts, et la part des echeances a 7 jours."""
-    rows, ref = [], None
-    for s in summaries:
-        o = parse_option(s.get("instrument_name", ""))
-        oi, iv, f = num(s.get("open_interest")), num(s.get("mark_iv")), num(s.get("underlying_price"))
-        if not o or not oi or oi <= 0 or not iv or iv <= 0 or not f or f <= 0 or o["expiry"] <= now_ms:
-            continue
-        t = max((o["expiry"] - now_ms) / YEAR_MS, 1.0 / (365.0 * 24.0))           # au moins une heure : gamma fini a l'echeance
-        rows.append((o["strike"], o["kind"], oi, iv / 100.0, f, t, o["expiry"]))
-        if ref is None or o["expiry"] < ref[0]:
-            ref = (o["expiry"], f)
-    if not rows:
-        raise DataError("gamma : aucune option exploitable (volatilité implicite ou intérêt ouvert absents)")
-    spot = ref[1]                                                                     # prix a terme de la plus proche echeance ~ prix du moment
-
-    def contrib(row, scale):
-        k, kind, oi, iv, f, t, _ = row
-        ff = f * scale
-        v = bs_gamma(ff, k, iv, t) * oi * ff * ff * 0.01
-        return v if kind == "C" else -v
-
-    by_k: dict[float, list] = {}
-    near, tot_abs = 0.0, 0.0
+    Quand le prix « bouge », chaque prix a terme bouge dans la meme proportion et la volatilite de chaque strike reste la meme."""
+    good = []
     for r in rows:
-        v = contrib(r, 1.0)
-        c = by_k.setdefault(r[0], [0.0, 0.0])
-        c[0 if r[1] == "C" else 1] += v
-        tot_abs += abs(v)
-        if r[6] - now_ms <= 7 * DAY:
-            near += abs(v)
+        if r["expiry"] <= now_ms:
+            continue
+        t = max((r["expiry"] - now_ms) / YEAR_MS, 1.0 / (365.0 * 24.0))         # au moins une heure : gamma fini a l'echeance
+        good.append((r, r["iv"] * math.sqrt(t)))
+    if not good:
+        raise DataError("gamma : aucune option exploitable (volatilité implicite ou intérêt ouvert absents)")
+    spot = ref_spot([r for r, _ in good])
+    def front_of(rs):
+        exps = sorted({r["expiry"] for r in rs})
+        return next((e for e in exps if e - now_ms >= FRONT_MIN_MS), exps[0]) if exps else None
+    fronts = {"all": front_of([r for r, _ in good]), "deribit": front_of([r for r, _ in good if r["ex"] == "Deribit"])}
+    scales = _scales(band, grid)
+    i1 = scales.index(1.0)
+    lg = [math.log(sc) for sc in scales]
+    span = max(abs(lg[0]), abs(lg[-1]))
+    keys = [(s, c) for s in GEX_SRCS for c in GEX_SCOPES]
+    acc = {k: {"curve": [0.0] * len(scales), "by_k": {}, "abs": 0.0, "near": 0.0, "n": 0, "oi": {}, "exps": set()} for k in keys}
+    for r, s in good:
+        srcs = ("all", "deribit") if r["ex"] == "Deribit" else ("all",)
+        week = r["expiry"] - now_ms <= 7 * DAY
+        base = math.log(r["f"] / r["strike"]) + 0.5 * s * s
+        if abs(base) / s - span / s > 9.0:                               # strike trop loin du prix, meme apres un mouvement de 25 % : gamma nul
+            vals = None
+        else:
+            amp = r["oi"] * r["f"] * 0.01 / (SQRT2PI * s) * (1.0 if r["kind"] == "C" else -1.0)
+            vals = [amp * sc * math.exp(-0.5 * ((base + l) / s) ** 2) for sc, l in zip(scales, lg)]
+        v0 = vals[i1] if vals else 0.0
+        for k in [(a, b) for a in srcs for b in ["all"] + (["week"] if week else []) + (["front"] if r["expiry"] == fronts[a] else [])]:
+            a = acc[k]
+            if vals:
+                c = a["curve"]
+                for i, v in enumerate(vals):
+                    c[i] += v
+            cell = a["by_k"].setdefault(r["strike"], [0.0, 0.0])
+            cell[0 if r["kind"] == "C" else 1] += v0
+            a["abs"] += abs(v0)
+            if r["expiry"] - now_ms <= 7 * DAY:
+                a["near"] += abs(v0)
+            a["n"] += 1
+            a["oi"][r["ex"]] = a["oi"].get(r["ex"], 0.0) + r["oi"]
+            a["exps"].add(r["expiry"])
     lo, hi = spot * (1 - band), spot * (1 + band)
-    strikes = [{"strike": k, "calls": c, "puts": p, "net": c + p} for k, (c, p) in sorted(by_k.items()) if lo <= k <= hi]
-    curve = []
-    for i in range(grid):
-        sc = (1 - band) + 2 * band * i / (grid - 1)
-        curve.append((spot * sc, sum(contrib(r, sc) for r in rows)))
-    flip = None
-    for (p0, v0), (p1, v1) in zip(curve, curve[1:]):
-        if v0 == 0 or (v0 < 0) != (v1 < 0):
-            x = p0 if v0 == v1 else p0 + (p1 - p0) * (0 - v0) / (v1 - v0)
-            if flip is None or abs(x - spot) < abs(flip - spot):
-                flip = x
-    total = sum(contrib(r, 1.0) for r in rows)
-    # mur de calls : plus forte gamma des calls AU-DESSUS du prix (resistance) ; mur de puts : plus forte gamma des puts EN DESSOUS (support)
-    cw = max((x for x in strikes if x["calls"] > 0 and x["strike"] >= spot), key=lambda x: x["calls"], default=None)
-    pw = min((x for x in strikes if x["puts"] < 0 and x["strike"] <= spot), key=lambda x: x["puts"], default=None)
-    top = sorted(strikes, key=lambda x: -abs(x["net"]))[:6]
-    return {"spot": spot, "total": total, "calls": sum(x["calls"] for x in strikes), "puts": sum(x["puts"] for x in strikes), "flip": flip,
-            "callWall": cw["strike"] if cw else None, "callWallGex": cw["calls"] if cw else None,
-            "putWall": pw["strike"] if pw else None, "putWallGex": pw["puts"] if pw else None,
-            "top": [{"strike": x["strike"], "net": x["net"]} for x in sorted(top, key=lambda x: x["strike"])],
-            "strikes": strikes, "curve": [[round(p, 2), v] for p, v in curve], "nearShare": near / tot_abs if tot_abs else None,
-            "n": len(rows), "expiries": len({r[6] for r in rows})}
+    out: dict = {"spot": spot, "front": fronts["all"]}
+    for src in GEX_SRCS:
+        out[src] = {}
+        for sc in GEX_SCOPES:
+            a = acc[(src, sc)]
+            if not a["n"]:
+                out[src][sc] = None
+                continue
+            curve = [(spot * x, v) for x, v in zip(scales, a["curve"])]
+            strikes = [{"strike": k, "calls": c, "puts": p, "net": c + p, "gross": c - p} for k, (c, p) in sorted(a["by_k"].items()) if lo <= k <= hi]
+            flips = _flips(curve)
+            flip = min(flips, key=lambda x: abs(x - spot)) if flips else None
+            # mur de calls : plus forte gamma des calls AU-DESSUS du prix (resistance) ; mur de puts : plus forte gamma des puts EN DESSOUS (support)
+            cw = max((x for x in strikes if x["calls"] > 0 and x["strike"] >= spot), key=lambda x: x["calls"], default=None)
+            pw = min((x for x in strikes if x["puts"] < 0 and x["strike"] <= spot), key=lambda x: x["puts"], default=None)
+            ag = max(strikes, key=lambda x: x["gross"], default=None)          # strike ou se concentre le plus de gamma, calls et puts additionnes
+            top = sorted(strikes, key=lambda x: -abs(x["net"]))[:6]
+            tot_oi = sum(a["oi"].values())
+            out[src][sc] = {
+                "spot": spot, "total": a["curve"][i1], "calls": sum(x["calls"] for x in strikes), "puts": sum(x["puts"] for x in strikes),
+                "flip": flip, "flips": flips,
+                "callWall": cw["strike"] if cw else None, "callWallGex": cw["calls"] if cw else None,
+                "putWall": pw["strike"] if pw else None, "putWallGex": pw["puts"] if pw else None,
+                "absGamma": ag["strike"] if ag and ag["gross"] > 0 else None, "absGammaGex": ag["gross"] if ag else None,
+                "top": [{"strike": x["strike"], "net": x["net"]} for x in sorted(top, key=lambda x: x["strike"])],
+                "flows": [{"pct": p, "up": _hedge(curve, spot, spot * (1 + p / 100.0)), "down": _hedge(curve, spot, spot * (1 - p / 100.0))} for p in FLOW_PCTS],
+                "strikes": strikes, "curve": [[round(p, 2), v] for p, v in curve], "nearShare": a["near"] / a["abs"] if a["abs"] else None,
+                "n": a["n"], "expiries": len(a["exps"]), "frontExpiry": fronts[src] if sc == "front" else None,
+                "sources": [{"ex": ex, "oi": v, "share": v / tot_oi if tot_oi else None} for ex, v in sorted(a["oi"].items(), key=lambda x: -x[1])]}
+    deri = [r for r, _ in good if r["ex"] == "Deribit"]
+    out["em"] = expected_moves(deri or [r for r, _ in good], now_ms, spot)
+    return out
+
+
+def gex_view(summaries: list[dict], now_ms: int, band: float = 0.25, grid: int = 101) -> dict:
+    """Gamma de Deribit seul, toutes echeances (forme de la V26, gardee pour les anciens appels et l'enregistreur)."""
+    g = gex_sets(norm_deribit(summaries, now_ms), now_ms, band, grid)
+    return g["deribit"]["all"]
 
 
 def futures_basis(summaries: list[dict], now_ms: int) -> list[dict]:
@@ -249,12 +409,20 @@ def compare_view(rows: list[dict]) -> dict:
 # =====================================================================================================
 #  Reseau
 # =====================================================================================================
-def with_gex(view: dict, rows: list, now_ms: int) -> dict:
-    """Ajoute l'exposition gamma au resume des options ; un echec du calcul ne fait jamais perdre le resume."""
+def with_gex(view: dict, rows: list, now_ms: int, others: list | None = None, others_error: str | None = None) -> dict:
+    """Ajoute l'exposition gamma au resume des options ; un echec du calcul ne fait jamais perdre le resume.
+    others : options deja normalisees des autres bourses (Bybit, OKX : V38) ; gex = Deribit, toutes echeances (forme V26) ;
+    gexSets = chaque source et chaque choix d'echeances, plus le mouvement attendu (em)."""
     try:
-        view["gex"] = gex_view(rows, now_ms)
+        sets = gex_sets(norm_deribit(rows, now_ms) + list(others or []), now_ms)
+        if sets["deribit"]["all"] is None:
+            raise DataError("gamma : aucune option Deribit exploitable")
+        view["gex"] = sets["deribit"]["all"]
+        view["gexSets"] = sets
     except (DataError, ValueError, ZeroDivisionError, OverflowError) as e:
         view["gexError"] = str(e)
+    if others_error:
+        view["gexOthersError"] = others_error
     return view
 
 
@@ -270,7 +438,30 @@ class DerivMixin:
 
     def deribit_options(self, currency: str, now_ms: int) -> dict:
         rows = self.deribit_summary(currency, "option")
-        return with_gex(options_view(rows, now_ms), rows, now_ms)
+        others, bad = [], []
+        if currency == "BTC":                                       # V38 : Bybit et OKX ajoutes au gamma du BTC ; une bourse en panne n'empeche rien
+            for fn in (self.options_bybit, self.options_okx):
+                try:
+                    others += fn(currency, now_ms)
+                except (DataError, KeyError, TypeError, ValueError, IndexError, AttributeError) as e:
+                    bad.append(f"{fn.__name__[8:]}: {str(e)[:60]}")
+        return with_gex(options_view(rows, now_ms), rows, now_ms, others, "; ".join(bad) or None)
+
+    def options_bybit(self, coin: str, now_ms: int) -> list[dict]:
+        d = self._get(f"{self.bybit}/v5/market/tickers?category=option&baseCoin={coin}")
+        items = (((d or {}).get("result") or {}).get("list")) if isinstance(d, dict) else None
+        rows = norm_bybit(items or [], now_ms)
+        if not rows:
+            raise DataError("Bybit options : réponse inattendue")
+        return rows
+
+    def options_okx(self, coin: str, now_ms: int) -> list[dict]:
+        s = self._get(f"{self.okx}/api/v5/public/opt-summary?instFamily={coin}-USD")
+        o = self._get(f"{self.okx}/api/v5/public/open-interest?instType=OPTION&instFamily={coin}-USD")
+        rows = norm_okx((s or {}).get("data") or [], (o or {}).get("data") or [], now_ms)
+        if not rows:
+            raise DataError("OKX options : réponse inattendue")
+        return rows
 
     def deribit_futures(self, currency: str, now_ms: int) -> list:
         return futures_basis(self.deribit_summary(currency, "future"), now_ms)
@@ -353,9 +544,18 @@ class SimDerivMixin:
             for j in range(-8, 9):
                 strike = round(spot / step) * step + j * step * (k + 1)
                 for kind, w in (("C", 1.0 if j >= 0 else 0.4), ("P", 1.0 if j <= 0 else 0.4)):
-                    summ.append({"instrument_name": f"{currency}-{tag}-{int(strike)}-{kind}", "open_interest": w * (300 - 25 * abs(j)) * (1 + 0.1 * k),
-                                 "underlying_price": spot * (1 + 0.0004 * days), "mark_iv": 48.0 + 1.2 * abs(j) + (3.0 if kind == "P" and j < 0 else 0.0)})
-        return with_gex(options_view(summ, now_ms), summ, now_ms)
+                    bump = 1.0
+                    if currency == "BTC":                                # V38 : murs nets pour que le dessin simule ressemble a un vrai marche
+                        bump = {(90000.0, "C"): 2.5, (88000.0, "C"): 4.0, (80000.0, "P"): 2.5, (82000.0, "P"): 4.0}.get((strike, kind), 1.0)
+                    summ.append({"instrument_name": f"{currency}-{tag}-{int(strike)}-{kind}", "open_interest": bump * w * (300 - 25 * abs(j)) * (1 + 0.1 * k),
+                                 "underlying_price": spot * (1 + 0.0004 * days), "mark_iv": 48.0 + 1.2 * abs(j) + (3.0 if kind == "P" and j < 0 else 0.0),
+                                 "estimated_delivery_price": spot})
+        others = []
+        if currency == "BTC":                                       # V38 : Bybit et OKX simules (environ 12 % et 9 % de l'interet ouvert de Deribit)
+            for r in norm_deribit(summ, now_ms):
+                for ex, share, dv in (("Bybit", 0.12, 0.01), ("OKX", 0.09, -0.005)):
+                    others.append({**r, "ex": ex, "oi": r["oi"] * share * (1.3 if r["kind"] == "P" and ex == "OKX" else 1.0), "iv": r["iv"] + dv, "index": None})
+        return with_gex(options_view(summ, now_ms), summ, now_ms, others)
 
     def deribit_futures(self, currency: str, now_ms: int) -> list:
         spot = 85000.0

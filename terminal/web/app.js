@@ -91,7 +91,7 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
   layout: 'main', prevLayout: null, sideOpen: true, sbCollapsed: false, ws: {}, instTab: null, minGrade: 9, heatEx: ['binance', 'okx', 'bybit', 'coinbase'], bookHeat: null, liqMap: null, ind: null,
   page: 'desk', sub: 'synth', planOn: true, planKey: null, plans: [], planHide: [], planShow: [], planSig: '', sig: null,
-  theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, nodes: true, dpoc: true, npoc: true, tpoM: true, tpoW: true, tpoD: true, tpo4: false, tpo1: false, vwap: true, dom: false, big: true, bigMin: 2, bigLabels: 'top', absorb: true, absorbMode: 'fortes', gex: true,
+  theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, nodes: true, dpoc: true, npoc: true, tpoM: true, tpoW: true, tpoD: true, tpo4: false, tpo1: false, vwap: true, dom: false, big: true, bigMin: 2, bigLabels: 'top', absorb: true, absorbMode: 'fortes', gex: true, gexScope: 'all', gexSrc: 'all', gexLevels: 'ess', gexZones: true, gexBars: 'net',
     vwapW: false, vwapM: false, vwapY: false, avwap: false, vol: true, heat: false, liqmap: false, oi: false, fund: false, fundMode: '8h', delta: false, deltaCvd: true, cvdMode: 'perp', cvdReset: 'all', deltaUnit: 'coin', oiMode: 'candles', oiColor: 'pos', zones: true}, flow: null,
   mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {M: true, W: true, D: true, '4h': false, '1h': false},
   tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true, expand: false},
@@ -723,7 +723,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 37;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré)
+const NEED_API = 38;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -789,7 +789,7 @@ async function poll() {
   timer = setTimeout(poll, 2000);
   let d;
   try {
-    const r = await fetch(`/api/state?symbol=${st.symbol}&tf=${st.tf}`);
+    const mo = st.mainOpts || {}, r = await fetch(`/api/state?symbol=${st.symbol}&tf=${st.tf}&gexScope=${mo.gexScope || 'all'}&gexSrc=${mo.gexSrc || 'all'}`);
     const boot = r.headers.get('X-Terminal-Boot');                 // le terminal a redemarre (mise a jour installee) : on recharge la page
     if (boot && st.boot && boot !== st.boot) { location.reload(); return; }
     if (boot) st.boot = boot;

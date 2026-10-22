@@ -1972,14 +1972,14 @@ class Service:
                             "base": symbol[:-4] if symbol.endswith("USDT") else symbol, "now": self.source.now_ms()}
         return {"real": True, "event": None}
 
-    def gex_brief(self, symbol: str, levels, price, atr):
+    def gex_brief(self, symbol: str, levels, price, atr, scope: str = "all", src: str = "all"):
         """V26 : exposition gamma des options BTC (Deribit) et ses confluences avec les VWAP et VWAP ancres ; BTC seulement (le marche des
         options sur SOL est trop petit pour peser)."""
         if symbol != "BTCUSDT" or not self.ext:
             return None
         try:
             opt = ((self.ext.snapshot().get("derivs") or {}).get("options") or {}).get("BTC")
-            return gamma_engine.brief(opt, levels or [], price, atr, self.source.now_ms())
+            return gamma_engine.brief(opt, levels or [], price, atr, self.source.now_ms(), scope, src)
         except Exception as e:                                           # le gamma ne doit jamais empecher l'affichage du graphique
             return {"error": f"{type(e).__name__}: {e}"}
 
@@ -2063,7 +2063,7 @@ class Service:
         out["avwapReport"] = reports_mod.strategy_summary(self.report_dirs, symbol, "avwap")
         return out
 
-    def get_state(self, symbol: str, tf: str) -> dict:
+    def get_state(self, symbol: str, tf: str, gex_scope: str = "all", gex_src: str = "all") -> dict:
         m = self.markets.get(symbol)
         if m is None:
             raise KeyError(f"symbole inconnu : {symbol}")
@@ -2075,6 +2075,6 @@ class Service:
             st = m.state(tf)
         st["ready"] = True
         st["error"] = self.errors.get(symbol)
-        st["gex"] = self.gex_brief(symbol, st.get("levels"), st.get("price"), st.get("atr"))
+        st["gex"] = self.gex_brief(symbol, st.get("levels"), st.get("price"), st.get("atr"), gex_scope, gex_src)
         st["lastUpdate"] = self.last_update
         return st

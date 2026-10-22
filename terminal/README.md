@@ -1,7 +1,8 @@
-# Liq Terminal (V37)
+# Liq Terminal (V38)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Gamma des options BTC plus complet, et un guide PDF pour le comprendre** (V38) : Deribit, Bybit et OKX additionnés, choix des échéances (toutes, 7 jours, prochaine), strike au plus fort gamma, max pain, mouvement attendu 24 heures, flux de couverture estimés et zones de gamma positif / négatif ; le guide `web/docs/guide_gamma.pdf` explique chaque niveau (voir « V38 » plus bas).
 - **Intérêt ouvert, delta, CVD et funding plus précis, et lus ensemble** (V37) : qui ouvre et qui ferme ses positions à chaque bougie, delta en dollars exacts, CVD du spot à côté de celui du perpétuel, funding pondéré par la durée, cumulé et toutes bourses (voir « V37 » plus bas).
 - **Le même terminal sur ton PC et ton Mac, et les unités 1 minute, semaine et mois** (V36) : tes réglages sont gardés sur le disque et, avec un dossier iCloud, Google Drive, OneDrive ou Dropbox, recopiés sur tes autres ordinateurs (voir « V36 » plus bas).
 - **Le funding sous le graphique et tes propres onglets de graphiques** (V35) : élément « Funding » (barres, % par 8 heures ou par an, estimation de la période en cours) et bouton « ＋ » pour ajouter des graphiques vierges que tu construis à ta façon (voir « V35 » plus bas).
@@ -132,6 +133,31 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V38 : le gamma des options BTC, plus complet et expliqué
+
+### Le calcul
+- **Trois bourses** : Deribit (comme avant), plus **Bybit** et **OKX** quand elles répondent (adresses publiques, sans clé). Une bourse en panne n'empêche rien : la Lecture le signale et le calcul continue avec les autres. Réglage « toutes les bourses » ou « Deribit seul ».
+- **Choix des échéances** : toutes (niveaux de fond), 7 prochains jours, ou prochaine échéance (les options du jour, les plus nerveuses ; une échéance à moins de 2 heures de sa fin est laissée de côté).
+- **Prix de référence** : l'indice des bourses (plutôt que le prix à terme de la plus proche échéance).
+- **Bascule plus précise** : le gamma total est recalculé tous les 0,25 % autour du prix (au lieu de 0,5 %) ; toutes les bascules sont gardées pour colorer les zones.
+- **Nouveaux niveaux** : **strike au plus fort gamma** (calls et puts additionnés : aimant et pivot), **max pain** (de la plus grosse des 4 prochaines échéances, ou de la prochaine), **mouvement attendu 24 heures** (volatilité implicite au prix, lue entre les deux échéances qui encadrent 24 heures).
+- **Flux de couverture estimés** : ce que les teneurs de marché devraient acheter ou vendre si le prix bougeait de 1, 2 ou 5 %, en additionnant le gamma rencontré sur tout le chemin.
+- **Enregistrement** : le gamma toutes bourses, le plus fort gamma, les murs de la prochaine échéance, le mouvement attendu et les flux à ±2 % s'ajoutent au fichier `data_local/history/derivs/BTCUSDT.csv`, pour pouvoir mesurer leur effet plus tard.
+
+### Sur le graphique BTC (« ＋ Éléments », ligne « Gamma des options (GEX) »)
+- Cinq menus : échéances, bourses, niveaux essentiels ou tous, zones colorées ou non, barres nettes ou calls et puts séparés.
+- **Zones** : fond légèrement vert là où le gamma total est positif (marché amorti), rouge là où il est négatif (marché amplifié).
+- Chaque étiquette donne la **distance au prix** ; les étiquettes à la hauteur de la légende passent à sa droite.
+- **Deux lignes de lecture en bas à gauche** : le régime et l'écart à la bascule, puis les flux à ±2 %, le mouvement attendu et ce qui a été pris en compte. Sur téléphone, elles passent à la ligne.
+- Lien « Comprendre chaque niveau (PDF) » vers le guide.
+
+### Le guide PDF (`web/docs/guide_gamma.pdf`, 24 pages au format téléphone)
+L'idée du gamma, l'hypothèse sur le sens des positions, puis chaque niveau (ce que c'est, comment le terminal le calcule, à quoi il sert, comment s'en servir, les pièges), les réglages, un tableau récapitulatif, cinq scénarios, le lien avec SOL, une routine en 6 étapes, les limites et un lexique. Les schémas viennent du moteur du terminal appliqué à un marché d'options fictif.
+
+### Limites
+- Formats de Bybit et OKX écrits d'après leur documentation publique, **non vérifiés** contre leurs vrais serveurs (aucun accès depuis l'endroit où le terminal a été construit) : une réponse inattendue donne une erreur lisible, jamais un faux chiffre.
+- Le CME et les options sur les ETF bitcoin américains ne sont pas lus. Le sens des positions reste une hypothèse ; l'effet sur le prix n'est pas mesuré : contexte, hors score.
 
 ## Ce qui est nouveau en V37 : intérêt ouvert, delta, CVD et funding plus précis, et lus ensemble
 

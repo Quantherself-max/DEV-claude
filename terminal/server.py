@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "37"
-API_LEVEL = 37                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "38"
+API_LEVEL = 38                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -1162,7 +1162,7 @@ def make_handler(app: App):
                 if u.path == "/api/state":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     tf = (q.get("tf") or ["1h"])[0]
-                    return self._json(app.service.get_state(sym, tf))
+                    return self._json(app.service.get_state(sym, tf, (q.get("gexScope") or ["all"])[0], (q.get("gexSrc") or ["all"])[0]))
                 if u.path == "/api/config":
                     c = app.cfg
                     return self._json({"symbols": list(c.symbols), "tfs": list(TFS), "alertTfs": list(ALERT_TFS), "source": c.source,

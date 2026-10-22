@@ -43,7 +43,7 @@ const Desk = (() => {
     dom: ['Carnet d\'ordres', 'taille en attente et nombre d\'ordres à chaque prix, à droite', 'Flux d\'ordres'],
     big: ['Gros ordres agressifs', 'bulles : vert = acheteurs, rouge = vendeurs', 'Flux d\'ordres'],
     absorb: ['Absorptions', 'delta fort contre la bougie ; murs en direct', 'Flux d\'ordres'],
-    gex: ['Gamma des options', 'murs de calls et de puts, bascule (Deribit)', 'Options', true],
+    gex: ['Gamma des options (GEX)', 'murs de calls et de puts, bascule, plus fort gamma, max pain, mouvement attendu 24 h et zones de gamma positif / négatif (Deribit, Bybit, OKX) ; échéances et bourses au choix', 'Options', true],
     plan: ['Idées envoyées', 'entrée, stop et objectifs figés à l\'envoi', 'Idées'],
   };
   const CATS = ['Niveaux', 'Profils de volume', 'TPO', 'VWAP', 'Flux d\'ordres', 'Options', 'Idées'];
@@ -88,7 +88,9 @@ const Desk = (() => {
     const cvd = cvdOf(s);
     Object.assign(S.mainOpts, {bigMin: s.bigMin, absorbMode: s.absorbMode, bigLabels: s.bigLabels, deltaCvd: cvd !== 'off', cvdMode: cvd,
       cvdReset: ['D', 'W', 'M'].includes(s.cvdReset) ? s.cvdReset : 'all', deltaUnit: s.deltaUnit === 'usd' ? 'usd' : 'coin',
-      oiMode: s.oiMode === 'chg' ? 'chg' : 'candles', oiColor: s.oiColor === 'dir' ? 'dir' : 'pos', fundMode: ['an', 'cum'].includes(s.fundMode) ? s.fundMode : '8h'});
+      oiMode: s.oiMode === 'chg' ? 'chg' : 'candles', oiColor: s.oiColor === 'dir' ? 'dir' : 'pos', fundMode: ['an', 'cum'].includes(s.fundMode) ? s.fundMode : '8h',
+      gexScope: ['week', 'front'].includes(s.gexScope) ? s.gexScope : 'all', gexSrc: s.gexSrc === 'deribit' ? 'deribit' : 'all', gexLevels: s.gexLevels === 'all' ? 'all' : 'ess',
+      gexZones: s.gexZones !== 'off', gexBars: s.gexBars === 'split' ? 'split' : 'net'});
     S.minGrade = s.minGrade; S.heatEx = s.heatEx;
   }
   function changed(reset) {
@@ -192,6 +194,14 @@ const Desk = (() => {
       sel('cvdReset', 'Le CVD repart de zéro au début de chaque jour, semaine ou mois (UTC), ou cumule tout le graphique', [['all', 'cumul du graphique'], ['D', 'CVD du jour'], ['W', 'CVD de la semaine'], ['M', 'CVD du mois']], ['D', 'W', 'M'].includes(s.cvdReset) ? s.cvdReset : 'all') + '</span>';
     if (k === 'fund') return sel('fundMode', 'Taux par période de 8 heures, ramené à une année, ou cumulé depuis le début du graphique (ce qu\'un acheteur a réellement payé)',
       [['8h', '% par 8 h'], ['an', '% par an'], ['cum', 'cumulé']], ['an', 'cum'].includes(s.fundMode) ? s.fundMode : '8h');
+    if (k === 'gex') return '<span class="ddopts">' +
+      sel('gexScope', 'Options prises en compte : toutes les échéances (niveaux de fond), les 7 prochains jours, ou seulement la prochaine échéance (niveaux du jour, les plus nerveux)',
+        [['all', 'toutes les échéances'], ['week', '7 prochains jours'], ['front', 'prochaine échéance']], ['week', 'front'].includes(s.gexScope) ? s.gexScope : 'all') +
+      sel('gexSrc', 'Bourses d\'options : Deribit, Bybit et OKX ensemble, ou Deribit seul', [['all', 'toutes les bourses'], ['deribit', 'Deribit seul']], s.gexSrc === 'deribit' ? 'deribit' : 'all') +
+      sel('gexLevels', 'Niveaux essentiels (murs, bascule, plus fort gamma, mouvement attendu), ou aussi le max pain et les strikes chargés', [['ess', 'niveaux essentiels'], ['all', 'tous les niveaux']], s.gexLevels === 'all' ? 'all' : 'ess') +
+      sel('gexZones', 'Colorer le fond : vert là où le gamma total est positif (marché amorti), rouge là où il est négatif (marché amplifié)', [['on', 'zones colorées'], ['off', 'sans zones']], s.gexZones === 'off' ? 'off' : 'on') +
+      sel('gexBars', 'Barres de gamma au bord gauche : le net de chaque strike, ou les calls et les puts séparés', [['net', 'barres nettes'], ['split', 'calls et puts']], s.gexBars === 'split' ? 'split' : 'net') +
+      '<a class="ddlink" href="/docs/guide_gamma.pdf" target="_blank" rel="noopener">Comprendre chaque niveau (PDF) →</a></span>';
     if (k === 'absorb') return `<select class="mini" data-copt="absorbMode"><option value="fortes"${s.absorbMode === 'fortes' ? ' selected' : ''}>fortes</option><option value="toutes"${s.absorbMode === 'toutes' ? ' selected' : ''}>toutes</option></select>`;
     return '';
   }
@@ -241,7 +251,7 @@ const Desk = (() => {
     chooser.addEventListener('change', e => {
       const t = e.target, s = curSet();
       if (t.dataset.chel) { if (t.checked) s.els[t.dataset.chel] = true; else delete s.els[t.dataset.chel]; changed(['sess', 'sessW', 'sessM', 'dom'].includes(t.dataset.chel)); }
-      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset'].includes(t.dataset.copt) ? t.value : t.dataset.copt === 'deltaCvd' ? t.value === '1' : +t.value; changed(false); }
+      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset', 'gexScope', 'gexSrc', 'gexLevels', 'gexZones', 'gexBars'].includes(t.dataset.copt) ? t.value : t.dataset.copt === 'deltaCvd' ? t.value === '1' : +t.value; changed(false); }
       else if (t.dataset.ptog != null) { LT.togglePlan(t.dataset.ptog); fillChooser(); }
     });
     chooser.addEventListener('click', e => {

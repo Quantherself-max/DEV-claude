@@ -786,36 +786,100 @@ class Panel {
     });
   }
   drawGex(L, h) {
-    // V26 : gamma des options BTC (Deribit). Barres de gamma par strike au bord gauche (vert : gamma positif, rouge : négatif), lignes du
-    // mur de calls, du mur de puts et de la bascule, avec les VWAP et VWAP ancrés tout proches (confluences).
-    const st = LT.st, g = L.d.gex;
-    if (!st.mainOpts.gex || st.symbol !== 'BTCUSDT' || !g || g.error || !g.levels) return;
+    // V26 : gamma des options BTC. Barres de gamma par strike au bord gauche (vert : gamma positif, rouge : négatif), lignes du mur de calls,
+    // du mur de puts et de la bascule, avec les VWAP et VWAP ancrés tout proches (confluences). V38 : zones de gamma positif / négatif,
+    // strike au plus fort gamma, max pain, mouvement attendu 24 h, distance au prix, et deux lignes de lecture en bas à gauche.
+    const st = LT.st, g = L.d.gex, mo = st.mainOpts;
+    if (!mo.gex || st.symbol !== 'BTCUSDT' || !g || g.error || !g.levels) return;
     const ctx = this.ctx, plotW = this.kind === 'main' && this.rightLimit ? Math.max(200, this.rightLimit) : L.plotW, Y = v => this.series.priceToCoordinate(v);
-    const fade = g.stale ? 0.45 : 1, strikes = (g.strikes || []).map(x => ({...x, y: Y(x.strike)})).filter(x => x.y != null && x.y > 0 && x.y < h - 24);
-    const mx = Math.max(1, ...strikes.map(x => Math.abs(x.net))), barMax = Math.min(90, plotW * 0.12);
+    const fade = g.stale ? 0.45 : 1, bottom = h - (L.plotW < 600 ? 110 : 64);
+    if (mo.gexZones !== false) (g.zones || []).forEach(z => {
+      if (!z.sign) return;
+      const yt = Y(z.hi), yb = Y(z.lo), a = yt == null ? 0 : yt, b = yb == null ? h : yb;
+      if (b < 0 || a > h) return;
+      ctx.fillStyle = z.sign > 0 ? `rgba(61,220,151,${0.035 * fade})` : `rgba(255,107,107,${0.045 * fade})`;
+      ctx.fillRect(0, Math.max(0, a), plotW, Math.min(h, b) - Math.max(0, a));
+    });
+    const strikes = (g.strikes || []).map(x => ({...x, y: Y(x.strike)})).filter(x => x.y != null && x.y > 0 && x.y < h - 24);
+    const split = mo.gexBars === 'split', barMax = Math.min(90, plotW * 0.12);
+    const mx = Math.max(1, ...strikes.map(x => split ? Math.max(Math.abs(x.calls), Math.abs(x.puts)) : Math.abs(x.net)));
     ctx.globalAlpha = 0.55 * fade;
     strikes.forEach(x => {
-      const w = Math.max(1, barMax * Math.abs(x.net) / mx);
-      ctx.fillStyle = x.net >= 0 ? '#3ddc97' : '#ff6b6b'; ctx.fillRect(0, x.y - 2, w, 4);
+      if (split) {
+        ctx.fillStyle = '#3ddc97'; ctx.fillRect(0, x.y - 3, Math.max(1, barMax * Math.abs(x.calls) / mx), 3);
+        ctx.fillStyle = '#ff6b6b'; ctx.fillRect(0, x.y, Math.max(1, barMax * Math.abs(x.puts) / mx), 3);
+      } else {
+        ctx.fillStyle = x.net >= 0 ? '#3ddc97' : '#ff6b6b'; ctx.fillRect(0, x.y - 2, Math.max(1, barMax * Math.abs(x.net) / mx), 4);
+      }
     });
     ctx.globalAlpha = fade;
-    const COL = {callwall: '#e879f9', putwall: '#22d3ee', flip: '#facc15', strike: '#a78bfa'};
-    const BG = {callwall: 'rgba(232,121,249,.88)', putwall: 'rgba(34,211,238,.88)', flip: 'rgba(250,204,21,.9)', strike: 'rgba(167,139,250,.88)'};
+    const COL = Panel.GEX_COL, ESS = ['callwall', 'putwall', 'flip', 'absgamma', 'emup', 'emdn'], all = mo.gexLevels === 'all';
     const fmt = LT.fmtP, musd = v => v == null ? '' : ` · ${v > 0 ? '+' : '−'}${LT.num(Math.abs(v) / 1e6, 1)} M$ par 1 %`;
+    const dist = k => k.distPct == null ? '' : Math.abs(k.distPct) < 0.05 ? ' · au prix' : ` · ${k.distPct > 0 ? '+' : '−'}${LT.num(Math.abs(k.distPct), 1)} %`;
     const labels = [];
     g.levels.forEach(k => {
+      if (!all && !ESS.includes(k.kind) && !(k.kind === 'strike' && k.vwap && k.vwap.length)) return;
       const y = Y(k.price);
       if (y == null || y < 0 || y > h - 24) return;
-      ctx.strokeStyle = COL[k.kind] || '#a78bfa'; ctx.lineWidth = k.kind === 'strike' ? 1 : 1.4; ctx.setLineDash(k.kind === 'flip' ? [7, 4] : k.kind === 'strike' ? [1, 4] : [10, 3]);
+      const em = k.kind === 'emup' || k.kind === 'emdn';
+      ctx.strokeStyle = COL[k.kind] || COL.strike; ctx.lineWidth = k.kind === 'strike' || em ? 1 : 1.4;
+      ctx.setLineDash(k.kind === 'flip' ? [7, 4] : k.kind === 'strike' ? [1, 4] : em ? [3, 5] : k.kind === 'maxpain' ? [2, 3] : [10, 3]);
       ctx.beginPath(); ctx.moveTo(barMax + 4, y); ctx.lineTo(plotW, y); ctx.stroke();
-      if (k.kind === 'strike' && !(k.vwap && k.vwap.length)) return;           // petits strikes : étiquette seulement s'ils tombent sur un VWAP
+      if (k.kind === 'strike' && !all && !(k.vwap && k.vwap.length)) return;
       const conf = k.vwap && k.vwap.length ? ` ≈ ${k.vwap.map(v => v.name).slice(0, 2).join(', ')}` : '';
-      labels.push({y, col: COL[k.kind], bg: BG[k.kind] || BG.strike, text: `Γ ${k.label.toLowerCase()} ${fmt(k.price)}${k.kind === 'flip' ? '' : musd(k.gex)}${conf}`});
+      const name = em ? (k.kind === 'emup' ? 'haut attendu 24 h' : 'bas attendu 24 h') : k.label.toLowerCase() + (k.alsoAbs ? ' (plus fort gamma)' : '');
+      const val = ['flip', 'maxpain'].includes(k.kind) || em ? '' : musd(k.gex);
+      labels.push({y, bg: Panel.GEX_BG[k.kind] || Panel.GEX_BG.strike, fg: em ? '#e6e8ee' : '#0b0e11', text: `Γ ${name} ${fmt(k.price)}${val}${dist(k)}${conf}`});
     });
     ctx.setLineDash([]);
-    LT.placeLabels(labels, 16, 12, h - 30).forEach(it => this.tag(barMax + 8, it.ly, it.text, '#0b0e11', it.bg, true, true));
+    // la légende du graphique (en haut à gauche) ne doit pas cacher une étiquette : celles qui tombent à sa hauteur passent à sa droite
+    const lgEl = this.host && this.host.querySelector('.legend'), cv = ctx.canvas.getBoundingClientRect();
+    const lg = lgEl && !lgEl.hidden && lgEl.offsetHeight ? lgEl.getBoundingClientRect() : null;
+    const lgBox = lg ? {top: lg.top - cv.top - 10, bot: lg.bottom - cv.top + 10, right: lg.right - cv.left + 8} : null;
+    LT.placeLabels(labels, 16, 12, bottom).forEach(it => {
+      const x = lgBox && it.ly >= lgBox.top && it.ly <= lgBox.bot ? Math.max(barMax + 8, lgBox.right) : barMax + 8;
+      this.tag(x, it.ly, it.text, it.fg, it.bg, true, true);
+    });
+    // deux lignes de lecture en bas à gauche : le régime et ce que feraient les teneurs de marché
+    // sur un écran étroit, chaque ligne passe à la ligne entre deux « · » plutôt que d'être écrasée
+    const x0 = Math.max(barMax + 4, 46), avail = Math.max(120, plotW - x0 - 12), rows = [];             // 46 : laisse le logo du graphique visible
+    Panel.gexLines(g).forEach((txt, i) => {
+      ctx.font = (i ? '500' : '600') + ' 11px sans-serif';
+      let cur = '';
+      txt.split(' · ').forEach(part => {
+        const next = cur ? cur + ' · ' + part : part;
+        if (cur && ctx.measureText(next).width > avail) { rows.push({t: cur, i}); cur = part; } else cur = next;
+      });
+      if (cur) rows.push({t: cur, i});
+    });
+    const tw = Math.max(...rows.map(r => { ctx.font = (r.i ? '500' : '600') + ' 11px sans-serif'; return ctx.measureText(r.t).width; })) + 14;
+    const y0 = h - 34 - 15 * (rows.length - 1);
+    ctx.fillStyle = 'rgba(11,14,17,.8)'; ctx.fillRect(x0, y0 - 10, tw, 15 * rows.length + 4);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    rows.forEach((r, j) => {
+      ctx.font = (r.i ? '500' : '600') + ' 11px sans-serif';
+      ctx.fillStyle = r.i ? '#c9ccd6' : g.sign > 0 ? '#3ddc97' : g.sign < 0 ? '#ff8a8a' : '#e6e8ee';
+      ctx.fillText(r.t, x0 + 7, y0 - 1 + 15 * j);
+    });
     if (g.stale) this.tag(barMax + 8, 14, 'Γ gamma : données de plus de 30 minutes', '#fff', 'rgba(90,96,112,.85)', false, true);
     ctx.globalAlpha = 1;
+  }
+  static get GEX_COL() { return {callwall: '#e879f9', putwall: '#22d3ee', flip: '#facc15', strike: '#a78bfa', absgamma: '#f8fafc', maxpain: '#fb923c', emup: '#94a3b8', emdn: '#94a3b8'}; }
+  static get GEX_BG() {
+    return {callwall: 'rgba(232,121,249,.88)', putwall: 'rgba(34,211,238,.88)', flip: 'rgba(250,204,21,.9)', strike: 'rgba(167,139,250,.88)',
+      absgamma: 'rgba(248,250,252,.9)', maxpain: 'rgba(251,146,60,.9)', emup: 'rgba(71,85,105,.85)', emdn: 'rgba(71,85,105,.85)'};
+  }
+  static gexLines(g) {
+    // ligne 1 : régime au prix et position face à la bascule ; ligne 2 : couverture estimée à ±2 %, mouvement attendu, calcul utilisé
+    const n = (v, d = 1) => LT.num(Math.abs(v), d), m = v => `${n(v / 1e6, 0)} M$`;
+    const reg = g.sign > 0 ? 'gamma positif : marché plutôt amorti' : g.sign < 0 ? 'gamma négatif : marché plutôt amplifié' : 'gamma neutre';
+    const fl = g.flip != null && g.flipDistPct != null ? ` · prix ${g.flipDistPct >= 0 ? 'au-dessus' : 'en dessous'} de la bascule (${g.flipDistPct >= 0 ? '+' : '−'}${n(g.flipDistPct)} %)` : '';
+    const f2 = (g.flows || []).find(f => f.pct === 2), flow = v => `${v > 0 ? 'achat' : 'vente'} ${m(v)}`;
+    const em = g.em && g.em.day ? ` · attendu 24 h ±${n(g.em.day.pct)} %` : '';
+    const src = (g.sources || []).map(s => s.ex).join(' + ');
+    const scope = {all: 'toutes échéances', week: '7 jours', front: 'prochaine échéance'}[g.scope] || '';
+    return [`Γ ${reg} · ${g.total >= 0 ? '+' : '−'}${n(g.total / 1e6)} M$ par 1 %${fl}`,
+      `${f2 ? `si +2 % : ${flow(f2.up)} · si −2 % : ${flow(f2.down)}` : ''}${em} · ${scope}, ${src}`];
   }
   drawPlan(L, h) {
     // V25.3 : les idées ENVOYÉES, à leurs niveaux figés, à partir de la bougie où elles sont parties (trait vertical et date) ; terminées

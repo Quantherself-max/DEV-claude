@@ -562,6 +562,12 @@ class ExternalHub:
                 g = o.get("gex")                                       # V26 : niveaux de gamma gardes pour mesurer plus tard leur effet sur le prix
                 if g:
                     row["gexTotal"], row["gexFlip"], row["gexCallWall"], row["gexPutWall"] = g.get("total"), g.get("flip"), g.get("callWall"), g.get("putWall")
+                    ga = (o.get("gexSets") or {}).get("all") or {}      # V38 : toutes bourses, plus fort gamma, prochaine echeance, mouvement attendu
+                    gall, gfr, em = ga.get("all") or {}, ga.get("front") or {}, ((o.get("gexSets") or {}).get("em") or {}).get("day") or {}
+                    row["gexAllTotal"], row["gexAllFlip"], row["gexAbs"] = gall.get("total"), gall.get("flip"), gall.get("absGamma")
+                    row["gexFrontCallWall"], row["gexFrontPutWall"], row["gexEmDayPct"] = gfr.get("callWall"), gfr.get("putWall"), em.get("pct")
+                    f2 = next((f for f in gall.get("flows") or [] if f["pct"] == 2.0), None)
+                    row["gexHedgeUp2"], row["gexHedgeDn2"] = (f2["up"], f2["down"]) if f2 else (None, None)
             if coin in self.derivs["dvol"]:
                 row["dvol"] = self.derivs["dvol"][coin]["value"]
             if coin in self.derivs["futures"]:
