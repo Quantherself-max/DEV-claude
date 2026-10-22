@@ -2,6 +2,7 @@ from __future__ import annotations
 import sys
 import math
 import random
+import shutil
 import unittest
 
 from engine import fine, history, squeeze as sq, squeezestudy as ss
@@ -235,23 +236,24 @@ class ServiceView(unittest.TestCase):
         from data.simulated import SimulatedSource
         from server import App
         from tests.test_data_server import NOW
-        with tempfile.TemporaryDirectory(**TMP_KW) as tmp:
-            cfg = Config(source="simulated", symbols=("BTCUSDT",), data_dir=tmp, port=0)
-            app = App(cfg, env_path=Path(tmp) / ".env", make_source=lambda c: SimulatedSource(now_ms=NOW))
-            app.service.refresh_all()
-            m = app.service.markets["BTCUSDT"]
-            v = m.squeeze_view()
-            self.assertIsNotNone(v)
-            json.dumps(v)
-            self.assertTrue(v["hasOi"])
-            self.assertEqual(len(v["spark"]["price"]), 72)
-            self.assertEqual(len(v["spark"]["cvd"]), 72)
-            self.assertIn(v["state"]["code"], ("none", "short_fuel", "long_fuel", "squeeze_up", "squeeze_down", "div_price_up", "div_price_down", "effort"))
-            self.assertIs(m.squeeze_view(), v)                                  # cache : pas de recalcul tant que rien ne change
-            lec = app.service.lecture("BTCUSDT")
-            self.assertIn("squeeze", lec)
-            self.assertIsNotNone(lec["squeeze"])
-            json.dumps(lec)
+        tmp = tempfile.mkdtemp()                                               # nettoyage tolérant : des tâches de fond écrivent encore
+        self.addCleanup(shutil.rmtree, tmp, True)
+        cfg = Config(source="simulated", symbols=("BTCUSDT",), data_dir=tmp, port=0)
+        app = App(cfg, env_path=Path(tmp) / ".env", make_source=lambda c: SimulatedSource(now_ms=NOW))
+        app.service.refresh_all()
+        m = app.service.markets["BTCUSDT"]
+        v = m.squeeze_view()
+        self.assertIsNotNone(v)
+        json.dumps(v)
+        self.assertTrue(v["hasOi"])
+        self.assertEqual(len(v["spark"]["price"]), 72)
+        self.assertEqual(len(v["spark"]["cvd"]), 72)
+        self.assertIn(v["state"]["code"], ("none", "short_fuel", "long_fuel", "squeeze_up", "squeeze_down", "div_price_up", "div_price_down", "effort"))
+        self.assertIs(m.squeeze_view(), v)                                  # cache : pas de recalcul tant que rien ne change
+        lec = app.service.lecture("BTCUSDT")
+        self.assertIn("squeeze", lec)
+        self.assertIsNotNone(lec["squeeze"])
+        json.dumps(lec)
 
 
 if __name__ == "__main__":
