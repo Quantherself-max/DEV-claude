@@ -24,8 +24,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from engine import footprint as fpm
+from engine import sizeflow as sfm
 
 VISION = "https://data.binance.vision/data/futures/um/daily/aggTrades"
+VISION_SPOT = "https://data.binance.vision/data/spot/daily/aggTrades"      # V39 : marche spot (flux par taille d'ordre)
+REST_PATH = {"perp": "/fapi/v1/aggTrades", "spot": "/api/v3/aggTrades"}
 DAY = 86_400_000
 REST_PAUSE = 1.0             # secondes entre deux pages de l'API (poids 20 : 1 200 sur 2 400 par minute au plus)
 SAVE_EVERY = 300.0           # sauvegarde du jour en cours (secondes)
@@ -58,12 +61,14 @@ def http_bytes(url: str, timeout: float = 120.0) -> bytes | None:
         raise
 
 
-def parse_day(raw: bytes, step: float | None = None, tick: float | None = None):
+def parse_day(raw: bytes, step: float | None = None, tick: float | None = None, flow=None):
     """Archive aggTrades d'un jour -> (empreinte fermee, premier numero, dernier numero, temps du dernier, nombre). Lecture en flux (memoire
-    faible meme pour les jours les plus charges du BTC). Le pas de cotation est deduit de l'ecriture des prix si `tick` est None."""
+    faible meme pour les jours les plus charges du BTC). Le pas de cotation est deduit de l'ecriture des prix si `tick` est None.
+    V39 : `flow` (engine/sizeflow.SizeFlow) recoit aussi chaque transaction ; les archives spot donnent le temps en microsecondes depuis 2025."""
     z = zipfile.ZipFile(io.BytesIO(raw))
     name = z.namelist()[0]
     fp = None
+    fadd = flow.add_unlocked if flow is not None else None
     first = last = last_t = None
     n = 0
     with z.open(name) as fh:
@@ -77,7 +82,12 @@ def parse_day(raw: bytes, step: float | None = None, tick: float | None = None):
                 add = fp.add_unlocked
             i = int(a[0])
             t = int(a[5])
-            add(float(a[1]), float(a[2]), a[6][:1] in (b"t", b"T"), t)
+            if t > 100_000_000_000_000:                              # microsecondes (archives spot depuis 2025)
+                t //= 1000
+            p, q, m = float(a[1]), float(a[2]), a[6][:1] in (b"t", b"T")
+            add(p, q, m, t)
+            if fadd is not None:
+                fadd(p, q, m, t)
             if first is None:
                 first = i
             last, last_t = i, t
@@ -85,6 +95,8 @@ def parse_day(raw: bytes, step: float | None = None, tick: float | None = None):
     if fp is None:
         return None
     fp.seal(2 ** 62)
+    if flow is not None:
+        flow.flush()
     return fp, first, last, last_t, n
 
 
@@ -92,14 +104,18 @@ class TradeSync:
     """Empreinte exacte d'une paire, tenue a jour en tache de fond. `get(path, params)` : appel de l'API publique Binance (la source du
     terminal) ; `fetch(url)` : telechargement d'une archive (None si absente)."""
 
-    def __init__(self, symbol: str, folder, days: int, get, fetch=http_bytes, now_ms=None, vision_base: str = VISION,
-                 rest_pause: float = REST_PAUSE):
+    def __init__(self, symbol: str, folder, days: int, get, fetch=http_bytes, now_ms=None, vision_base: str | None = None,
+                 rest_pause: float = REST_PAUSE, market: str = "perp", flow_days: int | None = None):
         self.symbol = symbol.upper()
+        self.market = market if market in REST_PATH else "perp"
         self.dir = Path(folder) / self.symbol
         self.days = max(1, int(days))
         self.get, self.fetch = get, fetch
         self.now_ms = now_ms or (lambda: int(time.time() * 1000))
-        self.vision_base = vision_base
+        self.vision_base = vision_base or (VISION_SPOT if self.market == "spot" else VISION)
+        self.rest_path = REST_PATH[self.market]
+        self.flow = sfm.SizeFlow()                                   # V39 : delta par taille d'ordre, nourri en meme temps que l'empreinte
+        self.flow_days = self.days if flow_days is None else max(0, min(self.days, int(flow_days)))   # jours recents ou il doit exister
         self.rest_pause = rest_pause
         self.fp: fpm.Footprint | None = None
         self.q: deque = deque()                                      # transactions en direct pas encore integrees : (numero, prix, qte, vente, t)
@@ -202,6 +218,7 @@ class TradeSync:
             a, p, qty, m, t = self.q.popleft()
             if a == self.head_id + 1:
                 fp.add(p, qty, m, t)
+                self.flow.add(p, qty, m, t)
                 self.head_id, self.head_t = a, t
                 self.day_last[t - t % DAY] = (a, t)
                 n += 1
@@ -213,6 +230,7 @@ class TradeSync:
         """Couverture de la queue jusqu'a la derniere transaction integree ; jours touches depuis `d0` marques a sauvegarder."""
         if self.tail_start is not None and self.head_t is not None and self.head_t > self.tail_start:
             self.fp.cover(self.tail_start, self.head_t)
+            self.flow.cover(self.tail_start, self.head_t)
         if self.head_t is not None:
             d = day_of(self.head_t) if d0 is None else min(d0, day_of(self.head_t))
             while d <= self.head_t:
@@ -223,7 +241,7 @@ class TradeSync:
         self.rest_at = time.time() + self.rest_pause
         d0 = day_of(self.head_t) if self.head_t is not None else None
         try:
-            rows = self.get("/fapi/v1/aggTrades", {"symbol": self.symbol, "fromId": self.head_id + 1, "limit": 1000})
+            rows = self.get(self.rest_path, {"symbol": self.symbol, "fromId": self.head_id + 1, "limit": 1000})
         except Exception as e:
             self.rest_errors += 1
             self.error = f"API aggTrades : {e}"
@@ -241,7 +259,10 @@ class TradeSync:
             if a != self.head_id + 1 or (stop is not None and a >= stop):
                 break
             t = int(r["T"])
+            if t > 100_000_000_000_000:                              # microsecondes (API spot si demande)
+                t //= 1000
             self.fp.add(float(r["p"]), float(r["q"]), bool(r["m"]), t)
+            self.flow.add(float(r["p"]), float(r["q"]), bool(r["m"]), t)
             self.head_id, self.head_t = a, t
             self.day_last[t - t % DAY] = (a, t)
             n += 1
@@ -264,7 +285,7 @@ class TradeSync:
         for d in self.wanted_days():
             if d in self.done:
                 continue
-            if self.fp is not None and self.fp.complete(d, d + DAY):
+            if self.fp is not None and self._day_ok(d):
                 self.done.add(d)
                 continue
             if self.missing.get(d, 0) > now_s:
@@ -292,8 +313,16 @@ class TradeSync:
             self._anchor_rest(self.wanted_days()[0])                 # aucune archive utilisable : la queue part d'hier minuit (API)
         return False
 
+    def _day_ok(self, d: int) -> bool:
+        """Jour complet : toutes ses transactions dans l'empreinte et, pour les `flow_days` jours les plus recents, dans le flux par taille
+        (un jour enregistre avant la V39 n'a pas ce flux : son archive est relue une fois)."""
+        if not self.fp.complete(d, d + DAY):
+            return False
+        return d < day_of(self.now_ms()) - self.flow_days * DAY or self.flow.complete(d, d + DAY)
+
     def _load_day(self, d: int, raw: bytes):
-        res = parse_day(raw, self.fp.step if self.fp else None, self.fp.tick if self.fp else None)
+        dflow = sfm.SizeFlow()
+        res = parse_day(raw, self.fp.step if self.fp else None, self.fp.tick if self.fp else None, dflow)
         if res is None:
             self.missing[d] = time.time() + RETRY_404
             return
@@ -306,6 +335,11 @@ class TradeSync:
         for t5, (i0, b, s) in dfp.closed.items():
             fp.put(t5, i0, b, s)
         fp.cover(d, d + DAY)
+        self.flow.clear(d, d + DAY)
+        vals = dflow.day_array(d)
+        if vals is not None:
+            self.flow.put_day(d, vals)
+        self.flow.cover(d, d + DAY)
         self.done.add(d)
         self.missing.pop(d, None)
         self.dirty.discard(d)
@@ -325,7 +359,7 @@ class TradeSync:
             return
         self.rest_at = time.time() + self.rest_pause
         try:
-            rows = self.get("/fapi/v1/aggTrades", {"symbol": self.symbol, "startTime": day, "endTime": day + 3_599_999, "limit": 1})
+            rows = self.get(self.rest_path, {"symbol": self.symbol, "startTime": day, "endTime": day + 3_599_999, "limit": 1})
         except Exception as e:
             self.error = f"API aggTrades : {e}"
             return
@@ -354,6 +388,9 @@ class TradeSync:
         try:
             self.dir.mkdir(parents=True, exist_ok=True)
             tmp = self._path(d).with_suffix(".tmp")
+            fl = self.flow.day_values(d)
+            if fl is not None and self.flow.covered_ms(d, d + DAY) >= self.fp.covered_ms(d, d + DAY):
+                extra = {**extra, "flow": fl}                        # V39 : flux par taille, couvert comme l'empreinte de ce jour
             tmp.write_bytes(gzip.compress(self.fp.day_blob(d, extra), compresslevel=5))
             tmp.replace(self._path(d))
         except OSError as e:
@@ -383,7 +420,11 @@ class TradeSync:
                 head = self.fp.load_blob(gzip.decompress(f.read_bytes()))
             except (OSError, ValueError, EOFError, KeyError):
                 continue
-            if self.fp.complete(d, d + DAY):
+            if isinstance(head.get("flow"), list):                   # V39 : flux par taille de ce jour, meme couverture que l'empreinte
+                self.flow.put_day(d, head["flow"])
+                for a, b in head.get("cov", []):
+                    self.flow.cover(int(a), int(b))
+            if self._day_ok(d):
                 self.done.add(d)
             if head.get("lastId") is not None:
                 self.day_last[d] = (int(head["lastId"]), int(head["lastT"]))
@@ -404,6 +445,7 @@ class TradeSync:
         oldest = min(self.wanted_days())
         if self.fp.first_covered() is not None and self.fp.first_covered() < oldest - DAY:
             self.fp.drop_before(oldest)
+            self.flow.drop_before(oldest)
             for d in [x for x in self.done if x < oldest]:
                 self.done.discard(d)
             for d in [x for x in self.day_last if x < oldest]:
@@ -434,7 +476,7 @@ class TradeSync:
         now = self.now_ms()
         fp = self.fp
         cov_today = (fp.covered_ms(today, now) / max(1, now - today)) if fp else 0.0
-        return {"symbol": self.symbol, "days": self.days, "complete": sum(1 for d in wanted if d in self.done),
+        return {"symbol": self.symbol, "market": self.market, "days": self.days, "complete": sum(1 for d in wanted if d in self.done),
                 "today": round(min(1.0, cov_today), 4), "state": self.state, "current": ymd(self.current) if self.current else None,
                 "behindSec": round((now - self.head_t) / 1000) if self.head_t else None, "queue": len(self.q),
                 "mb": round(self.mb, 1), "error": self.error, "step": fp.step if fp else None, "exactPrices": fp.exact if fp else None}

@@ -241,9 +241,10 @@ class BriefTests(unittest.TestCase):
 
 class PageTests(unittest.TestCase):
     def test_version_and_page(self):
-        self.assertEqual((VERSION, API_LEVEL), ("38", 38))
+        self.assertGreaterEqual(API_LEVEL, 38)                            # versions suivantes : le niveau monte
+        self.assertEqual(VERSION, str(API_LEVEL))
         app = (WEB / "app.js").read_text(encoding="utf-8")
-        self.assertIn("const NEED_API = 38;", app)
+        self.assertIn(f"const NEED_API = {API_LEVEL};", app)
         self.assertIn("gexScope=${mo.gexScope || 'all'}&gexSrc=${mo.gexSrc || 'all'}", app)
         desk = (WEB / "desk.js").read_text(encoding="utf-8")
         for k in ("gexScope", "gexSrc", "gexLevels", "gexZones", "gexBars"):

@@ -536,7 +536,34 @@ class Panel {
   // funding par 8 h, par an ou cumulé ; lectures chiffrées en tête de chaque fenêtre ----
   panes() {
     const o = LT.st.mainOpts || {};
-    return this.kind === 'main' ? ['oi', 'delta', 'fund'].filter(k => o[k]) : [];
+    if (this.kind !== 'main') return [];
+    const sm = o.sizeMkt || 'both';                                          // V39 : flux par taille d'ordre, une fenêtre par marché
+    return ['oi', 'delta', 'fund'].filter(k => o[k]).concat(o.sizes ? ['szs', 'szp'].filter(k => sm === 'both' || sm === (k === 'szs' ? 'spot' : 'perp')) : []);
+  }
+  // hauteur d'une sous-fenêtre : 17 % jusqu'à 3 fenêtres, puis partagée pour laisser au moins 38 % aux bougies
+  paneP() { const n = this.panes().length; return n <= 3 ? Panel.PANE : Math.max(0.1, 0.62 / n); }
+  // V39 : couleurs comme l'indicateur d'Aggr (moins de 1 000 $ rouge … plus d'un million bleu) ; en 3 groupes : petits, moyens, gros
+  static get SZ_COL5() { return ['#ef5350', '#ffa726', '#ffee58', '#66bb6a', '#42a5f5']; }
+  static get SZ_COL3() { return ['#ff8a65', '#ffee58', '#42a5f5']; }
+  static get SZ_SHORT5() { return ['< 1 k$', '1-10 k$', '10-100 k$', '100 k-1 M$', '> 1 M$']; }
+  // courbes d'un marché : [{nom, couleur, delta par bougie}] en 3 groupes ou 5 tailles
+  static sizeSets(Z, m) {
+    const M = Z && Z[m];
+    if (!M || !M.ok || !Array.isArray(M.delta)) return [];
+    if ((LT.st.mainOpts || {}).sizeGroups === '5') return M.delta.map((v, c) => ({name: Panel.SZ_SHORT5[c], col: Panel.SZ_COL5[c], vals: v}));
+    return (Z.groups || []).map(([name, , cls], g) => ({name, col: Panel.SZ_COL3[g],
+      vals: Z.times.map((_, i) => cls.some(c => M.delta[c][i] == null) ? null : cls.reduce((a, c) => a + M.delta[c][i], 0))}));
+  }
+  // cumul remis à zéro au début de chaque jour / semaine / mois (UTC) ; rien avant la première bougie connue
+  static sizeCum(Z, vals) {
+    const r = (LT.st.mainOpts || {}).sizeReset, per = {D: ['1d', 86400], W: ['1w', 604800], M: ['1M', 2419200]}[r];
+    const rs = per && (LT.TF_SEC[Z.tf] || 0) < per[1] ? per[0] : null;
+    let run = null, prev = null;
+    return Z.times.map((tm, i) => {
+      if (rs) { const k = LT.barStart(tm, rs); if (prev !== null && k !== prev && run !== null) run = 0; prev = k; }
+      const v = vals[i]; if (v != null) run = (run || 0) + v;
+      return v == null && run === null ? null : run;
+    });
   }
   static get POS_COL() { return {0: '#7b8394', 1: '#26c281', 2: '#ff4d6d', 3: '#6ec8ff', 4: '#ffa64d'}; }
   static get POS_TXT() { return {0: 'intérêt ouvert stable', 1: 'acheteurs qui ouvrent', 2: 'vendeurs qui ouvrent', 3: 'vendeurs qui rachètent', 4: 'acheteurs qui sortent'}; }
@@ -561,15 +588,24 @@ class Panel {
       return run;
     });
   }
-  candleBottom(h) { return Math.max(40, (h - 26) * (1 - this.panes().length * Panel.PANE)); }
+  candleBottom(h) { return Math.max(40, (h - 26) * (1 - this.panes().length * this.paneP())); }
   syncSubcharts(d) {
-    const st = LT.st, I = st.ind, o = st.mainOpts || {}, panes = this.panes(), n = panes.length, P = Panel.PANE, t = this.th();
+    const st = LT.st, I = st.ind, o = st.mainOpts || {}, panes = this.panes(), n = panes.length, P = this.paneP(), t = this.th();
     const ok = !!(I && I.ready && d && I.symbol === d.symbol && I.tf === d.tf);
+    const Z = st.size, zok = !!(Z && Z.ready && d && Z.symbol === d.symbol && Z.tf === d.tf), shared = o.sizeScale === 'shared';
+    const zsets = {s: zok && panes.includes('szs') ? Panel.sizeSets(Z, 'spot') : [], p: zok && panes.includes('szp') ? Panel.sizeSets(Z, 'perp') : []};
     const cvdM = o.cvdMode || (o.deltaCvd ? 'perp' : 'off'), dOn = ok && panes.includes('delta'), fOn = ok && panes.includes('fund') && Array.isArray(I.funding);
     const want = {oiS: ok && panes.includes('oi') && o.oiMode !== 'chg', oiH: ok && panes.includes('oi') && o.oiMode === 'chg', dS: dOn,
       cvdS: dOn && (cvdM === 'perp' || cvdM === 'both'), spS: dOn && (cvdM === 'spot' || cvdM === 'both') && Array.isArray(I.spotDelta),
       fdS: fOn && o.fundMode !== 'cum', fdC: fOn && o.fundMode === 'cum' && Array.isArray(I.fundCum)};
+    for (const m of ['s', 'p']) for (let j = 0; j < 5; j++) want[`sz${m}${j}`] = j < zsets[m].length;
     for (const k of Object.keys(want)) if (!want[k] && this[k]) { this.chart.removeSeries(this[k]); this[k] = null; }
+    for (const m of ['s', 'p']) zsets[m].forEach((g, j) => {
+      const k = `sz${m}${j}`, sid = shared ? `sz${m}` : k;
+      if (this[k] && this[k + 'sid'] !== sid) { this.chart.removeSeries(this[k]); this[k] = null; }
+      if (!this[k]) { this[k] = this.chart.addLineSeries({lastValueVisible: false, priceLineVisible: false, priceFormat: {type: 'volume'}, priceScaleId: sid, color: g.col, lineWidth: 1.4, crosshairMarkerVisible: false}); this[k + 'sid'] = sid; }
+      else this[k].applyOptions({color: g.col});
+    });
     const base = {lastValueVisible: false, priceLineVisible: false, priceFormat: {type: 'volume'}};
     if (want.oiS && !this.oiS) this.oiS = this.chart.addCandlestickSeries({...base, priceScaleId: 'oi', borderVisible: false,
       upColor: '#4fc3f7', downColor: '#ffa64d', wickUpColor: '#4fc3f7', wickDownColor: '#ffa64d'});
@@ -580,7 +616,7 @@ class Panel {
     if (want.fdC && !this.fdC) this.fdC = this.chart.addLineSeries({lastValueVisible: false, priceLineVisible: false, priceScaleId: 'fd', priceFormat: fpf, color: '#f5c26b', lineWidth: 1.5, crosshairMarkerVisible: false});
     if (want.cvdS && !this.cvdS) this.cvdS = this.chart.addLineSeries({...base, priceScaleId: 'cvd', color: '#e8eaf0', lineWidth: 1.5, crosshairMarkerVisible: false});
     if (want.spS && !this.spS) this.spS = this.chart.addLineSeries({...base, priceScaleId: 'cvds', color: '#ffb74d', lineWidth: 1.5, crosshairMarkerVisible: false});
-    const lk = [n, !!this.vol, ...Object.keys(want).map(k => !!this[k])].join();
+    const lk = [n, !!this.vol, shared, panes.join('/'), ...Object.keys(want).map(k => !!this[k])].join();
     if (lk !== this.paneKey) {
       this.paneKey = lk;
       this.chart.priceScale('right').applyOptions({scaleMargins: {top: 0.08, bottom: 0.08 + n * P}});
@@ -589,7 +625,16 @@ class Panel {
       if (this.oiS || this.oiH) this.chart.priceScale('oi').applyOptions({scaleMargins: pos('oi'), visible: false});
       if (this.fdS || this.fdC) this.chart.priceScale('fd').applyOptions({scaleMargins: pos('fund'), visible: false});
       for (const [id, k] of [['dl', 'dS'], ['cvd', 'cvdS'], ['cvds', 'spS']]) if (this[k]) this.chart.priceScale(id).applyOptions({scaleMargins: pos('delta'), visible: false});
-      this.indKey = '';
+      for (const m of ['s', 'p']) for (let j = 0; j < 5; j++) if (this[`sz${m}${j}`]) this.chart.priceScale(this[`sz${m}${j}sid`]).applyOptions({scaleMargins: pos('sz' + m), visible: false});
+      this.indKey = ''; this.sizeKey = '';
+    }
+    const zk = zok ? [Z.symbol, Z.tf, Z.at, o.sizeGroups, o.sizeReset, lk].join('|') : '';
+    if (zok && zk !== this.sizeKey) {
+      this.sizeKey = zk;
+      for (const m of ['s', 'p']) zsets[m].forEach((g, j) => {
+        const c = Panel.sizeCum(Z, g.vals);
+        this[`sz${m}${j}`].setData(Z.times.map((tm, i) => c[i] == null ? {time: tm} : {time: tm, value: c[i]}));
+      });
     }
     if (!ok) return;
     const F = I.funding || [], an = o.fundMode === 'an', usd = o.deltaUnit === 'usd', SD = I.spotDelta || [], L = I.times.length - 1;
@@ -621,6 +666,25 @@ class Panel {
     if (this.fdC) this.fdC.setData(I.times.map((tm, i) => I.fundCum[i] == null ? {time: tm} : {time: tm, value: I.fundCum[i]}));
   }
   // V37 : lectures en tête de chaque fenêtre (ligne 1 : la bougie visée ; ligne 2 : le résumé)
+  // V39 : lecture d'une fenêtre « flux par taille d'ordre » (ligne 1 : le cumul de chaque taille à la bougie visée ; ligne 2 : qui achète, qui vend)
+  static sizeLines(k, Z, idx) {
+    const m = k === 'szs' ? 'spot' : 'perp', lab = m === 'spot' ? 'Spot' : 'Perpétuel', M = Z && Z[m];
+    if (!M) return [`${lab} · par taille d'ordre · chargement…`];
+    if (!M.ok) return [`${lab} · par taille d'ordre · ${M.why || 'indisponible'}`];
+    const sets = Panel.sizeSets(Z, m), cums = sets.map(g => Panel.sizeCum(Z, g.vals));
+    const r = (LT.st.mainOpts || {}).sizeReset, rl = {D: ' du jour', W: ' de la semaine', M: ' du mois'}[r] || '';
+    const first = Z.times.findIndex((_, i) => cums[0][i] != null);
+    const l1 = [`${lab} · cumul${rl}${M.simulated ? ' (simulé)' : ''}`];
+    sets.forEach((g, j) => l1.push({txt: `${g.name} ${cums[j][idx] == null ? '-' : Panel.big(cums[j][idx]) + ' $'}`, col: g.col}));
+    if (first > 0 && !M.simulated) l1.push(`depuis le ${new Date(Z.times[first] * 1000).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit'})}`);
+    // lecture sur les dernières bougies, toujours en 3 groupes (petits : moins de 10 000 $, gros : plus de 100 000 $)
+    const N = Math.min(24, idx - Math.max(0, first)), D = c => { let a = 0; for (let i = idx - N + 1; i <= idx; i++) a += c.reduce((x, k2) => x + (M.delta[k2][i] || 0), 0); return a; };
+    if (N < 3) return [l1];
+    const big = D([3, 4]), small = D([0, 1]), mid = D([2]);
+    const txt = big > 0 && small < 0 ? 'les gros achètent, les petits vendent : accumulation' : big < 0 && small > 0 ? 'les gros vendent, les petits achètent : distribution' :
+      big > 0 && small > 0 ? 'gros et petits achètent ensemble' : big < 0 && small < 0 ? 'gros et petits vendent ensemble' : 'flux équilibré';
+    return [l1, [`${N} bougies : ${txt}`, {txt: `gros ${Panel.big(big)} $`, col: Panel.SZ_COL3[2]}, {txt: `moyens ${Panel.big(mid)} $`, col: Panel.SZ_COL3[1]}, {txt: `petits ${Panel.big(small)} $`, col: Panel.SZ_COL3[0]}]];
+  }
   paneLines(k, I, idx) {
     const o = LT.st.mainOpts || {}, unit = I.unit, pct = (x, d = 2) => (x >= 0 ? '+' : '−') + Math.abs(x * 100).toFixed(d).replace('.', ',') + ' %';
     if (k === 'fund') return [Panel.fundText(I, idx, o.fundMode), Panel.fundAggText(I)];
@@ -659,10 +723,13 @@ class Panel {
   drawPanes(L, w, h) {
     const panes = this.panes();
     if (!panes.length) return;
-    const ctx = this.ctx, st = LT.st, I = st.ind, t = this.th(), P = Panel.PANE, H = h - 26, n = panes.length, plotW = L.plotW;
+    const ctx = this.ctx, st = LT.st, I = st.ind, t = this.th(), P = this.paneP(), H = h - 26, n = panes.length, plotW = L.plotW;
     const ok = !!(I && I.ready && I.symbol === L.d.symbol && I.tf === L.d.tf);
     let idx = ok ? I.times.length - 1 : -1;
     if (ok && this.crossT != null) { const k = I.times.indexOf(this.crossT); if (k >= 0) idx = k; }
+    const Z = st.size, zok = !!(Z && Z.ready && Z.symbol === L.d.symbol && Z.tf === L.d.tf);
+    let zi = zok ? Z.times.length - 1 : -1;
+    if (zok && this.crossT != null) { const k = Z.times.indexOf(this.crossT); if (k >= 0) zi = k; }
     ctx.font = `500 11px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
     const fit = parts => {                                                // petit écran : on garde les premiers morceaux qui tiennent
       const out = []; let wsum = 0;
@@ -672,10 +739,27 @@ class Panel {
     panes.forEach((k, j) => {
       const y0 = Math.round(H * (1 - (n - j) * P)) + 0.5, ph = H * P;
       ctx.strokeStyle = 'rgba(120,130,150,.35)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(plotW, y0); ctx.stroke();
-      const lines = !ok || (k === 'fund' && !Array.isArray(I.funding)) ? [({oi: 'Intérêt ouvert', delta: 'Delta', fund: 'Funding'})[k] + ' · chargement…'] : this.paneLines(k, I, idx);
+      const sz = k === 'szs' || k === 'szp';
+      const lines = sz ? (zok ? Panel.sizeLines(k, Z, zi) : [(k === 'szs' ? 'Spot' : 'Perpétuel') + ' · par taille d\'ordre · chargement…']) :
+        !ok || (k === 'fund' && !Array.isArray(I.funding)) ? [({oi: 'Intérêt ouvert', delta: 'Delta', fund: 'Funding'})[k] + ' · chargement…'] : this.paneLines(k, I, idx);
       const base = k === 'oi' ? '#8fd3f4' : k === 'fund' ? '#f5c26b' : '#cfd3dc';
-      lines.filter(Boolean).slice(0, ph > 46 ? 2 : 1).forEach((ln, li) => {
-        const parts = fit(typeof ln === 'string' ? ln.split(' · ') : ln), y = y0 + 2 + li * 16;
+      // V39 : dans les fenêtres « flux par taille d'ordre », les morceaux passent à la ligne au lieu d'être coupés (téléphone)
+      let rows = lines.filter(Boolean).slice(0, ph > 46 ? 2 : 1).map((ln, li) => ({parts: typeof ln === 'string' ? ln.split(' · ') : ln, li}));
+      if (sz) {
+        const wrapped = [];
+        rows.forEach(r => {
+          let cur = [], wsum = 0;
+          r.parts.forEach(p => {
+            const ww = ctx.measureText((cur.length ? ' · ' : '') + (typeof p === 'string' ? p : p.txt)).width;
+            if (cur.length && wsum + ww > plotW - 16) { wrapped.push({parts: cur, li: r.li}); cur = []; wsum = 0; }
+            cur.push(p); wsum += ctx.measureText((cur.length > 1 ? ' · ' : '') + (typeof p === 'string' ? p : p.txt)).width;
+          });
+          if (cur.length) wrapped.push({parts: cur, li: r.li});
+        });
+        rows = wrapped.slice(0, Math.max(1, Math.min(3, Math.floor((ph - 8) / 16) - 1)));
+      }
+      rows.forEach(({parts: raw, li}, ri) => {
+        const parts = fit(raw), y = y0 + 2 + ri * 16;
         const tw = parts.reduce((s2, p, i) => s2 + ctx.measureText((i ? ' · ' : '') + (typeof p === 'string' ? p : p.txt)).width, 0);
         ctx.fillStyle = 'rgba(10,12,16,.78)'; ctx.fillRect(4, y, tw + 10, 16);
         let x = 9;

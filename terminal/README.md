@@ -1,7 +1,8 @@
-# Liq Terminal (V38)
+# Liq Terminal (V39)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Flux par taille d'ordre, spot et perpétuel** (V39) : comme « Volume By Side (delta) » d'Aggr, le delta cumulé en dollars des petits ordres (particuliers), des moyens et des gros (institutions), ou des 5 tailles d'Aggr, sur le spot et le perpétuel Binance, avec une lecture « qui achète, qui vend » (voir « V39 » plus bas).
 - **Gamma des options BTC plus complet, et un guide PDF pour le comprendre** (V38) : Deribit, Bybit et OKX additionnés, choix des échéances (toutes, 7 jours, prochaine), strike au plus fort gamma, max pain, mouvement attendu 24 heures, flux de couverture estimés et zones de gamma positif / négatif ; le guide `web/docs/guide_gamma.pdf` explique chaque niveau (voir « V38 » plus bas).
 - **Intérêt ouvert, delta, CVD et funding plus précis, et lus ensemble** (V37) : qui ouvre et qui ferme ses positions à chaque bougie, delta en dollars exacts, CVD du spot à côté de celui du perpétuel, funding pondéré par la durée, cumulé et toutes bourses (voir « V37 » plus bas).
 - **Le même terminal sur ton PC et ton Mac, et les unités 1 minute, semaine et mois** (V36) : tes réglages sont gardés sur le disque et, avec un dossier iCloud, Google Drive, OneDrive ou Dropbox, recopiés sur tes autres ordinateurs (voir « V36 » plus bas).
@@ -133,6 +134,38 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V39 : le flux par taille d'ordre, spot et perpétuel
+
+### Ce que c'est
+Nouvel élément **« Flux par taille d'ordre »** (« ＋ Éléments », famille Flux d'ordres). Comme l'indicateur « Volume By Side (delta) » d'Aggr : pour chaque bougie, les achats agressifs moins les ventes agressives, **en dollars**, séparés selon la **taille de l'ordre** :
+
+| Classe | Taille de l'ordre | Groupe |
+|---|---|---|
+| 1 | moins de 1 000 $ | petits (particuliers) |
+| 2 | 1 000 à 10 000 $ | petits (particuliers) |
+| 3 | 10 000 à 100 000 $ | moyens |
+| 4 | 100 000 $ à 1 million | gros (institutions, gros portefeuilles) |
+| 5 | plus d'un million | gros (institutions, gros portefeuilles) |
+
+- **Une fenêtre pour le spot, une pour le perpétuel** (ou l'un des deux), sous le graphique, comme l'intérêt ouvert et le delta.
+- **Options** : spot et perpétuel, spot ou perpétuel ; 3 groupes (petits, moyens, gros) ou les 5 tailles d'Aggr ; cumul du graphique, du jour, de la semaine ou du mois ; une échelle par courbe (comparer les formes) ou la même échelle (comparer les montants).
+- **Lecture** en tête de chaque fenêtre : le cumul de chaque taille à la bougie visée, puis sur les 24 dernières bougies « les gros achètent, les petits vendent : accumulation », « les gros vendent, les petits achètent : distribution », ou ensemble.
+
+### Comment c'est calculé
+- Chaque transaction de Binance (archives quotidiennes Binance Vision, rattrapage par l'API, flux en direct), déjà téléchargée pour le perpétuel depuis la V23, et **maintenant aussi pour le spot** (`/api/v3/aggTrades`, flux `wss://stream.binance.com:9443`).
+- **Un ordre** = les transactions consécutives du même sens au même instant (un ordre qui balaie plusieurs prix arrive en plusieurs transactions) : elles sont regroupées, comme l'option « aggregate trades » d'Aggr.
+- Stocké par minute (achats et ventes de chaque taille), sauvegardé avec l'empreinte de chaque jour. Une bougie n'est affichée que si au moins 98 % de son temps est couvert par des transactions complètes.
+
+### Au premier lancement
+- **Spot** : le terminal télécharge les 14 derniers jours de transactions spot du BTC et du SOL (archives Binance Vision, en tâche de fond ; estimation : de quelques centaines de Mo à environ 1 Go pour le BTC, beaucoup moins pour le SOL). Réglable dans `.env` : `TERMINAL_SIZEFLOW_DAYS` (0 = spot coupé, 62 au plus).
+- **Perpétuel** : les jours déjà enregistrés n'avaient pas ce flux ; les archives des 14 derniers jours sont retéléchargées et relues **une seule fois** (estimation : quelques Go pour le BTC, comme au premier téléchargement de la V23). Les jours plus anciens gardent leur empreinte, sans ce flux.
+- En attendant, la fenêtre dit « téléchargement des transactions en cours ».
+
+### Limites
+- On ne voit pas les portefeuilles : la **taille de l'ordre** sert d'indice de la taille de celui qui le passe. Un gros acteur qui découpe ses ordres compte dans les petites tailles.
+- Binance seulement (Aggr additionne plusieurs bourses). Formats du spot (temps en microsecondes depuis 2025) traités d'après la documentation de Binance, **non vérifiés** contre les vrais serveurs depuis l'endroit où le terminal a été construit.
+- Mode simulé : la répartition est fabriquée à partir du delta des bougies, seulement pour découvrir l'affichage.
 
 ## Ce qui est nouveau en V38 : le gamma des options BTC, plus complet et expliqué
 

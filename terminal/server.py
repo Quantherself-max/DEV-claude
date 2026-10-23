@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "38"
-API_LEVEL = 38                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "39"
+API_LEVEL = 39                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -70,7 +70,8 @@ def default_hub(cfg, source):
 
 
 def default_feed(cfg):
-    return LiveFeed(cfg.binance_ws, cfg.symbols, cfg.data_dir) if cfg.source == "binance" and cfg.live_ws else None
+    return LiveFeed(cfg.binance_ws, cfg.symbols, cfg.data_dir, spot_ws=getattr(cfg, "binance_spot_ws", None)) \
+        if cfg.source == "binance" and cfg.live_ws else None
 
 
 def _sim_price(service, sym):
@@ -182,9 +183,16 @@ def default_trades(cfg, source, feed):
         return {}
     from data.trades import TradeSync
     get = lambda path, params: source._get(path, params, retries=2, timeout=20)
-    out = {s: TradeSync(s, Path(cfg.data_dir) / "footprint", cfg.footprint_days, get) for s in cfg.symbols}
+    fd = getattr(cfg, "sizeflow_days", 14)
+    out = {s: TradeSync(s, Path(cfg.data_dir) / "footprint", cfg.footprint_days, get, flow_days=fd) for s in cfg.symbols}
+    spot = {}
+    if fd > 0 and hasattr(source, "spot_base"):                  # V39 : transactions du marche spot, pour le flux par taille d'ordre
+        sget = lambda path, params: source._get(path, params, host=source.spot_base, retries=2, timeout=20)
+        spot = {s: TradeSync(s, Path(cfg.data_dir) / "footprint_spot", fd, sget, market="spot") for s in cfg.symbols}
     if feed is not None:
         feed.trades = out
+        feed.spot_trades = spot
+    out.update({f"{s}:spot": ts for s, ts in spot.items()})       # la meme liste les demarre, les arrete et affiche leur etat
     return out
 
 
@@ -250,6 +258,7 @@ class App:
         self._ind_cache = {}
         self._fund = {}                                   # V35 : versements de funding par symbole (historique Binance)
         self._spot = {}                                   # V37 : bougies spot par (symbole, unité de temps) : CVD du spot
+        self._size_cache = {}                             # V39 : flux par taille d'ordre par (symbole, unité de temps)
         self.assistant = Assistant(cfg, lambda: self.service, cfg.data_dir)
         self.readings = readings_mod.ReadingLog(cfg)
         old_trades = getattr(self, "trades", {})
@@ -675,6 +684,55 @@ class App:
             last_f = next((v for v in reversed(out["funding"]) if v is not None), None)
             out["posNote"] = subcharts.crowding(pos["posSum"], last_f)
         self._ind_cache[(sym, tf, fund, spot)] = (key, out)
+        return out
+
+    def size_flow(self, sym: str, tf: str) -> dict:
+        """V39 : delta en dollars par TAILLE d'ordre (moins de 1 000 $ ... plus d'un million), perpetuel et spot Binance, pour les memes
+        bougies que le graphique (engine/sizeflow.py). Mode simule : repartition fabriquee a partir du delta des bougies."""
+        from engine import sizeflow
+        from engine.atr import INTERVAL_MS
+        m = self.service.markets.get(sym)
+        if m is None:
+            raise KeyError(f"symbole inconnu : {sym}")
+        if tf not in TFS:
+            raise KeyError(f"timeframe inconnu : {tf}")
+        if not m.ready:
+            return {"symbol": sym, "tf": tf, "ready": False}
+        with self.service.lock:
+            cs = m.chart_candles(tf)[-chart_bars(tf):]
+        if not cs:
+            return {"symbol": sym, "tf": tf, "ready": False}
+        step, times = INTERVAL_MS[tf], [k.t for k in cs]
+        perp, spot = self.trades.get(sym), self.trades.get(f"{sym}:spot")
+        key = (sym, tf, len(cs), times[-1], cs[-1].v, perp.flow.version if perp else None, spot.flow.version if spot else None, int(time.time() // 10))
+        hit = self._size_cache.get((sym, tf))
+        if hit and hit[0] == key:
+            return hit[1]
+        out = {"symbol": sym, "tf": tf, "ready": True, "times": [t // 1000 for t in times], "edges": list(sizeflow.EDGES),
+               "names": sizeflow.NAMES, "groups": [[n, d, list(c)] for n, d, c in sizeflow.GROUPS]}
+        if self.cfg.source != "binance":
+            out["perp"] = {**sizeflow.simulated(cs, 7), "ok": True, "simulated": True}
+            sp, serr = self.spot_rows(sym, tf, cs[0].t)
+            if sp:
+                idx = {k.t: k for k in sp}
+                al = [idx.get(t) for t in times]
+                sim = sizeflow.simulated([k or cs[i] for i, k in enumerate(al)], 11)
+                for c in range(sizeflow.NCLS):
+                    sim["delta"][c] = [v if al[i] is not None else None for i, v in enumerate(sim["delta"][c])]
+                out["spot"] = {**sim, "ok": True, "simulated": True}
+            else:
+                out["spot"] = {"ok": False, "why": serr or "pas de bougie spot"}
+        else:
+            for name, ts in (("perp", perp), ("spot", spot)):
+                if ts is None:
+                    out[name] = {"ok": False, "why": "désactivé (réglage des jours de transactions à 0)" if name == "spot" else "transactions exactes désactivées"}
+                    continue
+                ser = ts.flow.series(times, step)
+                st = ts.status()
+                ok = any(v is not None for v in ser["delta"][0])
+                out[name] = {**ser, "ok": ok, "state": st.get("state"), "days": st.get("days"), "complete": st.get("complete"),
+                             "error": st.get("error"), "why": None if ok else f"téléchargement des transactions en cours ({st.get('state')})"}
+        self._size_cache[(sym, tf)] = (key, out)
         return out
 
     def live_price(self, sym: str) -> dict:
@@ -1264,6 +1322,9 @@ def make_handler(app: App):
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.indicators(sym, (q.get("tf") or ["1h"])[0], (q.get("fund") or ["0"])[0] == "1",
                                                      (q.get("spot") or ["0"])[0] == "1"))
+                if u.path == "/api/sizeflow":                        # V39 : delta par taille d'ordre, perpétuel et spot
+                    sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
+                    return self._json(app.size_flow(sym, (q.get("tf") or ["1h"])[0]))
                 if u.path == "/api/liqmap":                          # V29 : carte des liquidations sur plusieurs mois (estimée)
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     kp = app.liqmaps.get(sym)

@@ -15,8 +15,9 @@ HOUR = 3600.0
 
 
 class LiveFeed:
-    def __init__(self, base_ws: str, symbols, data_dir: str | None = None, ssl_context=None):
+    def __init__(self, base_ws: str, symbols, data_dir: str | None = None, ssl_context=None, spot_ws: str | None = None):
         self.base = base_ws.rstrip("/")
+        self.spot_base = spot_ws.rstrip("/") if spot_ws else None     # V39 : transactions du marche spot (flux par taille d'ordre)
         self.symbols = [s.upper() for s in symbols]
         self.price: dict[str, tuple] = {}                       # sym -> (prix, t_transaction_ms, t_reception_s)
         self.liqs: dict[str, deque] = {s: deque(maxlen=5000) for s in self.symbols}
@@ -27,6 +28,7 @@ class LiveFeed:
         self.ticks = 0
         self.flow = None                                        # V15 : flux d'ordres (data/orderflow.py), recoit chaque transaction
         self.trades = {}                                        # V23 : synchronisation des transactions exactes (data/trades.py), par paire
+        self.spot_trades = {}                                   # V39 : la meme chose pour le marche spot
         self._load_liqs()
 
     # --- messages ---
@@ -42,6 +44,15 @@ class LiveFeed:
         if self.flow is not None:
             self.flow.on_trade(sym, x, now)
         ts = self.trades.get(sym)
+        if ts is not None:
+            ts.on_live(x)
+
+    def on_spot_trade(self, text: str):
+        m = json.loads(text)
+        x = m.get("data", m)
+        if x.get("e") != "aggTrade":
+            return
+        ts = self.spot_trades.get(x["s"].upper())
         if ts is not None:
             ts.on_live(x)
 
@@ -120,6 +131,9 @@ class LiveFeed:
         self.clients["trades"] = WSClient(f"{self.base}/stream?streams={trades}", self.on_trade, "trades", self.ctx)
         self.clients["liqs"] = WSClient(f"{self.base}/stream?streams={liqs}", self.on_liq, "liqs", self.ctx,
                                         idle_timeout=600.0)        # les liquidations peuvent etre rares
+        if self.spot_base and self.spot_trades:
+            spot = "/".join(f"{s.lower()}@aggTrade" for s in self.spot_trades)
+            self.clients["spot"] = WSClient(f"{self.spot_base}/stream?streams={spot}", self.on_spot_trade, "spot", self.ctx)
         for c in self.clients.values():
             c.start()
 

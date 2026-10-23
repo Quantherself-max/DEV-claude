@@ -43,6 +43,7 @@ const Desk = (() => {
     dom: ['Carnet d\'ordres', 'taille en attente et nombre d\'ordres à chaque prix, à droite', 'Flux d\'ordres'],
     big: ['Gros ordres agressifs', 'bulles : vert = acheteurs, rouge = vendeurs', 'Flux d\'ordres'],
     absorb: ['Absorptions', 'delta fort contre la bougie ; murs en direct', 'Flux d\'ordres'],
+    sizes: ['Flux par taille d\'ordre', 'delta cumulé (achats moins ventes agressifs, en dollars) des petits ordres (particuliers), des moyens et des gros (institutions), sur le spot et le perpétuel Binance, comme « Volume By Side » d\'Aggr ; 3 groupes ou 5 tailles', 'Flux d\'ordres'],
     gex: ['Gamma des options (GEX)', 'murs de calls et de puts, bascule, plus fort gamma, max pain, mouvement attendu 24 h et zones de gamma positif / négatif (Deribit, Bybit, OKX) ; échéances et bourses au choix', 'Options', true],
     plan: ['Idées envoyées', 'entrée, stop et objectifs figés à l\'envoi', 'Idées'],
   };
@@ -51,7 +52,7 @@ const Desk = (() => {
   const PRESET = {main: {zones: true, sess: true, vwap: true, vol: true, plan: true}, blank: {}, heat: {heat: true, liqmap: false, big: true, vol: true, plan: true}};
   const VIEW_TF = {heat: '5m'};                                   // unité de temps de départ d'une vue (ensuite : la dernière choisie dans cette vue)
   const MO_KEYS = ['sess', 'sessW', 'sessM', 'nodes', 'dpoc', 'npoc', 'tpoM', 'tpoW', 'tpoD', 'tpo4', 'tpo1', 'vwap', 'vwapW', 'vwapM', 'vwapY', 'avwap',
-    'vol', 'heat', 'liqmap', 'oi', 'fund', 'delta', 'dom', 'big', 'absorb', 'gex', 'zones'];
+    'vol', 'heat', 'liqmap', 'oi', 'fund', 'delta', 'sizes', 'dom', 'big', 'absorb', 'gex', 'zones'];
   const freshSet = view => ({els: {...PRESET[view]}, minGrade: 9, bigMin: 2, absorbMode: 'fortes', bigLabels: 'top', heatEx: EX.map(e => e[0]), tf: VIEW_TF[view] || null});
 
   // ---------- espaces par instrument ----------
@@ -90,7 +91,9 @@ const Desk = (() => {
       cvdReset: ['D', 'W', 'M'].includes(s.cvdReset) ? s.cvdReset : 'all', deltaUnit: s.deltaUnit === 'usd' ? 'usd' : 'coin',
       oiMode: s.oiMode === 'chg' ? 'chg' : 'candles', oiColor: s.oiColor === 'dir' ? 'dir' : 'pos', fundMode: ['an', 'cum'].includes(s.fundMode) ? s.fundMode : '8h',
       gexScope: ['week', 'front'].includes(s.gexScope) ? s.gexScope : 'all', gexSrc: s.gexSrc === 'deribit' ? 'deribit' : 'all', gexLevels: s.gexLevels === 'all' ? 'all' : 'ess',
-      gexZones: s.gexZones !== 'off', gexBars: s.gexBars === 'split' ? 'split' : 'net'});
+      gexZones: s.gexZones !== 'off', gexBars: s.gexBars === 'split' ? 'split' : 'net',
+      sizeMkt: ['spot', 'perp'].includes(s.sizeMkt) ? s.sizeMkt : 'both', sizeGroups: s.sizeGroups === '5' ? '5' : '3',
+      sizeReset: ['D', 'W', 'M'].includes(s.sizeReset) ? s.sizeReset : 'all', sizeScale: s.sizeScale === 'shared' ? 'shared' : 'own'});
     S.minGrade = s.minGrade; S.heatEx = s.heatEx;
   }
   function changed(reset) {
@@ -194,6 +197,11 @@ const Desk = (() => {
       sel('cvdReset', 'Le CVD repart de zéro au début de chaque jour, semaine ou mois (UTC), ou cumule tout le graphique', [['all', 'cumul du graphique'], ['D', 'CVD du jour'], ['W', 'CVD de la semaine'], ['M', 'CVD du mois']], ['D', 'W', 'M'].includes(s.cvdReset) ? s.cvdReset : 'all') + '</span>';
     if (k === 'fund') return sel('fundMode', 'Taux par période de 8 heures, ramené à une année, ou cumulé depuis le début du graphique (ce qu\'un acheteur a réellement payé)',
       [['8h', '% par 8 h'], ['an', '% par an'], ['cum', 'cumulé']], ['an', 'cum'].includes(s.fundMode) ? s.fundMode : '8h');
+    if (k === 'sizes') return '<span class="ddopts">' +
+      sel('sizeMkt', 'Marché : spot, perpétuel, ou les deux (une fenêtre chacun)', [['both', 'spot et perpétuel'], ['spot', 'spot'], ['perp', 'perpétuel']], ['spot', 'perp'].includes(s.sizeMkt) ? s.sizeMkt : 'both') +
+      sel('sizeGroups', '3 groupes (petits ordres de moins de 10 000 $, moyens de 10 000 à 100 000 $, gros de plus de 100 000 $) ou les 5 tailles d\'Aggr', [['3', 'petits, moyens, gros'], ['5', '5 tailles d\'ordre']], s.sizeGroups === '5' ? '5' : '3') +
+      sel('sizeReset', 'Le cumul repart de zéro au début de chaque jour, semaine ou mois (UTC), ou cumule tout le graphique', [['all', 'cumul du graphique'], ['D', 'cumul du jour'], ['W', 'cumul de la semaine'], ['M', 'cumul du mois']], ['D', 'W', 'M'].includes(s.sizeReset) ? s.sizeReset : 'all') +
+      sel('sizeScale', 'Chaque courbe sur sa propre échelle (on compare les formes : qui achète, qui vend), ou toutes sur la même (on compare les montants)', [['own', 'une échelle par courbe'], ['shared', 'même échelle']], s.sizeScale === 'shared' ? 'shared' : 'own') + '</span>';
     if (k === 'gex') return '<span class="ddopts">' +
       sel('gexScope', 'Options prises en compte : toutes les échéances (niveaux de fond), les 7 prochains jours, ou seulement la prochaine échéance (niveaux du jour, les plus nerveux)',
         [['all', 'toutes les échéances'], ['week', '7 prochains jours'], ['front', 'prochaine échéance']], ['week', 'front'].includes(s.gexScope) ? s.gexScope : 'all') +
@@ -251,7 +259,7 @@ const Desk = (() => {
     chooser.addEventListener('change', e => {
       const t = e.target, s = curSet();
       if (t.dataset.chel) { if (t.checked) s.els[t.dataset.chel] = true; else delete s.els[t.dataset.chel]; changed(['sess', 'sessW', 'sessM', 'dom'].includes(t.dataset.chel)); }
-      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset', 'gexScope', 'gexSrc', 'gexLevels', 'gexZones', 'gexBars'].includes(t.dataset.copt) ? t.value : t.dataset.copt === 'deltaCvd' ? t.value === '1' : +t.value; changed(false); }
+      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset', 'gexScope', 'gexSrc', 'gexLevels', 'gexZones', 'gexBars', 'sizeMkt', 'sizeGroups', 'sizeReset', 'sizeScale'].includes(t.dataset.copt) ? t.value : t.dataset.copt === 'deltaCvd' ? t.value === '1' : +t.value; changed(false); }
       else if (t.dataset.ptog != null) { LT.togglePlan(t.dataset.ptog); fillChooser(); }
     });
     chooser.addEventListener('click', e => {
@@ -606,10 +614,24 @@ const Desk = (() => {
       r.at = Date.now(); indState.key = key; S.ind = r; S.version++;
     } catch (e) { /* le prochain passage reessaiera */ } finally { indState.busy = false; }
   }
+  // V39 : flux par taille d'ordre (adresse /api/sizeflow), toutes les 15 secondes au plus
+  const sizeState = {key: '', busy: false};
+  async function pollSize(force) {
+    const S = st(), d = S.data;
+    if (!mainVisible() || !S.mainOpts.sizes || !d || !d.candles || !d.candles.length || sizeState.busy) return;
+    const key = [S.symbol, S.tf, d.candles[d.candles.length - 1][0]].join('|');
+    if (!force && key === sizeState.key && S.size && Date.now() - (S.size.at || 0) < 15000) return;
+    sizeState.busy = true;
+    try {
+      const r = await LT.api(`/api/sizeflow?symbol=${S.symbol}&tf=${S.tf}`);
+      if (r.symbol !== S.symbol || r.tf !== S.tf) return;
+      r.at = Date.now(); sizeState.key = key; S.size = r; S.version++;
+    } catch (e) { /* le prochain passage reessaiera */ } finally { sizeState.busy = false; }
+  }
   async function pollHeat(force) {
     clearTimeout(heatTimer);
     heatTimer = setTimeout(() => pollHeat(false), 8000);
-    pollInd(force);
+    pollInd(force); pollSize(force);
     if (!heatWanted()) return;
     const q = heatQuery();
     if (!q) return;
@@ -619,7 +641,7 @@ const Desk = (() => {
   let viewSig = '', viewT = 0;
   function tick() {
     try {                                             // jamais d'erreur ici : la boucle d'affichage du terminal s'arrêterait
-      pollInd(false);
+      pollInd(false); pollSize(false);
       if (!heatWanted()) return;
       const q = heatQuery(); if (!q) return;
       const s = [Math.round(q.t0 / 60000), Math.round(q.t1 / 60000), q.lo.toPrecision(4), q.hi.toPrecision(4), q.cols, q.rows].join();
