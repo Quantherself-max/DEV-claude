@@ -1,7 +1,8 @@
-# Liq Terminal (V39)
+# Liq Terminal (V40)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Un onglet GEX** (V40) : le gamma des options BTC sur une page à part, à côté de tes graphiques : profil par strike, murs, bascule, régime, flux de couverture, mouvement attendu, échéances et bourses (voir « V40 » plus bas).
 - **Flux par taille d'ordre, spot et perpétuel** (V39) : comme « Volume By Side (delta) » d'Aggr, le delta cumulé en dollars des petits ordres (particuliers), des moyens et des gros (institutions), ou des 5 tailles d'Aggr, sur le spot et le perpétuel Binance, avec une lecture « qui achète, qui vend » (voir « V39 » plus bas).
 - **Gamma des options BTC plus complet, et un guide PDF pour le comprendre** (V38) : Deribit, Bybit et OKX additionnés, choix des échéances (toutes, 7 jours, prochaine), strike au plus fort gamma, max pain, mouvement attendu 24 heures, flux de couverture estimés et zones de gamma positif / négatif ; le guide `web/docs/guide_gamma.pdf` explique chaque niveau (voir « V38 » plus bas).
 - **Intérêt ouvert, delta, CVD et funding plus précis, et lus ensemble** (V37) : qui ouvre et qui ferme ses positions à chaque bougie, delta en dollars exacts, CVD du spot à côté de celui du perpétuel, funding pondéré par la durée, cumulé et toutes bourses (voir « V37 » plus bas).
@@ -134,6 +135,15 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V40 : l'onglet GEX
+
+Un onglet **GEX** dans la barre du Desk (à côté de TPO), pour regarder le gamma des options BTC sans charger tes graphiques. Il marche aussi depuis l'onglet SOL : il montre toujours le gamma du BTC, qui sert de repère au marché.
+
+- **Le profil** (au centre) : le prix à la verticale, une barre par strike (vert à droite : gamma positif ; rouge à gauche : négatif), en net ou calls et puts séparés ; la courbe bleue du gamma total (le régime qu'on aurait si le prix allait là) ; le prix, la bascule, les murs de calls et de puts, le plus fort gamma, le max pain et la bande du mouvement attendu sur 24 heures ; fond légèrement vert ou rouge selon le régime. Survol : le détail d'un strike. Molette : zoom (± 3 à 25 %).
+- **En haut** : échéances (toutes, 7 jours, prochaine), bourses (toutes ou Deribit seul), fourchette, barres, courbe, régime en un coup d'œil, âge des données, lien vers le guide PDF.
+- **À droite** (sous le profil sur téléphone) : régime, tableau des niveaux (prix, écart au prix, taille, confluence VWAP), ce que feraient les teneurs de marché à ±1, 2 et 5 %, mouvement attendu 24 heures et 7 jours avec le DVOL, comparaison des niveaux selon les échéances prises en compte, échéances Deribit (intérêt ouvert, put / call, max pain), part de chaque bourse, lecture complète.
+- Mêmes calculs que sur le graphique (V38) : hypothèse sur le sens des teneurs de marché, effet non mesuré sur le passé, hors score des idées.
 
 ## Ce qui est nouveau en V39 : le flux par taille d'ordre, spot et perpétuel
 

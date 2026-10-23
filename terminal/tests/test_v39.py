@@ -208,9 +208,10 @@ class ServerTests(unittest.TestCase):
 
 class PageTests(unittest.TestCase):
     def test_version_element_options_and_panes(self):
-        self.assertEqual((VERSION, API_LEVEL), ("39", 39))
+        self.assertGreaterEqual(API_LEVEL, 39)
+        self.assertEqual(VERSION, str(API_LEVEL))
         app = (WEB / "app.js").read_text(encoding="utf-8")
-        self.assertIn("const NEED_API = 39;", app)
+        self.assertIn(f"const NEED_API = {API_LEVEL};", app)
         self.assertIn("sizes: false, sizeMkt: 'both', sizeGroups: '3'", app)
         desk = (WEB / "desk.js").read_text(encoding="utf-8")
         self.assertIn("sizes: ['Flux par taille d\\'ordre'", desk)

@@ -95,6 +95,7 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
     vwapW: false, vwapM: false, vwapY: false, avwap: false, vol: true, heat: false, liqmap: false, oi: false, fund: false, fundMode: '8h', delta: false, deltaCvd: true, cvdMode: 'perp', cvdReset: 'all', deltaUnit: 'coin', oiMode: 'candles', oiColor: 'pos', zones: true}, flow: null,
   mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {M: true, W: true, D: true, '4h': false, '1h': false},
   tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true, expand: false},
+  gexView: {scope: 'all', src: 'all', range: 10, bars: 'net', curve: true},                       // V40 : onglet GEX
   tpoGroups: {}, utabs: [], tabOrder: [], tabHide: []};                                         // V35 : tes onglets de graphiques (nom, éléments, unité de temps)                                                    // V34 : séances TPO fusionnées et profils dépliés, par paire et type de séance
 async function api(path, body) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
@@ -183,7 +184,7 @@ function buildHeatImage(h) {
 const panels = [];
 // V28 : main = Graphique (épuré), blank = Vierge, heat = Heatmap du carnet ; les trois sont le graphique principal avec SES éléments (desk.js) ;
 // 3 = Grille (principal + liquidité + VWAP·VP) ; pair = onglet « BTC + SOL » (deux instruments côte à côte, setups liés)
-const LAYOUTS = {main: ['main'], blank: ['main'], heat: ['main'], '1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: [], pair: []};
+const LAYOUTS = {main: ['main'], blank: ['main'], heat: ['main'], '1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: [], gex: [], pair: []};
 const needs = k => (LAYOUTS[st.layout] || LAYOUTS.main).includes(k) && st.page === 'desk';
 // ---------- V36 : mêmes réglages sur tous tes ordinateurs : la page envoie ses réglages au terminal (copie sur le disque et, si
 // choisi, dans un dossier synchronisé par le cloud) et reprend la version la plus récente au démarrage et quand tu reviens sur la fenêtre ----------
@@ -225,7 +226,7 @@ setInterval(() => syncPush(false), 5000);
 setInterval(() => { if (document.visibilityState === 'visible' && Date.now() - sync.input > 20000 && M.hidden) syncPull(false); }, 30000);
 function savePrefs() {
   syncSoon();
-  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, planHide: st.planHide.slice(-80), planShow: st.planShow.slice(-80), expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds, tpoOpts: st.tpoOpts, tpoGroups: st.tpoGroups, utabs: st.utabs, tabOrder: st.tabOrder, tabHide: st.tabHide, ws: st.ws, instTab: st.instTab, v: 28})); } catch (e) { /* stockage indisponible */ }
+  try { localStorage.setItem('liqPrefs', JSON.stringify({mode: st.mode, pools: st.pools, ppools: st.ppools, liqOpts: st.liqOpts, vpOpts: st.vpOpts, layout: st.layout, side: st.sideOpen, sb: st.sbCollapsed, plan: st.planOn, planHide: st.planHide.slice(-80), planShow: st.planShow.slice(-80), expert: st.expert, theme: st.theme, mainOpts: st.mainOpts, mtf: st.mtf, tpoKinds: st.tpoKinds, tpoOpts: st.tpoOpts, tpoGroups: st.tpoGroups, gexView: st.gexView, utabs: st.utabs, tabOrder: st.tabOrder, tabHide: st.tabHide, ws: st.ws, instTab: st.instTab, v: 28})); } catch (e) { /* stockage indisponible */ }
 }
 function loadPrefs() {
   try {
@@ -252,6 +253,7 @@ function loadPrefs() {
     Object.assign(st.mainOpts, p.mainOpts || {});
     if (v20) Object.assign(st.mainOpts, {tpoM: true, tpoW: true, tpo4: false, tpo1: false});
     if (p.tpoOpts && typeof p.tpoOpts === 'object') Object.keys(st.tpoOpts).forEach(k => { if (typeof p.tpoOpts[k] === typeof st.tpoOpts[k]) st.tpoOpts[k] = p.tpoOpts[k]; });
+    if (p.gexView && typeof p.gexView === 'object') Object.keys(st.gexView).forEach(k => { if (typeof p.gexView[k] === typeof st.gexView[k]) st.gexView[k] = p.gexView[k]; });
     if (p.tpoKinds && typeof p.tpoKinds === 'object' && typeof p.tpoKinds.W === 'boolean') ['M', 'W', 'D', '4h', '1h'].forEach(k => { if (typeof p.tpoKinds[k] === 'boolean') st.tpoKinds[k] = p.tpoKinds[k]; });
     else if (p.tpoKinds && typeof p.tpoKinds === 'object' && typeof p.tpoKinds.D === 'boolean') st.tpoKinds.D = p.tpoKinds.D;
     if (p.tpoGroups && typeof p.tpoGroups === 'object') Object.entries(p.tpoGroups).slice(-40).forEach(([key, g]) => {
@@ -298,6 +300,8 @@ function applyLayout() {
   Desk.renderTabs(); Desk.renderLegend(); setTimeout(() => Desk.pollHeat(true), 300);
   const tg = $('#tpoGrid');                                             // V17 : vue TPO
   if (tg) { tg.classList.toggle('hide', st.layout !== 'tpo'); if (st.layout === 'tpo' && st.page === 'desk') TPO.show(); else TPO.hide(); }
+  const gg = $('#gexGrid');                                             // V40 : onglet GEX
+  if (gg) { gg.classList.toggle('hide', st.layout !== 'gex'); if (st.layout === 'gex' && st.page === 'desk') GEXV.show(); else GEXV.hide(); }
   document.querySelectorAll('#layouts button').forEach(b => b.classList.toggle('on', b.dataset.layout === st.layout || (b.dataset.layout === 'main' && st.layout === '1')));
   $('#deskwrap').classList.toggle('noside', !st.sideOpen);
   $('#sideToggle').textContent = st.sideOpen ? 'Panneau ▸' : '◂ Panneau';
@@ -315,6 +319,7 @@ function createPanels() {
   ['main', 'liq', 'vp'].forEach(k => { const el = document.createElement('section'); desk.appendChild(el); panels.push(new Panel(el, k)); });
   const g = document.createElement('section'); g.id = 'mtfGrid'; g.className = 'mtf hide'; desk.appendChild(g); MTF.init(window.LT, g);
   const tg = document.createElement('section'); tg.id = 'tpoGrid'; tg.className = 'tpo hide'; desk.appendChild(tg); TPO.init(window.LT, tg);
+  const gg = document.createElement('section'); gg.id = 'gexGrid'; gg.className = 'gexv hide'; desk.appendChild(gg); GEXV.init(window.LT, gg);   // V40 : onglet GEX
   let sr = false, sx = false;
   panels.forEach(p => {
     p.chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
@@ -344,6 +349,7 @@ function onTick(price, tms, src) {
   if (!(price > 0)) return;
   live.price = price; live.t = Date.now(); live.src = src; live.dirty = true;
   if (live.sym === st.symbol) { MTF.onTick(price, tms); TPO.onTick(price); }
+  GEXV.onTick(price, live.sym);
   const d = st.data;
   if (!d || d.symbol !== live.sym || !st.lastBarObj) return;
   const bt = barStart(Math.floor(tms / 1000), st.tf);           // V36 : semaine et mois de calendrier
@@ -723,7 +729,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 39;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow)
+const NEED_API = 40;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -890,6 +896,7 @@ function navigate(page, sub) {
   if (page === 'desk') setTimeout(() => { syncRange(); refreshAll(); }, 60);
   if (page === 'desk' && st.layout === 'mtf') MTF.show(); else MTF.hide();
   if (page === 'desk' && st.layout === 'tpo') TPO.show(); else TPO.hide();
+  if (page === 'desk' && st.layout === 'gex') GEXV.show(); else GEXV.hide();
   if (page === 'overview') pollOverview();
   if (page === 'backtest') Backtest.show();
   if (page === 'history') History.show();

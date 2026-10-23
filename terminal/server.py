@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "39"
-API_LEVEL = 39                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "40"
+API_LEVEL = 40                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -1322,6 +1322,8 @@ def make_handler(app: App):
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.indicators(sym, (q.get("tf") or ["1h"])[0], (q.get("fund") or ["0"])[0] == "1",
                                                      (q.get("spot") or ["0"])[0] == "1"))
+                if u.path == "/api/gex":                             # V40 : onglet GEX (options BTC)
+                    return self._json(app.service.gex_page((q.get("scope") or ["all"])[0], (q.get("src") or ["all"])[0]))
                 if u.path == "/api/sizeflow":                        # V39 : delta par taille d'ordre, perpétuel et spot
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.size_flow(sym, (q.get("tf") or ["1h"])[0]))

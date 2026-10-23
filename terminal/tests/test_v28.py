@@ -247,7 +247,7 @@ class PageTests(unittest.TestCase):
 
     def test_tabs_and_views(self):
         self.assertIn('id="instTabs"', self.HTML)
-        self.assertEqual(re.findall(r'data-layout="([a-z0-9]+)"', self.HTML), ["main", "blank", "heat", "3", "mtf", "tpo"])
+        self.assertEqual(re.findall(r'data-layout="([a-z0-9]+)"', self.HTML), ["main", "blank", "heat", "3", "mtf", "tpo", "gex"])   # V40 : onglet GEX
         self.assertIn('<script src="desk.js"></script>', self.HTML)
         self.assertNotIn('id="deskhint"', self.HTML)
         for el in ('id="srcBadge"', 'id="tgBadge"', 'id="liveBadge"', 'id="status"'):          # gardés, rangés dans le témoin d'état

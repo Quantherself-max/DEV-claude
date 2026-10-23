@@ -1983,6 +1983,37 @@ class Service:
         except Exception as e:                                           # le gamma ne doit jamais empecher l'affichage du graphique
             return {"error": f"{type(e).__name__}: {e}"}
 
+    def gex_page(self, scope: str = "all", src: str = "all") -> dict:
+        """V40 : onglet GEX : le gamma des options BTC en entier pour une page a part (profil par strike, niveaux, regime, flux de
+        couverture, mouvement attendu, echeances, bourses, comparaison des choix d'echeances). BTC seulement : c'est le seul marche
+        d'options assez gros ; il sert aussi de repere pour SOL."""
+        if not self.ext:
+            return {"ok": False, "why": "dérivés désactivés (réglage du terminal)"}
+        try:
+            snap = self.ext.snapshot()
+            dv = snap.get("derivs") or {}
+            opt = (dv.get("options") or {}).get("BTC")
+            if not opt:
+                errs = snap.get("errors") or {}
+                return {"ok": False, "why": "options BTC pas encore chargées" + (f" ({errs.get('options')})" if errs.get("options") else "")}
+            m = self.markets.get("BTCUSDT")
+            price = m.price() if m is not None and m.ready else None
+            ast = self._an_state.get("BTCUSDT")
+            b = gamma_engine.brief(opt, ast[1]["levels"] if ast else [], price, ast[1]["atr"] if ast else None, self.source.now_ms(), scope, src)
+            if not b or b.get("error"):
+                return {"ok": False, "why": (b or {}).get("error") or "gamma indisponible"}
+            sets = (opt.get("gexSets") or {}).get(b["src"]) or {}
+            keep = ("total", "flip", "callWall", "putWall", "absGamma", "n", "expiries", "frontExpiry", "nearShare")
+            compare = {sc: ({k: g.get(k) for k in keep} | {"flow2": next((f for f in g.get("flows") or [] if f["pct"] == 2.0), None)} if g else None)
+                       for sc, g in sets.items()}
+            exps = [{k: e.get(k) for k in ("expiry", "daysLeft", "maxPain", "putCall", "oiUsd", "calls", "puts")} for e in opt.get("expiries") or []]
+            dvol = (dv.get("dvol") or {}).get("BTC")
+            return {"ok": True, "brief": b, "compare": compare, "expiries": exps, "putCall": opt.get("putCall"), "oiUsd": opt.get("oiUsd"),
+                    "dvol": {k: dvol.get(k) for k in ("value", "chg24h", "chg7d", "rank")} if dvol else None, "price": price or b["spot"],
+                    "regime": gamma_engine.regime_text(b), "note": gamma_engine.chip_value(b)[1]}
+        except Exception as e:                                       # la page ne doit jamais casser le terminal
+            return {"ok": False, "why": f"{type(e).__name__}: {e}"}
+
     def lecture(self, symbol: str) -> dict:
         """L'essentiel du marche pour cette paire en une page (engine/lecture.py) : tendance, idee, ce qui arrive, positionnement, derives, macro, liquidite."""
         m = self.markets.get(symbol)
