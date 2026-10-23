@@ -162,6 +162,9 @@ Nouvel élément **« Flux par taille d'ordre »** (« ＋ Éléments », famill
 - **Perpétuel** : les jours déjà enregistrés n'avaient pas ce flux ; les archives des 14 derniers jours sont retéléchargées et relues **une seule fois** (estimation : quelques Go pour le BTC, comme au premier téléchargement de la V23). Les jours plus anciens gardent leur empreinte, sans ce flux.
 - En attendant, la fenêtre dit « téléchargement des transactions en cours ».
 
+### V39.1 : plus de grand rectangle vert et rouge sur le graphique
+- Les **zones de gamma** (V38) coloraient tout le fond du graphique (vert au-dessus de la bascule, rouge en dessous) : en journalier, on aurait dit une position ouverte. Elles sont maintenant **coupées par défaut**, et, si tu les actives (« ＋ Éléments », Gamma des options, « zones en bande à droite »), elles ne sont plus qu'une fine bande au bord droit. Le guide PDF est mis à jour.
+
 ### Limites
 - On ne voit pas les portefeuilles : la **taille de l'ordre** sert d'indice de la taille de celui qui le passe. Un gros acteur qui découpe ses ordres compte dans les petites tailles.
 - Binance seulement (Aggr additionne plusieurs bourses). Formats du spot (temps en microsecondes depuis 2025) traités d'après la documentation de Binance, **non vérifiés** contre les vrais serveurs depuis l'endroit où le terminal a été construit.

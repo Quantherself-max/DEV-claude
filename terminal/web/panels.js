@@ -877,12 +877,13 @@ class Panel {
     if (!mo.gex || st.symbol !== 'BTCUSDT' || !g || g.error || !g.levels) return;
     const ctx = this.ctx, plotW = this.kind === 'main' && this.rightLimit ? Math.max(200, this.rightLimit) : L.plotW, Y = v => this.series.priceToCoordinate(v);
     const fade = g.stale ? 0.45 : 1, bottom = h - (L.plotW < 600 ? 110 : 64);
-    if (mo.gexZones !== false) (g.zones || []).forEach(z => {
+    // V39.1 : zones en fine bande au bord droit (en fond d'écran, elles ressemblaient à une position ouverte) ; coupées par défaut
+    if (mo.gexZones === true) (g.zones || []).forEach(z => {
       if (!z.sign) return;
       const yt = Y(z.hi), yb = Y(z.lo), a = yt == null ? 0 : yt, b = yb == null ? h : yb;
       if (b < 0 || a > h) return;
-      ctx.fillStyle = z.sign > 0 ? `rgba(61,220,151,${0.035 * fade})` : `rgba(255,107,107,${0.045 * fade})`;
-      ctx.fillRect(0, Math.max(0, a), plotW, Math.min(h, b) - Math.max(0, a));
+      ctx.fillStyle = z.sign > 0 ? `rgba(61,220,151,${0.55 * fade})` : `rgba(255,107,107,${0.55 * fade})`;
+      ctx.fillRect(plotW - 7, Math.max(0, a), 5, Math.min(h, b) - Math.max(0, a));
     });
     const strikes = (g.strikes || []).map(x => ({...x, y: Y(x.strike)})).filter(x => x.y != null && x.y > 0 && x.y < h - 24);
     const split = mo.gexBars === 'split', barMax = Math.min(90, plotW * 0.12);

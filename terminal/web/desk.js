@@ -91,7 +91,7 @@ const Desk = (() => {
       cvdReset: ['D', 'W', 'M'].includes(s.cvdReset) ? s.cvdReset : 'all', deltaUnit: s.deltaUnit === 'usd' ? 'usd' : 'coin',
       oiMode: s.oiMode === 'chg' ? 'chg' : 'candles', oiColor: s.oiColor === 'dir' ? 'dir' : 'pos', fundMode: ['an', 'cum'].includes(s.fundMode) ? s.fundMode : '8h',
       gexScope: ['week', 'front'].includes(s.gexScope) ? s.gexScope : 'all', gexSrc: s.gexSrc === 'deribit' ? 'deribit' : 'all', gexLevels: s.gexLevels === 'all' ? 'all' : 'ess',
-      gexZones: s.gexZones !== 'off', gexBars: s.gexBars === 'split' ? 'split' : 'net',
+      gexZones: s.gexZones === 'on', gexBars: s.gexBars === 'split' ? 'split' : 'net',
       sizeMkt: ['spot', 'perp'].includes(s.sizeMkt) ? s.sizeMkt : 'both', sizeGroups: s.sizeGroups === '5' ? '5' : '3',
       sizeReset: ['D', 'W', 'M'].includes(s.sizeReset) ? s.sizeReset : 'all', sizeScale: s.sizeScale === 'shared' ? 'shared' : 'own'});
     S.minGrade = s.minGrade; S.heatEx = s.heatEx;
@@ -207,7 +207,7 @@ const Desk = (() => {
         [['all', 'toutes les échéances'], ['week', '7 prochains jours'], ['front', 'prochaine échéance']], ['week', 'front'].includes(s.gexScope) ? s.gexScope : 'all') +
       sel('gexSrc', 'Bourses d\'options : Deribit, Bybit et OKX ensemble, ou Deribit seul', [['all', 'toutes les bourses'], ['deribit', 'Deribit seul']], s.gexSrc === 'deribit' ? 'deribit' : 'all') +
       sel('gexLevels', 'Niveaux essentiels (murs, bascule, plus fort gamma, mouvement attendu), ou aussi le max pain et les strikes chargés', [['ess', 'niveaux essentiels'], ['all', 'tous les niveaux']], s.gexLevels === 'all' ? 'all' : 'ess') +
-      sel('gexZones', 'Colorer le fond : vert là où le gamma total est positif (marché amorti), rouge là où il est négatif (marché amplifié)', [['on', 'zones colorées'], ['off', 'sans zones']], s.gexZones === 'off' ? 'off' : 'on') +
+      sel('gexZones', 'Une fine bande au bord droit du graphique : verte là où le gamma total est positif (marché amorti), rouge là où il est négatif (marché amplifié)', [['off', 'sans zones'], ['on', 'zones en bande à droite']], s.gexZones === 'on' ? 'on' : 'off') +
       sel('gexBars', 'Barres de gamma au bord gauche : le net de chaque strike, ou les calls et les puts séparés', [['net', 'barres nettes'], ['split', 'calls et puts']], s.gexBars === 'split' ? 'split' : 'net') +
       '<a class="ddlink" href="/docs/guide_gamma.pdf" target="_blank" rel="noopener">Comprendre chaque niveau (PDF) →</a></span>';
     if (k === 'absorb') return `<select class="mini" data-copt="absorbMode"><option value="fortes"${s.absorbMode === 'fortes' ? ' selected' : ''}>fortes</option><option value="toutes"${s.absorbMode === 'toutes' ? ' selected' : ''}>toutes</option></select>`;
