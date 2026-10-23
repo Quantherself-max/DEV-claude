@@ -198,12 +198,12 @@ class ServerTests(unittest.TestCase):
                     return []
             bcfg = Config(source="binance", symbols=("BTCUSDT", "SOLUSDT"), data_dir=tmp, port=0)
             out = default_trades(bcfg, Src(), None)
-            self.assertEqual(sorted(out), ["BTCUSDT", "BTCUSDT:spot", "SOLUSDT", "SOLUSDT:spot"])
+            self.assertEqual(sorted(k for k in out if ":hist:" not in k), ["BTCUSDT", "BTCUSDT:spot", "SOLUSDT", "SOLUSDT:spot"])   # V40.1 : + historique
             self.assertEqual(out["BTCUSDT:spot"].market, "spot")
             self.assertEqual(out["BTCUSDT:spot"].days, bcfg.sizeflow_days)
             self.assertEqual(out["BTCUSDT"].flow_days, bcfg.sizeflow_days)
             bcfg.sizeflow_days = 0
-            self.assertEqual(sorted(default_trades(bcfg, Src(), None)), ["BTCUSDT", "SOLUSDT"])
+            self.assertEqual(sorted(k for k in default_trades(bcfg, Src(), None) if ":hist:" not in k), ["BTCUSDT", "SOLUSDT"])
 
 
 class PageTests(unittest.TestCase):

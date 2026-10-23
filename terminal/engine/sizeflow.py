@@ -31,7 +31,11 @@ def cls_of(usd: float) -> int:
 
 
 class SizeFlow:
-    def __init__(self):
+    """res_ms : resolution du stockage (1 minute pour les jours recents ; V40.1 : 1 heure pour l'historique profond)."""
+
+    def __init__(self, res_ms: int = MIN):
+        self.res = int(res_ms)
+        self.slots = DAY // self.res
         self.days: dict[int, array] = {}
         self.cov: list[list[int]] = []
         self.lock = threading.RLock()
@@ -42,12 +46,12 @@ class SizeFlow:
     def _arr(self, day: int) -> array:
         a = self.days.get(day)
         if a is None:
-            a = self.days[day] = array("d", bytes(8 * 1440 * WIDTH))
+            a = self.days[day] = array("d", bytes(8 * self.slots * WIDTH))
         return a
 
     def _put(self, t: int, sell: bool, usd: float) -> None:
         day = t - t % DAY
-        k = ((t - day) // MIN) * WIDTH + (NCLS if sell else 0) + cls_of(usd)
+        k = ((t - day) // self.res) * WIDTH + (NCLS if sell else 0) + cls_of(usd)
         self._arr(day)[k] += usd
 
     def add_unlocked(self, price: float, qty: float, buyer_maker: bool, t_ms: int) -> None:
@@ -75,7 +79,7 @@ class SizeFlow:
 
     def put_day(self, day: int, values) -> None:
         with self.lock:
-            a = array("d", bytes(8 * 1440 * WIDTH))
+            a = array("d", bytes(8 * self.slots * WIDTH))
             for i, v in enumerate(values[:len(a)]):
                 a[i] = float(v)
             self.days[day] = a
@@ -86,7 +90,8 @@ class SizeFlow:
         with self.lock:
             if self._pend is not None and a <= self._pend[0] < b:
                 self._pend = None
-            t = a - a % MIN
+            res = self.res
+            t = a - a % res
             while t < b:
                 day = t - t % DAY
                 arr = self.days.get(day)
@@ -95,10 +100,10 @@ class SizeFlow:
                         del self.days[day]
                         t += DAY
                         continue
-                    k = ((t - day) // MIN) * WIDTH
+                    k = ((t - day) // res) * WIDTH
                     for j in range(WIDTH):
                         arr[k + j] = 0.0
-                t += MIN
+                t += res
             self.uncover(a, b)
             self.version += 1
 
@@ -152,7 +157,7 @@ class SizeFlow:
             return None if a is None else array("d", a)
 
     def day_values(self, day: int) -> list | None:
-        """Les 14 400 valeurs d'un jour, arrondies au dollar (sauvegarde)."""
+        """Les valeurs d'un jour (14 400 a la minute, 240 a l'heure), arrondies au dollar (sauvegarde)."""
         with self.lock:
             a = self.days.get(day)
             return None if a is None else [round(v) for v in a]
@@ -160,14 +165,15 @@ class SizeFlow:
     def totals(self, t0: int, t1: int) -> tuple[list, list]:
         """(achats, ventes) en dollars par classe sur [t0, t1[ (minutes entieres)."""
         buy, sell = [0.0] * NCLS, [0.0] * NCLS
+        res = self.res
         with self.lock:
-            t = t0 - t0 % MIN
+            t = t0 - t0 % res
             while t < t1:
                 day = t - t % DAY
                 arr = self.days.get(day)
                 end = min(t1, day + DAY)
                 if arr is not None:
-                    k0, k1 = ((t - day) // MIN) * WIDTH, ((end - day + MIN - 1) // MIN) * WIDTH
+                    k0, k1 = ((t - day) // res) * WIDTH, ((end - day + res - 1) // res) * WIDTH
                     for c in range(NCLS):
                         buy[c] += sum(arr[k0 + c:k1:WIDTH])
                         sell[c] += sum(arr[k0 + NCLS + c:k1:WIDTH])
@@ -198,6 +204,61 @@ class SizeFlow:
                 deltas[k][i] = b[k] - s[k]
                 vols[k][i] = b[k] + s[k]
         return {"delta": deltas, "volume": vols, "cov": cov}
+
+
+def hourly_of(minute: "SizeFlow", day: int) -> list | None:
+    """Les 240 valeurs a l'heure d'un jour, additionnees depuis le flux a la minute (pour garder un jour qui sort de la fenetre recente)."""
+    a = minute.day_array(day)
+    if a is None:
+        return None
+    per = minute.slots // 24
+    out = [0.0] * (24 * WIDTH)
+    for h in range(24):
+        base = h * per * WIDTH
+        for j in range(WIDTH):
+            out[h * WIDTH + j] = sum(a[base + j:base + per * WIDTH:WIDTH])
+    return out
+
+
+def combined(times: list[int], step_ms: int, layers: list["SizeFlow"], min_cov: float = 0.98) -> dict:
+    """Comme SizeFlow.series, mais sur plusieurs flux : chaque jour d'une bougie est pris dans le premier flux qui le couvre entierement
+    (la minute d'abord, puis l'historique a l'heure, seulement si la bougie et ce jour tombent sur des heures entieres). V40.1 : les
+    grandes unites de temps (4 heures, jour, semaine, mois) remontent ainsi aussi loin que l'historique a l'heure."""
+    layers = [x for x in layers if x is not None]
+    for x in layers:
+        x.flush()
+    n = len(times)
+    deltas = [[None] * n for _ in range(NCLS)]
+    vols = [[None] * n for _ in range(NCLS)]
+    cov = []
+    ends = [x.cov[-1][1] for x in layers if x.cov]
+    last_end = max(ends) if ends else None
+    for i, t in enumerate(times):
+        end = t + step_ms
+        if last_end is not None and t < last_end < end:
+            end = last_end
+        span = max(1, end - t)
+        got, b, s = 0, [0.0] * NCLS, [0.0] * NCLS
+        a = t
+        while a < end:
+            e = min(end, a - a % DAY + DAY)
+            for x in layers:
+                if a % x.res == 0 and (e % x.res == 0 or x.res == MIN) and x.complete(a, e):
+                    bb, ss = x.totals(a, e)
+                    for k in range(NCLS):
+                        b[k] += bb[k]
+                        s[k] += ss[k]
+                    got += e - a
+                    break
+            a = e
+        c = got / span
+        cov.append(round(c, 4))
+        if c < min_cov:
+            continue
+        for k in range(NCLS):
+            deltas[k][i] = b[k] - s[k]
+            vols[k][i] = b[k] + s[k]
+    return {"delta": deltas, "volume": vols, "cov": cov}
 
 
 def simulated(candles, seed: int = 7) -> dict:

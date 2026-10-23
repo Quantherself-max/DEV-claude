@@ -1,7 +1,8 @@
-# Liq Terminal (V40)
+# Liq Terminal (V41)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Le flux par taille d'ordre sur plusieurs mois** (V41) : historique à l'heure (180 jours par défaut, réglable) pour les grandes unités de temps (voir « V41 » plus bas).
 - **Un onglet GEX** (V40) : le gamma des options BTC sur une page à part, à côté de tes graphiques : profil par strike, murs, bascule, régime, flux de couverture, mouvement attendu, échéances et bourses (voir « V40 » plus bas).
 - **Flux par taille d'ordre, spot et perpétuel** (V39) : comme « Volume By Side (delta) » d'Aggr, le delta cumulé en dollars des petits ordres (particuliers), des moyens et des gros (institutions), ou des 5 tailles d'Aggr, sur le spot et le perpétuel Binance, avec une lecture « qui achète, qui vend » (voir « V39 » plus bas).
 - **Gamma des options BTC plus complet, et un guide PDF pour le comprendre** (V38) : Deribit, Bybit et OKX additionnés, choix des échéances (toutes, 7 jours, prochaine), strike au plus fort gamma, max pain, mouvement attendu 24 heures, flux de couverture estimés et zones de gamma positif / négatif ; le guide `web/docs/guide_gamma.pdf` explique chaque niveau (voir « V38 » plus bas).
@@ -135,6 +136,16 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V41 : le flux par taille d'ordre sur plusieurs mois
+
+En V39, le flux par taille ne couvrait que les 14 derniers jours : en semaine ou en mois, il ne restait qu'une ou deux bougies. Il a maintenant un **historique à l'heure**.
+
+- **Comment** : il n'existe pas de résumé public par taille d'ordre ; il faut chaque transaction. En tâche de fond, un jour à la fois, du plus récent au plus ancien, le terminal relit les archives quotidiennes de Binance Vision (perpétuel et spot), les lit en mémoire, n'en garde que 24 heures × 10 valeurs (quelques Ko par jour, dossier `data_local/sizehist`) et jette le reste. Les jours déjà présents à la minute sont additionnés par heure, sans rien télécharger.
+- **Sur le graphique** : chaque jour d'une bougie est pris à la minute s'il y est, sinon dans l'historique à l'heure. En 4 heures, jour, semaine et mois, le cumul remonte donc aussi loin que l'historique. En dessous d'une heure (1, 5, 15 minutes), seuls les 14 derniers jours restent disponibles (l'historique n'a pas le détail à la minute).
+- **Réglage** (Réglages, « Historique du flux par taille d'ordre ») : 180 jours par défaut, 90 jours, 1 an, 2 ans, ou désactivé. Un changement s'applique sans redémarrer. La fenêtre affiche « historique 23/180 jours » pendant le chargement, les Réglages l'avancement et les Mo téléchargés.
+- **Coût** : tout le volume des archives est téléchargé une seule fois (estimation : plusieurs dizaines de Mo par jour pour le BTC sur chaque marché, beaucoup moins pour le SOL ; pour 180 jours de BTC, de l'ordre de 10 à 30 Go, en tâche de fond, une archive toutes les quelques secondes). Rien de gros n'est gardé sur le disque.
+- **Non vérifié** contre les vrais serveurs de Binance depuis l'endroit où le terminal a été construit (même format d'archive que la V39).
 
 ## Ce qui est nouveau en V40 : l'onglet GEX
 

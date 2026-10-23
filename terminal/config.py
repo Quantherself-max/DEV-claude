@@ -86,6 +86,7 @@ class Config:
     live_ws: bool = True                 # flux temps reel cote serveur (prix exact pour les alertes, liquidations reelles)
     orderflow_on: bool = True            # V15 : carnet d'ordres Binance (route /public) + nombre d'ordres OKX + ruban (vitesse, gros ordres)
     sizeflow_days: int = 14               # V39 : jours de transactions du marche SPOT (flux par taille d'ordre) ; et jours recents du perpetuel dont l'archive est relue une fois pour ce flux ; 0 = spot desactive
+    sizeflow_history_days: int = 180      # V40.1 : historique a l'heure du flux par taille (archives relues une fois, quelques Ko gardes par jour) ; 0 = coupe
     binance_spot_ws: str = "wss://stream.binance.com:9443"   # V39 : flux temps reel Binance spot (transactions)
     footprint_days: int = 62              # V23 : jours de transactions exactes (archives Binance Vision + API + direct) ; 62 couvre le mois precedent ; 0 = desactive
     heatmap_symbols: tuple = ("BTCUSDT",)   # V28 : heatmap du carnet (photos des carnets Binance, OKX, Bybit, Coinbase) ; () = desactivee
@@ -188,6 +189,7 @@ def load_config(env_path: Path | None = None) -> Config:
     c.orderflow_on = g("TERMINAL_ORDERFLOW", "1").lower() not in ("0", "false", "non", "no")
     c.footprint_days = max(0, min(400, int(float(g("TERMINAL_FOOTPRINT_DAYS", c.footprint_days)))))
     c.sizeflow_days = max(0, min(62, int(float(g("TERMINAL_SIZEFLOW_DAYS", c.sizeflow_days)))))
+    c.sizeflow_history_days = max(0, min(1500, int(float(g("TERMINAL_SIZEFLOW_HISTORY_DAYS", c.sizeflow_history_days)))))
     c.binance_spot_ws = g("TERMINAL_BINANCE_SPOT_WS", c.binance_spot_ws).rstrip("/")
     hm = g("TERMINAL_HEATMAP", ",".join(c.heatmap_symbols)).strip()
     c.heatmap_symbols = () if hm.lower() in ("0", "false", "non", "no", "") else tuple(x.strip().upper() for x in hm.split(",") if x.strip())

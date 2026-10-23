@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "40"
-API_LEVEL = 40                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "41"
+API_LEVEL = 41                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -193,6 +193,13 @@ def default_trades(cfg, source, feed):
         feed.trades = out
         feed.spot_trades = spot
     out.update({f"{s}:spot": ts for s, ts in spot.items()})       # la meme liste les demarre, les arrete et affiche leur etat
+    hd = getattr(cfg, "sizeflow_history_days", 0)
+    if hd > 0 and fd > 0:                                        # V40.1 : historique a l'heure du flux par taille (grandes unites de temps)
+        from data.sizehist import SizeHistory
+        for s in cfg.symbols:
+            for market, ts in (("perp", out.get(s)), ("spot", spot.get(s))):
+                if ts is not None:
+                    out[f"{s}:hist:{market}"] = SizeHistory(s, market, Path(cfg.data_dir) / "sizehist", hd, minute=ts)
     return out
 
 
@@ -704,7 +711,9 @@ class App:
             return {"symbol": sym, "tf": tf, "ready": False}
         step, times = INTERVAL_MS[tf], [k.t for k in cs]
         perp, spot = self.trades.get(sym), self.trades.get(f"{sym}:spot")
-        key = (sym, tf, len(cs), times[-1], cs[-1].v, perp.flow.version if perp else None, spot.flow.version if spot else None, int(time.time() // 10))
+        hist = {m: self.trades.get(f"{sym}:hist:{m}") for m in ("perp", "spot")}
+        key = (sym, tf, len(cs), times[-1], cs[-1].v, perp.flow.version if perp else None, spot.flow.version if spot else None,
+               tuple(len(h.done) if h else None for h in hist.values()), int(time.time() // 10))
         hit = self._size_cache.get((sym, tf))
         if hit and hit[0] == key:
             return hit[1]
@@ -727,11 +736,13 @@ class App:
                 if ts is None:
                     out[name] = {"ok": False, "why": "désactivé (réglage des jours de transactions à 0)" if name == "spot" else "transactions exactes désactivées"}
                     continue
-                ser = ts.flow.series(times, step)
+                h = hist.get(name)
+                ser = sizeflow.combined(times, step, [ts.flow, h.flow if h else None])      # V40.1 : la minute, puis l'historique a l'heure
                 st = ts.status()
                 ok = any(v is not None for v in ser["delta"][0])
                 out[name] = {**ser, "ok": ok, "state": st.get("state"), "days": st.get("days"), "complete": st.get("complete"),
-                             "error": st.get("error"), "why": None if ok else f"téléchargement des transactions en cours ({st.get('state')})"}
+                             "error": st.get("error"), "why": None if ok else f"téléchargement des transactions en cours ({st.get('state')})",
+                             "hist": h.status() if h else None}
         self._size_cache[(sym, tf)] = (key, out)
         return out
 
@@ -777,6 +788,11 @@ class App:
                     m.cfg = cfg
                 self.service._sig_cache.clear()
                 self.assistant.cfg = cfg
+                for k, ts in self.trades.items():                # V40.1 : jours d'historique du flux par taille, sans redemarrer
+                    if ":hist:" in k:
+                        ts.days = getattr(cfg, "sizeflow_history_days", ts.days)
+                        if self.running:
+                            ts.start()
                 self._chat_restart()
 
     def alert_cycle(self, service):
@@ -1061,7 +1077,7 @@ class App:
                              "chatId": c.telegram_chat_id, "envFile": str(self.env_path), **self.telegram_state()},
                 "alertMinScore": c.alert_min_score, "alertTf": c.alert_tf, "alertCooldownHours": c.alert_cooldown_hours,
                 "alertMode": c.alert_mode, "alertSweep": c.alert_sweep, "alertMacro": c.alert_macro, "alertZones": c.alert_zones, "historyYears": c.history_years,
-                "footprintDays": c.footprint_days, "trades": {s: t.status() for s, t in getattr(self, "trades", {}).items()},
+                "footprintDays": c.footprint_days, "sizeHistDays": getattr(c, "sizeflow_history_days", 180), "trades": {s: t.status() for s, t in getattr(self, "trades", {}).items()},
                 "signalOn": c.signal_on, "signalMinScore": c.signal_min_score, "signalMaxWeek": c.signal_max_week, "signalMaxPerSymbol": c.signal_max_per_symbol,
                 "signalLeverage": c.signal_leverage, "signalTrendGate": c.signal_trend_gate, "signalDirection": c.signal_direction, "signalOpposite": c.signal_opposite,
                 "macroWeekTelegram": c.macro_week_telegram, "macroMonthTelegram": c.macro_month_telegram,
@@ -1103,6 +1119,8 @@ class App:
             upd["TERMINAL_ALERT_SWEEP"] = "1" if body["alertSweep"] else "0"
         if body.get("historyYears") is not None:
             upd["TERMINAL_HISTORY_YEARS"] = str(max(0, min(10, int(body["historyYears"]))))
+        if body.get("sizeHistDays") is not None:
+            upd["TERMINAL_SIZEFLOW_HISTORY_DAYS"] = str(max(0, min(1500, int(body["sizeHistDays"]))))
         if body.get("footprintDays") is not None:
             upd["TERMINAL_FOOTPRINT_DAYS"] = str(max(0, min(400, int(body["footprintDays"]))))
         if body.get("alertMode") in ("ideas", "all"):

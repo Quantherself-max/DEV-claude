@@ -729,7 +729,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 40;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex)
+const NEED_API = 41;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -1172,6 +1172,8 @@ function renderFpState(tr, source) {
   if (!rows.length) { el.textContent = 'Désactivé.'; return; }
   el.innerHTML = rows.map(t => {
     const base = String(t.symbol || '').replace(/USDT$/, '') + (t.market === 'spot' ? ' spot' : '');
+    if (t.kind === 'hist') return `<b>${base}${t.market === 'perp' ? ' perpétuel' : ''}</b> · historique du flux par taille : ${t.complete}/${t.days} jours` +
+      (t.current ? ` · archive du ${t.current}` : '') + ` · ${t.mb || 0} Mo` + (t.error ? ` · <span class="dn">${String(t.error).replace(/[<>&]/g, '')}</span>` : '');
     const today = t.today != null ? Math.round(t.today * 100) + ' %' : '—';
     const err = t.error ? ` · <span class="dn">${String(t.error).replace(/[<>&]/g, '')}</span>` : '';
     return `<b>${base}</b> : ${t.complete}/${t.days} jours complets, aujourd'hui ${today}` +
@@ -1245,6 +1247,7 @@ async function openSettings() {
     $('#symbols').value = s.symbols.join(',');
     $('#histYears').value = String(s.historyYears || 0);
     $('#fpDays').value = String(s.footprintDays ?? 62);
+    if ($('#sizeHistDays')) { const v = String(s.sizeHistDays ?? 180), sel = $('#sizeHistDays'); if (![...sel.options].some(o => o.value === v)) sel.add(new Option(v + ' jours', v)); sel.value = v; }
     renderFpState(s.trades, s.source);
     $('#tgToken').value = '';
     $('#tgToken').placeholder = s.telegram.tokenHint ? `token enregistré (${s.telegram.tokenHint}) : laisse vide pour le garder` : '123456789:AA...';
@@ -1418,7 +1421,7 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
   const src = (document.querySelector('input[name=source]:checked') || {}).value;
   const before = st.cfg ? st.cfg.source + '|' + st.cfg.symbols.join(',') + '|' + (st.cfg.historyYears || 0) : '';
   const body = {source: src, symbols: $('#symbols').value.split(/[\s,;]+/).filter(Boolean), telegramChatId: $('#tgChat').value.trim(),
-    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMode: $('#aMode').value, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, macroWeekTelegram: $('#mwTg').checked, macroMonthTelegram: $('#mmTg').checked, historyYears: +$('#histYears').value, footprintDays: +$('#fpDays').value,
+    alertMinScore: +$('#aScore').value, alertTf: $('#aTf').value, alertCooldownHours: +$('#aCool').value, alertSweep: $('#aSweep').checked, alertMode: $('#aMode').value, alertZones: $('#aZones').checked, alertMacro: $('#aMacro').checked, macroWeekTelegram: $('#mwTg').checked, macroMonthTelegram: $('#mmTg').checked, historyYears: +$('#histYears').value, footprintDays: +$('#fpDays').value, sizeHistDays: $('#sizeHistDays') ? +$('#sizeHistDays').value : undefined,
     xOn: $('#xOn').checked, xAccounts: $('#xAccounts').value, xPosts: +$('#xPosts').value,
     signalOn: $('#sOn').checked, signalMinScore: +$('#sMin').value, signalMaxWeek: +$('#sMax').value, signalMaxPerSymbol: +$('#sMaxSym').value, signalLeverage: +$('#sLev').value, signalTrendGate: $('#sTrend').checked, signalDirection: $('#sDir').value, signalOpposite: $('#sOpp').value};
   if ($('#tgToken').value.trim()) body.telegramToken = $('#tgToken').value.trim();

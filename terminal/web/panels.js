@@ -676,7 +676,9 @@ class Panel {
     const first = Z.times.findIndex((_, i) => cums[0][i] != null);
     const l1 = [`${lab} · cumul${rl}${M.simulated ? ' (simulé)' : ''}`];
     sets.forEach((g, j) => l1.push({txt: `${g.name} ${cums[j][idx] == null ? '-' : Panel.big(cums[j][idx]) + ' $'}`, col: g.col}));
-    if (first > 0 && !M.simulated) l1.push(`depuis le ${new Date(Z.times[first] * 1000).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit'})}`);
+    if (first > 0 && !M.simulated) l1.push(`depuis le ${new Date(Z.times[first] * 1000).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit', year: '2-digit'})}`);
+    const Hs = M.hist;                                                    // V40.1 : historique à l'heure en cours de chargement
+    if (Hs && Hs.days && Hs.complete < Hs.days) l1.push({txt: `historique ${Hs.complete}/${Hs.days} jours`, col: '#8a90a0'});
     // lecture sur les dernières bougies, toujours en 3 groupes (petits : moins de 10 000 $, gros : plus de 100 000 $)
     const N = Math.min(24, idx - Math.max(0, first)), D = c => { let a = 0; for (let i = idx - N + 1; i <= idx; i++) a += c.reduce((x, k2) => x + (M.delta[k2][i] || 0), 0); return a; };
     if (N < 3) return [l1];
