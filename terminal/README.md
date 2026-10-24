@@ -137,6 +137,22 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## V41.1 : mesure de la cassure de la bascule du gamma
+
+Question : quand le prix passe sous la bascule du gamma (gamma positif → négatif, les teneurs de marché devraient alors vendre la baisse),
+de combien baisse-t-il avant de rebondir ? Outil : `python tools/run_gex_flip_study.py` (méthode : `engine/gexflip.py`).
+
+- Sans option, il mesure sur **tes enregistrements** : le terminal garde la bascule toutes les 15 minutes (`data_local/history/derivs/BTCUSDT.csv`,
+  Deribit, Bybit et OKX). Plus le terminal a tourné, plus la mesure est solide.
+- `--source binance2023` : archives horaires des options Binance (mai à octobre 2023), les seules archives gratuites d'options par strike trouvées.
+  La courbe de gamma de chaque heure est recalculée avec le calcul de l'onglet GEX. Limite : Binance ne portait qu'environ 200 millions de
+  dollars d'intérêt ouvert, contre plusieurs milliards sur Deribit.
+- Mesures : baisse (ou hausse) avant un rebond de 1, 2 et 3 %, écarts à 4 h, 24 h et 72 h, course 1 % / 2 %, retour au-dessus du niveau cassé,
+  comparées aux mêmes mesures depuis des heures prises au hasard.
+- Résultat sur Binance 2023 (BTC, 43 cassures vers le gamma négatif) : 1,1 % de baisse moyenne avant un rebond de 1 % (hasard : 1,0 %),
+  2,0 % avant un rebond de 2 % (hasard : 1,9 %) ; le prix repasse au-dessus du niveau dans 91 % des cas en moins de 4 heures. Aucune
+  différence nette avec le hasard (ETH : pareil). À refaire sur tes enregistrements Deribit.
+
 ## Ce qui est nouveau en V41 : le flux par taille d'ordre sur plusieurs mois
 
 En V39, le flux par taille ne couvrait que les 14 derniers jours : en semaine ou en mois, il ne restait qu'une ou deux bougies. Il a maintenant un **historique à l'heure**.
