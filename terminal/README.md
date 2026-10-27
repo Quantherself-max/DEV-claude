@@ -1,4 +1,4 @@
-# Liq Terminal (V41)
+# Liq Terminal (V42)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
@@ -136,6 +136,21 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V42 : PUMP
+
+PUMP (le jeton de pump.fun, perpétuel Binance PUMPUSDT) est le troisième instrument, avec son onglet comme BTC et SOL : graphique, profils
+de volume, TPO, VWAP, liquidité, carnet, empreinte, flux par taille d'ordre (perpétuel et spot), intérêt ouvert, financement des autres
+bourses (Bybit, OKX, Hyperliquid) et idées de trade.
+
+- **Paires** : PUMPUSDT est ajouté une seule fois à la liste déjà enregistrée dans `.env` (Réglages, ligne « Paires »). Si tu l'enlèves, il ne revient pas.
+- **Ancien jeton exclu** : Binance a d'abord utilisé le nom PUMPUSDT pour un autre jeton (avril à juin 2025, figé à 0,0471 jusqu'au 9 juillet).
+  Tout l'historique de PUMP commence le 10 juillet 2025 (le spot le 11 septembre 2025) : `data/listing.py`, appliqué aux appels de l'API
+  et à toutes les archives Binance Vision.
+- **Prix sous 0,01 $** : les prix s'affichent avec au moins 4 chiffres significatifs (0,004231), l'échelle des graphiques prend les décimales
+  du prix, la grille des profils de volume et des poches de liquidité descend jusqu'à 0,00000001 $ (les cases de BTC et SOL ne changent pas).
+- **Seuils PUMP** : gros ordres à partir de 25 000 $, taille des contrats OKX (1 000 PUMP), posts X comptés seulement avec le symbole $PUMP.
+- Aucun rapport de backtest n'existe encore pour PUMP : les pages de mesure restent sur BTC et SOL.
 
 ## V41.1 : mesure de la cassure de la bascule du gamma
 

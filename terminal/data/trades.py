@@ -25,6 +25,7 @@ from pathlib import Path
 
 from engine import footprint as fpm
 from engine import sizeflow as sfm
+from . import listing
 
 VISION = "https://data.binance.vision/data/futures/um/daily/aggTrades"
 VISION_SPOT = "https://data.binance.vision/data/spot/daily/aggTrades"      # V39 : marche spot (flux par taille d'ordre)
@@ -278,7 +279,8 @@ class TradeSync:
     # ---------- archives quotidiennes ----------
     def wanted_days(self):
         today = day_of(self.now_ms())
-        return [today - k * DAY for k in range(1, self.days + 1)]   # du plus recent au plus ancien, aujourd'hui exclu (pas encore archive)
+        first = listing.first_ms(self.symbol, self.market)          # V42 : rien avant le premier jour de la paire (data/listing.py)
+        return [d for d in (today - k * DAY for k in range(1, self.days + 1)) if d >= first]   # du plus recent au plus ancien, aujourd'hui exclu
 
     def history_step(self) -> bool:
         now_s = time.time()

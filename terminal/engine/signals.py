@@ -63,7 +63,12 @@ DEFAULTS = {
 def fmt_price(p):
     if p is None:
         return "-"
-    s = f"{p:,.0f}" if abs(p) >= 1000 else f"{p:,.2f}" if abs(p) >= 1 else f"{p:.4f}"
+    if abs(p) >= 1000:
+        s = f"{p:,.0f}"
+    elif abs(p) >= 1:
+        s = f"{p:,.2f}"
+    else:                                                       # V42 : 4 decimales jusqu'a 0,01 ; en dessous, 4 chiffres significatifs (PUMP : 0,004231)
+        s = f"{p:.{4 if abs(p) >= 0.01 else 3 - math.floor(math.log10(abs(p)))}f}" if p else "0"
     return s.replace(",", " ").replace(".", ",") if abs(p) < 1000 else s.replace(",", " ")
 
 

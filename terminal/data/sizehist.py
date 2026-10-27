@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from engine import sizeflow as sfm
+from . import listing
 from .trades import DAY, VISION, VISION_SPOT, day_of, http_bytes, vision_url, ymd
 
 HOUR = 3_600_000
@@ -95,7 +96,8 @@ class SizeHistory:
     # ---------- travail ----------
     def wanted_days(self) -> list[int]:
         today = day_of(self.now_ms())
-        return [today - k * DAY for k in range(1, self.days + 1)]          # du plus recent au plus ancien
+        first = listing.first_ms(self.symbol, self.market)                 # V42 : rien avant le premier jour de la paire
+        return [d for d in (today - k * DAY for k in range(1, self.days + 1)) if d >= first]   # du plus recent au plus ancien
 
     def step(self) -> bool:
         """Un jour : additionne depuis la minute s'il y est complet, sinon telecharge son archive. True s'il en reste."""

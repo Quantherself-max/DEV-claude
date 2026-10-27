@@ -10,6 +10,7 @@ import urllib.parse
 import urllib.request
 
 from engine.atr import Candle, INTERVAL_MS
+from . import listing
 from .base import DataError, Source
 
 FAPI = "https://fapi.binance.com"
@@ -69,7 +70,7 @@ class BinanceSource(Source):
 
     def candles(self, symbol, interval, start_ms, end_ms):
         step = INTERVAL_MS[interval]
-        out, t = [], start_ms
+        out, t = [], listing.clamp(symbol, start_ms)                # V42 : jamais avant le premier jour de la paire (data/listing.py)
         while t <= end_ms:
             rows = self._get("/fapi/v1/klines", {"symbol": symbol, "interval": interval,
                                                    "startTime": t, "endTime": end_ms, "limit": 1500})
@@ -84,7 +85,7 @@ class BinanceSource(Source):
 
     def open_interest(self, symbol, period, start_ms, end_ms):
         step = INTERVAL_MS[period]
-        out, t = [], start_ms
+        out, t = [], listing.clamp(symbol, start_ms)
         while t <= end_ms:
             rows = self._get("/futures/data/openInterestHist",
                              {"symbol": symbol, "period": period, "limit": 500,
@@ -105,7 +106,7 @@ class BinanceSource(Source):
     def spot_candles(self, symbol, interval, start_ms, end_ms):
         """V37 : bougies spot (/api/v3/klines : index 9 et 10 = volume acheteur agressif en coin et en dollars), 1000 par appel."""
         step = INTERVAL_MS[interval]
-        out, t = [], start_ms
+        out, t = [], listing.clamp(symbol, start_ms, "spot")
         while t <= end_ms:
             rows = self._get("/api/v3/klines", {"symbol": symbol, "interval": interval, "startTime": t, "endTime": end_ms, "limit": 1000},
                              host=self.spot_base)
@@ -126,7 +127,7 @@ class BinanceSource(Source):
                 "next_funding": int(r["nextFundingTime"])}
 
     def funding_history(self, symbol, start_ms, end_ms):
-        out, t = [], start_ms
+        out, t = [], listing.clamp(symbol, start_ms)
         while t <= end_ms:
             rows = self._get("/fapi/v1/fundingRate", {"symbol": symbol, "startTime": t, "endTime": end_ms, "limit": 1000})
             if not rows:
@@ -141,7 +142,7 @@ class BinanceSource(Source):
     def long_short(self, symbol, period, start_ms, end_ms, kind="global"):
         """Ratio long/short : 'global' = comptes, 'top' = positions des gros traders. [(t, ratio, part long)]"""
         path = "/futures/data/globalLongShortAccountRatio" if kind == "global" else "/futures/data/topLongShortPositionRatio"
-        rows = self._get(path, {"symbol": symbol, "period": period, "limit": 500, "startTime": start_ms, "endTime": end_ms})
+        rows = self._get(path, {"symbol": symbol, "period": period, "limit": 500, "startTime": listing.clamp(symbol, start_ms), "endTime": end_ms})
         out = []
         for r in rows:
             lg = r.get("longAccount", r.get("longPosition"))

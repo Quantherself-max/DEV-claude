@@ -7,6 +7,8 @@ sont pas presentees comme des probabilites mesurees. La confiance reste « faibl
 statistique n'a pas prouve un avantage et qu'une annonce majeure est proche."""
 from __future__ import annotations
 
+from .signals import fmt_price
+
 
 def _clip(x, lo=-1.0, hi=1.0):
     return lo if x < lo else hi if x > hi else x
@@ -135,10 +137,10 @@ def synthesize(sym, price, bias, macro, dom, ctx, zones, ess_ids):
         if direction == "haussier" and dn:
             z = dn[0]
             b = (z.get("prob") or {}).get("bounce")
-            inval.append(f"Cassure franche de la zone {z['mid']:,.0f}".replace(",", " ") + (f" (rebond historique {b['p'] * 100:.0f} % sur {b['n']} tests)" if b and b.get("n") else ""))
+            inval.append(f"Cassure franche de la zone {fmt_price(z['mid'])}" + (f" (rebond historique {b['p'] * 100:.0f} % sur {b['n']} tests)" if b and b.get("n") else ""))
         if direction == "baissier" and up:
             z = up[0]
-            inval.append(f"Reprise et tenue au-dessus de la zone {z['mid']:,.0f}".replace(",", " "))
+            inval.append(f"Reprise et tenue au-dessus de la zone {fmt_price(z['mid'])}")
     if danger:
         inval.append(f"Annonce majeure ({risk['label']}) dans {int(risk['minutes'])} min : tout biais peut être balayé en quelques secondes")
     return {

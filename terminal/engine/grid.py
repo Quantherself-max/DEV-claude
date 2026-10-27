@@ -4,7 +4,9 @@ import math
 
 
 class Grid:
-    def __init__(self, pct: float, min_px: float = 0.01):
+    def __init__(self, pct: float, min_px: float = 1e-8):
+        # V42 : plancher a 1e-8 (0,01 avant : tout PUMP, vers 0,004, tombait dans la meme case). Les bords des cases sont exp(k x pas)
+        # quel que soit le plancher : BTC et SOL gardent exactement les memes cases, seuls les numeros changent.
         self.step = math.log(1.0 + pct / 100.0)
         self.min_px = min_px
         self.base = math.floor(math.log(min_px) / self.step)

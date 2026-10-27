@@ -362,6 +362,7 @@ class Panel {
   }
   setBars(bars, reset) {
     if (reset) {
+      if (bars.length) this.series.applyOptions({priceFormat: LT.pxFormat(bars[bars.length - 1].close)});   // V42 : décimales selon le prix (PUMP)
       this.series.setData(bars); this.n = bars.length;
       this.chart.timeScale().setVisibleLogicalRange({from: Math.max(0, this.n - 130), to: this.n + this.rightSpace()});
       this.lastBar = this.n ? bars[this.n - 1].time : 0; this.stamp = '';
@@ -473,7 +474,7 @@ class Panel {
       let L = this.layers[w.id];
       if (!L) {
         L = this.layers[w.id] = {s: this.chart.addLineSeries({color: w.color, lineWidth: w.w, lineStyle: w.st || 0, lastValueVisible: false,
-          priceLineVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null})};
+          priceLineVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null, priceFormat: this.series.options().priceFormat})};
       }
       L.meta = w;
       L.s.setData(S.times.map((t, i) => w.v[i] == null ? {time: t} : {time: t, value: w.v[i]}));

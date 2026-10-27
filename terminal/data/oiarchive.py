@@ -12,6 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from engine import history
+from . import listing
 
 DAY = 86_400_000
 M5 = 300_000
@@ -37,7 +38,8 @@ class OiArchive:
 
     def _wanted(self):
         today = int(self.now() * 1000) // DAY * DAY
-        return [today - k * DAY for k in range(1, self.days + 1)]
+        first = listing.first_ms(self.symbol)                              # V42 : rien avant le premier jour de la paire
+        return [d for d in (today - k * DAY for k in range(1, self.days + 1)) if d >= first]
 
     def days_count(self) -> int:
         return sum(1 for d in self._wanted() if os.path.exists(self._file(d)))

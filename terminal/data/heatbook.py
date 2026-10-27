@@ -31,9 +31,11 @@ import random
 import threading
 import time
 
+from . import listing
+
 RANGE = 0.04
 KEEP_MS = 24 * 3_600_000
-CTVAL = {"BTC": 0.01, "ETH": 0.1, "SOL": 1.0}               # pièces par contrat OKX
+CTVAL = {"BTC": 0.01, "ETH": 0.1, "SOL": 1.0, "PUMP": 1000.0}             # pièces par contrat OKX
 EXCHANGES = ("binance", "okx", "bybit", "coinbase")
 EX_NAMES = {"binance": "Binance", "okx": "OKX", "bybit": "Bybit", "coinbase": "Coinbase"}
 # série -> (bourse, priorité, âge maximal d'une photo pour qu'elle compte encore)
@@ -632,6 +634,8 @@ class HeatRecorder:
                 if self.stop_ev.is_set() or (limit is not None and got >= limit):
                     break
                 day = today - k * DAY_MS
+                if day < listing.first_ms(lng.symbol):
+                    break                                           # V42 : rien avant le premier jour de la paire
                 have = lng.count_day("archive", day) + lng.count_day("binance", day)
                 if have >= (min(now - day, DAY_MS) // LT_MS) * 0.85:
                     continue                                        # jour déjà couvert (85 % des quarts d'heure)

@@ -74,6 +74,7 @@ const MTF = (() => {
       const last = this.bars[this.bars.length - 1];
       if (live && last && live.time === last.time) { last.high = Math.max(last.high, live.high); last.low = Math.min(last.low, live.low); last.close = live.close; }
       else if (live && last && live.time > last.time) this.bars.push(live);            // la transaction en direct a deja ouvert la bougie suivante
+      if (last) { const pf = LT.pxFormat(last.close); [this.series, this.vD, this.uD, this.lD, this.vW].forEach(s => s.applyOptions({priceFormat: pf})); }   // V42 : PUMP
       this.series.setData(this.bars);
       const T = d.times || [], pts = v => T.map((t, i) => v && v[i] != null ? {time: t, value: v[i]} : {time: t});
       this.vD.setData(pts(d.vwapD));

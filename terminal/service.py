@@ -730,7 +730,7 @@ class Market:
         for m in range(math.floor((price - win) / step), math.ceil((price + win) / step) + 1):
             v = m * step
             if v > 0 and abs(v - price) <= win:
-                levels.append(Level(f"ROUND|{v:g}", f"Rond {v:,.0f}".replace(",", " ") if v >= 1000 else f"Rond {v:g}",
+                levels.append(Level(f"ROUND|{v:g}", f"Rond {v:,.0f}".replace(",", " ") if v >= 1000 else f"Rond {v:.10g}".replace(".", ","),
                                     float(v), "ROUND", "round"))
         vps = self.vp_profiles(tf)
         for pf in vps:                                           # volume profiles supplementaires = sources de confluence

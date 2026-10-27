@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 
 ASSETS = {
-    "BTC": ("btc", "bitcoin", "xbt", "₿"), "ETH": ("eth", "ethereum", "ether"), "SOL": ("sol", "solana"),
+    "BTC": ("btc", "bitcoin", "xbt", "₿"), "ETH": ("eth", "ethereum", "ether"), "SOL": ("sol", "solana"), "PUMP": ("$pump", "pumpfun"),   # V42 : « pump » seul est un mot courant : seulement le symbole boursier $PUMP
     "BNB": ("bnb",), "XRP": ("xrp", "ripple"), "ADA": ("ada", "cardano"), "DOGE": ("doge", "dogecoin"),
     "AVAX": ("avax", "avalanche"), "LINK": ("link", "chainlink"),
 }
@@ -50,7 +50,7 @@ def tokens(text: str):
 
 def mentions(text: str, names) -> bool:
     for tk in tokens(text):
-        if tk.lstrip("$#") in names:
+        if tk in names or tk.lstrip("$#") in names:
             return True
     return False
 

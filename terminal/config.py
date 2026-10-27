@@ -77,7 +77,7 @@ def chat_is_bot(cid: str, tok: str) -> bool:
 @dataclass
 class Config:
     source: str = "binance"              # binance = vraies donnees (par defaut) | simulated = prix fictifs (essai hors ligne)
-    symbols: tuple = ("BTCUSDT", "SOLUSDT")
+    symbols: tuple = ("BTCUSDT", "SOLUSDT", "PUMPUSDT")       # V42 : PUMP (jeton de pump.fun, perpetuel Binance depuis le 10 juillet 2025)
     host: str = "127.0.0.1"              # local uniquement : le terminal n'est pas expose sur le reseau
     port: int = 8765
     refresh_seconds: int = 5             # recalcul des niveaux / alertes ; le prix, lui, arrive en temps reel
@@ -268,6 +268,13 @@ def write_env(path: Path, updates: dict) -> None:
 
 
 def migrate_env(path: Path, data_dir) -> bool:
+    """Migrations uniques de .env (V13.1 : sens des idees ; V42 : PUMPUSDT ajoute aux paires). True si .env a change."""
+    a = _migrate_direction(path, data_dir)
+    b = _migrate_pump(path, data_dir)
+    return a or b
+
+
+def _migrate_direction(path: Path, data_dir) -> bool:
     """Migration unique (V13.1) : la V13 mettait « achat seulement » par defaut et l'ecrivait dans .env a chaque enregistrement des reglages.
     Retour a « achats et ventes » une seule fois ; un choix fait ensuite (reglages ou .env) est respecte. True si .env a change."""
     mark = Path(data_dir) / ".migrated-direction"
@@ -280,6 +287,26 @@ def migrate_env(path: Path, data_dir) -> bool:
             changed = True
         mark.parent.mkdir(parents=True, exist_ok=True)
         mark.write_text("V13.1 : TERMINAL_SIGNAL_DIRECTION remis a both une seule fois\n", encoding="utf-8")
+    except OSError:
+        pass
+    return changed
+
+
+def _migrate_pump(path: Path, data_dir) -> bool:
+    """Migration unique (V42) : PUMPUSDT ajoute a la liste des paires deja ecrite dans .env (les Reglages l'y ecrivent). Une seule fois :
+    si tu l'enleves ensuite, il ne revient pas. True si .env a change."""
+    mark = Path(data_dir) / ".migrated-pump"
+    if mark.exists():
+        return False
+    changed = False
+    try:
+        cur = _load_env_file(path).get("TERMINAL_SYMBOLS", "") if path.exists() else ""
+        syms = [x.strip().upper() for x in cur.split(",") if x.strip()]
+        if syms and "PUMPUSDT" not in syms and len(syms) < 6:
+            write_env(path, {"TERMINAL_SYMBOLS": ",".join(syms + ["PUMPUSDT"])})
+            changed = True
+        mark.parent.mkdir(parents=True, exist_ok=True)
+        mark.write_text("V42 : PUMPUSDT ajoute une seule fois a TERMINAL_SYMBOLS\n", encoding="utf-8")
     except OSError:
         pass
     return changed

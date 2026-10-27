@@ -6,7 +6,7 @@ const Overview = (() => {
   const n1 = (v, d = 2) => v == null || isNaN(v) ? '-' : v.toFixed(d).replace('.', ',');
   const sg = (v, d = 2, u = '') => v == null || isNaN(v) ? '-' : (v > 0 ? '+' : '') + v.toFixed(d).replace('.', ',') + u;
   const p0 = v => v == null ? '-' : Math.round(v * 100) + ' %';
-  const fmtP = p => p >= 1000 ? Math.round(p).toLocaleString('fr-FR') : p.toFixed(2).replace('.', ',');
+  const fmtP = p => LT.fmtP(p);
   const cd = ms => { const m = Math.round(Math.abs(ms) / 60000); return m >= 1440 ? `${Math.floor(m / 1440)} j ${Math.floor(m % 1440 / 60)} h` : m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}` : `${m} min`; };
   let LT = null, last = null;
   const card = (t, b, cls = '') => `<div class="acard ${cls}"><h3>${t}</h3>${b}</div>`;

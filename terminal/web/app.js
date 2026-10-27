@@ -2,7 +2,11 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const fmtP = p => p >= 1000 ? Math.round(p).toLocaleString('fr-FR') : p.toFixed(2).replace('.', ',');
+// V42 : 4 décimales jusqu'à 0,01 $, en dessous 4 chiffres significatifs (PUMP : 0,004231) ; pxDec donne le nombre de décimales d'un prix
+const pxDec = p => { const a = Math.abs(p || 0); return a >= 1000 ? 0 : a >= 1 ? 2 : a >= 0.01 ? 4 : a > 0 ? 3 - Math.floor(Math.log10(a)) : 2; };
+const fmtP = p => p == null || isNaN(p) ? '-' : Math.abs(p) >= 1000 ? Math.round(p).toLocaleString('fr-FR') : p.toFixed(pxDec(p)).replace('.', ',');
+// format des prix des graphiques (lightweight-charts) : 2 décimales au-dessus de 1 $, sinon autant que pxDec (jamais 0,00 pour PUMP)
+const pxFormat = p => { const d = Math.max(2, pxDec(p)); return {type: 'price', precision: d, minMove: Math.pow(10, -d)}; };
 const fmtPct = v => (v > 0 ? '+' : '') + v.toFixed(2).replace('.', ',') + ' %';
 const UP = '#3ddc97', DN = '#ff6b6b', AMB = '#ffb300';
 const num = (v, d = 2) => v == null ? '-' : v.toFixed(d).replace('.', ',');
@@ -729,7 +733,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 41;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille)
+const NEED_API = 42;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille, V42 : prix sous 0,01 $ (PUMP))
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -746,7 +750,7 @@ function updateBanner(d) {
 }
 function header(d) {
   $('#price').textContent = fmtP(livePrice(d));
-  $('#atr').textContent = `ATR ${st.tf} ${fmtP(d.atr)} (${num(d.atrPct)} %)`;
+  $('#atr').textContent = `ATR ${st.tf} ${d.price && d.price < 1 && d.atr != null ? d.atr.toFixed(pxDec(d.price)).replace('.', ',') : fmtP(d.atr)} (${num(d.atrPct)} %)`;   // V42 : mêmes décimales que le prix
   const sb = $('#srcBadge');
   sb.textContent = d.source === 'simulated' ? 'DONNÉES SIMULÉES' : 'BINANCE';
   sb.className = 'badge ' + (d.source === 'simulated' ? 'warn' : 'ok');
@@ -1475,7 +1479,7 @@ function openSymbol(sym, page) {
   loadPrefs();
   let cfg;
   try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
-  window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, TF_LABEL, TF_TITLE, barStart, barEnd, leftTxt, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
+  window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, pxDec, pxFormat, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, TF_LABEL, TF_TITLE, barStart, barEnd, leftTxt, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
     serverOld, LAUNCHER, OPEN_ST, shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, oppOf, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan, togglePlan, planReset, planVisible,
     panels: () => panels, switchSymbol, applyLayout, setTf};
   Desk.init(window.LT);

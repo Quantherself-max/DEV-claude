@@ -21,7 +21,7 @@ from collections import deque
 
 from .ws import WSClient
 
-MIN_BIG_USD = {"BTC": 250_000.0, "ETH": 100_000.0, "SOL": 50_000.0}
+MIN_BIG_USD = {"BTC": 250_000.0, "ETH": 100_000.0, "SOL": 50_000.0, "PUMP": 25_000.0}
 DEFAULT_MIN_BIG = 25_000.0
 BIG_PCT = 0.997
 OKX_DEPTH_CHECK = 25
@@ -236,7 +236,7 @@ class AbsorbWatch:
     SAMPLE = 5.0
     MIN_SAMPLES = 60
     AWAY = 6                                             # confirmee : le prix s'eloigne de 6 tranches (environ 0,12 %)
-    FLOOR = {"BTC": 1_500_000.0, "ETH": 600_000.0, "SOL": 300_000.0}
+    FLOOR = {"BTC": 1_500_000.0, "ETH": 600_000.0, "SOL": 300_000.0, "PUMP": 100_000.0}
     DEFAULT_FLOOR = 150_000.0
 
     def __init__(self, sym: str, book_size=None):
@@ -622,14 +622,15 @@ class SimFlow:
             return
         tp = self.tapes[sym]
         nxt, ep = self._episode[sym]
+        dec = max(2, 6 - math.floor(math.log10(px)))                 # V42 : decimales selon le prix (PUMP a 0,004 : arrondi a 2 decimales = 0)
         for i in range(n):
             t = last + (i + 1) * (now - last) / n
             if ep is None and t >= nxt:                     # de temps en temps, un gros ordre passif absorbe les agressifs pendant 25 s
                 side = "bull" if self.rnd.random() < 0.5 else "bear"
-                ep = (t + 25.0, side, round(px * (1 - 0.0003 if side == "bull" else 1 + 0.0003), 2))
+                ep = (t + 25.0, side, round(px * (1 - 0.0003 if side == "bull" else 1 + 0.0003), dec))
             if ep is not None and t > ep[0]:
                 nxt, ep = t + self.rnd.uniform(600, 1500), None
-            p = round(px * (1 + self.rnd.gauss(0, 0.0004)), 2)
+            p = round(px * (1 + self.rnd.gauss(0, 0.0004)), dec)
             usd = math.exp(self.rnd.gauss(8.0, 1.6))
             maker = self.rnd.random() < 0.5
             if ep is not None:
