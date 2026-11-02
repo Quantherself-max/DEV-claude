@@ -57,6 +57,20 @@ class GexTests(unittest.TestCase):
         self.assertEqual(r["callWall"], 100.0)
         self.assertEqual(r["putWall"], 90.0)
 
+    def test_no_zero_gamma_without_a_real_sign_change(self):
+        no_iv = {"data": {"current_price": 100.0, "options": [{"option": "XYZ261120C00100000", "open_interest": 1000, "iv": 0, "gamma": 0.05}]}}
+        self.assertIsNone(gex.compute(gex.chain_from_json(no_iv, NOW))["zeroGamma"])
+        calls = {"data": {"current_price": 100.0, "options": [{"option": f"XYZ261016C{k * 1000:08d}", "open_interest": 500, "iv": 0.2}
+                                                            for k in range(95, 106)]}}
+        r = gex.compute(gex.chain_from_json(calls, NOW))
+        self.assertIsNone(r["zeroGamma"])                                  # que des calls : gamma total ≥ 0 partout
+        self.assertFalse([x for x in gex.to_nq(r, 1.0)["levels"] if x["kind"] == "gzero"])
+
+    def test_expired_options_are_dropped(self):
+        evening = clock.et_to_utc(2026, 10, 15, 19, 0)                    # 3 h après l'échéance du jour
+        ch = gex.chain_from_json(make(24950.0, date(2026, 10, 15)), evening)
+        self.assertFalse([o for o in ch["options"] if o["exp"] == "2026-10-15"])
+
     def test_unreadable_chain_raises(self):
         with self.assertRaises(ValueError):
             gex.chain_from_json({"data": {"current_price": 100, "options": [{"option": "??"}]}}, NOW)
@@ -90,6 +104,28 @@ class OptionsFeedTests(unittest.TestCase):
             js3, src3 = feed2.load(force=True)
             self.assertEqual(src3, "copie locale")
             self.assertIn("réseau coupé", feed2.error)
+
+    def test_bad_download_keeps_the_last_good_copy(self):
+        with tempfile.TemporaryDirectory() as d:
+            good = json.dumps(make(24950.0, date(2026, 10, 15))).encode()
+            OptionsFeed("NDX", d, fetch_fn=lambda u: good).load(force=True)
+            feed = OptionsFeed("NDX", d, fetch_fn=lambda u: b'{"error": "rate limited"}')
+            js, src = feed.load(force=True)
+            self.assertEqual(src, "copie locale")
+            self.assertTrue(js["data"]["options"])
+            self.assertIn("sans chaîne", feed.error)
+
+    def test_file_error_clears_once_readable(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "o.json"
+            p.write_text("{incomplet", encoding="utf-8")
+            feed = OptionsFeed("NDX", d, file_path=str(p))
+            self.assertEqual(feed.load(), (None, None))
+            self.assertTrue(feed.error)
+            p.write_text(json.dumps(make(24950.0, date(2026, 10, 15))), encoding="utf-8")
+            js, _ = feed.load()
+            self.assertIsNotNone(js)
+            self.assertIsNone(feed.error)
 
     def test_explicit_file(self):
         with tempfile.TemporaryDirectory() as d:
@@ -155,7 +191,11 @@ class RealDataTests(unittest.TestCase):
                 self.assertEqual((c.source, c.csv_path, c.auto_source), ("csv", str(f), True))
                 self.assertEqual(c.oi_path, str(f.with_name("nq-oi.csv")))
                 env.write_text("NQ_SOURCE=simulated\n", encoding="utf-8")      # un choix explicite l'emporte
-                self.assertEqual(load_config(env).source, "simulated")
+                c2 = load_config(env)
+                self.assertEqual((c2.source, c2.oi_path), ("simulated", ""))  # pas d'intérêt ouvert réel sur des prix simulés
+                env.write_text("NQ_CSV_PATH=/ailleurs/mes_ticks.csv\n", encoding="utf-8")   # un chemin seul : ce fichier, sans détection
+                c3 = load_config(env)
+                self.assertEqual((c3.source, c3.csv_path, c3.auto_source), ("csv", "/ailleurs/mes_ticks.csv", False))
 
     def test_switch_source_without_restart(self):
         with tempfile.TemporaryDirectory() as d:
@@ -164,7 +204,7 @@ class RealDataTests(unittest.TestCase):
             csvp.write_text("time,price,size,side\n" + "".join(f"{t0 + i * 1000},{25000 + (i % 8) * 0.25},1,{'B' if i % 2 else 'S'}\n" for i in range(400)),
                             encoding="utf-8")
             env = Path(d) / ".env"
-            env.write_text("# commentaire gardé\nNQ_PORT=8766\n", encoding="utf-8")
+            env.write_bytes("# commentaire gardé, écrit au Bloc-notes\nNQ_PORT=8766\n".encode("cp1252"))
             cfg = Config(data_dir=d, sim_days=2, gex="OFF")
             svc = Service(cfg, source=SimulatedSource(days=2, now_fn=lambda: NOW), account=Account(f"{d}/c.json", now_ms=lambda: NOW), env_path=env)
             svc.load_sync()
@@ -176,13 +216,21 @@ class RealDataTests(unittest.TestCase):
             self.assertFalse(svc.source.info()["simulated"])
             self.assertEqual(svc.market.count, 400)
             text = env.read_text(encoding="utf-8")
-            self.assertIn("# commentaire gardé", text)
+            self.assertIn("# commentaire gardé, écrit au Bloc-notes", text)
             self.assertIn("NQ_PORT=8766", text)
             self.assertIn("NQ_SOURCE=csv", text)
             self.assertIn(f"NQ_CSV_PATH={csvp}", text)
             svc.use_source(None)
             self.assertIn("NQ_SOURCE=simulated", env.read_text(encoding="utf-8"))
             self.assertNotIn("NQ_CSV_PATH", env.read_text(encoding="utf-8"))
+
+    def test_no_gex_for_es(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Config(data_dir=d, sim_days=2, instrument="ES", gex="NDX")
+            now = clock.et_to_utc(2026, 10, 15, 12, 0)
+            svc = Service(cfg, source=SimulatedSource(days=2, now_fn=lambda: now), account=Account(f"{d}/c.json", now_ms=lambda: now))
+            self.assertIsNone(svc.options)
+            self.assertEqual(svc.gex_view()["state"], "off")
 
     def test_gex_through_the_service(self):
         with tempfile.TemporaryDirectory() as d:

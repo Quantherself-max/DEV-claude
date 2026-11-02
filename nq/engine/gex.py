@@ -88,7 +88,7 @@ def chain_from_json(js: dict, now_ms: int) -> dict:
         root0 = root0 or root
         oi = _num(o, "open_interest", "openInterest", "oi") or 0.0
         t = (expiry_ms(exp) - now_ms) / YEAR
-        if t <= -1 / 365.0:                                   # échue
+        if t <= 0:                                            # échue (16 h ET le jour de l'échéance) : plus aucun gamma
             continue
         out.append({"strike": k, "type": cp, "exp": exp, "t": max(t, 1.0 / (365 * 24)), "oi": oi,
                     "iv": _num(o, "iv", "implied_volatility", "impliedVolatility") or 0.0,
@@ -137,11 +137,14 @@ def compute(chain: dict, mult: float = 100.0, band: float = 0.10, grid: int = 61
         for o in with_iv:
             tot += _gamma_at(o, s) * o["oi"] * mult * s * s * 0.01 * (1 if o["type"] == "C" else -1)
         curve.append((s, tot))
+    # vrai changement de signe seulement, entre deux points NON nuls (un gamma nul aux bords de la grille n'est pas un « flip ») ;
+    # aucun : pas de zéro gamma dans la plage (None)
     zero = None
     best = None
-    for (s1, g1), (s2, g2) in zip(curve, curve[1:]):
-        if g1 == 0 or (g1 < 0) != (g2 < 0):
-            x = s1 if g1 == 0 else s1 + (s2 - s1) * (-g1) / (g2 - g1)
+    pts = [(s, g) for s, g in curve if g != 0]
+    for (s1, g1), (s2, g2) in zip(pts, pts[1:]):
+        if (g1 < 0) != (g2 < 0):
+            x = s1 + (s2 - s1) * (-g1) / (g2 - g1)
             if best is None or abs(x - s0) < best:
                 zero, best = x, abs(x - s0)
     majors = sorted(near, key=lambda a: -abs(a["net"]))[:top]

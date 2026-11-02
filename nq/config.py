@@ -56,6 +56,8 @@ class Config:
     csv_sell_codes: tuple = ()
     data_dir: str = str(ROOT / "data_local")
     auto_source: bool = False        # vrai si le fichier de l'enregistreur NinjaTrader a ete trouve tout seul
+    source_explicit: bool = False    # NQ_SOURCE ecrit dans .env ou l'environnement (la detection automatique ne joue pas)
+    oi_explicit: bool = False        # NQ_OI_PATH donne
     oi_path: str = ""                # intérêt ouvert écrit par NQTickLogger (par defaut : nq-oi.csv a cote du fichier des transactions)
     gex: str = "NDX"                 # sous-jacent des options pour le GEX : NDX | QQQ | off
     gex_file: str = ""               # fichier JSON d'options a lire au lieu du telechargement
@@ -108,11 +110,16 @@ def load_config(env_path: Path | None = None) -> Config:
     c.csv_buy_codes = tuple(x.strip() for x in g("NQ_CSV_BUY_CODES", "").split(",") if x.strip())
     c.csv_sell_codes = tuple(x.strip() for x in g("NQ_CSV_SELL_CODES", "").split(",") if x.strip())
     c.data_dir = g("NQ_DATA_DIR", c.data_dir)
-    if "NQ_SOURCE" not in env:                               # rien de choisi : les vraies donnees de NinjaTrader si l'enregistreur tourne
-        found = find_logger_file()
-        if found:
-            c.source, c.csv_path, c.auto_source = "csv", c.csv_path or found, True
-    c.oi_path = g("NQ_OI_PATH", "") or (str(Path(c.csv_path).with_name("nq-oi.csv")) if c.csv_path else "")
+    c.source_explicit = "NQ_SOURCE" in env
+    if not c.source_explicit:
+        if c.csv_path:                                       # un chemin donne sans NQ_SOURCE : c'est ce fichier qu'on veut
+            c.source = "csv"
+        else:                                                # rien de choisi : les vraies donnees de NinjaTrader si l'enregistreur tourne
+            found = find_logger_file()
+            if found:
+                c.source, c.csv_path, c.auto_source = "csv", found, True
+    c.oi_explicit = bool(g("NQ_OI_PATH", ""))
+    c.oi_path = g("NQ_OI_PATH", "") or (str(Path(c.csv_path).with_name("nq-oi.csv")) if c.csv_path and c.source == "csv" else "")
     gx = g("NQ_GEX", c.gex).upper()
     c.gex = gx if gx in ("NDX", "QQQ", "OFF") else "NDX"
     c.gex_file = g("NQ_GEX_FILE", c.gex_file)

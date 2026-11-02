@@ -105,17 +105,27 @@ namespace NinjaTrader.NinjaScript.Indicators
 						writer.WriteLine("time,price,size,side,bid,ask");
 					writer.Flush();
 					Print("NQTickLogger : écriture dans " + FilePath);
-					string oiPath = Path.Combine(string.IsNullOrEmpty(dir) ? "." : dir, "nq-oi.csv");
+				}
+				catch (Exception ex)
+				{
+					Print("NQTickLogger : impossible d'ouvrir le fichier (" + ex.Message + ")");
+					writer = null;
+				}
+				// intérêt ouvert : fichier à part, ouvert à part. S'il est verrouillé (ouvert dans Excel...), les transactions s'écrivent quand même.
+				try
+				{
+					string oiDir = Path.GetDirectoryName(FilePath);
+					string oiPath = Path.Combine(string.IsNullOrEmpty(oiDir) ? "." : oiDir, "nq-oi.csv");
 					bool oiNew = !File.Exists(oiPath) || new FileInfo(oiPath).Length == 0;
-					oiWriter = new StreamWriter(new FileStream(oiPath, FileMode.Append, FileAccess.Write, FileShare.Read), new UTF8Encoding(false));
+					oiWriter = new StreamWriter(new FileStream(oiPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite), new UTF8Encoding(false));
 					if (oiNew)
 						oiWriter.WriteLine("time,oi");
 					oiWriter.Flush();
 				}
 				catch (Exception ex)
 				{
-					Print("NQTickLogger : impossible d'ouvrir le fichier (" + ex.Message + ")");
-					writer = null;
+					Print("NQTickLogger : intérêt ouvert non écrit (" + ex.Message + ")");
+					oiWriter = null;
 				}
 			}
 		}
@@ -124,9 +134,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			lock (gate)
 			{
-				if (writer == null)
-					return;
-				try { writer.Flush(); writer.Dispose(); }
+				try { if (writer != null) { writer.Flush(); writer.Dispose(); } }
 				catch (Exception) { }
 				writer = null;
 				try { if (oiWriter != null) { oiWriter.Flush(); oiWriter.Dispose(); } }

@@ -262,12 +262,13 @@ class CsvSource(Source):
         return d
 
 
-def selftest_file(path) -> tuple:
-    """(ok, message) : le fichier existe-t-il et ses premieres lignes sont-elles lisibles ? Pour le bouton « Tester » des reglages."""
+def selftest_file(path, tz: str = "utc", columns: str | None = None, buy_codes=(), sell_codes=(), max_days: float = 36_500) -> tuple:
+    """(ok, message) : le fichier existe-t-il et ses lignes sont-elles lisibles (avec les memes reglages de colonnes / fuseau / codes que la
+    source) ? Pour le bouton « Tester » des reglages. `max_days` : seulement la fin du fichier (par defaut : aucun filtre d'age)."""
     p = Path(path)
     if not p.is_file():
         return False, f"fichier introuvable : {p}"
-    src = CsvSource(p, follow=False, max_days=36_500)             # test de lecture : aucun filtre d'age
+    src = CsvSource(p, tz, columns, buy_codes, sell_codes, follow=False, max_days=max_days)
     try:
         ticks = list(src.history(int(time.time() * 1000)))
     except DataError as e:

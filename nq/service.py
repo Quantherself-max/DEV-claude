@@ -69,8 +69,10 @@ class Service:
         self._abs_known = {}                                 # absorptions déjà évaluées, par barre close (une barre close ne change plus)
         self._lv_cache = (0.0, None)                         # niveaux (recalculés au plus toutes les 3 s pour classer les absorptions)
         self._oi = (None, None)                              # (date de modification du fichier, résumé de l'intérêt ouvert)
-        self.options = OptionsFeed(cfg.gex, Path(cfg.data_dir), cfg.gex_file, cfg.gex_refresh_min) if cfg.gex != "OFF" else None
-        self.gex_state = {"state": "off" if self.options is None else "waiting", "msg": "", "res": None, "asof": None, "src": None}
+        gex_ok = cfg.gex != "OFF" and inst.root in ("NQ", "MNQ")          # options NDX / QQQ : seulement pour le Nasdaq
+        self.options = OptionsFeed(cfg.gex, Path(cfg.data_dir), cfg.gex_file, cfg.gex_refresh_min) if gex_ok else None
+        self.gex_state = {"state": "off" if self.options is None else "waiting", "res": None, "asof": None, "src": None,
+                          "msg": "" if gex_ok or cfg.gex == "OFF" else "GEX : options du Nasdaq, seulement pour NQ / MNQ."}
         self._gex_lock = threading.Lock()
         self._gex_force = threading.Event()
         self._swap = threading.Lock()                        # changement de source pendant que le fil de lecture tourne
@@ -141,15 +143,23 @@ class Service:
                 self.gex_state = dict(self.gex_state, state="error" if self.gex_state.get("res") is None else self.gex_state["state"],
                                       msg=self.options.error or "Pas encore de données d'options.")
             return self.gex_state
+        now = self.now_ms()
         try:
-            chain = gex.chain_from_json(js, self.now_ms())
+            chain = gex.chain_from_json(js, now)
             res = gex.compute(chain)
         except (ValueError, KeyError, TypeError, ZeroDivisionError) as e:
-            with self._gex_lock:
-                self.gex_state = dict(self.gex_state, state="error", msg=f"Données d'options inattendues : {e}")
+            with self._gex_lock:                                 # on garde le dernier bon calcul s'il existe
+                self.gex_state = dict(self.gex_state, state="ready" if self.gex_state.get("res") else "error",
+                                      msg=f"Données d'options inattendues : {e}")
             return self.gex_state
+        # prix du NQ qui correspond au prix du sous-jacent des données : cotations différées de 15 min -> NQ d'il y a 15 min pour un
+        # téléchargement ; pour un fichier / une copie, NQ à l'heure écrite dans les données si on l'a, sinon le dernier prix
+        ref_t = now - 15 * 60_000 if src and src.startswith("CBOE") else chain["asof"]
+        with self.market.lock:
+            bars = self.market.slice(ref_t - 3 * 60_000, ref_t + 60_000) if ref_t else []
+            ref = bars[-1].c if bars else self.market.price
         with self._gex_lock:
-            self.gex_state = {"state": "ready", "msg": self.options.error or "", "res": res, "asof": chain["asof"], "src": src,
+            self.gex_state = {"state": "ready", "msg": self.options.error or "", "res": res, "asof": ref_t, "src": src, "ref": ref,
                               "underlying": chain["underlying"] or self.cfg.gex}
         return self.gex_state
 
@@ -175,13 +185,7 @@ class Service:
         res = st.get("res")
         if not res:
             return out
-        mk = self.market
-        with mk.lock:
-            ref = None
-            if st["asof"] and mk.series.bars:
-                bars = mk.slice(st["asof"] - 3 * 60_000, st["asof"] + 60_000)
-                ref = bars[-1].c if bars else None
-            ref = ref or mk.price
+        ref = st.get("ref") or self.market.price
         if not ref or not res["spot"]:
             return dict(out, state="error", msg="Pas de prix NQ pour convertir les niveaux d'options.")
         ratio = ref / res["spot"]
@@ -559,8 +563,8 @@ class Service:
         """Où le terminal prend ses données, et où il cherche le fichier de l'enregistreur NinjaTrader."""
         from config import logger_candidates
         c = self.cfg
-        out = {"source": c.source, "auto": c.auto_source, "csvPath": c.csv_path, "oiPath": c.oi_path, "status": self.status,
-               "candidates": []}
+        out = {"source": c.source, "auto": c.auto_source, "explicit": c.source_explicit, "csvPath": c.csv_path, "oiPath": c.oi_path,
+               "status": self.status, "candidates": []}
         for p in logger_candidates():
             try:
                 st = p.stat() if p.is_file() else None
@@ -582,38 +586,41 @@ class Service:
     def use_source(self, path: str | None) -> dict:
         """Passe sur le fichier de transactions `path` (vérifié d'abord), ou sur les données simulées si `path` est vide, sans redémarrer.
         Le choix est écrit dans .env (NQ_SOURCE, NQ_CSV_PATH) pour les prochains démarrages."""
+        c0 = self.cfg
         if path:
-            ok, msg = selftest_file(path)
+            ok, msg = selftest_file(path, c0.csv_tz, c0.csv_columns or None, c0.csv_buy_codes, c0.csv_sell_codes,
+                                    max_days=c0.history_days * 7 / 5 + 2)
             if not ok:
                 raise ValueError(msg)
+        self._write_env({"NQ_SOURCE": "csv" if path else "simulated", "NQ_CSV_PATH": str(path) if path else ""})   # avant de changer : une erreur ne laisse rien à moitié
         with self._swap:
             c = self.cfg
-            c.source, c.csv_path, c.auto_source = ("csv", str(path), False) if path else ("simulated", "", False)
-            c.oi_path = str(Path(path).with_name("nq-oi.csv")) if path else ""
+            c.source, c.csv_path, c.auto_source, c.source_explicit = ("csv", str(path), False, True) if path else ("simulated", "", False, True)
+            c.oi_path = str(Path(path).with_name("nq-oi.csv")) if path else ""          # pas d'OI réel sur des prix simulés
             self.source = make_source(c)
             self.market = Market(self.inst, keep_days=c.history_days + 1)
             self.composer = profiles.Composer()
             self._abs_known, self._lv_cache, self._oi, self._bt_cache = {}, (0.0, None), (None, None), None
             self.loaded = False
             self.status = {"state": "loading", "msg": "Chargement de la nouvelle source…"}
-        self._write_env({"NQ_SOURCE": c.source, "NQ_CSV_PATH": c.csv_path})
         return {"ok": True, "message": msg if path else "Données simulées.", "source": c.source}
 
     def _write_env(self, values: dict):
         """Remplace (ou ajoute) ces réglages dans .env, en gardant le reste du fichier tel quel."""
+        from config import _read_text
         p = self.env_path
         try:
-            lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
-        except OSError:
-            lines = []
+            lines = _read_text(p).splitlines() if p.exists() else []          # .env écrit au Bloc-notes : UTF-8 ou Windows-1252
+        except OSError as e:
+            raise ValueError(f"impossible de lire {p} : {e}") from None
         keep = [ln for ln in lines if ln.split("=", 1)[0].strip() not in values]
         keep += [f"{k}={v}" for k, v in values.items() if v != ""]
         try:
             tmp = p.with_suffix(".tmp")
             tmp.write_text("\n".join(keep) + "\n", encoding="utf-8")
             tmp.replace(p)
-        except OSError:
-            log.warning("impossible d'écrire %s", p)
+        except OSError as e:
+            raise ValueError(f"impossible d'écrire {p} : {e}") from None
 
     def market_days(self) -> int:
         with self.market.lock:

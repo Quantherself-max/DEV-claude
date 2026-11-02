@@ -9,7 +9,7 @@ const Panels = (() => {
   let lastProfile = null;       // profil du dernier état reçu (pour les textes qui dépendent des règles)
   const lockableNow = () => !!lastProfile && lastProfile.dd_mode === 'eod_trailing' && lastProfile.lock_offset != null;
   let replan = null;            // recalcule le plan affiché (posé par buildPlan) sans toucher aux champs
-  const GROUP_COLOR = {veille: '#f5a97f', nuit: '#b794f6', seance: '#5eead4', profil: '#c084fc', rond: '#6b7280'};
+  const GROUP_COLOR = {veille: '#f5a97f', nuit: '#b794f6', seance: '#5eead4', profil: '#c084fc', gex: '#facc15', rond: '#6b7280'};
 
   const gauge = (frac, kind = '', marker = null) =>
     `<div class="bar ${kind}"><span style="width:${Math.max(0, Math.min(1, frac)) * 100}%"></span>${marker != null ? `<em style="left:${marker * 100}%"></em>` : ''}</div>`;
@@ -677,31 +677,40 @@ const Panels = (() => {
   }
 
   // ======================================================= Source des données
+  // Le formulaire est construit UNE fois : les relectures (toutes les 3 s) ne mettent à jour que l'état et la liste, jamais la saisie ni le message.
   function source(src) {
     const host = $('#tab-source');
-    if (host.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;     // ne pas effacer une saisie en cours
+    if (!$('#srcState', host)) {
+      host.innerHTML = '<div id="srcState"></div>'
+        + '<div class="card"><h2>Fichier de l\'enregistreur NinjaTrader</h2><div id="srcCands"></div>'
+        + '<form id="srcForm" class="f" style="margin-top:8px" autocomplete="off"><label class="wide">Autre fichier de transactions (chemin complet)<input name="path" placeholder="C:\\Users\\…\\Documents\\NQ-Terminal\\nq-ticks.csv"></label>'
+        + '<div class="row" style="grid-column:1/3"><button type="button" id="srcUse" class="primary">Tester et utiliser</button><button type="button" id="srcSim">Revenir aux données simulées</button></div></form>'
+        + '<div id="srcMsg" class="small" style="margin-top:6px"></div>'
+        + '<div class="small" style="margin-top:6px">Le choix est gardé dans le fichier .env du terminal (NQ_SOURCE, NQ_CSV_PATH). Le terminal relit le fichier puis suit les lignes ajoutées en temps réel.</div></div>';
+      const use = async path => {
+        const msg = $('#srcMsg');
+        msg.textContent = 'Lecture du fichier…';
+        $('#srcUse').disabled = true; $('#srcSim').disabled = true;
+        try { const r = await api('/api/source/use', {body: {path}}); msg.textContent = '✓ ' + r.message; toast('Source changée'); if (cb.refreshSource) setTimeout(cb.refreshSource, 1500); }
+        catch (e) { msg.textContent = '✗ ' + e.message; }
+        finally { $('#srcUse').disabled = false; $('#srcSim').disabled = false; }
+      };
+      host.onclick = e => { const b = e.target.closest('[data-use]'); if (b) use(b.dataset.use); };
+      $('#srcUse').onclick = () => { const p = $('#srcForm').path.value.trim(); if (p) use(p); };
+      $('#srcSim').onclick = () => use('');
+    }
     const sim = src.source !== 'csv';
     const age = src.file && src.file.ageS != null ? src.file.ageS : null;
-    let html = `<div class="card"><h2>Source des données <span class="badge ${sim ? 'sim' : 'ok'}">${sim ? 'SIMULÉES' : 'RÉELLES'}</span></h2>`
-      + (sim ? '<div class="note warn"><i></i><div>Prix fictifs. Pour les vraies données CME : lance NinjaTrader connecté à ton compte Lucid, avec l\'indicateur NQTickLogger sur un graphique NQ (README, « Brancher NinjaTrader »). Le terminal trouve son fichier tout seul au prochain démarrage, ou choisis-le ci-dessous.</div></div>'
+    $('#srcSim').hidden = sim;
+    $('#srcState').innerHTML = `<div class="card"><h2>Source des données <span class="badge ${sim ? 'sim' : 'ok'}">${sim ? 'SIMULÉES' : 'RÉELLES'}</span></h2>`
+      + (sim ? `<div class="note warn"><i></i><div>Prix fictifs. Pour les vraies données CME : lance NinjaTrader connecté à ton compte Lucid, avec l'indicateur NQTickLogger sur un graphique NQ (README, « Brancher NinjaTrader »). `
+          + (src.explicit ? 'Ton fichier .env impose NQ_SOURCE=simulated : choisis le fichier ci-dessous (ou retire cette ligne) pour passer aux vraies données.' : 'Le terminal trouve son fichier tout seul au prochain démarrage, ou choisis-le ci-dessous.') + '</div></div>'
         : kv('Fichier', `<small>${esc(src.csvPath)}</small>`) + kv('Trouvé automatiquement', src.auto ? 'oui' : 'non')
           + (src.file ? kv('Dernière écriture', age < 5 ? '<b class="pos">à l\'instant</b>' : `il y a ${fmt(age, 0)} s`, age > 120 ? 'amb' : '') + kv('Taille', fmt(src.file.size / 1e6, 1) + ' Mo') : kv('Fichier', '<b class="neg">introuvable</b>')))
       + kv('État', esc(src.status ? src.status.msg : '—')) + '</div>';
-    html += '<div class="card"><h2>Fichier de l\'enregistreur NinjaTrader</h2><table><tr><th>Emplacement cherché</th><th></th></tr>'
+    $('#srcCands').innerHTML = '<table><tr><th>Emplacement cherché</th><th></th></tr>'
       + src.candidates.map(c => `<tr><td><small>${esc(c.path)}</small></td><td>${c.exists ? `<button data-use="${esc(c.path)}">Utiliser</button>` : '<span class="muted">absent</span>'}</td></tr>`).join('')
-      + '</table><form id="srcForm" class="f" style="margin-top:8px" autocomplete="off"><label class="wide">Autre fichier de transactions (chemin complet)<input name="path" placeholder="C:\\Users\\…\\Documents\\NQ-Terminal\\nq-ticks.csv"></label>'
-      + '<div class="row" style="grid-column:1/3"><button type="button" id="srcUse" class="primary">Tester et utiliser</button>'
-      + (sim ? '' : '<button type="button" id="srcSim">Revenir aux données simulées</button>') + '</div></form><div id="srcMsg" class="small" style="margin-top:6px"></div>'
-      + '<div class="small" style="margin-top:6px">Le choix est gardé dans le fichier .env du terminal (NQ_SOURCE, NQ_CSV_PATH). Le terminal relit le fichier puis suit les lignes ajoutées en temps réel.</div></div>';
-    host.innerHTML = html;
-    const use = async path => {
-      $('#srcMsg').textContent = 'Lecture du fichier…';
-      try { const r = await api('/api/source/use', {body: {path}}); $('#srcMsg').textContent = r.message; toast('Source changée'); if (cb.refreshSource) setTimeout(cb.refreshSource, 1500); }
-      catch (e) { $('#srcMsg').textContent = e.message; }
-    };
-    $$('#tab-source [data-use]').forEach(b => b.onclick = () => use(b.dataset.use));
-    $('#srcUse').onclick = () => { const p = $('#srcForm').path.value.trim(); if (p) use(p); };
-    const back = $('#srcSim'); if (back) back.onclick = () => use('');
+      + '</table>';
   }
 
   function init(callbacks) { cb = callbacks; buildSetups(); buildAccount(); buildPlan(); buildBacktest(); buildFp(); }

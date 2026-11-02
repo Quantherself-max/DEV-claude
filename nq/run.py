@@ -80,9 +80,12 @@ def main() -> int:
     from config import load_config, validate
     cfg = load_config()
     if a.source:
-        cfg.source = a.source
+        cfg.source, cfg.source_explicit, cfg.auto_source = a.source, True, False
     if a.csv:
-        cfg.csv_path, cfg.source = a.csv, "csv"
+        cfg.csv_path, cfg.source, cfg.auto_source = a.csv, "csv", False
+    from pathlib import Path
+    if (a.source or a.csv) and not cfg.oi_explicit:          # intérêt ouvert réel seulement avec de vraies transactions
+        cfg.oi_path = str(Path(cfg.csv_path).with_name("nq-oi.csv")) if cfg.source == "csv" and cfg.csv_path else ""
     if a.instrument:
         cfg.instrument = a.instrument.upper()
     if a.port:

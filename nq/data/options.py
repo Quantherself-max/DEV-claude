@@ -44,7 +44,9 @@ class OptionsFeed:
         """(json, provenance) ou (None, None). Ordre : fichier choisi > téléchargement (si dû ou forcé) > copie locale."""
         if self.file_path:
             try:
-                return json.loads(Path(self.file_path).read_text(encoding="utf-8")), "fichier " + Path(self.file_path).name
+                js = json.loads(Path(self.file_path).read_text(encoding="utf-8"))
+                self.error = None
+                return js, "fichier " + Path(self.file_path).name
             except (OSError, ValueError) as e:
                 self.error = f"fichier d'options illisible : {e}"
                 return None, None
@@ -54,6 +56,9 @@ class OptionsFeed:
             try:
                 raw = self.fetch_fn(CBOE_URL.format(sym=sym))
                 js = json.loads(raw)
+                data = js.get("data", js) if isinstance(js, dict) else None
+                if not isinstance(data, dict) or not data.get("options"):     # réponse d'erreur : on ne remplace PAS la dernière bonne copie
+                    raise ValueError("réponse sans chaîne d'options")
                 try:
                     self.cache.parent.mkdir(parents=True, exist_ok=True)
                     tmp = self.cache.with_suffix(".tmp")
