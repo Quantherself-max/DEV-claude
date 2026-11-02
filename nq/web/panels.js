@@ -636,6 +636,74 @@ const Panels = (() => {
       `<tr><td>${U.hm(t.t / 1000, cb.tz())}</td><td class="${t.s > 0 ? 'pos' : 'neg'}">${t.s > 0 ? '▲' : '▼'} ${t.q}</td><td>${fmt(t.p, 2)}</td></tr>`).join('')}</table>`;
   }
 
+  // ======================================================= GEX / intérêt ouvert
+  const big = v => { const a = Math.abs(v); return (v < 0 ? '−' : '') + (a >= 1e9 ? fmt(a / 1e9, 2) + ' Md' : a >= 1e6 ? fmt(a / 1e6, 1) + ' M' : fmt(a, 0)) + ' $'; };
+  function gex(g, oi) {
+    const host = $('#tab-gex');
+    let html = '';
+    if (!g || g.state === 'off') html += '<div class="card muted">GEX désactivé (NQ_GEX=off dans .env).</div>';
+    else if (g.state !== 'ready') html += `<div class="card"><h2>GEX</h2><div class="muted">${esc(g.msg || 'Données d\'options en attente…')}</div>`
+      + '<div class="small" style="margin-top:6px">Le terminal télécharge la chaîne d\'options différée du CBOE depuis ton PC (toutes les 15 min). Sans réseau, il reprend la dernière copie gardée.</div></div>';
+    else {
+      const lv = g.levels || [];
+      const L = k => lv.find(x => x.kind === k);
+      const row = (x, cls) => x ? kv(esc(x.name), `${fmt(x.price, 2)} <small>${esc(g.underlying)} ${fmt(x.src, 2)}</small>`, cls) : '';
+      html += `<div class="card"><h2>GEX ${esc(g.underlying)} <span class="badge ${g.regime === 'positif' ? 'ok' : 'warn'}">GAMMA ${g.regime === 'positif' ? 'POSITIF' : 'NÉGATIF'}</span></h2>`
+        + kv('Gamma total (par 1 % de mouvement)', big(g.total), g.total >= 0 ? 'pos' : 'neg')
+        + row(L('gzero'), 'amb') + row(L('gcall'), 'pos') + row(L('gput'), 'neg')
+        + kv('Part des échéances du jour (0DTE)', pct(g.dte0Share))
+        + kv('Données', `${esc(g.src || '')} · ${g.asof ? U.hm(g.asof / 1000, cb.tz()) : '—'} · ${g.nOptions} options`)
+        + kv('Conversion vers le NQ', `× ${fmt(g.ratio, 4)} <small>NQ / ${esc(g.underlying)}</small>`)
+        + `<div class="small" style="margin-top:6px">${g.regime === 'positif' ? 'Gamma positif : les couvertures des teneurs de marché freinent les mouvements (achat des baisses, vente des hausses). Rotations, retours vers les gros strikes : favorable au scalp de range.' : 'Gamma négatif : les couvertures amplifient les mouvements (vente des baisses, achat des hausses). Extensions plus probables : prudence sur les contre-tendances.'} Le zéro gamma (HVL) sépare les deux régimes.</div>`
+        + (g.msg ? `<div class="small amb" style="margin-top:4px">${esc(g.msg)}</div>` : '') + '</div>';
+      const top = (g.strikes || []).slice().sort((a, b) => Math.abs(b.net) - Math.abs(a.net)).slice(0, 12).sort((a, b) => b.price - a.price);
+      if (top.length) html += `<div class="card"><h2>Strikes majeurs <small>prix NQ</small></h2><table><tr><th>NQ</th><th>${esc(g.underlying)}</th><th>GEX net</th><th>OI calls / puts</th></tr>`
+        + top.map(a => `<tr class="lvl" data-price="${a.price}"><td>${fmt(a.price, 2)}</td><td>${fmt(a.strike, 0)}</td><td class="${a.net >= 0 ? 'pos' : 'neg'}">${big(a.net)}</td><td>${fmt(a.callOi, 0)} / ${fmt(a.putOi, 0)}</td></tr>`).join('')
+        + '</table></div>';
+    }
+    html += '<div class="card"><h2>Intérêt ouvert du NQ <small>open interest</small></h2>';
+    if (!oi) html += '<div class="muted">Pas de données. NQTickLogger (version 0.6) écrit l\'intérêt ouvert dans « nq-oi.csv » à côté du fichier des transactions, quand le flux le fournit.</div>';
+    else {
+      html += kv('Dernier', `${fmt(oi.oi, 0)} <small>${esc(oi.day)}</small>`) + (oi.change != null ? kv('Variation sur la veille', sign(oi.change, 0), cls(oi.change)) : '')
+        + `<table style="margin-top:6px"><tr><th>Journée</th><th>OI</th></tr>${oi.history.slice().reverse().map(h => `<tr><td>${esc(h.day)}</td><td>${fmt(h.oi, 0)}</td></tr>`).join('')}</table>`
+        + '<div class="small" style="margin-top:6px">La bourse publie l\'intérêt ouvert une fois par jour. Hausse du prix + hausse de l\'OI : positions nouvelles dans le sens du mouvement ; hausse du prix + baisse de l\'OI : couverture de vendeurs (mouvement moins solide).</div>';
+    }
+    html += '</div>';
+    host.innerHTML = html;
+    $$('#tab-gex tr.lvl').forEach(tr => tr.onclick = () => {
+      const f = $(`#planForm [name=${lastField}]`);
+      if (f) { f.value = Number(tr.dataset.price).toFixed(2); f.dispatchEvent(new Event('input', {bubbles: true})); toast(`Prix ${fmt(Number(tr.dataset.price), 2)} copié dans le calculateur`); }
+    });
+  }
+
+  // ======================================================= Source des données
+  function source(src) {
+    const host = $('#tab-source');
+    if (host.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;     // ne pas effacer une saisie en cours
+    const sim = src.source !== 'csv';
+    const age = src.file && src.file.ageS != null ? src.file.ageS : null;
+    let html = `<div class="card"><h2>Source des données <span class="badge ${sim ? 'sim' : 'ok'}">${sim ? 'SIMULÉES' : 'RÉELLES'}</span></h2>`
+      + (sim ? '<div class="note warn"><i></i><div>Prix fictifs. Pour les vraies données CME : lance NinjaTrader connecté à ton compte Lucid, avec l\'indicateur NQTickLogger sur un graphique NQ (README, « Brancher NinjaTrader »). Le terminal trouve son fichier tout seul au prochain démarrage, ou choisis-le ci-dessous.</div></div>'
+        : kv('Fichier', `<small>${esc(src.csvPath)}</small>`) + kv('Trouvé automatiquement', src.auto ? 'oui' : 'non')
+          + (src.file ? kv('Dernière écriture', age < 5 ? '<b class="pos">à l\'instant</b>' : `il y a ${fmt(age, 0)} s`, age > 120 ? 'amb' : '') + kv('Taille', fmt(src.file.size / 1e6, 1) + ' Mo') : kv('Fichier', '<b class="neg">introuvable</b>')))
+      + kv('État', esc(src.status ? src.status.msg : '—')) + '</div>';
+    html += '<div class="card"><h2>Fichier de l\'enregistreur NinjaTrader</h2><table><tr><th>Emplacement cherché</th><th></th></tr>'
+      + src.candidates.map(c => `<tr><td><small>${esc(c.path)}</small></td><td>${c.exists ? `<button data-use="${esc(c.path)}">Utiliser</button>` : '<span class="muted">absent</span>'}</td></tr>`).join('')
+      + '</table><form id="srcForm" class="f" style="margin-top:8px" autocomplete="off"><label class="wide">Autre fichier de transactions (chemin complet)<input name="path" placeholder="C:\\Users\\…\\Documents\\NQ-Terminal\\nq-ticks.csv"></label>'
+      + '<div class="row" style="grid-column:1/3"><button type="button" id="srcUse" class="primary">Tester et utiliser</button>'
+      + (sim ? '' : '<button type="button" id="srcSim">Revenir aux données simulées</button>') + '</div></form><div id="srcMsg" class="small" style="margin-top:6px"></div>'
+      + '<div class="small" style="margin-top:6px">Le choix est gardé dans le fichier .env du terminal (NQ_SOURCE, NQ_CSV_PATH). Le terminal relit le fichier puis suit les lignes ajoutées en temps réel.</div></div>';
+    host.innerHTML = html;
+    const use = async path => {
+      $('#srcMsg').textContent = 'Lecture du fichier…';
+      try { const r = await api('/api/source/use', {body: {path}}); $('#srcMsg').textContent = r.message; toast('Source changée'); if (cb.refreshSource) setTimeout(cb.refreshSource, 1500); }
+      catch (e) { $('#srcMsg').textContent = e.message; }
+    };
+    $$('#tab-source [data-use]').forEach(b => b.onclick = () => use(b.dataset.use));
+    $('#srcUse').onclick = () => { const p = $('#srcForm').path.value.trim(); if (p) use(p); };
+    const back = $('#srcSim'); if (back) back.onclick = () => use('');
+  }
+
   function init(callbacks) { cb = callbacks; buildSetups(); buildAccount(); buildPlan(); buildBacktest(); buildFp(); }
-  return {init, lecture, levels, account, footprint, planResult, setups, backtestResult};
+  return {init, lecture, levels, account, footprint, planResult, setups, backtestResult, gex, source};
 })();

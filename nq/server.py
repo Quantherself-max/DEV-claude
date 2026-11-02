@@ -101,6 +101,10 @@ def route_get(app: App, path: str, q: dict):
                                     str(one("onePerSession", "")).lower() in ("1", "true", "on"), _num(q, "days", None, int))
         except ValueError as e:
             raise ApiError(400, str(e)) from None
+    if path == "/api/gex":
+        return s.gex_view()
+    if path == "/api/source":
+        return s.source_view()
     if path == "/api/context":
         return s.context(one("pos"))
     if path == "/api/account":
@@ -152,6 +156,13 @@ def route_post(app: App, path: str, body: dict):
             return a.set_profile(body.get("changes") or {}).to_dict()
         if path == "/api/test/file":
             return s.test_file(str(body.get("path", "")))
+        if path == "/api/source/use":
+            return s.use_source(str(body.get("path") or "").strip() or None)
+        if path == "/api/gex/refresh":
+            if s.options is None:
+                raise ApiError(400, "GEX désactivé (NQ_GEX=off)")
+            s._gex_force.set()
+            return {"ok": True}
     except AccountError as e:
         raise ApiError(400, str(e)) from None
     except (ValueError, TypeError, OverflowError) as e:

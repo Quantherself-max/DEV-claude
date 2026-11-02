@@ -11,13 +11,14 @@ from data.base import DataError
 from data.filefeed import CsvSource, selftest_file
 from data.simulated import SimulatedSource
 from engine import backtest as bt
-from engine import absorption, clock, context, cvd, events, footprint, levels, montecarlo, profiles, risk, signals, vp, vwap
+from data.options import OptionsFeed, oi_summary, read_oi
+from engine import absorption, clock, context, cvd, events, footprint, gex, levels, montecarlo, profiles, risk, signals, vp, vwap
 from engine.account import Account
 from engine.bars import TF_MS, resample
 from engine.instruments import INSTRUMENTS, front_contract
 from engine.market import Market
 
-VERSION = "0.5"
+VERSION = "0.6"
 log = logging.getLogger("nq")
 SIM_BASE = {"NQ": 25_000.0, "MNQ": 25_000.0, "ES": 6_700.0, "MES": 6_700.0}
 
@@ -52,7 +53,7 @@ def parse_position(text) -> dict | None:
 
 
 class Service:
-    def __init__(self, cfg, source=None, account: Account | None = None):
+    def __init__(self, cfg, source=None, account: Account | None = None, env_path: Path | None = None):
         self.cfg = cfg
         inst = INSTRUMENTS[cfg.instrument]
         if cfg.big_lot:
@@ -66,6 +67,15 @@ class Service:
         self._bt_cache = None                                # (clé, Tape) du dernier backtest
         self.composer = profiles.Composer()                  # profils composites semaine / mois (journées passées gardées)
         self._abs_known = {}                                 # absorptions déjà évaluées, par barre close (une barre close ne change plus)
+        self._lv_cache = (0.0, None)                         # niveaux (recalculés au plus toutes les 3 s pour classer les absorptions)
+        self._oi = (None, None)                              # (date de modification du fichier, résumé de l'intérêt ouvert)
+        self.options = OptionsFeed(cfg.gex, Path(cfg.data_dir), cfg.gex_file, cfg.gex_refresh_min) if cfg.gex != "OFF" else None
+        self.gex_state = {"state": "off" if self.options is None else "waiting", "msg": "", "res": None, "asof": None, "src": None}
+        self._gex_lock = threading.Lock()
+        self._gex_force = threading.Event()
+        self._swap = threading.Lock()                        # changement de source pendant que le fil de lecture tourne
+        from config import ROOT
+        self.env_path = Path(env_path) if env_path else ROOT / ".env"
         self._events = (None, [])
         self.status = {"state": "loading", "msg": "Chargement de l'historique…"}
         self.loaded = False
@@ -90,6 +100,10 @@ class Service:
         return n
 
     def pump_once(self) -> int:
+        with self._swap:
+            return self._pump()
+
+    def _pump(self) -> int:
         if not self.loaded:
             return self.load_sync()
         try:
@@ -113,6 +127,82 @@ class Service:
     def start(self):
         self.thread = threading.Thread(target=self._run, daemon=True, name="nq-pump")
         self.thread.start()
+        if self.options is not None:
+            threading.Thread(target=self._gex_loop, daemon=True, name="nq-gex").start()
+
+    # ---------- GEX (options, téléchargement en arrière-plan) ----------
+    def gex_refresh(self, force: bool = False) -> dict:
+        """Lit la chaîne d'options (fichier, téléchargement ou copie locale) et calcule le GEX. Appelé par le fil GEX ou à la demande."""
+        if self.options is None:
+            return self.gex_state
+        js, src = self.options.load(force=force)
+        if js is None:
+            with self._gex_lock:
+                self.gex_state = dict(self.gex_state, state="error" if self.gex_state.get("res") is None else self.gex_state["state"],
+                                      msg=self.options.error or "Pas encore de données d'options.")
+            return self.gex_state
+        try:
+            chain = gex.chain_from_json(js, self.now_ms())
+            res = gex.compute(chain)
+        except (ValueError, KeyError, TypeError, ZeroDivisionError) as e:
+            with self._gex_lock:
+                self.gex_state = dict(self.gex_state, state="error", msg=f"Données d'options inattendues : {e}")
+            return self.gex_state
+        with self._gex_lock:
+            self.gex_state = {"state": "ready", "msg": self.options.error or "", "res": res, "asof": chain["asof"], "src": src,
+                              "underlying": chain["underlying"] or self.cfg.gex}
+        return self.gex_state
+
+    def _gex_loop(self):
+        try:
+            self.gex_refresh()
+        except Exception:
+            log.exception("GEX")
+        while not self.stop_ev.is_set():
+            forced = self._gex_force.wait(30)
+            self._gex_force.clear()
+            try:
+                if forced or self.options.due():
+                    self.gex_refresh(force=forced)
+            except Exception:
+                log.exception("GEX")
+
+    def gex_view(self) -> dict:
+        """Niveaux GEX ramenés au prix du NQ (rapport NQ / sous-jacent à l'heure des données d'options)."""
+        with self._gex_lock:
+            st = dict(self.gex_state)
+        out = {"state": st["state"], "msg": st.get("msg", ""), "underlying": st.get("underlying") or self.cfg.gex, "src": st.get("src")}
+        res = st.get("res")
+        if not res:
+            return out
+        mk = self.market
+        with mk.lock:
+            ref = None
+            if st["asof"] and mk.series.bars:
+                bars = mk.slice(st["asof"] - 3 * 60_000, st["asof"] + 60_000)
+                ref = bars[-1].c if bars else None
+            ref = ref or mk.price
+        if not ref or not res["spot"]:
+            return dict(out, state="error", msg="Pas de prix NQ pour convertir les niveaux d'options.")
+        ratio = ref / res["spot"]
+        conv = gex.to_nq(res, ratio)
+        out.update({"asof": st["asof"], "spot": res["spot"], "ratio": round(ratio, 6), "total": res["total"], "regime": res["regime"],
+                    "dte0Share": round(res["dte0Share"], 3), "nOptions": res["nOptions"], "levels": conv["levels"], "strikes": conv["strikes"],
+                    "zeroGammaSrc": res["zeroGamma"], "callWallSrc": res["callWall"], "putWallSrc": res["putWall"]})
+        return out
+
+    def oi(self):
+        """Intérêt ouvert du NQ (fichier de NQTickLogger), relu seulement quand le fichier change."""
+        p = Path(self.cfg.oi_path) if self.cfg.oi_path else None
+        try:
+            mt = p.stat().st_mtime_ns if p and p.exists() else None
+        except OSError:
+            mt = None
+        if mt is None:
+            return None
+        if self._oi[0] != mt:
+            self._oi = (mt, oi_summary(read_oi(p)))
+        return self._oi[1]
 
     def shutdown(self):
         self.stop_ev.set()
@@ -134,12 +224,14 @@ class Service:
         days_to_roll = (c.roll_ms - now) / clock.DAY
         with mk.lock:
             last = mk.last
-            out = {"ok": True, "version": VERSION, "status": self.status, "source": self.source.info(), "ticks": mk.count,
+            out = {"ok": True, "version": VERSION, "status": self.status, "source": dict(self.source.info(), auto=self.cfg.auto_source),
+                   "ticks": mk.count,
                    "deltaReal": mk.cls.real_share if mk.count else None,
                    "last": {"t": last.t, "p": last.p, "q": last.q, "side": last.side} if last else None,
                    "day": mk.day(), "prevDay": mk.prev_day(),
                    "tape": [{"t": t, "p": p, "q": q, "s": s} for t, p, q, s in list(mk.tape)[-25:]][::-1],
                    "bigs": [{"t": t, "p": p, "q": q, "s": s} for t, p, q, s in list(mk.bigs)[-8:]][::-1]}
+        out["oi"] = self.oi()
         out["inst"] = {"root": self.inst.root, "name": self.inst.name, "tick": self.inst.tick, "pointValue": self.inst.point_value,
                        "tickValue": self.inst.tick_value, "bigLot": self.inst.big_lot}
         out["contract"] = {"code": c.code, "label": c.label, "rollInDays": round(days_to_roll, 1), "next": nxt.code,
@@ -175,8 +267,11 @@ class Service:
             v_wk = vwap.bands(vwap.sample(base, vwap.cumulative(base, vwap.key_week, offsets=off_w), win, step), ks=(1.0,))
             v_mo = vwap.bands(vwap.sample(base, vwap.cumulative(base, vwap.key_month, offsets=off_m), win, step) if month_ok
                               else [None] * len(win), ks=(1.0,))
-            c_rth = vwap.sample(base, cvd.cumulative(base, vwap.key_rth), win, step)
-            c_gx = vwap.sample(base, cvd.cumulative(base, vwap.key_globex), win, step)
+            cum_rth, cum_gx = cvd.cumulative(base, vwap.key_rth), cvd.cumulative(base, vwap.key_globex)
+            c_rth = vwap.sample(base, cum_rth, win, step)
+            c_gx = vwap.sample(base, cum_gx, win, step)
+            o_rth = cvd.ohlc_sample(base, cum_rth, win, step)                # bougies de CVD (ouverture, plus haut, plus bas, clôture)
+            o_gx = cvd.ohlc_sample(base, cum_gx, win, step)
             # absorptions au prix (barres de 1 min, footprint), suivies jusqu'à maintenant ; 70 barres d'avance pour les échelles habituelles
             j0 = bisect_left(mk.series._ts, a0)                          # les 65 barres d'avant, quelle que soit la pause de 17 h ou le week-end
             warm = mk.series.bars[max(0, j0 - absorption.PARAMS.base - 5):j0]
@@ -188,6 +283,7 @@ class Service:
             marks = [{"t": z["t"] // 1000, "side": z["side"], "price": z["price"], "lo": z["lo"], "hi": z["hi"], "qty": z["qty"],
                       "strength": z["strength"], "kind": z["kind"], "status": z["status"], "tests": z["tests"], "count": z["count"],
                       "end": z["end"] // 1000 if z["end"] else None} for z in zs if z["t"] >= t_first or z["status"] == "active"]
+            absorption.rank(marks, self._key_levels(), tick)        # note d'intérêt : force, répétition, tests, niveau clé
             rows = [{"t": b.t // 1000, "o": b.o, "h": b.h, "l": b.l, "c": b.c, "v": b.v, "d": b.bv - b.sv} for b in win]
             t0 = win[0].t
             bigs = [{"t": t // 1000, "p": p, "q": q, "s": s} for t, p, q, s in mk.bigs if t >= t0]
@@ -203,9 +299,10 @@ class Service:
             v_wk = {key: v[sl] for key, v in v_wk.items()}
             v_mo = {key: v[sl] for key, v in v_mo.items()}
             c_rth, c_gx = c_rth[sl], c_gx[sl]
+            o_rth, o_gx = o_rth[sl], o_gx[sl]
         rnd = lambda xs: [None if x is None else round(x, 2) for x in xs]
         return {"tf": tf, "step": step, "full": full, "bars": rows, "vwapRth": v_rth, "vwapGx": v_gx, "vwapWeek": v_wk, "vwapMonth": v_mo,
-                "cvdRth": rnd(c_rth), "cvdGx": rnd(c_gx),
+                "cvdRth": rnd(c_rth), "cvdGx": rnd(c_gx), "cvdOhlcRth": o_rth, "cvdOhlcGx": o_gx,
                 "absorptions": marks, "bigs": bigs}
 
     def profile(self, which: str = "rth", row_ticks: int | None = None) -> dict:
@@ -266,9 +363,25 @@ class Service:
 
     def levels(self) -> dict:
         extra, singles = self._structure()
+        g = self.gex_view()
+        for x in g.get("levels") or []:                      # niveaux GEX (options) : groupe à part, poids fort pour les murs et le zéro gamma
+            w = {"gcall": 3.0, "gput": 3.0, "gzero": 3.0}.get(x["kind"], 2.0)
+            extra.append({"name": x["name"], "price": x["price"], "kind": x["kind"], "group": "gex", "w": w})
         lv = levels.build(self.market, self.cfg.zone_pts, extra=extra)
         lv["near"] = levels.nearest(lv["levels"], lv["price"], 3) if lv["price"] else {"above": [], "below": []}
         lv["singles"] = singles
+        return lv
+
+    def _key_levels(self) -> list:
+        """Niveaux (hors nombres ronds), recalculés au plus toutes les 3 s : servent à repérer les absorptions qui se font SUR un niveau."""
+        t, lv = self._lv_cache
+        if lv is None or time.time() - t > 3.0:
+            try:
+                lv = [x for x in self.levels()["levels"] if x["group"] != "rond"]
+            except Exception:                                   # jamais bloquant pour le graphique
+                log.exception("niveaux")
+                lv = lv or []
+            self._lv_cache = (time.time(), lv)
         return lv
 
     def _structure(self):
@@ -440,7 +553,67 @@ class Service:
     def config_view(self) -> dict:
         c = self.cfg
         return {"source": c.source, "instrument": c.instrument, "displayTz": c.display_tz, "zonePts": c.zone_pts, "csvPath": c.csv_path,
-                "tfs": list(TF_MS), "version": VERSION, "days": self.market_days()}
+                "tfs": list(TF_MS), "version": VERSION, "days": self.market_days(), "gex": c.gex, "historyDays": c.history_days}
+
+    def source_view(self) -> dict:
+        """Où le terminal prend ses données, et où il cherche le fichier de l'enregistreur NinjaTrader."""
+        from config import logger_candidates
+        c = self.cfg
+        out = {"source": c.source, "auto": c.auto_source, "csvPath": c.csv_path, "oiPath": c.oi_path, "status": self.status,
+               "candidates": []}
+        for p in logger_candidates():
+            try:
+                st = p.stat() if p.is_file() else None
+            except OSError:
+                st = None
+            out["candidates"].append({"path": str(p), "exists": st is not None, "size": st.st_size if st else 0,
+                                      "mtime": int(st.st_mtime * 1000) if st else None})
+        if c.csv_path:
+            try:
+                st = Path(c.csv_path).stat()
+                out["file"] = {"size": st.st_size, "mtime": int(st.st_mtime * 1000), "ageS": round(time.time() - st.st_mtime, 1)}
+            except OSError:
+                out["file"] = None
+        with self.market.lock:
+            last = self.market.last
+            out["lastTick"] = last.t if last else None
+        return out
+
+    def use_source(self, path: str | None) -> dict:
+        """Passe sur le fichier de transactions `path` (vérifié d'abord), ou sur les données simulées si `path` est vide, sans redémarrer.
+        Le choix est écrit dans .env (NQ_SOURCE, NQ_CSV_PATH) pour les prochains démarrages."""
+        if path:
+            ok, msg = selftest_file(path)
+            if not ok:
+                raise ValueError(msg)
+        with self._swap:
+            c = self.cfg
+            c.source, c.csv_path, c.auto_source = ("csv", str(path), False) if path else ("simulated", "", False)
+            c.oi_path = str(Path(path).with_name("nq-oi.csv")) if path else ""
+            self.source = make_source(c)
+            self.market = Market(self.inst, keep_days=c.history_days + 1)
+            self.composer = profiles.Composer()
+            self._abs_known, self._lv_cache, self._oi, self._bt_cache = {}, (0.0, None), (None, None), None
+            self.loaded = False
+            self.status = {"state": "loading", "msg": "Chargement de la nouvelle source…"}
+        self._write_env({"NQ_SOURCE": c.source, "NQ_CSV_PATH": c.csv_path})
+        return {"ok": True, "message": msg if path else "Données simulées.", "source": c.source}
+
+    def _write_env(self, values: dict):
+        """Remplace (ou ajoute) ces réglages dans .env, en gardant le reste du fichier tel quel."""
+        p = self.env_path
+        try:
+            lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
+        except OSError:
+            lines = []
+        keep = [ln for ln in lines if ln.split("=", 1)[0].strip() not in values]
+        keep += [f"{k}={v}" for k, v in values.items() if v != ""]
+        try:
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text("\n".join(keep) + "\n", encoding="utf-8")
+            tmp.replace(p)
+        except OSError:
+            log.warning("impossible d'écrire %s", p)
 
     def market_days(self) -> int:
         with self.market.lock:

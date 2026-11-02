@@ -198,3 +198,23 @@ def track(marks: list, bars, tick: float, p: AbsParams = PARAMS) -> list:
         z.pop("_j")
         z.pop("_away")
     return out
+
+
+KEY_KINDS = {"poc", "vah", "val", "ppoc", "pvah", "pval", "pdh", "pdl", "onh", "onl", "ibh", "ibl", "vwap", "vp1", "vm1", "vp2", "vm2",
+             "npoc", "nwpoc", "wpoc", "pwh", "pwl", "mpoc", "sph", "spl", "vwapw", "vwapm", "gcall", "gput", "gzero", "gpos", "gneg"}
+
+
+def rank(marks: list, levels: list, tick: float, near_pts: float = 2.0) -> list:
+    """Note d'intérêt de chaque absorption (champ « score », 0 à ~2) et le niveau clé où elle s'est faite (« level ») :
+    force + répétition (même prix, ordre qui se recharge) + tests tenus + absorption SUR un niveau clé (POC, VAH / VAL, VWAP et bandes,
+    veille, nuit, IB, POC vierges, single prints, GEX). Les marqueurs n'affichent que les meilleures (« top » vrai) : une absorption au milieu
+    de nulle part compte moins qu'une absorption sur la VAL de la veille."""
+    key = [x for x in levels if x.get("kind") in KEY_KINDS]
+    for m in marks:
+        near = min(key, key=lambda x: abs(x["price"] - m["price"]), default=None)
+        on = near is not None and abs(near["price"] - m["price"]) <= near_pts
+        m["level"] = near["name"] if on else None
+        m["score"] = round(m["strength"] + 0.25 * (m.get("count", 1) - 1) + 0.15 * min(m.get("tests", 0), 2) + (0.35 if on else 0.0)
+                           + (0.1 if "effort" in m.get("kind", "") and "niveau" in m.get("kind", "") else 0.0), 3)
+        m["top"] = m["score"] >= 0.85
+    return marks

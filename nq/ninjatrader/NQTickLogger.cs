@@ -28,6 +28,9 @@ using NinjaTrader.NinjaScript;
 //   bid,ask : meilleures limites au moment du trade (le terminal peut en déduire
 //           le côté lui-même si « side » est vide).
 //
+// Il écrit aussi l'INTÉRÊT OUVERT (open interest) du contrat, quand le flux le donne, dans « nq-oi.csv »
+// (même dossier) : time,oi.
+//
 // Ce N'EST PAS un robot : il n'envoie AUCUN ordre, ne se connecte à rien, ne
 // contourne rien. Il écoute le flux que NinjaTrader reçoit déjà et le recopie
 // dans un fichier. C'est un usage en lecture seule, à confirmer avec Lucid.
@@ -45,6 +48,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 	public class NQTickLogger : Indicator
 	{
 		private StreamWriter writer;
+		private StreamWriter oiWriter;                 // intérêt ouvert : nq-oi.csv à côté du fichier des transactions
+		private double lastOi = -1;
 		private double lastBid = 0.0;
 		private double lastAsk = 0.0;
 		private long lineCount = 0;
@@ -100,6 +105,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 						writer.WriteLine("time,price,size,side,bid,ask");
 					writer.Flush();
 					Print("NQTickLogger : écriture dans " + FilePath);
+					string oiPath = Path.Combine(string.IsNullOrEmpty(dir) ? "." : dir, "nq-oi.csv");
+					bool oiNew = !File.Exists(oiPath) || new FileInfo(oiPath).Length == 0;
+					oiWriter = new StreamWriter(new FileStream(oiPath, FileMode.Append, FileAccess.Write, FileShare.Read), new UTF8Encoding(false));
+					if (oiNew)
+						oiWriter.WriteLine("time,oi");
+					oiWriter.Flush();
 				}
 				catch (Exception ex)
 				{
@@ -118,6 +129,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 				try { writer.Flush(); writer.Dispose(); }
 				catch (Exception) { }
 				writer = null;
+				try { if (oiWriter != null) { oiWriter.Flush(); oiWriter.Dispose(); } }
+				catch (Exception) { }
+				oiWriter = null;
 			}
 		}
 
@@ -132,6 +146,24 @@ namespace NinjaTrader.NinjaScript.Indicators
 			if (e.MarketDataType == MarketDataType.Bid)
 			{
 				lastBid = e.Price;
+				return;
+			}
+			if (e.MarketDataType == MarketDataType.OpenInterest)
+			{
+				// intérêt ouvert (publié une fois par jour par la bourse) : selon le flux, la valeur arrive dans Volume ou dans Price
+				double oi = e.Volume > 0 ? e.Volume : e.Price;
+				if (oi > 0 && oi != lastOi)
+				{
+					lastOi = oi;
+					lock (gate)
+					{
+						if (oiWriter != null)
+						{
+							try { oiWriter.WriteLine(ToUnixMs(e.Time).ToString(CultureInfo.InvariantCulture) + "," + oi.ToString(CultureInfo.InvariantCulture)); oiWriter.Flush(); }
+							catch (Exception ex) { Print("NQTickLogger : erreur d'écriture OI (" + ex.Message + ")"); }
+						}
+					}
+				}
 				return;
 			}
 			if (e.MarketDataType != MarketDataType.Last)

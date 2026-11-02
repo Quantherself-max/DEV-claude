@@ -62,6 +62,26 @@ def divergence(bars, cvd: list, i: int, look: int = 60, n: int = 2) -> tuple:
     return None, 0.0
 
 
+def ohlc_sample(base_bars, cum: list, chart_bars, chart_step: int) -> list:
+    """Bougies de CVD alignees sur les barres du graphique : [ouverture, plus haut, plus bas, cloture] ou None (hors seance). L'ouverture est
+    le CVD juste AVANT la premiere barre de base de la bougie (0 au debut d'une seance) ; plus haut / plus bas sur les barres de base (1 min)."""
+    out = []
+    j, n = 0, len(base_bars)
+    for cb in chart_bars:
+        end = cb.t + chart_step
+        o = h = l = c = None
+        while j < n and base_bars[j].t < end:
+            if base_bars[j].t >= cb.t and cum[j] is not None:
+                v = cum[j]
+                if o is None:
+                    o = v - (base_bars[j].bv - base_bars[j].sv)
+                    h = l = o
+                h, l, c = max(h, v), min(l, v), v
+            j += 1
+        out.append(None if o is None else [round(o, 2), round(h, 2), round(l, 2), round(c, 2)])
+    return out
+
+
 def imbalance(bars, n: int) -> float:
     """Desequilibre des n dernieres barres : delta / volume, de -1 (que des vendeurs agressifs) a +1 (que des acheteurs)."""
     sub = bars[-n:]
