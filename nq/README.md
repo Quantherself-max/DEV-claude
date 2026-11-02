@@ -99,7 +99,7 @@ Pour que le terminal ait ses ticks, quatre voies (recherche d'octobre 2026, la p
 
 `NQTickLogger` est un indicateur NinjaScript **en lecture seule** : il n'envoie aucun ordre, ne se connecte à rien d'autre que ce que NinjaTrader reçoit déjà. À chaque transaction, il écrit une ligne `time,price,size,side,bid,ask` (heure en millisecondes UTC, côté `B`/`S` déduit du bid / ask du moment, vide si le prix tombe entre les deux).
 
-1. **Copier** `ninjatrader\NQTickLogger.cs` dans `Documents\NinjaTrader 8\bin\Custom\Indicators\`.
+1. **Copier** `ninjatrader\NQTickLogger.cs` dans `Documents\NinjaTrader 8\bin\Custom\Indicators\` : double-clic sur **`Installer-NinjaTrader.bat`** (dans le dossier du terminal) le fait pour toi.
 2. Dans NinjaTrader : **New → NinjaScript Editor**, ouvrir *Indicators → NQTickLogger*, puis **Compile** (F5). Aucune erreur ne doit apparaître en bas.
 3. Ouvrir un **graphique du contrat NQ en cours** (ex. `NQ 12-26`), connecté à ton compte Lucid. Clic droit → **Indicators…** → ajouter **NQTickLogger**. Par défaut il écrit dans `Documents\NQ-Terminal\nq-ticks.csv` (réglable : « Chemin du fichier »). La fenêtre *Output* de NinjaTrader affiche « NQTickLogger : écriture dans … ».
 4. Lancer `Lancer-NQ-Windows.bat`. **Rien à régler** : si le fichier `Documents\NQ-Terminal\nq-ticks.csv` existe (OneDrive compris), le terminal le prend tout seul. Le badge passe de « DONNÉES SIMULÉES » à « Fichier · NinjaTrader » ; s'il indique « delta estimé », le côté n'arrive pas (vérifie que le graphique reçoit bien le bid / ask). Fichier ailleurs : **Outils → Source** → « Tester et utiliser » (le choix est gardé dans `.env`), ou à la main dans `.env` : `NQ_SOURCE=csv` et `NQ_CSV_PATH=…`. Un `NQ_SOURCE` écrit dans `.env` l'emporte toujours sur la détection.
