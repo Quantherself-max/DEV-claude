@@ -9,7 +9,7 @@ const Panels = (() => {
   let lastProfile = null;       // profil du dernier état reçu (pour les textes qui dépendent des règles)
   const lockableNow = () => !!lastProfile && lastProfile.dd_mode === 'eod_trailing' && lastProfile.lock_offset != null;
   let replan = null;            // recalcule le plan affiché (posé par buildPlan) sans toucher aux champs
-  const GROUP_COLOR = {veille: '#f5a97f', nuit: '#b794f6', seance: '#5eead4', rond: '#6b7280'};
+  const GROUP_COLOR = {veille: '#f5a97f', nuit: '#b794f6', seance: '#5eead4', profil: '#c084fc', rond: '#6b7280'};
 
   const gauge = (frac, kind = '', marker = null) =>
     `<div class="bar ${kind}"><span style="width:${Math.max(0, Math.min(1, frac)) * 100}%"></span>${marker != null ? `<em style="left:${marker * 100}%"></em>` : ''}</div>`;
@@ -41,7 +41,7 @@ const Panels = (() => {
   }
 
   // ======================================================= Niveaux
-  function levels(lv, price) {
+  function levels(lv, price, abs) {
     const host = $('#tab-levels');
     if (!lv || !lv.levels || !lv.levels.length) { host.innerHTML = '<div class="card muted">Pas encore de niveaux.</div>'; return; }
     const list = lv.levels.filter(x => showRounds || x.group !== 'rond');
@@ -56,7 +56,20 @@ const Panels = (() => {
     const zs = [...(lv.zones || [])].sort((a, b) => b.score - a.score).slice(0, 8).map(z =>
       `<tr class="lvl" data-price="${z.mid}"><td>${esc(z.names.slice(0, 3).join(' + '))}${z.names.length > 3 ? ' …' : ''}</td><td>${fmt(z.lo, 2)}${z.hi > z.lo ? '–' + fmt(z.hi, 2) : ''}</td>`
       + `<td class="${z.dist >= 0 ? 'pos' : 'neg'}">${sign(z.dist, 1)}</td><td><b>${z.score}</b></td></tr>`).join('');
-    host.innerHTML = `<div class="card"><h2>Zones de confluence <small>plusieurs niveaux proches</small></h2>`
+    const ab = (abs || []).slice().sort((a, b) => Math.abs(a.price - price) - Math.abs(b.price - price)).slice(0, 6).map(a =>
+      `<tr class="lvl" data-price="${a.price}"><td><b class="${a.side === 'bull' ? 'pos' : 'neg'}">${a.side === 'bull' ? '▲ acheteuse' : '▼ vendeuse'}</b> <small>${esc(a.kind)}</small></td>`
+      + `<td>${fmt(a.price, 2)}</td><td class="${a.price - price >= 0 ? 'pos' : 'neg'}">${sign(a.price - price, 1)}</td>`
+      + `<td>${fmt(a.qty, 0)}${a.count > 1 ? ' ×' + a.count : ''}${a.tests ? ' · ' + a.tests + 't' : ''} <small>${Math.round(a.strength * 100)} %</small></td></tr>`).join('');
+    const sp = (lv.singles || []).slice().sort((a, b) => Math.abs((a.lo + a.hi) / 2 - price) - Math.abs((b.lo + b.hi) / 2 - price)).slice(0, 6).map(z =>
+      `<tr class="lvl" data-price="${z.price != null ? z.price : (z.lo + z.hi) / 2}"><td>${z.kind === 'single' ? 'Single print' : z.kind === 'queue haute' ? 'Queue haute' : 'Queue basse'} <small>${esc(z.day.slice(8, 10) + '/' + z.day.slice(5, 7))}${z.current ? ' · en cours' : ''}</small></td>`
+      + `<td>${fmt(z.lo, 2)}–${fmt(z.hi, 2)}</td><td class="${(z.lo + z.hi) / 2 - price >= 0 ? 'pos' : 'neg'}">${sign((z.lo + z.hi) / 2 - price, 1)}</td><td>${z.filled > 0 ? 'comblé ' + Math.round(z.filled * 100) + ' %' : (z.current ? '—' : 'vierge')}</td></tr>`).join('');
+    host.innerHTML = `<div class="card"><h2>Absorptions qui tiennent <small>au prix, footprint 1 min</small></h2>`
+      + (ab ? `<table><tr><th>Côté</th><th>Prix</th><th>Dist.</th><th>Lots · tests</th></tr>${ab}</table>` : '<div class="muted">Aucune zone d\'absorption active.</div>')
+      + `<div class="small" style="margin-top:6px">Une zone tient tant que le prix ne la traverse pas de plus d'1 point ; ×N = absorption répétée au même prix (ordre qui se recharge), « t » = retours dans la zone qui ont tenu.</div></div>`
+      + `<div class="card"><h2>Single prints et queues <small>TPO 30 min, non comblés</small></h2>`
+      + (sp ? `<table><tr><th>Type</th><th>Zone</th><th>Dist.</th><th>État</th></tr>${sp}</table>` : '<div class="muted">Aucun pour l\'instant.</div>')
+      + `<div class="small" style="margin-top:6px">Prix traités pendant une seule demi-heure : le marché y est passé vite. Les zones vierges des séances passées attirent souvent le prix (il revient « remplir »), et tiennent souvent quand il y revient.</div></div>`
+      + `<div class="card"><h2>Zones de confluence <small>plusieurs niveaux proches</small></h2>`
       + (zs ? `<table><tr><th>Niveaux</th><th>Prix</th><th>Dist.</th><th>Score</th></tr>${zs}</table>` : '<div class="muted">Aucune zone pour l\'instant.</div>')
       + `<div class="small" style="margin-top:6px">Ce n'est pas un signal : c'est une carte des endroits où le prix a plusieurs raisons de réagir. Sa valeur réelle sera mesurée avant qu'on s'y fie.</div></div>`
       + `<div class="card"><h2>Niveaux <label style="float:right;font-weight:400;text-transform:none"><input type="checkbox" id="showRounds" ${showRounds ? 'checked' : ''}> nombres ronds</label></h2>`

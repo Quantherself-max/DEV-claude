@@ -7,7 +7,7 @@ from pathlib import Path
 from data import filefeed
 from data.base import DataError
 from data.simulated import SimulatedSource
-from engine import clock, cvd
+from engine import absorption, clock
 from engine.bars import Tick
 from engine.market import Market
 
@@ -57,8 +57,8 @@ class SimulatedTests(unittest.TestCase):
     def test_absorption_episodes_exist(self):
         m = Market()
         m.ingest_many(SimulatedSource(now_fn=lambda: NOW).history(NOW))
-        marks = cvd.marks(m.chart_bars(MIN, 0))
-        self.assertTrue({"bull", "bear"} <= {s for _, s in marks}, marks)
+        marks = absorption.scan(m.chart_bars(MIN, 0), m.inst.tick)
+        self.assertTrue({"bull", "bear"} <= {x["side"] for x in marks}, marks)
 
 
 class MarketTests(unittest.TestCase):

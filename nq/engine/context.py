@@ -5,7 +5,7 @@ flux d'ordres, amplitude du jour) avec un ton : `bull` (favorable aux acheteurs)
 au-dessus de cette lecture, et seront MESURES avant d'etre crus (voir README, « Methode »)."""
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 
-from . import clock, cvd, vp, vwap
+from . import absorption, clock, cvd, vp, vwap
 from .bars import atr, resample
 from .events import blackout, upcoming
 from .levels import nearest
@@ -134,9 +134,10 @@ def build(mk, lv: dict, events=None, acct: dict | None = None, source: dict | No
             cur = lad.delta if lad is not None else None                          # CVD de la seance = delta cumule de la seance
             slope = sum(x.bv - x.sv for x in b1[-15:])                            # variation du CVD sur 15 minutes
             div, force = cvd.divergence(b1, cv, len(b1) - 1, look=60)
-            ab = [(i, s) for i, s in cvd.marks(b1) if i >= len(b1) - 10]
+            zs = absorption.track(absorption.scan(b1, mk.inst.tick, start=max(0, len(b1) - 30)), b1, mk.inst.tick)
+            ab = [z for z in zs if z["i"] >= len(b1) - 10]
             out["flow"] = {"imb5": round(imb5, 3), "imb15": round(imb15, 3), "cvd": cur, "cvdSlope15": slope, "divergence": div, "divStrength": round(force, 2),
-                           "absorption": ab[-1][1] if ab else None, "scope": scope}
+                           "absorption": ab[-1]["side"] if ab else None, "scope": scope}
             tone = "bull" if imb15 > 0.08 else "bear" if imb15 < -0.08 else "info"
             note(tone, f"Flux agressif sur 15 min : {50 * (1 + imb15):.0f} % d'achats (5 min : {50 * (1 + imb5):.0f} %). CVD {scope} : "
                        f"{fr(cur, 0) if cur is not None else '—'}" + (f" ({'+' if slope >= 0 else '−'}{fr(abs(slope), 0)} sur 15 min)." if slope is not None else "."))
@@ -145,11 +146,15 @@ def build(mk, lv: dict, events=None, acct: dict | None = None, source: dict | No
             elif div == "bear":
                 note("bear", "Divergence baissière du CVD : le prix fait un plus haut plus haut, mais les acheteurs agressifs s'épuisent.")
             if ab:
-                i, s = ab[-1]
+                z = ab[-1]
+                s = z["side"]
+                etat = {"active": "la zone tient", "cassée": "zone déjà cassée", "expirée": "zone expirée"}[z["status"]]
                 note("bull" if s == "bull" else "bear",
-                     f"Absorption {'acheteuse' if s == 'bull' else 'vendeuse'} à {clock.fmt_hm(b1[i].t, 'paris')} (Paris), à {fr(b1[i].c, 2)} : "
-                     + ("des ordres passifs ont absorbé de fortes ventes agressives, le prix a tenu." if s == "bull"
-                        else "des ordres passifs ont absorbé de forts achats agressifs, le prix a plafonné."))
+                     f"Absorption {'acheteuse' if s == 'bull' else 'vendeuse'} à {fr(z['price'], 2)} ({clock.fmt_hm(z['t'], 'paris')} Paris, "
+                     f"{fr(z['qty'], 0)} lots, force {z['strength'] * 100:.0f} %"
+                     + (f", ×{z['count']}" if z["count"] > 1 else "") + f") : "
+                     + ("des ordres passifs ont encaissé de fortes ventes agressives" if s == "bull"
+                        else "des ordres passifs ont encaissé de forts achats agressifs") + f" ; {etat}.")
 
         # ----- niveaux proches -----
         nr = nearest(lv.get("levels", []), price, 2) if lv else {"above": [], "below": []}

@@ -46,7 +46,8 @@ class Config:
     display_tz: str = "paris"        # fuseau des heures affichees : paris | et
     big_lot: int = 0                 # taille d'un « gros ordre » (0 = valeur par defaut de l'instrument)
     zone_pts: float = 6.0            # largeur d'une zone de confluence, en points
-    sim_days: int = 4                # jours de donnees simulees
+    sim_days: int = 6                # jours de donnees simulees
+    history_days: int = 10           # journees de trading gardees en memoire (profil de la semaine : 5 ; du mois : ~22 -> NQ_HISTORY_DAYS=25)
     sim_start: str = ""              # heure de depart de la simulation (« 2026-10-12T15:40:00Z », UTC) : le temps avance ensuite normalement. Vide = maintenant.
     csv_path: str = ""
     csv_tz: str = "utc"              # fuseau des heures SANS indication du fichier : utc | et | paris
@@ -75,7 +76,8 @@ def load_config(env_path: Path | None = None) -> Config:
     c.display_tz = "et" if g("NQ_DISPLAY_TZ", c.display_tz).lower() in ("et", "ny", "newyork") else "paris"
     c.big_lot = max(0, int(float(g("NQ_BIG_LOT", c.big_lot))))
     c.zone_pts = max(1.0, float(g("NQ_ZONE_PTS", c.zone_pts)))
-    c.sim_days = max(2, min(8, int(float(g("NQ_SIM_DAYS", c.sim_days)))))
+    c.history_days = max(3, min(40, int(float(g("NQ_HISTORY_DAYS", c.history_days)))))
+    c.sim_days = max(2, min(c.history_days, 25, int(float(g("NQ_SIM_DAYS", c.sim_days)))))
     c.sim_start = g("NQ_SIM_START", c.sim_start)
     c.csv_path = g("NQ_CSV_PATH", c.csv_path)
     c.csv_tz = g("NQ_CSV_TZ", c.csv_tz).lower()

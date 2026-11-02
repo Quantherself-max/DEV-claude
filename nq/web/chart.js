@@ -12,15 +12,20 @@ const NQChart = (() => {
     onh: ['#b794f6', 1, 1], onl: ['#b794f6', 1, 1], asih: ['#8b7ab8', 1, 1], asil: ['#8b7ab8', 1, 1], lonh: ['#9c88d6', 1, 1], lonl: ['#9c88d6', 1, 1],
     open: ['#5eead4', 1, 1], ibh: ['#5eead4', 1, 2], ibl: ['#5eead4', 1, 2], poc: ['#f472b6', 2, 0], vah: ['#f472b6', 1, 2], val: ['#f472b6', 1, 2],
     r100: ['#4b5563', 1, 1], r50: ['#323945', 1, 1],
+    // structure : semaine / mois / POC vierges / single prints
+    wpoc: ['#c084fc', 2, 0], wvah: ['#c084fc', 1, 2], wval: ['#c084fc', 1, 2], pwpoc: ['#a78bfa', 1, 0], pwvah: ['#a78bfa', 1, 2], pwval: ['#a78bfa', 1, 2],
+    pwh: ['#a78bfa', 1, 1], pwl: ['#a78bfa', 1, 1], mpoc: ['#38bdf8', 2, 0], mvah: ['#38bdf8', 1, 2], mval: ['#38bdf8', 1, 2],
+    npoc: ['#fb7185', 2, 1], nwpoc: ['#f43f5e', 2, 1], sph: ['#fbbf24', 1, 1], spl: ['#fbbf24', 1, 1],
   };
+  const MINOR = new Set(['wvah', 'wval', 'pwvah', 'pwval', 'mvah', 'mval', 'pwpoc']);   // bords des profils composites : seulement en « Tous »
   const SHORT = {'High veille': 'H veille', 'Low veille': 'L veille', 'Clôture veille': 'Clôt. veille', 'POC veille': 'POC veille', 'VAH veille': 'VAH veille',
     'VAL veille': 'VAL veille', 'Ouverture 9h30': 'Open 9h30'};
 
-  let chart, cvdChart, candle, vol, vwapS = {}, vwapG, cvdLine, dHist, overlay, ctx;
+  let chart, cvdChart, candle, vol, vwapS = {}, vwapG, vwapW = {}, vwapM = {}, cvdLine, dHist, overlay, ctx;
   let rows = [];                       // [{t, o, h, l, c, v, d, vr:{...}, vg, cr, cg}] : tout ce que le serveur a donne, par barre
   let step = 60, theme = 'nuit', tz = 'paris', cvdScope = 'rth';
-  let profile = null, vpMode = 'rth', levelMode = 'key', levels = [], zones = [], bigs = [], marks = [];
-  let opts = {zones: false, bigs: true, abs: true};
+  let profile = null, profile2 = null, vpMode = 'rth', levelMode = 'key', levels = [], zones = [], bigs = [], marks = [], singles = [];
+  let opts = {zones: false, bigs: true, abs: true, vwapW: true, vwapM: false, singles: true};
   let lines = [], lineSig = '', sig = '', syncing = false;
   const listeners = {legend: null};
 
@@ -53,6 +58,9 @@ const NQChart = (() => {
     vwapS = {v: line('#ffb300', 2, 0, 'VWAP'), u1: line('rgba(255,179,0,.65)', 1, 2, '', false), l1: line('rgba(255,179,0,.65)', 1, 2, '', false),
       u2: line('rgba(255,179,0,.38)', 1, 1, '', false), l2: line('rgba(255,179,0,.38)', 1, 1, '', false)};
     vwapG = line('rgba(122,162,255,.55)', 1, 2, '', false);
+    // VWAP de la semaine (violet) et du mois (bleu ciel), avec leur bande ±1σ
+    vwapW = {v: line('#c084fc', 2, 0, 'VWAP sem.', false), u1: line('rgba(192,132,252,.45)', 1, 2, '', false), l1: line('rgba(192,132,252,.45)', 1, 2, '', false)};
+    vwapM = {v: line('#38bdf8', 2, 0, 'VWAP mois', false), u1: line('rgba(56,189,248,.40)', 1, 2, '', false), l1: line('rgba(56,189,248,.40)', 1, 2, '', false)};
     cvdLine = cvdChart.addLineSeries({color: '#4c8dff', lineWidth: 2, priceLineVisible: false, title: 'CVD', priceFormat: {type: 'volume'}});
     dHist = cvdChart.addHistogramSeries({priceScaleId: 'delta', priceFormat: {type: 'volume'}, lastValueVisible: false, priceLineVisible: false});
     cvdChart.priceScale('delta').applyOptions({scaleMargins: {top: 0.70, bottom: 0}});
@@ -87,6 +95,8 @@ const NQChart = (() => {
     const v = key === 'vg' ? r.vg : r.vr[key];
     return v == null ? {time: r.t} : {time: r.t, value: v};
   });
+  const anchData = (src, key, on) => rows.map(r => { const v = on && r[src] ? r[src][key] : null; return v == null ? {time: r.t} : {time: r.t, value: v}; });
+  const pt = (r, src, key, on) => { const v = on && r[src] ? r[src][key] : null; return v == null ? {time: r.t} : {time: r.t, value: v}; };
   const cvdData = () => rows.map(r => { const v = cvdScope === 'rth' ? r.cr : r.cg; return v == null ? {time: r.t} : {time: r.t, value: v}; });
   const th = () => THEMES[theme];
   const barOf = r => ({time: r.t, open: r.o, high: r.h, low: r.l, close: r.c});
@@ -96,20 +106,22 @@ const NQChart = (() => {
   function pick(p, i) {
     const vr = {};
     for (const k of ['v', 'u1', 'l1', 'u2', 'l2']) vr[k] = p.vwapRth[k][i];
-    return Object.assign({}, p.bars[i], {vr, vg: p.vwapGx.v[i], cr: p.cvdRth[i], cg: p.cvdGx[i]});
+    const sub = s => s ? {v: s.v[i], u1: s.u1[i], l1: s.l1[i]} : null;
+    return Object.assign({}, p.bars[i], {vr, vg: p.vwapGx.v[i], vw: sub(p.vwapWeek), vm: sub(p.vwapMonth), cr: p.cvdRth[i], cg: p.cvdGx[i]});
   }
 
   function redrawAll() {
     candle.setData(rows.map(barOf)); vol.setData(rows.map(volOf));
     for (const k of Object.keys(vwapS)) vwapS[k].setData(lineData(k));
     vwapG.setData(lineData('vg'));
+    for (const k of ['v', 'u1', 'l1']) { vwapW[k].setData(anchData('vw', k, opts.vwapW)); vwapM[k].setData(anchData('vm', k, opts.vwapM)); }
     cvdLine.setData(cvdData()); dHist.setData(rows.map(deltaOf));
     applyMarkers();
   }
 
   // full : remplace tout (changement d'unite de temps, premier chargement) ; sinon met a jour la fin
   function apply(p, full) {
-    step = p.step;
+    step = p.step / 1000;                 // le serveur donne des ms ; les temps du graphique sont en secondes
     marks = p.absorptions || []; bigs = p.bigs || [];
     if (full) {
       rows = p.bars.map((_, i) => pick(p, i));
@@ -124,6 +136,7 @@ const NQChart = (() => {
         candle.update(barOf(r)); vol.update(volOf(r));
         for (const k of Object.keys(vwapS)) vwapS[k].update(r.vr[k] == null ? {time: r.t} : {time: r.t, value: r.vr[k]});
         vwapG.update(r.vg == null ? {time: r.t} : {time: r.t, value: r.vg});
+        for (const k of ['v', 'u1', 'l1']) { vwapW[k].update(pt(r, 'vw', k, opts.vwapW)); vwapM[k].update(pt(r, 'vm', k, opts.vwapM)); }
         const cv = cvdScope === 'rth' ? r.cr : r.cg;
         cvdLine.update(cv == null ? {time: r.t} : {time: r.t, value: cv}); dHist.update(deltaOf(r));
       }
@@ -133,15 +146,8 @@ const NQChart = (() => {
     sig = '';
   }
 
-  function applyMarkers() {
-    const m = [];
-    if (opts.abs) for (const a of marks) {
-      m.push(a.side === 'bull' ? {time: a.t, position: 'belowBar', color: '#3ddc97', shape: 'arrowUp', text: 'ABS'}
-                               : {time: a.t, position: 'aboveBar', color: '#ff6b6b', shape: 'arrowDown', text: 'ABS'});
-    }
-    m.sort((x, y) => x.time - y.time);
-    candle.setMarkers(m);
-  }
+  // les absorptions sont dessinées sur le canvas, à leur prix (voir draw) : plus de flèches au-dessus / au-dessous des bougies
+  function applyMarkers() { candle.setMarkers([]); }
 
   // ---------- reglages d'affichage ----------
   function setTheme(name) {
@@ -156,14 +162,20 @@ const NQChart = (() => {
     cvdLine.applyOptions({title: cvdScope === 'gx' ? 'CVD Globex' : 'CVD séance'});
     if (rows.length) cvdLine.setData(cvdData());
   }
-  function setOptions(o) { Object.assign(opts, o); applyMarkers(); sig = ''; }
+  function setOptions(o) {
+    const vw = ('vwapW' in o && o.vwapW !== opts.vwapW) || ('vwapM' in o && o.vwapM !== opts.vwapM);
+    Object.assign(opts, o); applyMarkers(); sig = '';
+    if (vw && rows.length) for (const k of ['v', 'u1', 'l1']) { vwapW[k].setData(anchData('vw', k, opts.vwapW)); vwapM[k].setData(anchData('vm', k, opts.vwapM)); }
+  }
   function setVpMode(m) { vpMode = m; sig = ''; }
+  function setProfile2(p) { profile2 = p && !p.empty ? p : null; sig = ''; }
+  function setSingles(z) { singles = z || []; sig = ''; }
   function setProfile(p) { profile = p && !p.empty ? p : null; sig = ''; }
   function setZones(z) { zones = z || []; sig = ''; }
 
   function setLevels(list, mode) {
     levels = list || []; if (mode) levelMode = mode;
-    const want = levelMode === 'off' ? [] : levels.filter(x => !/^VWAP/.test(x.name) && (levelMode === 'all' || x.group !== 'rond'));
+    const want = levelMode === 'off' ? [] : levels.filter(x => !/^VWAP/.test(x.name) && (levelMode === 'all' || (x.group !== 'rond' && !MINOR.has(x.kind))));
     const s = levelMode + '|' + want.map(x => x.name + x.price).join(',');
     if (s === lineSig) return;
     lineSig = s;
@@ -245,6 +257,71 @@ const NQChart = (() => {
       if (profile.label) { ctx.fillStyle = 'rgba(200,205,220,.8)'; ctx.textAlign = 'right'; ctx.fillText('Profil : ' + profile.label, right - 6, 14); }
     }
 
+    // second profil (semaine, mois...) : à GAUCHE du graphique, plus discret, pour lire le jour dans la structure
+    if (profile2) {
+      const rowsP = profile2.rows, tick = profile2.tick || 0.25;
+      let mx = 0; for (const r of rowsP) mx = Math.max(mx, r.s + r.b);
+      const maxW = Math.min(150, right * 0.2);
+      for (const r of rowsP) {
+        const yt = Y(r.hi + tick / 2), yb = Y(r.lo - tick / 2);
+        if (yt == null || yb == null) continue;
+        const tot = r.s + r.b, w = mx ? tot / mx * maxW : 0, h = Math.max(1, yb - yt - 1);
+        ctx.fillStyle = r.va ? 'rgba(192,132,252,.30)' : 'rgba(192,132,252,.14)'; ctx.fillRect(0, yt, w, h);
+        if (r.poc) { ctx.fillStyle = 'rgba(192,132,252,.95)'; ctx.fillRect(0, yt + h / 2 - 0.5, maxW + 30, 1.5); }
+      }
+      ctx.fillStyle = 'rgba(205,190,240,.85)'; ctx.textAlign = 'left';
+      ctx.fillText('Profil 2 : ' + (profile2.label || ''), 6, H - 30);
+      for (const [p, t] of [[profile2.vah, 'VAH'], [profile2.val, 'VAL'], [profile2.poc, 'POC']]) {
+        const y = Y(p); if (y == null) continue;
+        ctx.fillStyle = 'rgba(205,190,240,.9)'; ctx.fillText(t + ' ' + p.toFixed(2), maxW + 34, y + 3);
+      }
+    }
+
+    // single prints (jaune) et queues (violet) : bandes horizontales ; celles des séances passées non comblées sont les plus marquées
+    if (opts.singles) for (const z of singles) {
+      const y1 = Y(z.hi + 0.125), y2 = Y(z.lo - 0.125);
+      if (y1 == null || y2 == null) continue;
+      const tail = z.kind !== 'single', a = z.current ? 0.07 : 0.13;
+      ctx.fillStyle = tail ? `rgba(167,139,250,${a})` : `rgba(251,191,36,${a})`;
+      ctx.fillRect(0, y1, right, Math.max(2, y2 - y1));
+      ctx.strokeStyle = tail ? 'rgba(167,139,250,.5)' : 'rgba(251,191,36,.55)'; ctx.setLineDash([2, 4]);
+      ctx.strokeRect(0.5, y1 + 0.5, right - 1, Math.max(2, y2 - y1));
+      ctx.setLineDash([]);
+      ctx.fillStyle = tail ? 'rgba(200,185,255,.9)' : 'rgba(251,210,90,.9)'; ctx.textAlign = 'left';
+      const lx = profile2 ? Math.min(150, right * 0.2) + 110 : 8;            // à droite du profil 2 et de ses étiquettes
+      const lbl = (tail ? (z.kind === 'queue haute' ? 'Queue haute' : 'Queue basse') : 'Single print') + ' ' + z.day.slice(8, 10) + '/' + z.day.slice(5, 7)
+        + (z.filled > 0 ? ` · comblé ${Math.round(z.filled * 100)} %` : (z.current ? ' · en cours' : ' · vierge'));
+      ctx.fillText(lbl, lx, Math.max(y1 + 11, 34));
+    }
+
+    // absorptions à LEUR prix : trait de la barre d'absorption jusqu'à sa cassure (ou jusqu'au bord si elle tient), épaisseur = force
+    if (opts.abs && rows.length) {
+      const ts = chart.timeScale();
+      for (const a of marks) {
+        const bt = Math.floor(a.t / step) * step, x0 = ts.timeToCoordinate(bt), y = Y(a.price);
+        if (x0 == null || y == null || x0 > right) continue;
+        const live = a.status === 'active';
+        if (!live && a.strength < 0.55) continue;                         // zones cassées faibles : du bruit, on ne les montre pas
+        let x1 = right;
+        if (!live && a.end != null) { const xe = ts.timeToCoordinate(Math.floor(a.end / step) * step); x1 = xe == null ? right : Math.min(right, Math.max(xe, x0 + 6)); }
+        const bull = a.side === 'bull', c = bull ? '61,220,151' : '255,107,107';
+        ctx.strokeStyle = `rgba(${c},${live ? 0.9 : 0.5})`; ctx.lineWidth = 1 + 2.5 * a.strength;
+        ctx.beginPath(); ctx.moveTo(Math.max(0, x0), y); ctx.lineTo(x1, y); ctx.stroke(); ctx.lineWidth = 1;
+        // triangle à la barre d'absorption
+        ctx.fillStyle = `rgba(${c},${live ? 1 : 0.5})`; ctx.beginPath();
+        if (bull) { ctx.moveTo(x0, y + 3); ctx.lineTo(x0 - 5, y + 11); ctx.lineTo(x0 + 5, y + 11); }
+        else { ctx.moveTo(x0, y - 3); ctx.lineTo(x0 - 5, y - 11); ctx.lineTo(x0 + 5, y - 11); }
+        ctx.fill();
+        if (!live && a.status === 'cassée') {                              // croix à la cassure
+          ctx.strokeStyle = `rgba(${c},.8)`; ctx.beginPath(); ctx.moveTo(x1 - 3, y - 3); ctx.lineTo(x1 + 3, y + 3); ctx.moveTo(x1 - 3, y + 3); ctx.lineTo(x1 + 3, y - 3); ctx.stroke();
+        }
+        if (live) {
+          ctx.fillStyle = `rgba(${c},1)`; ctx.textAlign = 'right';
+          ctx.fillText(`ABS ${Math.round(a.qty)}${a.count > 1 ? ' ×' + a.count : ''}${a.tests ? ' · ' + a.tests + ' test' + (a.tests > 1 ? 's' : '') : ''}`, x1 - 4, bull ? y + 12 : y - 4);
+        }
+      }
+    }
+
     if (opts.bigs && bigs.length && rows.length) {
       const big = Math.max(...bigs.map(b => b.q));
       for (const b of bigs) {
@@ -259,7 +336,8 @@ const NQChart = (() => {
     }
   }
 
-  return {init, apply, setTheme, setTz, setCvdScope, setOptions, setVpMode, setProfile, setZones, setLevels, setSetup,
+  return {init, apply, setTheme, setTz, setCvdScope, setOptions, setVpMode, setProfile, setProfile2, setSingles, setZones, setLevels, setSetup,
+    absZones: () => marks.filter(a => a.status === 'active'),
     onLegend: fn => { listeners.legend = fn; }, lastRow: () => rows[rows.length - 1] || null, count: () => rows.length,
     lastTime: () => rows.length ? rows[rows.length - 1].t : null};
 })();

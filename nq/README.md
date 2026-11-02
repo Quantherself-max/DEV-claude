@@ -1,10 +1,12 @@
-# NQ Scalp Terminal (V0.4)
+# NQ Scalp Terminal (V0.5)
 
 Un terminal **local** (il tourne uniquement sur ton PC) pour scalper le **Nasdaq-100 en futures (NQ / MNQ)** avec un compte prop firm **Lucid 25K**. Même esprit que le terminal crypto (VP, CVD, VWAP, niveaux, lecture honnête), refait pour le scalping : horloge de New York, séances du CME, order flow à la transaction près, et un moteur de risque qui connaît les règles du compte.
 
 > **État actuel : la carte, des setups mesurables, et l'outil pour les mesurer.** Le terminal te donne la carte (niveaux, flux, profil, VWAP, risque du compte), propose des **setups** scorés qui intègrent les règles Lucid, et les **rejoue** sur l'historique (backtest prudent, Monte Carlo de l'évaluation, test de robustesse). Les données par défaut sont **simulées** : rien à l'écran ne dit quoi que ce soit du vrai marché tant que tu n'as pas branché tes vraies transactions (NinjaTrader, voir plus bas). **Aucun setup n'est validé tant qu'il n'a pas été mesuré sur plusieurs semaines de vraies données.**
 
-**Nouveau en V0.4** : backtest plus réaliste (la barre d'entrée est vérifiée, un objectif doit être *dépassé* d'un tick pour être rempli, un stop sauté par un écart est exécuté à l'ouverture, plancher touché *en cours* de journée), **probabilité de valider l'évaluation** (Monte Carlo) et coût moyen d'une évaluation validée, **test de robustesse** début / fin d'historique, export CSV des trades, **alertes** (son + notification) et **tracé du setup** (entrée, stop, objectifs) sur le graphique.
+**Nouveau en V0.5** : **absorptions mesurées au prix** dans le footprint (zone tracée jusqu'à sa cassure, tests et recharges comptés), **profils semaine et mois** (et précédents), un **second profil** à gauche du graphique, **VWAP de la semaine et du mois** avec bande ±1σ, **POC vierges** (jour et semaine), **single prints et queues** (lecture TPO, comblés ou non), **graphiques supplémentaires** (« + Graphique », 3 au plus, chacun sa propre unité de temps), historique gardé réglable (`NQ_HISTORY_DAYS`). Correction : les bulles des gros ordres s'affichaient toutes sur la même bougie.
+
+**V0.4** : backtest plus réaliste (la barre d'entrée est vérifiée, un objectif doit être *dépassé* d'un tick pour être rempli, un stop sauté par un écart est exécuté à l'ouverture, plancher touché *en cours* de journée), **probabilité de valider l'évaluation** (Monte Carlo) et coût moyen d'une évaluation validée, **test de robustesse** début / fin d'historique, export CSV des trades, **alertes** (son + notification) et **tracé du setup** (entrée, stop, objectifs) sur le graphique.
 
 ## Démarrage
 
@@ -21,11 +23,15 @@ Pour **voir la séance américaine à n'importe quelle heure** : `NQ_SIM_START=2
 
 ## Ce que montre l'écran
 
-- **Graphique** : bougies 1 / 2 / 3 / 5 / 15 / 30 min et 1 h, volume, **VWAP de séance** (9 h 30 – 16 h ET) avec bandes ±1σ et ±2σ, VWAP Globex (depuis 18 h ET) en pointillé. Axe du temps en **heure de Paris** ou de **New York** (bouton). Le VWAP et l'écart-type sont **exacts** : ils sont calculés sur chaque transaction, pas sur un « prix typique » de bougie.
-- **Profil de volume collé à l'échelle des prix** (séance, journée Globex ou veille) : volume échangé à chaque prix, acheteurs agressifs (vert) et vendeurs agressifs (rouge), **POC** (tick le plus échangé), **zone de valeur 70 %** (VAH / VAL, méthode des bourses), lignes de 1 point (4 ticks). Avant 9 h 30 ET, « Séance » affiche la journée Globex et l'écrit.
+- **Graphique** : bougies 1 / 2 / 3 / 5 / 15 / 30 min et 1 h, volume, **VWAP de séance** (9 h 30 – 16 h ET) avec bandes ±1σ et ±2σ, VWAP Globex (depuis 18 h ET) en pointillé, **VWAP de la semaine** (violet, ancré le dimanche 18 h ET) et **du mois** (bleu ciel), chacun avec sa bande ±1σ (cases « VWAP sem. » / « VWAP mois »). Les journées d'avant la fenêtre affichée entrent dans ces VWAP par leurs profils : le calcul reste exact quelle que soit l'unité de temps. Axe du temps en **heure de Paris** ou de **New York** (bouton). Le VWAP et l'écart-type sont **exacts** : ils sont calculés sur chaque transaction, pas sur un « prix typique » de bougie.
+- **Profil de volume collé à l'échelle des prix** (menu « Profil » : séance, journée Globex, veille, **semaine**, **semaine précédente**, **mois**, **mois précédent**) : volume échangé à chaque prix, acheteurs agressifs (vert) et vendeurs agressifs (rouge), **POC** (tick le plus échangé), **zone de valeur 70 %** (VAH / VAL, méthode des bourses), lignes de 1 point (4 ticks). Avant 9 h 30 ET, « Séance » affiche la journée Globex et l'écrit. Semaine et mois sont des **composites** des journées Globex complètes (24 h). **Profil 2** : un second profil, à gauche du graphique, plus discret (par exemple la semaine pendant que le profil de droite montre la séance) : tu lis la journée dans sa structure.
 - **CVD et delta** dans un panneau synchronisé sous le prix (remise à zéro à 18 h ET « Globex » ou à 9 h 30 ET « séance »).
-- **Absorptions** (flèches ABS) : delta très fort *contre* le sens de la barre, avec un volume au-dessus de la normale. **Gros ordres** : bulles vertes (achats) et rouges (ventes) à leur prix.
+- **Absorptions, mesurées au prix** (`engine/absorption.py`, footprint de chaque minute) : dans les 3 ticks du plus bas d'une barre, les vendeurs agressifs ont traité ≥ 1,6 fois le plus gros niveau habituel d'une barre et au moins 30 % de leurs ventes de la barre, et la barre a clôturé loin de son plus bas → des acheteurs passifs ont tout pris (absorption **acheteuse**, haussière) ; symétrique au plus haut. S'y ajoute l'**effort sans résultat** (volume ≥ 2 fois l'habituel, gros delta, mais une petite étendue et une clôture contre le delta). Chaque absorption est tracée **à son prix**, de sa barre jusqu'à sa **cassure** (le prix la traverse de plus d'1 point : petite croix) ou jusqu'au bord si elle **tient** ; l'épaisseur dit la force. « ×2 » = absorption **répétée** au même prix tant que la première tient (souvent un ordre caché qui se recharge) ; « 2 tests » = retours dans la zone qui ont tenu. Les zones actives sont listées dans l'onglet Niveaux. Valeurs de départ, à mesurer.
+- **Gros ordres** : bulles vertes (achats) et rouges (ventes) à leur prix et à leur bougie.
 - **Niveaux** : high / low / clôture / POC / VAH / VAL de la veille, high / low de la nuit, de l'Asie et de Londres, ouverture 9 h 30, **initial balance** (1re heure), VWAP et bandes, POC / VAH / VAL en formation, nombres ronds. Deux niveaux au même prix dans le même groupe (le plus haut de la nuit *est* le plus haut de Londres) comptent pour **un seul**.
+- **Structure** (groupe violet, `engine/profiles.py`) : POC / VAH / VAL de la semaine, de la semaine précédente (et ses plus haut / plus bas) et du mois, VWAP semaine et mois, et les **POC vierges** : POC d'une séance régulière passée (« nPOC 13/10 ») ou d'une semaine passée (« nPOC sem. 41 ») que le prix n'a **jamais retouché** depuis. Le marché y revient souvent « finir le travail » : ce sont des cibles et des aimants de scalping. En mode « Clés », les bords des profils composites (VAH / VAL semaine, mois) sont cachés ; « Tous » les montre.
+- **Single prints et queues** (case « Single prints », lecture **TPO** de la séance régulière, périodes de 30 min, lignes de 1 point) : prix traités pendant **une seule** demi-heure, au moins 3 points d'affilée. Au milieu du profil, ce sont des **single prints** (bande jaune : le prix y est passé vite, sans échange) ; aux extrémités, des **queues** (bande violette : rejet net, excès). Pour la séance du jour (« en cours »), la demi-heure en cours n'est pas comptée ; pour les 3 séances précédentes, seuls ceux **non comblés** depuis restent, avec la part déjà retraitée (« comblé 31 % », « vierge »). Les bords des single prints vierges entrent dans les niveaux (« SP 14/10 haut / bas »).
+- **Graphiques supplémentaires** (« + Graphique ») : jusqu'à 3 petits graphiques sous le principal, chacun avec son unité de temps (ex. 5 min et 15 min pendant que tu scalpes en 1 min) : bougies, VWAP de séance et de la semaine, niveaux clés (POC, VAH / VAL, POC vierges, veille, IB, nuit, single prints) et absorptions qui tiennent. Gardés d'une ouverture à l'autre ; ✕ pour en retirer un.
 - **Zones de confluence** : plusieurs niveaux à moins de 6 points, avec un score. **Ce n'est pas un signal** : c'est une carte des endroits où le prix a plusieurs raisons de réagir. Les poids viennent de valeurs de départ, ils n'ont **pas encore été mesurés**.
 - **Lecture** (panneau de droite) : l'essentiel en phrases courtes avec un ton par ligne (vert acheteur, rouge vendeur, bleu info, orange attention) : position face au VWAP en écarts-types, face à la zone de valeur de la veille et à l'initial balance, flux agressif sur 5 et 15 min, divergences et absorptions, amplitude de la séance face à la moyenne des dernières séances, prochains repères horaires **en heure de Paris**, annonces, état du compte.
 - **Footprint** : volume au bid et à l'ask à chaque prix pour les 2 dernières barres, avec les **déséquilibres diagonaux** (≥ 3 fois : l'acheteur d'un prix contre le vendeur du prix juste en dessous, et inversement), le POC de la barre et les piles de déséquilibres.
@@ -70,6 +76,8 @@ Pour que le terminal ait ses ticks, quatre voies (recherche d'octobre 2026, la p
 | **D. Pine Script `request.footprint()` + alertes** | Premium (≈ 70 $/mois) | Par barre seulement (pas de CVD au tick), serveur public sur le port 80 / 443, 3 secondes pour répondre, au plus 15 déclenchements par 3 minutes, et **conditions de TradingView probablement violées** : à éviter |
 
 Écartés : l'API Tradovate (compte réel financé et frais CME, selon une source) et les API de CQG (non fournies aux comptes Lucid). Lucid autorise les systèmes automatiques (le trader reste responsable), mais ne dit rien d'un simple enregistreur de données : demande-lui une confirmation écrite.
+
+**Et une « clé Lucid » ?** Lucid ne fournit pas de clé d'API de données de marché : ses comptes donnent accès aux plateformes (NinjaTrader, Tradovate…), qui reçoivent elles-mêmes le flux CME sous licence. Le terminal n'a donc pas de champ « clé Lucid » et n'en aura pas ; les vraies données CME arrivent par l'enregistreur NinjaTrader ci-dessous, ou par un fournisseur de données qui te vend un accès en ton nom (voie B).
 
 **Voie retenue : A (NinjaTrader 8 + flux CQG de Lucid).** L'enregistreur est fourni : `ninjatrader/NQTickLogger.cs`.
 
@@ -196,19 +204,21 @@ nq/
     market.py       état du marché : barres, profils par journée, ruban, gros ordres
     levels.py  context.py  events.py     niveaux et zones · lecture de séance · annonces
     risk.py  account.py  règles Lucid et dimensionnement · journal du compte
+    absorption.py   absorptions au prix (footprint) : détection, suivi (tient / cassée / testée / répétée)
+    profiles.py     profils composites semaine / mois, POC vierges, single prints et queues (TPO)
     signals.py      setups de scalping : ingrédients du flux, score, stop / objectifs, règles Lucid
     backtest.py     rejeu sans regard vers le futur (Tape pré-calculée) · exécution prudente · règles jour après jour · robustesse
     montecarlo.py   probabilité de valider l'évaluation (bootstrap des journées)
   ninjatrader/      NQTickLogger.cs : enregistreur de transactions NinjaTrader 8 -> CSV lu par le terminal
   data/             simulated.py (essai) · filefeed.py (CSV, par blocs, suivi) · base.py
-  web/              interface (lightweight-charts v4.2.3, canvas pour le profil et les bulles)
+  web/              interface (lightweight-charts v4.2.3, canvas pour les profils, absorptions, single prints et bulles ; minis.js : graphiques supplémentaires)
   tools/            make_sample_csv.py
   tests/            tests unitaires de tous les moteurs, de l'API et de la source fichier
 ```
 
 Tests : `python -m unittest discover -s tests -t .` (depuis le dossier `nq`).
 
-## Limites connues (V0.4)
+## Limites connues (V0.5)
 
 - Données **simulées** par défaut ; pas de connexion directe à un courtier ni à un flux de données.
 - Barres de 1 minute au plus fin : pas encore de graphiques à la seconde, au tick ni au volume (il faut d'abord une vraie source de ticks).
@@ -216,6 +226,8 @@ Tests : `python -m unittest discover -s tests -t .` (depuis le dossier `nq`).
 - Compte : saisie manuelle ; règles de Lucid à confirmer (voir plus haut) ; le compte financé repart-il vraiment de 25 000 $ avec un plancher à 24 000 $ ? À confirmer. La phase **Live** (après 5 retraits) n'est pas modélisée.
 - Backtest sur barres de 1 minute : l'ordre des prix *dans* une minute est inconnu (d'où les hypothèses prudentes) ; pas de file d'attente réelle. Le côté de l'agresseur venant de NinjaTrader est déduit du bid / ask, pas fourni par le CME.
 - Le **GEX** (gamma exposure, niveaux HVL…) est reporté : il demande une source d'options payante.
+- Le backtest rejoue les niveaux de la journée et de la veille, mais **pas encore** la structure semaine / mois, les POC vierges ni les single prints (en direct, les setups les voient).
+- Le terminal ne garde que `NQ_HISTORY_DAYS` journées (10 par défaut) : le profil du mois et les POC vierges anciens demandent `NQ_HISTORY_DAYS=25` et un fichier de transactions qui remonte aussi loin (démarrage plus lent : le fichier est relu en entier).
 - Pas d'alertes Telegram, pas de discussion avec Claude, pas de mise à jour automatique : étapes suivantes.
 
 > Estimations et statistiques à titre informatif, ce n'est pas un conseil financier. Le trading de futures comporte un risque élevé de perte.

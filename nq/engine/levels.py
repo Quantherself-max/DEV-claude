@@ -12,7 +12,7 @@ avant qu'on s'appuie dessus."""
 from . import clock, vp
 from .instruments import MNQ, NQ
 
-GROUPS = {"veille": "Veille", "nuit": "Nuit", "seance": "Séance", "rond": "Ronds"}
+GROUPS = {"veille": "Veille", "nuit": "Nuit", "seance": "Séance", "profil": "Structure", "rond": "Ronds"}
 
 W = {                                        # poids de depart (a mesurer et ajuster)
     "pdh": 3.0, "pdl": 3.0, "pdc": 2.0, "ppoc": 3.0, "pvah": 2.5, "pval": 2.5,
@@ -33,9 +33,11 @@ def _round_levels(price: float, span: float = 200.0) -> list:
     return out
 
 
-def build(mk, zone_pts: float = 6.0, min_zone_score: float = 4.0, round_span: float = 200.0, stats_cache: dict | None = None) -> dict:
+def build(mk, zone_pts: float = 6.0, min_zone_score: float = 4.0, round_span: float = 200.0, stats_cache: dict | None = None,
+          extra: list | None = None) -> dict:
     """Niveaux et zones autour du prix. `mk` : Market. Renvoie {"price", "levels": [...], "zones": [...]} (niveaux tries du haut vers le bas).
-    `stats_cache` : passe au calcul de profil (vp.stats) pour eviter de recalculer le profil de la veille a chaque appel (backtest)."""
+    `stats_cache` : passe au calcul de profil (vp.stats) pour eviter de recalculer le profil de la veille a chaque appel (backtest).
+    `extra` : niveaux deja calcules ailleurs (structure semaine / mois, POC vierges, single prints : groupe « profil »), ajoutes tels quels."""
     with mk.lock:
         price = mk.price
         if price is None:
@@ -97,6 +99,7 @@ def build(mk, zone_pts: float = 6.0, min_zone_score: float = 4.0, round_span: fl
                 add(f"VAL {suffix}", st["val"], "val", "seance")
         for name, p, kind in _round_levels(price, round_span):
             add(name, p, kind, "rond")
+        lv.extend(dict(x) for x in (extra or []))
         lv = merge_same(lv, tick)
         lv.sort(key=lambda x: -x["price"])
         for x in lv:

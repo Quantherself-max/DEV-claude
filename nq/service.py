@@ -10,13 +10,13 @@ from data.base import DataError
 from data.filefeed import CsvSource, selftest_file
 from data.simulated import SimulatedSource
 from engine import backtest as bt
-from engine import clock, context, cvd, events, footprint, levels, montecarlo, risk, signals, vp, vwap
+from engine import absorption, clock, context, cvd, events, footprint, levels, montecarlo, profiles, risk, signals, vp, vwap
 from engine.account import Account
 from engine.bars import TF_MS, resample
 from engine.instruments import INSTRUMENTS, front_contract
 from engine.market import Market
 
-VERSION = "0.4"
+VERSION = "0.5"
 log = logging.getLogger("nq")
 SIM_BASE = {"NQ": 25_000.0, "MNQ": 25_000.0, "ES": 6_700.0, "MES": 6_700.0}
 
@@ -24,7 +24,9 @@ SIM_BASE = {"NQ": 25_000.0, "MNQ": 25_000.0, "ES": 6_700.0, "MES": 6_700.0}
 def make_source(cfg):
     inst = INSTRUMENTS[cfg.instrument]
     if cfg.source == "csv":
-        return CsvSource(cfg.csv_path, cfg.csv_tz, cfg.csv_columns or None, cfg.csv_buy_codes, cfg.csv_sell_codes)
+        # journees de trading -> jours calendaires du fichier (week-ends compris), avec une marge
+        return CsvSource(cfg.csv_path, cfg.csv_tz, cfg.csv_columns or None, cfg.csv_buy_codes, cfg.csv_sell_codes,
+                         max_days=cfg.history_days * 7 / 5 + 2)
     now_fn = None
     if cfg.sim_start:                                        # rejoue une seance simulee : l'horloge part de l'heure demandee puis avance normalement
         from datetime import datetime, timezone
@@ -55,12 +57,14 @@ class Service:
         if cfg.big_lot:
             inst = replace(inst, big_lot=cfg.big_lot)
         self.inst = inst
-        self.market = Market(inst)
+        self.market = Market(inst, keep_days=cfg.history_days + 1)
         self.source = source or make_source(cfg)
         self.account = account or Account(Path(cfg.data_dir) / "compte.json", now_ms=self.now_ms)
         self.events_path = Path(cfg.data_dir) / "events.json"
         self._bt_lock = threading.Lock()
         self._bt_cache = None                                # (clé, Tape) du dernier backtest
+        self.composer = profiles.Composer()                  # profils composites semaine / mois (journées passées gardées)
+        self._abs_known = {}                                 # absorptions déjà évaluées, par barre close (une barre close ne change plus)
         self._events = (None, [])
         self.status = {"state": "loading", "msg": "Chargement de l'historique…"}
         self.loaded = False
@@ -77,7 +81,7 @@ class Service:
         try:
             n = self.market.ingest_many(self.source.history(self.now_ms()))
         except DataError as e:
-            self.market = Market(self.inst)                      # lecture interrompue a mi-chemin : on repart d'un marche vide (sinon la reprise doublerait les volumes deja lus)
+            self.market = Market(self.inst, keep_days=self.cfg.history_days + 1)                      # lecture interrompue a mi-chemin : on repart d'un marche vide (sinon la reprise doublerait les volumes deja lus)
             self.status = {"state": "error", "msg": str(e)}
             return 0
         self.loaded = True
@@ -156,14 +160,30 @@ class Service:
             if not chart:
                 return {"tf": tf, "step": step, "bars": [], "full": True}
             win = chart[-limit:]
-            a0 = clock.window(clock.trading_day(win[0].t), "globex")[0]
+            d0 = clock.trading_day(win[0].t)
+            a0 = clock.window(d0, "globex")[0]
             base = mk.slice(a0, win[-1].t + step)
             v_rth = vwap.bands(vwap.sample(base, vwap.cumulative(base, vwap.key_rth), win, step))
             v_gx = vwap.bands(vwap.sample(base, vwap.cumulative(base, vwap.key_globex), win, step))
+            # VWAP de la semaine et du mois : les journées d'avant la fenêtre lue viennent de leurs profils (sommes), sans relire leurs barres
+            tick = self.inst.tick
+            wk, mo = profiles.week_key(d0), d0[:7]
+            off_w = {wk: vwap.ladder_sums([mk.gx[d] for d in mk.gx if d < d0 and profiles.week_key(d) == wk], tick)}
+            off_m = {mo: vwap.ladder_sums([mk.gx[d] for d in mk.gx if d < d0 and d[:7] == mo], tick)}
+            v_wk = vwap.bands(vwap.sample(base, vwap.cumulative(base, vwap.key_week, offsets=off_w), win, step), ks=(1.0,))
+            v_mo = vwap.bands(vwap.sample(base, vwap.cumulative(base, vwap.key_month, offsets=off_m), win, step), ks=(1.0,))
             c_rth = vwap.sample(base, cvd.cumulative(base, vwap.key_rth), win, step)
             c_gx = vwap.sample(base, cvd.cumulative(base, vwap.key_globex), win, step)
-            off = len(chart) - len(win)
-            marks = [{"t": chart[i].t // 1000, "side": s, "h": chart[i].h, "l": chart[i].l} for i, s in cvd.marks(chart) if i >= off]
+            # absorptions au prix (barres de 1 min, footprint), suivies jusqu'à maintenant ; 70 barres d'avance pour les échelles habituelles
+            warm = mk.slice(a0 - 75 * 60_000, a0)[-(absorption.PARAMS.base + 5):]
+            ab_bars = warm + base
+            if len(self._abs_known) > 60_000:
+                self._abs_known.clear()
+            zs = absorption.track(absorption.scan(ab_bars, tick, known=self._abs_known), ab_bars, tick)
+            t_first = win[0].t
+            marks = [{"t": z["t"] // 1000, "side": z["side"], "price": z["price"], "lo": z["lo"], "hi": z["hi"], "qty": z["qty"],
+                      "strength": z["strength"], "kind": z["kind"], "status": z["status"], "tests": z["tests"], "count": z["count"],
+                      "end": z["end"] // 1000 if z["end"] else None} for z in zs if z["t"] >= t_first]
             rows = [{"t": b.t // 1000, "o": b.o, "h": b.h, "l": b.l, "c": b.c, "v": b.v, "d": b.bv - b.sv} for b in win]
             t0 = win[0].t
             bigs = [{"t": t // 1000, "p": p, "q": q, "s": s} for t, p, q, s in mk.bigs if t >= t0]
@@ -176,14 +196,30 @@ class Service:
             sl = slice(k, None)
             v_rth = {key: v[sl] for key, v in v_rth.items()}
             v_gx = {key: v[sl] for key, v in v_gx.items()}
+            v_wk = {key: v[sl] for key, v in v_wk.items()}
+            v_mo = {key: v[sl] for key, v in v_mo.items()}
             c_rth, c_gx = c_rth[sl], c_gx[sl]
         rnd = lambda xs: [None if x is None else round(x, 2) for x in xs]
-        return {"tf": tf, "step": step, "full": full, "bars": rows, "vwapRth": v_rth, "vwapGx": v_gx, "cvdRth": rnd(c_rth), "cvdGx": rnd(c_gx),
+        return {"tf": tf, "step": step, "full": full, "bars": rows, "vwapRth": v_rth, "vwapGx": v_gx, "vwapWeek": v_wk, "vwapMonth": v_mo,
+                "cvdRth": rnd(c_rth), "cvdGx": rnd(c_gx),
                 "absorptions": marks, "bigs": bigs}
 
     def profile(self, which: str = "rth", row_ticks: int | None = None) -> dict:
-        """Profil de volume : `rth` (seance du jour), `gx` (journee Globex), `prev` (seance reguliere de la veille)."""
+        """Profil de volume : `rth` (seance du jour), `gx` (journee Globex), `prev` (seance reguliere de la veille), `week` / `pweek`
+        (semaine en cours / precedente, composite Globex), `month` / `pmonth` (mois en cours / precedent)."""
         mk = self.market
+        if which in ("week", "pweek", "month", "pmonth"):
+            with mk.lock:
+                if mk.last is None:
+                    return {"which": which, "empty": True}
+                lad, label, days = self.composer.composite(mk, which)
+                st = vp.stats(lad, row_ticks, min_row_ticks=4) if lad is not None else None
+                price = mk.price
+            if st is None:
+                return {"which": which, "empty": True, "label": label}
+            st.update({"which": which, "day": days[-1] if days else None, "days": days, "empty": False, "tick": self.inst.tick,
+                       "price": price, "label": label})
+            return st
         with mk.lock:
             if mk.last is None:
                 return {"which": which, "empty": True}
@@ -225,9 +261,55 @@ class Service:
         return {"tf": tf, "ratio": ratio, "minVol": min_vol, "bars": out}
 
     def levels(self) -> dict:
-        lv = levels.build(self.market, self.cfg.zone_pts)
+        extra, singles = self._structure()
+        lv = levels.build(self.market, self.cfg.zone_pts, extra=extra)
         lv["near"] = levels.nearest(lv["levels"], lv["price"], 3) if lv["price"] else {"above": [], "below": []}
+        lv["singles"] = singles
         return lv
+
+    def _structure(self):
+        """Niveaux de structure au-delà de la journée : profils semaine / mois, semaine précédente, VWAP semaine / mois, POC vierges, et les
+        single prints (séance du jour + 3 séances passées non comblées). Renvoie (niveaux en plus, single prints)."""
+        mk = self.market
+        out, singles = [], []
+
+        def add(name, p, kind, w):
+            if p is not None:
+                out.append({"name": name, "price": round(float(p), 4), "kind": kind, "group": "profil", "w": w})
+
+        with mk.lock:
+            if mk.last is None:
+                return out, singles
+            day, price = mk.day(), mk.price
+            after = profiles._After(mk.series.bars)
+            for which, pre, w in (("week", "sem.", 2.5), ("pweek", "sem. préc.", 2.0), ("month", "mois", 2.5)):
+                lad, _, days = self.composer.composite(mk, which)
+                st = vp.stats(lad, min_row_ticks=4) if lad is not None else None
+                if not st or (which == "month" and len(days) < 6):          # un « mois » de quelques jours n'apporte rien de plus que la semaine
+                    continue
+                k = {"week": "w", "pweek": "pw", "month": "m"}[which]
+                add(f"POC {pre}", st["poc"], k + "poc", w + 0.5)
+                add(f"VAH {pre}", st["vah"], k + "vah", w - 0.5)
+                add(f"VAL {pre}", st["val"], k + "val", w - 0.5)
+                if which == "pweek":
+                    add("High sem. préc.", st["hi"], "pwh", 2.5)
+                    add("Low sem. préc.", st["lo"], "pwl", 2.5)
+                if which in ("week", "month"):
+                    add("VWAP " + pre, lad.vwap, "vwapw" if which == "week" else "vwapm", 2.5 if which == "week" else 2.0)
+            for n in profiles.naked_pocs(mk, max_days=self.cfg.history_days, after=after):
+                add(n["label"], n["price"], "npoc" if n["kind"] == "jour" else "nwpoc", 3.0 if n["kind"] == "jour" else 3.5)
+            past = [d for d in sorted(mk.rth) if d < day][-3:]
+            for d in past + [day]:
+                for sp_ in profiles.single_prints(mk, d, after=after):
+                    if sp_["filled"] < 1.0 and abs((sp_["lo"] + sp_["hi"]) / 2 - price) <= 250:
+                        singles.append(sp_)
+        for z in singles:
+            if z["current"] or z["kind"] != "single":
+                continue
+            lab = f"SP {z['day'][8:10]}/{z['day'][5:7]}"
+            add(lab + " haut", z["hi"], "sph", 2.0)
+            add(lab + " bas", z["lo"], "spl", 2.0)
+        return out, singles
 
     def account_view(self, pos_text=None) -> dict:
         """Etat du compte pour la journee de trading en cours. `pos_text` : position ouverte saisie (« long,NQ,1,25000.25 ») pour le latent."""

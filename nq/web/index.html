@@ -31,18 +31,21 @@
       <span class="seg" id="lvlMode" title="Niveaux affichés sur le graphique">
         <button data-m="off">Niveaux : non</button><button data-m="key">Clés</button><button data-m="all">Tous</button>
       </span>
-      <span class="seg" id="vpMode" title="Profil de volume collé à l'échelle des prix">
-        <button data-m="off">Profil : non</button><button data-m="rth">Séance</button><button data-m="gx">Globex</button><button data-m="prev">Veille</button>
-      </span>
+      <label title="Profil de volume collé à l'échelle des prix (à droite)">Profil <select id="vpSel"><option value="off">non</option><option value="rth">Séance</option><option value="gx">Globex</option><option value="prev">Veille</option><option value="week">Semaine</option><option value="pweek">Sem. préc.</option><option value="month">Mois</option><option value="pmonth">Mois préc.</option></select></label>
+      <label title="Second profil, à gauche, pour lire la journée dans la structure de la semaine ou du mois">Profil 2 <select id="vp2Sel"><option value="off">non</option><option value="rth">Séance</option><option value="gx">Globex</option><option value="prev">Veille</option><option value="week">Semaine</option><option value="pweek">Sem. préc.</option><option value="month">Mois</option><option value="pmonth">Mois préc.</option></select></label>
+      <label title="VWAP ancré au début de la semaine (dimanche 18 h ET), avec sa bande ±1σ"><input type="checkbox" id="optVwapW"> VWAP sem.</label>
+      <label title="VWAP ancré au début du mois, avec sa bande ±1σ"><input type="checkbox" id="optVwapM"> VWAP mois</label>
+      <label title="Single prints et queues (lecture TPO, 30 min) : séance du jour et séances passées non comblées"><input type="checkbox" id="optSingles"> Single prints</label>
       <label title="Zones où plusieurs niveaux se superposent"><input type="checkbox" id="optZones"> Zones</label>
       <label title="Gros ordres agressifs (bulles)"><input type="checkbox" id="optBigs"> Gros ordres</label>
-      <label title="Absorptions : gros delta contre le sens de la barre"><input type="checkbox" id="optAbs"> Absorptions</label>
+      <label title="Absorptions mesurées au prix dans le footprint : trait jusqu'à leur cassure, épaisseur = force"><input type="checkbox" id="optAbs"> Absorptions</label>
       <span class="seg" id="cvdMode" title="Remise à zéro du CVD">
         <button data-m="gx">CVD Globex</button><button data-m="rth">CVD séance</button>
       </span>
       <span class="seg" id="tzMode" title="Fuseau de l'axe du temps">
         <button data-m="paris">Paris</button><button data-m="et">New York</button>
       </span>
+      <button id="addChart" title="Ajouter un graphique (autre unité de temps) sous le graphique principal, 3 au plus">+ Graphique</button>
     </div>
     <div id="pricewrap">
       <div id="price-chart"></div>
@@ -50,6 +53,7 @@
       <div id="legend"></div>
     </div>
     <div id="cvd-chart"></div>
+    <div id="multi" hidden></div>
     <div id="strip"><span class="muted">Gros ordres</span> <span id="bigstrip">—</span></div>
   </section>
 
@@ -78,6 +82,7 @@
 <script src="util.js"></script>
 <script src="chart.js"></script>
 <script src="panels.js"></script>
+<script src="minis.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

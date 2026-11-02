@@ -118,8 +118,15 @@ def is_open(utc_ms: int) -> bool:
 
 
 def trading_day(utc_ms: int) -> str:
-    """Date (AAAA-MM-JJ) de la journee de trading : celle de la cloture de 17 h ET. Dimanche 18 h ET -> lundi."""
-    w = et(utc_ms)
+    """Date (AAAA-MM-JJ) de la journee de trading : celle de la cloture de 17 h ET. Dimanche 18 h ET -> lundi.
+    La bascule (18 h ET) tombe toujours sur une heure pleine en UTC (decalages ET entiers) : le resultat est constant sur chaque heure UTC,
+    on le garde par heure (appele pour chaque barre, c'est le calcul le plus frequent du terminal)."""
+    return _trading_day_hour(utc_ms // 3_600_000)
+
+
+@lru_cache(maxsize=4096)
+def _trading_day_hour(hour: int) -> str:
+    w = et(hour * 3_600_000)
     d = w.date() + (timedelta(days=1) if w.hour >= 18 else timedelta(0))
     return d.isoformat()
 

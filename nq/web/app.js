@@ -5,6 +5,7 @@
   const {$, $$, api, fmt, sign, usd, susd, esc, store} = U;
   const S = {tf: store.get('tf', '1m'), theme: store.get('theme', 'nuit'), tz: store.get('tz', 'paris'), lvl: store.get('lvl', 'key'), vp: store.get('vp', 'rth'),
     cvd: store.get('cvd', 'gx'), zones: store.get('zones', false), bigs: store.get('bigs', true), abs: store.get('abs', true), tab: store.get('tab', 'lecture'),
+    vp2: store.get('vp2', 'off'), vwapW: store.get('vwapW', true), vwapM: store.get('vwapM', false), singles: store.get('singles', true),
     pos: store.get('pos', ''), boot: null, state: null, price: null, acct: null, lv: null, fails: 0};
 
   const getLast = () => S.price;
@@ -74,15 +75,15 @@
   }
 
   async function pollProfile() {
-    if (S.vp === 'off') { NQChart.setProfile(null); return; }
-    NQChart.setProfile(await api('/api/profile?which=' + S.vp));
+    const [p1, p2] = await Promise.all([S.vp === 'off' ? null : api('/api/profile?which=' + S.vp), S.vp2 === 'off' ? null : api('/api/profile?which=' + S.vp2)]);
+    NQChart.setProfile(p1); NQChart.setProfile2(p2);
   }
 
   async function pollLevels() {
     const lv = await api('/api/levels');
     S.lv = lv;
-    NQChart.setLevels(lv.levels, S.lvl); NQChart.setZones(lv.zones);
-    if (S.price != null) Panels.levels(lv, S.price);
+    NQChart.setLevels(lv.levels, S.lvl); NQChart.setZones(lv.zones); NQChart.setSingles(lv.singles);
+    if (S.price != null) Panels.levels(lv, S.price, NQChart.absZones());
   }
 
   async function pollContext() {
@@ -185,18 +186,27 @@
     NQChart.init($('#price-chart'), $('#cvd-chart'), $('#overlay'));
     NQChart.onLegend(legend);
     NQChart.setTheme(S.theme); NQChart.setTz(S.tz); NQChart.setCvdScope(S.cvd); NQChart.setVpMode(S.vp);
-    NQChart.setOptions({zones: S.zones, bigs: S.bigs, abs: S.abs});
+    NQChart.setOptions({zones: S.zones, bigs: S.bigs, abs: S.abs, vwapW: S.vwapW, vwapM: S.vwapM, singles: S.singles});
     seg('#lvlMode', 'lvl', v => { NQChart.setLevels(S.lv ? S.lv.levels : [], v); });
-    seg('#vpMode', 'vp', v => { NQChart.setVpMode(v); pollProfile().catch(() => {}); });
+    for (const [id, key] of [['#vpSel', 'vp'], ['#vp2Sel', 'vp2']]) {
+      const sel = $(id);
+      if (![...sel.options].some(o => o.value === S[key])) S[key] = key === 'vp' ? 'rth' : 'off';
+      sel.value = S[key];
+      sel.onchange = () => { S[key] = sel.value; store.set(key, S[key]); if (key === 'vp') NQChart.setVpMode(S.vp); pollProfile().catch(() => {}); };
+    }
+    NQChart.setVpMode(S.vp);
     seg('#cvdMode', 'cvd', v => NQChart.setCvdScope(v));
     seg('#tzMode', 'tz', v => { NQChart.setTz(v); });
-    for (const [id, key] of [['#optZones', 'zones'], ['#optBigs', 'bigs'], ['#optAbs', 'abs']]) {
+    for (const [id, key] of [['#optZones', 'zones'], ['#optBigs', 'bigs'], ['#optAbs', 'abs'], ['#optVwapW', 'vwapW'], ['#optVwapM', 'vwapM'], ['#optSingles', 'singles']]) {
       const cb = $(id); cb.checked = !!S[key];
-      cb.onchange = () => { S[key] = cb.checked; store.set(key, cb.checked); NQChart.setOptions({[key]: cb.checked}); };
+      cb.onchange = () => { S[key] = cb.checked; store.set(key, cb.checked); NQChart.setOptions({[key]: cb.checked}); Minis.refresh(); };
     }
     const theme = () => { $('#themeBtn').textContent = S.theme === 'nuit' ? '☾ nuit' : '☀ classique'; };
     theme();
-    $('#themeBtn').onclick = () => { S.theme = S.theme === 'nuit' ? 'classic' : 'nuit'; store.set('theme', S.theme); NQChart.setTheme(S.theme); theme(); };
+    $('#themeBtn').onclick = () => { S.theme = S.theme === 'nuit' ? 'classic' : 'nuit'; store.set('theme', S.theme); NQChart.setTheme(S.theme); Minis.setTheme(S.theme); theme(); };
+    Minis.init($('#multi'), {tfs: () => cfg.tfs || ['1m'], tz: tzNow, theme: () => S.theme, opts: () => ({vwapW: S.vwapW, abs: S.abs}),
+      levels: () => (S.lv ? S.lv.levels : [])});
+    $('#addChart').onclick = () => Minis.add();
     $$('#tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
     $('#acctChip').onclick = () => showTab('account');
 

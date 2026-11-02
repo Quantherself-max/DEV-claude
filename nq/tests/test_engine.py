@@ -329,20 +329,6 @@ class CvdTests(unittest.TestCase):
         cv[3], cv[9] = 50.0, 20.0
         self.assertEqual(cvd.divergence(bars, cv, 15)[0], "bear")
 
-    def test_absorption(self):
-        rnd = random.Random(5)
-        bars = [mk(i * MIN, 100, 101, 99, 100, 100, 50 + rnd.randint(-5, 5), 50 + rnd.randint(-5, 5)) for i in range(80)]
-        bars[70] = mk(70 * MIN, 100, 101, 98, 100.5, 300, 50, 250)       # enorme delta vendeur mais la barre monte
-        self.assertEqual(cvd.absorption(bars, 70), "bull")
-        bars[71] = mk(71 * MIN, 100, 102, 99, 99.5, 300, 250, 50)        # enorme delta acheteur mais la barre baisse
-        self.assertEqual(cvd.absorption(bars, 71), "bear")
-        bars[72] = mk(72 * MIN, 100, 102, 99, 101.5, 300, 250, 50)       # delta et prix vont dans le meme sens : pas d'absorption
-        self.assertIsNone(cvd.absorption(bars, 72))
-        self.assertIsNone(cvd.absorption(bars, 10))                       # pas assez d'historique
-        sides = cvd.marks(bars)
-        self.assertIn((70, "bull"), sides)
-        self.assertIn((71, "bear"), sides)
-
     def test_imbalance(self):
         bars = [mk(0, 1, 1, 1, 1, 10, 8, 2), mk(MIN, 1, 1, 1, 1, 10, 2, 8)]
         self.assertEqual(cvd.imbalance(bars, 2), 0.0)

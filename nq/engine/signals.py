@@ -17,6 +17,7 @@ touché le plancher, respecté la consistance — pour corréler la stratégie a
 import math
 from dataclasses import dataclass, field, replace
 
+from . import absorption
 from . import cvd as cvdmod
 from .bars import atr
 from .footprint import imbalances
@@ -77,11 +78,12 @@ def _ingredients(bars, cvd_vals, prof, near, zones, inst, params):
         out.append((1 if dname == "bull" else -1, min(1.0, 0.4 + dstr), "divergence",
                     f"Divergence {('haussière' if dname == 'bull' else 'baissière')} prix / CVD"))
 
-    # --- CVD : absorption sur la dernière barre (gros delta contre le sens, volume fort)
-    ab = cvdmod.absorption(bars, i)
+    # --- absorption au prix, dans le footprint de la dernière barre (engine/absorption.py)
+    ab = absorption.detect(bars, i, inst.tick)
     if ab:
-        out.append((1 if ab == "bull" else -1, 0.8, "absorption",
-                    f"Absorption {('acheteuse' if ab == 'bull' else 'vendeuse')} (le flux opposé est encaissé)"))
+        out.append((1 if ab["side"] == "bull" else -1, min(1.0, 0.35 + 0.65 * ab["strength"]), "absorption",
+                    f"Absorption {('acheteuse' if ab['side'] == 'bull' else 'vendeuse')} à {ab['price']:.2f} ({ab['kind']}, "
+                    f"{ab['qty']:.0f} lots encaissés)"))
 
     # --- Footprint : piles de déséquilibres diagonaux sur la dernière barre
     if last.fp:

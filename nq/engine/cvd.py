@@ -1,13 +1,11 @@
-"""CVD (flux cumule d'ordres agressifs), divergences et absorptions. Module PUR.
+"""CVD (flux cumule d'ordres agressifs) et divergences. Module PUR. (Les absorptions, mesurees au prix dans le footprint : engine/absorption.py.)
 
 delta d'une barre = volume acheteur agressif - volume vendeur agressif ; CVD = somme cumulee de ces deltas, remise a zero au debut de la
 seance choisie (journee Globex ou seance reguliere). Le CVD ne vaut que ce que vaut le cote de l'agresseur : voir `bars.SideClassifier`
 (part des transactions dont le cote vient de la bourse). Avec un cote estime (regle du tick), le terminal l'affiche clairement.
 
   - divergence haussiere : le prix fait un plus bas plus bas mais le CVD un plus bas plus HAUT (les vendeurs agressifs s'epuisent) ;
-    baissiere : plus haut plus haut du prix, plus haut plus BAS du CVD ;
-  - absorption : delta anormalement fort (>= `z` fois sa taille habituelle) CONTRE le sens de la barre, avec un volume au-dessus du normal :
-    des ordres passifs ont absorbe le flux (acheteuse = vendeurs absorbes, signal haussier ; vendeuse = acheteurs absorbes, signal baissier)."""
+    baissiere : plus haut plus haut du prix, plus haut plus BAS du CVD."""
 import math
 
 
@@ -62,41 +60,6 @@ def divergence(bars, cvd: list, i: int, look: int = 60, n: int = 2) -> tuple:
         if (low and pc < pa and cvd[c] > cvd[a]) or (not low and pc > pa and cvd[c] < cvd[a]):
             return name, min(1.0, abs(cvd[c] - cvd[a]) / vol / 0.10)
     return None, 0.0
-
-
-def absorption(bars, i: int, base: int = 60, z: float = 2.0, vol_ratio: float = 1.3, min_delta_share: float = 0.15):
-    """('bull' | 'bear' | None) pour la barre i. Echelle : racine de la moyenne des carres des deltas des `base` barres PRECEDENTES (rien du futur)."""
-    if i < base:
-        return None
-    prev = bars[i - base:i]
-    rms = math.sqrt(sum((b.bv - b.sv) ** 2 for b in prev) / base)
-    avg_v = sum(b.v for b in prev) / base
-    b = bars[i]
-    if rms <= 0 or avg_v <= 0 or b.v < vol_ratio * avg_v:
-        return None
-    d = b.bv - b.sv
-    if abs(d) < z * rms or abs(d) < min_delta_share * b.v:
-        return None
-    if d < 0 and b.c >= b.o:
-        return "bull"
-    if d > 0 and b.c <= b.o:
-        return "bear"
-    return None
-
-
-def marks(bars, base: int = 60, **kw) -> list:
-    """[(indice de barre, 'bull'|'bear')] pour toutes les absorptions ; une seule (la plus forte) par grappe de 3 barres du meme cote."""
-    out = []
-    for i in range(base, len(bars)):
-        side = absorption(bars, i, base, **kw)
-        if not side:
-            continue
-        if out and out[-1][1] == side and i - out[-1][0] <= 3:
-            if abs(bars[i].bv - bars[i].sv) > abs(bars[out[-1][0]].bv - bars[out[-1][0]].sv):
-                out[-1] = (i, side)
-            continue
-        out.append((i, side))
-    return out
 
 
 def imbalance(bars, n: int) -> float:

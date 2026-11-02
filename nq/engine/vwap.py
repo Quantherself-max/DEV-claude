@@ -6,6 +6,7 @@ et une cle `None` (hors seance) donne `None` : la ligne est coupee sur le graphi
 import math
 
 from . import clock
+from .profiles import week_key
 
 
 def key_globex(t: int):
@@ -20,8 +21,20 @@ def key_rth(t: int):
     return day if a <= t < b else None
 
 
-def cumulative(bars, key_fn=key_globex, anchor_ms: int | None = None) -> list:
-    """Pour chaque barre : (vwap, ecart-type) APRES cette barre, ou (None, None). `anchor_ms` : VWAP ancre (rien avant cet instant)."""
+def key_week(t: int):
+    """Un VWAP par semaine (semaine ISO de la journee de trading : remise a zero le dimanche 18 h ET)."""
+    return week_key(clock.trading_day(t))
+
+
+def key_month(t: int):
+    """Un VWAP par mois civil (de la journee de trading)."""
+    return clock.trading_day(t)[:7]
+
+
+def cumulative(bars, key_fn=key_globex, anchor_ms: int | None = None, offsets: dict | None = None) -> list:
+    """Pour chaque barre : (vwap, ecart-type) APRES cette barre, ou (None, None). `anchor_ms` : VWAP ancre (rien avant cet instant).
+    `offsets` : {cle: (s0, s1, s2)} sommes (quantite, prix x q, prix^2 x q) deja accumulees AVANT la premiere barre pour cette cle
+    (semaine ou mois commences avant la fenetre lue : les journees precedentes viennent de leurs profils, sans relire leurs barres)."""
     out = []
     key = None
     s0 = s1 = s2 = 0.0
@@ -32,7 +45,8 @@ def cumulative(bars, key_fn=key_globex, anchor_ms: int | None = None) -> list:
             key = None
             continue
         if k != key:
-            key, s0, s1, s2 = k, 0.0, 0.0, 0.0
+            key = k
+            s0, s1, s2 = (offsets or {}).get(k, (0.0, 0.0, 0.0))
         s0 += b.v
         s1 += b.pv
         s2 += b.pv2
@@ -78,3 +92,15 @@ def bands(vals: list, ks=(1.0, 2.0)) -> dict:
             out[f"u{k:g}"].append(round(m + k * sd, 4))
             out[f"l{k:g}"].append(round(m - k * sd, 4))
     return out
+
+
+def ladder_sums(ladders, tick: float) -> tuple:
+    """(s0, s1, s2) en PRIX d'une liste de profils (Ladder tient ses sommes en indices de tick)."""
+    s0 = s1 = s2 = 0.0
+    for lad in ladders:
+        if lad is None:
+            continue
+        s0 += lad.s0
+        s1 += lad.s1 * tick
+        s2 += lad.s2 * tick * tick
+    return s0, s1, s2
