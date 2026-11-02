@@ -182,7 +182,7 @@
     if (!store.get('tzInit', false)) { S.tz = cfg.displayTz || S.tz; store.set('tzInit', true); }
     // unites de temps
     $('#tfs').innerHTML = cfg.tfs.map(t => `<button data-m="${t}">${t}</button>`).join('');
-    seg('#tfs', 'tf', () => { NQChart.apply({step: 60, bars: [], vwapRth: {}, vwapGx: {}, cvdRth: [], cvdGx: []}, true); S.barsTf = null; pollBars().catch(() => {}); pollFp().catch(() => {}); });
+    seg('#tfs', 'tf', () => { NQChart.apply({step: 60_000, bars: [], vwapRth: {}, vwapGx: {}, cvdRth: [], cvdGx: []}, true); S.barsTf = null; pollBars().catch(() => {}); pollFp().catch(() => {}); });
     NQChart.init($('#price-chart'), $('#cvd-chart'), $('#overlay'));
     NQChart.onLegend(legend);
     NQChart.setTheme(S.theme); NQChart.setTz(S.tz); NQChart.setCvdScope(S.cvd); NQChart.setVpMode(S.vp);

@@ -291,16 +291,18 @@ const NQChart = (() => {
       const lx = profile2 ? Math.min(150, right * 0.2) + 110 : 8;            // à droite du profil 2 et de ses étiquettes
       const lbl = (tail ? (z.kind === 'queue haute' ? 'Queue haute' : 'Queue basse') : 'Single print') + ' ' + z.day.slice(8, 10) + '/' + z.day.slice(5, 7)
         + (z.filled > 0 ? ` · comblé ${Math.round(z.filled * 100)} %` : (z.current ? ' · en cours' : ' · vierge'));
-      ctx.fillText(lbl, lx, Math.max(y1 + 11, 34));
+      if (y2 > 40 && y1 + 11 < H - 20) ctx.fillText(lbl, lx, Math.max(y1 + 11, 34));   // pas d'étiquette pour une bande hors champ
     }
 
     // absorptions à LEUR prix : trait de la barre d'absorption jusqu'à sa cassure (ou jusqu'au bord si elle tient), épaisseur = force
     if (opts.abs && rows.length) {
       const ts = chart.timeScale();
       for (const a of marks) {
-        const bt = Math.floor(a.t / step) * step, x0 = ts.timeToCoordinate(bt), y = Y(a.price);
-        if (x0 == null || y == null || x0 > right) continue;
         const live = a.status === 'active';
+        const bt = Math.floor(a.t / step) * step, y = Y(a.price);
+        let x0 = ts.timeToCoordinate(bt);
+        if (x0 == null && live && rows.length && bt < rows[0].t) x0 = -8;     // née avant la fenêtre affichée, elle tient encore
+        if (x0 == null || y == null || x0 > right) continue;
         if (!live && a.strength < 0.55) continue;                         // zones cassées faibles : du bruit, on ne les montre pas
         let x1 = right;
         if (!live && a.end != null) { const xe = ts.timeToCoordinate(Math.floor(a.end / step) * step); x1 = xe == null ? right : Math.min(right, Math.max(xe, x0 + 6)); }

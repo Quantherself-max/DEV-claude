@@ -70,6 +70,17 @@ class AbsorptionTests(unittest.TestCase):
         bars.append(fpbar(self.T0 + 60 * MIN, 100.0, 100.0, 99.0, 99.0, fp))         # clôture sur le plus bas : les vendeurs ont gagné
         self.assertIsNone(absorption.detect(bars, 60, TICK))
 
+    def test_late_tick_reevaluates_a_cached_bar(self):
+        bars = calm(62, self.T0)
+        known = {}
+        self.assertEqual(absorption.scan(bars, TICK, known=known), [])
+        i0 = int(round(100.0 / TICK))
+        late = bars[60]                                   # une transaction en retard transforme la barre 60 en absorption
+        late.fp = {i0: [40, 2], i0 + 1: [30, 3], i0 + 2: [3, 4], i0 + 3: [2, 5]}
+        late.sv, late.bv = 75, 14
+        late.v, late.n, late.c, late.h = 89, late.n + 1, 100.75, 100.75
+        self.assertEqual([m["i"] for m in absorption.scan(bars, TICK, known=known)], [60])
+
     def test_not_enough_history(self):
         self.assertIsNone(absorption.detect(calm(10, self.T0), 9, TICK))
 
@@ -105,6 +116,10 @@ class AbsorptionTests(unittest.TestCase):
         z2 = absorption.track([dict(m, i=60), dict(m, i=62, t=bars[62].t)], bars[:63], TICK)
         self.assertEqual(len(z2), 1)
         self.assertEqual(z2[0]["count"], 2)
+        # une nouvelle marque sur la barre même qui casse la zone : pas de fusion, la zone est cassée
+        z3 = absorption.track([dict(m, i=60), dict(m, i=63, t=bars[63].t)], bars, TICK)
+        self.assertEqual(z3[0]["status"], "cassée")
+        self.assertEqual(z3[0]["count"], 1)
 
 
 def tick_at(t, p, q=1, side=1):
@@ -161,7 +176,7 @@ class ProfileStructureTests(unittest.TestCase):
         sp = profiles.single_prints(mk, day)
         tails = [z for z in sp if z["kind"] == "queue basse"]
         self.assertTrue(tails, sp)
-        self.assertLessEqual(tails[0]["lo"], 100.0)
+        self.assertEqual(tails[0]["lo"], 100.0)                   # bornée au plus bas de la séance (pas au bas de la ligne)
         self.assertGreaterEqual(tails[0]["hi"], 105.0)
         self.assertTrue(tails[0]["current"])
 
@@ -203,8 +218,8 @@ class ServiceStructureTests(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         now = utc(2026, 10, 15, 18, 30)
-        cfg = Config(data_dir=cls.tmp.name, sim_days=8, history_days=10)
-        cls.svc = Service(cfg, source=SimulatedSource(days=8, now_fn=lambda: now),
+        cfg = Config(data_dir=cls.tmp.name, sim_days=10, history_days=10)
+        cls.svc = Service(cfg, source=SimulatedSource(days=10, now_fn=lambda: now),
                           account=Account(f"{cls.tmp.name}/c.json", now_ms=lambda: now))
         cls.svc.load_sync()
 
@@ -235,6 +250,18 @@ class ServiceStructureTests(unittest.TestCase):
         for n in ("POC sem.", "POC sem. préc.", "High sem. préc.", "Low sem. préc.", "VWAP sem."):
             self.assertIn(n, names)
         self.assertIn("singles", lv)
+
+    def test_truncated_month_gives_no_month_levels_nor_vwap(self):
+        # 10 journées gardées, le 15/10 : le mois d'octobre commence le 01/10, avant l'historique -> pas de niveaux ni de VWAP du mois
+        lv = self.svc.levels()
+        names = " | ".join(x["name"] for x in lv["levels"] if x["group"] == "profil")
+        self.assertNotIn("POC mois", names)
+        self.assertTrue(all(v is None for v in self.svc.bars("5m", 50)["vwapMonth"]["v"]))
+        self.assertIn("incomplet", self.svc.profile("month")["label"])
+
+    def test_no_naked_poc_for_yesterday(self):
+        prev = self.svc.market.prev_day()
+        self.assertFalse([n for n in profiles.naked_pocs(self.svc.market, weekly=False) if n["day"] == prev])
 
     def test_market_keeps_configured_history(self):
         self.assertGreaterEqual(len(self.svc.market.days()), 8)

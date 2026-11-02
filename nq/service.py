@@ -1,5 +1,6 @@
 """Service : relie la source de donnees, le marche, le compte et les vues JSON servies au navigateur."""
 import copy
+from bisect import bisect_left
 import logging
 import threading
 import time
@@ -170,12 +171,15 @@ class Service:
             wk, mo = profiles.week_key(d0), d0[:7]
             off_w = {wk: vwap.ladder_sums([mk.gx[d] for d in mk.gx if d < d0 and profiles.week_key(d) == wk], tick)}
             off_m = {mo: vwap.ladder_sums([mk.gx[d] for d in mk.gx if d < d0 and d[:7] == mo], tick)}
+            month_ok = profiles.covers(mk, profiles.period_start(mk.day(), "month"))        # mois tronqué par l'historique : pas de VWAP faux
             v_wk = vwap.bands(vwap.sample(base, vwap.cumulative(base, vwap.key_week, offsets=off_w), win, step), ks=(1.0,))
-            v_mo = vwap.bands(vwap.sample(base, vwap.cumulative(base, vwap.key_month, offsets=off_m), win, step), ks=(1.0,))
+            v_mo = vwap.bands(vwap.sample(base, vwap.cumulative(base, vwap.key_month, offsets=off_m), win, step) if month_ok
+                              else [None] * len(win), ks=(1.0,))
             c_rth = vwap.sample(base, cvd.cumulative(base, vwap.key_rth), win, step)
             c_gx = vwap.sample(base, cvd.cumulative(base, vwap.key_globex), win, step)
             # absorptions au prix (barres de 1 min, footprint), suivies jusqu'à maintenant ; 70 barres d'avance pour les échelles habituelles
-            warm = mk.slice(a0 - 75 * 60_000, a0)[-(absorption.PARAMS.base + 5):]
+            j0 = bisect_left(mk.series._ts, a0)                          # les 65 barres d'avant, quelle que soit la pause de 17 h ou le week-end
+            warm = mk.series.bars[max(0, j0 - absorption.PARAMS.base - 5):j0]
             ab_bars = warm + base
             if len(self._abs_known) > 60_000:
                 self._abs_known.clear()
@@ -183,7 +187,7 @@ class Service:
             t_first = win[0].t
             marks = [{"t": z["t"] // 1000, "side": z["side"], "price": z["price"], "lo": z["lo"], "hi": z["hi"], "qty": z["qty"],
                       "strength": z["strength"], "kind": z["kind"], "status": z["status"], "tests": z["tests"], "count": z["count"],
-                      "end": z["end"] // 1000 if z["end"] else None} for z in zs if z["t"] >= t_first]
+                      "end": z["end"] // 1000 if z["end"] else None} for z in zs if z["t"] >= t_first or z["status"] == "active"]
             rows = [{"t": b.t // 1000, "o": b.o, "h": b.h, "l": b.l, "c": b.c, "v": b.v, "d": b.bv - b.sv} for b in win]
             t0 = win[0].t
             bigs = [{"t": t // 1000, "p": p, "q": q, "s": s} for t, p, q, s in mk.bigs if t >= t0]
@@ -285,7 +289,11 @@ class Service:
             for which, pre, w in (("week", "sem.", 2.5), ("pweek", "sem. préc.", 2.0), ("month", "mois", 2.5)):
                 lad, _, days = self.composer.composite(mk, which)
                 st = vp.stats(lad, min_row_ticks=4) if lad is not None else None
-                if not st or (which == "month" and len(days) < 6):          # un « mois » de quelques jours n'apporte rien de plus que la semaine
+                if not st or not days or not profiles.covers(mk, profiles.period_start(days[0], "week" if which != "month" else "month")):
+                    continue                                              # période tronquée par l'historique gardé : niveaux faux, on s'abstient
+                if which == "week" and days == [day]:
+                    continue                                              # lundi : la semaine EST la journée (doublon des niveaux du jour)
+                if which == "month" and len(days) < 6:                    # un « mois » de quelques jours n'apporte rien de plus que la semaine
                     continue
                 k = {"week": "w", "pweek": "pw", "month": "m"}[which]
                 add(f"POC {pre}", st["poc"], k + "poc", w + 0.5)
@@ -307,8 +315,11 @@ class Service:
             if z["current"] or z["kind"] != "single":
                 continue
             lab = f"SP {z['day'][8:10]}/{z['day'][5:7]}"
-            add(lab + " haut", z["hi"], "sph", 2.0)
-            add(lab + " bas", z["lo"], "spl", 2.0)
+            if z["hi"] - z["lo"] > self.cfg.zone_pts:                     # assez large : ses deux bords sont deux niveaux
+                add(lab + " haut", z["hi"], "sph", 2.0)
+                add(lab + " bas", z["lo"], "spl", 2.0)
+            else:                                                         # étroit : un seul niveau (sinon il ferait une « zone » à lui seul)
+                add(lab, (z["lo"] + z["hi"]) / 2, "sph", 2.0)
         return out, singles
 
     def account_view(self, pos_text=None) -> dict:

@@ -52,7 +52,7 @@ const Minis = (() => {
       vw: chart.addLineSeries({color: '#ffb300', lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false}),
       ww: chart.addLineSeries({color: '#c084fc', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
         autoscaleInfoProvider: () => null})};
-    el.querySelector('select').onchange = e => { m.tf = e.target.value; m.fitted = false; m.lineSig = ''; save(); poll(m); };
+    el.querySelector('select').onchange = e => { m.tf = e.target.value; m.fitted = false; m.lineSig = ''; m.again = true; save(); poll(m); };
     el.querySelector('button').onclick = () => remove(m);
     list.push(m);
     save(); layout(); poll(m);
@@ -67,10 +67,11 @@ const Minis = (() => {
 
   async function poll(m) {
     if (m.busy) return;
-    m.busy = true;
-    try { draw(m, await api(`/api/bars?tf=${encodeURIComponent(m.tf)}&limit=300`)); }
+    m.busy = true; m.again = false;
+    try { draw(m, await api(`/api/bars?tf=${encodeURIComponent(m.tf)}&limit=240`)); }
     catch (e) { /* le prochain passage reessaiera */ }
     finally { m.busy = false; }
+    if (m.again && list.includes(m)) poll(m);                // l'unite a change pendant la requete : on relit tout de suite
   }
 
   const series = (bars, vals) => bars.map((b, i) => vals && vals[i] != null ? {time: b.t, value: vals[i]} : {time: b.t});

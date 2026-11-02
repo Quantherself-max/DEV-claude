@@ -119,9 +119,10 @@ def detect(bars, i: int, tick: float, p: AbsParams = PARAMS):
 
 
 def scan(bars, tick: float, p: AbsParams = PARAMS, known: dict | None = None, start: int = 0) -> list:
-    """Toutes les absorptions de `bars` (échelles glissantes en O(1) par barre). `known` : cache {t: résultat} des barres déjà évaluées
-    (une barre close ne change plus ; la DERNIÈRE barre, qui se forme peut-être, n'y est jamais mise). Ne renvoie que les barres d'indice
-    ≥ `start`. Chaque résultat porte « i », son indice dans `bars`."""
+    """Toutes les absorptions de `bars` (échelles glissantes en O(1) par barre). `known` : cache {t: (nb de transactions, volume, résultat)}
+    des barres déjà évaluées ; une transaction arrivée en retard dans une barre déjà passée change son nombre de transactions : elle est alors
+    réévaluée. La DERNIÈRE barre, qui se forme, n'est jamais gardée. Ne renvoie que les barres d'indice ≥ `start`. Chaque résultat porte
+    « i », son indice dans `bars`."""
     out = []
     n = len(bars)
     if n <= p.base:
@@ -136,12 +137,13 @@ def scan(bars, tick: float, p: AbsParams = PARAMS, known: dict | None = None, st
         if i >= start:
             b = bars[i]
             last = i == n - 1
-            if known is not None and not last and b.t in known:
-                r = known[b.t]
+            hit = known.get(b.t) if known is not None and not last else None
+            if hit is not None and hit[0] == b.n and hit[1] == b.v:
+                r = hit[2]
             else:
                 r = _eval(b, (s_v / nb, s_r / nb, math.sqrt(max(s_d2, 0.0) / nb), s_l / nb), tick, p)
                 if known is not None and not last:
-                    known[b.t] = r
+                    known[b.t] = (b.n, b.v, r)
             if r:
                 out.append(dict(r, i=i))
         f_in, f_out = feats[i], feats[i - p.base]
@@ -177,7 +179,7 @@ def track(marks: list, bars, tick: float, p: AbsParams = PARAMS) -> list:
     for m in sorted(marks, key=lambda x: x["i"]):
         i = m["i"]
         for z in out:
-            advance(z, i - 1)
+            advance(z, i)                                # la barre de la nouvelle marque compte : elle peut casser la zone précédente
         day = clock.trading_day(m["t"])
         prev = next((o for o in reversed(out) if o["side"] == m["side"] and o["status"] == "active" and o["day"] == day
                      and abs(o["price"] - m["price"]) <= p.merge_ticks * tick), None)

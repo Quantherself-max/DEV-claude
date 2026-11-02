@@ -11,7 +11,7 @@
     séance passée que le prix n'a pas « comblés » (retraités depuis) restent des cibles et des supports / résistances de scalping.
 Tout se calcule sur les barres de 1 minute (plus haut / plus bas) et les profils déjà tenus par le marché."""
 from bisect import bisect_left
-from datetime import date
+from datetime import date, timedelta
 
 from . import clock, vp
 from .footprint import Ladder
@@ -26,6 +26,20 @@ def week_key(day: str) -> str:
 
 def month_key(day: str) -> str:
     return day[:7]
+
+
+def period_start(day: str, kind: str) -> str:
+    """Premier jour ouvré (lundi -> vendredi) de la semaine ou du mois de `day` (jours fériés ignorés)."""
+    d = date.fromisoformat(day)
+    d = d - timedelta(days=d.weekday()) if kind == "week" else d.replace(day=1)
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d.isoformat()
+
+
+def covers(mk, start: str) -> bool:
+    """L'historique gardé commence-t-il au plus tard à `start` ? Sinon un profil / VWAP de cette période serait tronqué."""
+    return bool(mk.gx) and min(mk.gx) <= start
 
 
 def _merge(ladders, tick) -> Ladder:
@@ -75,7 +89,8 @@ class Composer:
             if lad.empty():
                 return None, lab, sel
             n = len(sel)
-            return lad, f"{lab} ({n} j)", sel
+            part = "" if covers(mk, period_start(sel[0], "week" if which in ("week", "pweek") else "month")) else ", incomplet"
+            return lad, f"{lab} ({n} j{part})", sel
 
 
 class _After:
@@ -104,7 +119,10 @@ def naked_pocs(mk, max_days: int = 20, weekly: bool = True, after=None) -> list:
         today = mk.day()
         after = after or _After(mk.series.bars)
         past_days = [d for d in sorted(mk.rth) if d < today][-max_days:]
+        prev = past_days[-1] if past_days else None                    # le POC de la veille est déjà un niveau (« POC veille »)
         for d in past_days:
+            if d == prev:
+                continue
             lad = mk.rth[d]
             if lad.empty():
                 continue
@@ -117,6 +135,8 @@ def naked_pocs(mk, max_days: int = 20, weekly: bool = True, after=None) -> list:
             weeks = sorted({week_key(d) for d in mk.gx if week_key(d) < cur_w})
             for wk in weeks:
                 ds = [d for d in sorted(mk.gx) if week_key(d) == wk]
+                if not covers(mk, period_start(ds[0], "week")):         # semaine coupée par l'historique gardé : son POC serait faux
+                    continue
                 lad = _merge([mk.gx[d] for d in ds], mk.inst.tick)
                 if lad.empty():
                     continue
@@ -127,7 +147,7 @@ def naked_pocs(mk, max_days: int = 20, weekly: bool = True, after=None) -> list:
     return out
 
 
-def single_prints(mk, day: str, row_ticks: int = 4, min_rows: int = 3, after=None, include_current: bool = True) -> list:
+def single_prints(mk, day: str, row_ticks: int = 4, min_rows: int = 3, after=None) -> list:
     """Single prints et queues de la séance régulière `day` (lecture TPO, périodes de 30 min).
     [{lo, hi, kind: 'single'|'queue haute'|'queue basse', day, filled: 0..1 (part retraitée depuis la fin de la séance), current}]."""
     out = []
@@ -166,9 +186,10 @@ def single_prints(mk, day: str, row_ticks: int = 4, min_rows: int = 3, after=Non
         if ended:
             after = after or _After(mk.series.bars)
             rng = after.range_from(b)
+        s_lo, s_hi = min(x.l for x in bars), max(x.h for x in bars)
         for run in runs:
-            lo = run[0] * row_ticks * tick
-            hi = (run[-1] * row_ticks + row_ticks - 1) * tick
+            lo = max(run[0] * row_ticks * tick, s_lo)                  # une ligne déborde l'extrême de la séance : on borne
+            hi = min((run[-1] * row_ticks + row_ticks - 1) * tick, s_hi)
             kind = "queue haute" if run[-1] == hi_r else "queue basse" if run[0] == lo_r else "single"
             filled = 0.0
             if rng is not None:
