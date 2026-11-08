@@ -69,7 +69,7 @@ def main() -> int:
         except (AttributeError, ValueError):
             pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--source", choices=("simulated", "csv"))
+    ap.add_argument("--source", choices=("simulated", "csv", "tradovate"))
     ap.add_argument("--csv", help="fichier de transactions (avec --source csv)")
     ap.add_argument("--instrument", help="NQ, MNQ, ES ou MES")
     ap.add_argument("--port", type=int)

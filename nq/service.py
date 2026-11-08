@@ -18,13 +18,17 @@ from engine.bars import TF_MS, resample
 from engine.instruments import INSTRUMENTS, front_contract
 from engine.market import Market
 
-VERSION = "0.6"
+VERSION = "0.7"
 log = logging.getLogger("nq")
 SIM_BASE = {"NQ": 25_000.0, "MNQ": 25_000.0, "ES": 6_700.0, "MES": 6_700.0}
 
 
 def make_source(cfg):
     inst = INSTRUMENTS[cfg.instrument]
+    if cfg.source == "tradovate":
+        from data.tradovate import TradovateSource
+        return TradovateSource(cfg.tv_user, cfg.tv_password, cfg.tv_cid, cfg.tv_secret, cfg.tv_app_id, "1.0",
+                               cfg.tv_env, inst.root, debug=cfg.tv_debug)
     if cfg.source == "csv":
         # journees de trading -> jours calendaires du fichier (week-ends compris), avec une marge
         return CsvSource(cfg.csv_path, cfg.csv_tz, cfg.csv_columns or None, cfg.csv_buy_codes, cfg.csv_sell_codes,
@@ -210,6 +214,11 @@ class Service:
 
     def shutdown(self):
         self.stop_ev.set()
+        if hasattr(self.source, "shutdown"):
+            try:
+                self.source.shutdown()
+            except Exception:
+                pass
 
     # ---------- vues ----------
     def events(self) -> list:
@@ -581,6 +590,10 @@ class Service:
         with self.market.lock:
             last = self.market.last
             out["lastTick"] = last.t if last else None
+        if c.source == "tradovate":
+            info = self.source.info()
+            out["tradovate"] = {"status": info.get("status"), "error": info.get("error"), "env": info.get("env"),
+                                "symbol": info.get("symbol"), "mode": info.get("mode"), "label": info.get("label")}
         return out
 
     def use_source(self, path: str | None) -> dict:

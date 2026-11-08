@@ -1,10 +1,12 @@
-# NQ Scalp Terminal (V0.6)
+# NQ Scalp Terminal (V0.7)
 
 Un terminal **local** (il tourne uniquement sur ton PC) pour scalper le **Nasdaq-100 en futures (NQ / MNQ)** avec un compte prop firm **Lucid 25K**. Même esprit que le terminal crypto (VP, CVD, VWAP, niveaux, lecture honnête), refait pour le scalping : horloge de New York, séances du CME, order flow à la transaction près, et un moteur de risque qui connaît les règles du compte.
 
 > **État actuel : la carte, des setups mesurables, et l'outil pour les mesurer.** Le terminal te donne la carte (niveaux, flux, profil, VWAP, risque du compte), propose des **setups** scorés qui intègrent les règles Lucid, et les **rejoue** sur l'historique (backtest prudent, Monte Carlo de l'évaluation, test de robustesse). Les données par défaut sont **simulées** : rien à l'écran ne dit quoi que ce soit du vrai marché tant que tu n'as pas branché tes vraies transactions (NinjaTrader, voir plus bas). **Aucun setup n'est validé tant qu'il n'a pas été mesuré sur plusieurs semaines de vraies données.**
 
-**Nouveau en V0.6** :
+**Nouveau en V0.7** : connexion directe à **Tradovate** (API officielle, tes identifiants dans `.env`) pour le flux NQ en temps réel sans NinjaTrader — voir « Brancher Tradovate » ; client WebSocket écrit en bibliothèque standard (toujours aucune dépendance à installer).
+
+**V0.6** :
 - **vraies données sans réglage** : si l'enregistreur NinjaTrader tourne (fichier `Documents\NQ-Terminal\nq-ticks.csv`, OneDrive compris), le terminal le prend tout seul ; onglet **Outils → Source** pour voir l'état du fichier, en choisir un autre ou revenir au simulé, **sans redémarrer** ;
 - **graphique pleine largeur** : le panneau de droite est devenu un tiroir **☰ Outils**, fermé par défaut (Lecture, Setups, Niveaux, GEX / OI, Compte, Plan, Backtest, Footprint, Source) ;
 - **vues en onglets** (« Vue 1 · 1m », « Vue 2 · 5m », **＋ Vue**) : chaque onglet garde son unité de temps et ses indicateurs ;
@@ -106,6 +108,28 @@ Pour que le terminal ait ses ticks, quatre voies (recherche d'octobre 2026, la p
 5. **Test d'une journée** avant de t'y fier : laisse tourner une séance complète, puis compare le volume total et le delta d'une barre de 5 min avec ceux de NinjaTrader (Order Flow + si tu l'as). Un écart de quelques contrats est normal (transactions entre le bid et l'ask), un delta de signe opposé ne l'est pas.
 
 Bon à savoir : l'enregistreur écrit **le temps réel seulement** (option « Inclure l'historique » pour rejouer ce que NinjaTrader a en mémoire) ; il **ajoute** au fichier à chaque démarrage. Le terminal garde les 6 derniers jours du fichier : plus tu enregistres tôt, plus le backtest a de journées. Pour repartir de zéro, ferme NinjaTrader et renomme le fichier. Lucid ne dit rien d'un simple enregistreur de données : demande-lui une confirmation écrite.
+
+### Brancher Tradovate (API officielle, sans NinjaTrader)
+
+Si ton compte Lucid est relié à **Tradovate**, le terminal peut se connecter directement à l'**API officielle de Tradovate** avec **tes propres identifiants** et recevoir le flux NQ en temps réel, sans NinjaTrader. Rien n'est contourné : ce sont tes identifiants, l'API publique de Tradovate, tes données.
+
+**À vérifier d'abord sur ton compte Tradovate** (sinon la connexion est refusée — c'est une limite du compte, pas un bug du terminal) :
+- l'**« API Access »** doit être activé (souvent un abonnement en plus, de l'ordre de 25 $/mois) ;
+- un **abonnement aux données de marché CME** doit être actif (frais de bourse) ; sans lui, la socket s'authentifie mais n'envoie aucune cotation.
+Beaucoup de comptes d'évaluation prop n'ont pas l'accès API : si c'est ton cas, reste sur NinjaTrader. Demande à Lucid / Tradovate en cas de doute, et vérifie que leurs conditions autorisent l'accès par programme.
+
+**Réglage** : dans `.env` (copie de `config.example.env`, à ne jamais partager — il contient ton mot de passe) :
+```
+NQ_SOURCE=tradovate
+TRADOVATE_USERNAME=ton_identifiant
+TRADOVATE_PASSWORD=ton_mot_de_passe
+TRADOVATE_ENV=live
+```
+Si tu as créé une **clé d'API** Tradovate (bouton « API Access » → clé), ajoute aussi `TRADOVATE_CID=…` et `TRADOVATE_SECRET=…`. Puis lance `Lancer-NQ-Windows.bat` et ouvre **Outils → Source** : l'état passe par « connecté » → « autorisé ». S'il reste « refusé », le message dit pourquoi (identifiants, accès API, données). `NQ_TRADOVATE_DEBUG=1` journalise les trames reçues dans la fenêtre noire (utile si quelque chose cloche).
+
+**Comment c'est fabriqué** : le terminal s'abonne aux cotations (`md/subscribeQuote`) et, à chaque hausse du volume cumulé, émet une transaction de la taille de la hausse au dernier prix, avec le côté de l'agresseur déduit du bid / ask — comme l'enregistreur NinjaTrader. C'est robuste, mais plusieurs transactions dans une même mise à jour sont regroupées : un peu moins fin qu'un vrai flux tick-par-tick. Pas d'historique au démarrage (l'API de cotations ne le rejoue pas) : le terminal part du direct et construit l'historique au fil de la séance.
+
+**Honnêteté** : ce module **n'a pas pu être testé contre l'API réelle** depuis l'environnement de développement (pas d'accès à un compte). Le protocole est implémenté d'après la documentation de Tradovate. Si l'état reste bloqué ou si les prix sont absents / faux, envoie-moi le message de l'onglet Source et, avec `NQ_TRADOVATE_DEBUG=1`, les premières trames de la fenêtre noire : je corrige vite.
 
 ## Compte Lucid 25K
 
@@ -220,7 +244,8 @@ nq/
     backtest.py     rejeu sans regard vers le futur (Tape pré-calculée) · exécution prudente · règles jour après jour · robustesse
     montecarlo.py   probabilité de valider l'évaluation (bootstrap des journées)
   ninjatrader/      NQTickLogger.cs : enregistreur de transactions NinjaTrader 8 -> CSV lu par le terminal
-  data/             simulated.py (essai) · filefeed.py (CSV, par blocs, suivi) · options.py (options CBOE, intérêt ouvert) · base.py
+  data/             simulated.py (essai) · filefeed.py (CSV, par blocs, suivi) · options.py (options CBOE, intérêt ouvert)
+                    tradovate.py (API officielle Tradovate : auth + flux NQ) · wsclient.py (client WebSocket stdlib) · base.py
   web/              interface (lightweight-charts v4.2.3 ; canvas pour les profils, le GEX, les single prints, le delta chiffré ; minis.js : graphiques supplémentaires)
   tools/            make_sample_csv.py · make_sample_options.py (chaîne d'options fictive)
   tests/            tests unitaires de tous les moteurs, de l'API et de la source fichier
@@ -228,7 +253,7 @@ nq/
 
 Tests : `python -m unittest discover -s tests -t .` (depuis le dossier `nq`).
 
-## Limites connues (V0.6)
+## Limites connues (V0.7)
 
 - Données **simulées** par défaut ; pas de connexion directe à un courtier ni à un flux de données.
 - Barres de 1 minute au plus fin : pas encore de graphiques à la seconde, au tick ni au volume (il faut d'abord une vraie source de ticks).

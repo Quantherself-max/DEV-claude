@@ -62,6 +62,14 @@ class Config:
     gex: str = "NDX"                 # sous-jacent des options pour le GEX : NDX | QQQ | off
     gex_file: str = ""               # fichier JSON d'options a lire au lieu du telechargement
     gex_refresh_min: float = 15.0    # frequence de telechargement des options (minutes)
+    # --- Tradovate (API officielle, TES identifiants ; voir README « Brancher Tradovate ») : identifiants lus SEULEMENT dans .env ---
+    tv_user: str = ""
+    tv_password: str = ""
+    tv_cid: str = ""                 # « cid » de ta cle d'API Tradovate (si tu en as une)
+    tv_secret: str = ""              # « sec » de ta cle d'API Tradovate
+    tv_env: str = "live"             # live | demo
+    tv_app_id: str = "NQScalpTerminal"
+    tv_debug: bool = False           # journalise les trames recues (pour mettre au point)
 
 
 def logger_candidates() -> list:
@@ -110,6 +118,13 @@ def load_config(env_path: Path | None = None) -> Config:
     c.csv_buy_codes = tuple(x.strip() for x in g("NQ_CSV_BUY_CODES", "").split(",") if x.strip())
     c.csv_sell_codes = tuple(x.strip() for x in g("NQ_CSV_SELL_CODES", "").split(",") if x.strip())
     c.data_dir = g("NQ_DATA_DIR", c.data_dir)
+    c.tv_user = g("TRADOVATE_USERNAME", "")
+    c.tv_password = g("TRADOVATE_PASSWORD", "")
+    c.tv_cid = g("TRADOVATE_CID", "")
+    c.tv_secret = g("TRADOVATE_SECRET", "")
+    c.tv_env = g("TRADOVATE_ENV", c.tv_env).lower()
+    c.tv_app_id = g("TRADOVATE_APP_ID", c.tv_app_id)
+    c.tv_debug = _flag(g("NQ_TRADOVATE_DEBUG", ""))
     c.source_explicit = "NQ_SOURCE" in env
     if not c.source_explicit:
         if c.csv_path:                                       # un chemin donne sans NQ_SOURCE : c'est ce fichier qu'on veut
@@ -131,8 +146,10 @@ def validate(c: Config) -> list:
     """Problemes de configuration, en francais ([] si tout va bien)."""
     from engine.instruments import INSTRUMENTS
     bad = []
-    if c.source not in ("simulated", "csv"):
-        bad.append(f"NQ_SOURCE « {c.source} » inconnue : simulated ou csv.")
+    if c.source not in ("simulated", "csv", "tradovate"):
+        bad.append(f"NQ_SOURCE « {c.source} » inconnue : simulated, csv ou tradovate.")
+    if c.source == "tradovate" and not (c.tv_user and c.tv_password):
+        bad.append("NQ_SOURCE=tradovate demande TRADOVATE_USERNAME et TRADOVATE_PASSWORD dans .env.")
     if c.instrument not in INSTRUMENTS:
         bad.append(f"NQ_INSTRUMENT « {c.instrument} » inconnu : {', '.join(INSTRUMENTS)}.")
     if c.source == "csv" and not c.csv_path:

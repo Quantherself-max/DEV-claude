@@ -699,16 +699,24 @@ const Panels = (() => {
       $('#srcUse').onclick = () => { const p = $('#srcForm').path.value.trim(); if (p) use(p); };
       $('#srcSim').onclick = () => use('');
     }
-    const sim = src.source !== 'csv';
+    const sim = src.source === 'simulated';
+    const tv = src.source === 'tradovate' ? (src.tradovate || {}) : null;
     const age = src.file && src.file.ageS != null ? src.file.ageS : null;
     $('#srcSim').hidden = sim;
-    $('#srcState').innerHTML = `<div class="card"><h2>Source des données <span class="badge ${sim ? 'sim' : 'ok'}">${sim ? 'SIMULÉES' : 'RÉELLES'}</span></h2>`
+    $('#srcForm').hidden = !!tv;
+    const stTone = tv ? ({'autorisé': 'ok', 'connecté': 'ok', 'refusé': 'bad', 'reconnexion': 'warn'}[tv.status] || 'warn') : '';
+    const tvCard = tv ? `<div class="card"><h2>Tradovate <span class="badge ${stTone}">${esc((tv.status || '—').toUpperCase())}</span></h2>`
+      + kv('Compte', esc(tv.label || '')) + kv('Environnement', esc(tv.env || '')) + kv('Contrat', esc(tv.symbol || ''))
+      + (tv.error ? `<div class="note warn"><i></i><div>${esc(tv.error)}</div></div>` : '')
+      + '<div class="small" style="margin-top:6px">Connexion à l\'API officielle de Tradovate avec tes identifiants (lus dans .env). Si l\'état reste « refusé » : vérifie identifiants, « API Access » activé et abonnement aux données CME sur ton compte Tradovate. Sinon, passe par NinjaTrader.</div></div>' : '';
+    $('#srcState').innerHTML = tvCard + `<div class="card"><h2>Source des données <span class="badge ${sim ? 'sim' : 'ok'}">${sim ? 'SIMULÉES' : 'RÉELLES'}</span></h2>`
       + (sim ? `<div class="note warn"><i></i><div>Prix fictifs. Pour les vraies données CME : lance NinjaTrader connecté à ton compte Lucid, avec l'indicateur NQTickLogger sur un graphique NQ (README, « Brancher NinjaTrader »). `
           + (src.explicit ? 'Ton fichier .env impose NQ_SOURCE=simulated : choisis le fichier ci-dessous (ou retire cette ligne) pour passer aux vraies données.' : 'Le terminal trouve son fichier tout seul au prochain démarrage, ou choisis-le ci-dessous.') + '</div></div>'
+        : tv ? kv('Type', 'Tradovate (temps réel)') + kv('État', esc(tv.status || '—'), stTone)
         : kv('Fichier', `<small>${esc(src.csvPath)}</small>`) + kv('Trouvé automatiquement', src.auto ? 'oui' : 'non')
           + (src.file ? kv('Dernière écriture', age < 5 ? '<b class="pos">à l\'instant</b>' : `il y a ${fmt(age, 0)} s`, age > 120 ? 'amb' : '') + kv('Taille', fmt(src.file.size / 1e6, 1) + ' Mo') : kv('Fichier', '<b class="neg">introuvable</b>')))
       + kv('État', esc(src.status ? src.status.msg : '—')) + '</div>';
-    $('#srcCands').innerHTML = '<table><tr><th>Emplacement cherché</th><th></th></tr>'
+    $('#srcCands').innerHTML = tv ? '' : '<table><tr><th>Emplacement cherché</th><th></th></tr>'
       + src.candidates.map(c => `<tr><td><small>${esc(c.path)}</small></td><td>${c.exists ? `<button data-use="${esc(c.path)}">Utiliser</button>` : '<span class="muted">absent</span>'}</td></tr>`).join('')
       + '</table>';
   }
