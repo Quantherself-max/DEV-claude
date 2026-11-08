@@ -68,6 +68,7 @@ class TradovateSource(Source):
         self._stop = threading.Event()
         self.status = "en attente"
         self.error = None
+        self._fatal = False                                 # vrai seulement pour un refus définitif (identifiants, accès, données)
         self.mode = "quote"
         self.heartbeat_s = HEARTBEAT_S
         self._started = False
@@ -90,8 +91,8 @@ class TradovateSource(Source):
                 out.append(self.q.get_nowait())
         except queue.Empty:
             pass
-        if self.error and "refus" in self.error.lower():
-            raise DataError(self.error)                     # erreur définitive (identifiants / accès) : remonte au terminal
+        if self._fatal and self.error:
+            raise DataError(self.error)                     # refus définitif (identifiants / accès / données) : remonte au terminal
         return out
 
     def info(self) -> dict:
@@ -123,6 +124,7 @@ class TradovateSource(Source):
             except _AuthDenied as e:
                 self.error = f"Connexion refusée par Tradovate : {e}"
                 self.status = "refusé"
+                self._fatal = True
                 log.error("Tradovate : %s", e)
                 return                                       # identifiants / accès : inutile de réessayer en boucle
             except (WsError, DataError, OSError, ValueError) as e:
@@ -197,7 +199,8 @@ class TradovateSource(Source):
                         else:
                             raise _AuthDenied(_err_text(item, "autorisation de la socket refusée"))
                     elif item["s"] != 200 and subscribed:
-                        raise DataError(_err_text(item, f"abonnement au flux {sym} refusé"))
+                        # pas d'abonnement aux données CME (ou contrat inconnu) : définitif, inutile de se reconnecter en boucle
+                        raise _AuthDenied(_err_text(item, f"abonnement au flux {sym} refusé (données CME actives sur le compte ?)"))
                     continue
                 if item.get("e") == "md":                   # évènement de données de marché
                     self._on_md(item.get("d") or {})
@@ -242,10 +245,14 @@ class TradovateSource(Source):
         try:
             res = self._http(url, self.cred)
         except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", "replace") if hasattr(e, "read") else ""
+            detail = ""
+            try:                                            # on ne montre que le message d'erreur du serveur, jamais le corps brut
+                detail = str(json.loads(e.read().decode("utf-8", "replace")).get("errorText") or "")[:160]
+            except (ValueError, AttributeError, OSError):
+                pass
             if e.code in (401, 403):
-                raise _AuthDenied(f"HTTP {e.code} — vérifie tes identifiants et l'accès API ({body[:200]})") from None
-            raise DataError(f"Tradovate auth : HTTP {e.code} ({body[:200]})") from None
+                raise _AuthDenied(f"HTTP {e.code} — vérifie tes identifiants et l'accès API" + (f" ({detail})" if detail else "")) from None
+            raise DataError(f"Tradovate auth : HTTP {e.code}" + (f" ({detail})" if detail else "")) from None
         except (urllib.error.URLError, OSError, TimeoutError) as e:
             raise DataError(f"Tradovate injoignable : {e}") from None
         if "p-ticket" in res or "penaltyTime" in res:       # trop d'essais : Tradovate impose une attente

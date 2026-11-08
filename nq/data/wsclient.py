@@ -137,7 +137,18 @@ class WsClient:
                     nxt = self._next_frame(False)
                     if nxt is None:
                         raise WsError("trame fragmentée interrompue")
-                    fin, _, more = nxt
+                    c_fin, c_op, more = nxt
+                    if c_op == 0x9:                     # la norme autorise un contrôle ENTRE deux fragments : on y répond, sans le mêler
+                        self._pong(more)
+                        continue
+                    if c_op == 0xA:
+                        continue
+                    if c_op == 0x8:
+                        self.connected = False
+                        raise WsError("le serveur a fermé la connexion")
+                    if c_op != 0x0:
+                        raise WsError("trame de continuation attendue")
+                    fin = c_fin
                     data += more
                 return data.decode("utf-8", "replace")
             # opcode inconnu : on l'ignore

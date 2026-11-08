@@ -38,6 +38,50 @@ class FrameTests(unittest.TestCase):
         self.assertIsNone(WsClient._parse(frame[:5]))         # incomplète : None
 
 
+class WsLoopbackTests(unittest.TestCase):
+    def test_ping_between_fragments_is_not_spliced(self):
+        import base64
+        import hashlib
+        import socket
+        from data.wsclient import GUID
+
+        def frame(fin, op, p):
+            return struct.pack("!BB", (0x80 if fin else 0) | op, len(p)) + p
+
+        def server(sock, got):
+            conn, _ = sock.accept()
+            data = b""
+            while b"\r\n\r\n" not in data:
+                data += conn.recv(4096)
+            key = [ln.split(":", 1)[1].strip() for ln in data.decode().split("\r\n") if ln.lower().startswith("sec-websocket-key")][0]
+            acc = base64.b64encode(hashlib.sha1((key + GUID).encode()).digest()).decode()
+            conn.sendall(f"HTTP/1.1 101 OK\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {acc}\r\n\r\n".encode())
+            conn.sendall(frame(False, 0x1, b"AB") + frame(True, 0x9, b"zz") + frame(True, 0x0, b"CD") + frame(True, 0x1, b"next"))
+            conn.settimeout(2)
+            try:
+                hdr = conn.recv(2)
+                got.append(hdr[0] & 0x0F)               # le pong du client
+            except OSError:
+                pass
+            time.sleep(0.3)
+            conn.close()
+
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        got = []
+        th = threading.Thread(target=server, args=(srv, got), daemon=True)
+        th.start()
+        c = WsClient(f"ws://127.0.0.1:{srv.getsockname()[1]}/")
+        c.connect()
+        self.assertEqual(c.recv(2), "ABCD")
+        self.assertEqual(c.recv(2), "next")                   # le flux n'est pas désynchronisé
+        c.close()
+        th.join(2)
+        srv.close()
+        self.assertIn(0xA, got)
+
+
 class FakeWs:
     """Rejoue le serveur de données Tradovate. `script` : messages poussés vers le client après l'autorisation. Enregistre ce que le client envoie."""
     def __init__(self, md_events, deny_auth=False, deny_sub=False):
@@ -176,6 +220,31 @@ class ErrorTests(unittest.TestCase):
         src.shutdown()
         self.assertEqual(src.status, "refusé")
         self.assertIn("refus", (src.error or "").lower())
+
+    def test_transient_refused_connection_is_not_fatal(self):
+        import urllib.error
+        src, _ = source([], http_err=urllib.error.URLError(ConnectionRefusedError(111, "Connection refused")))
+        src.history(0)                                        # démarre le fil de fond
+        for _ in range(100):
+            if src.status == "reconnexion":
+                break
+            time.sleep(0.01)
+        src.shutdown()
+        self.assertEqual(src.status, "reconnexion")
+        self.assertEqual(src.poll(0), [])                     # ne remonte PAS d'erreur fatale au terminal
+
+    def test_data_subscription_denied_is_fatal(self):
+        src, _ = source([], deny_sub=True)
+        src.history(0)
+        for _ in range(200):
+            if src.status == "refusé":
+                break
+            time.sleep(0.01)
+        src.shutdown()
+        self.assertEqual(src.status, "refusé")
+        from data.base import DataError
+        with self.assertRaises(DataError):
+            src.poll(0)
 
     def test_missing_credentials(self):
         from data.base import DataError
