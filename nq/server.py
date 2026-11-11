@@ -158,6 +158,11 @@ def route_post(app: App, path: str, body: dict):
             return s.test_file(str(body.get("path", "")))
         if path == "/api/source/use":
             return s.use_source(str(body.get("path") or "").strip() or None)
+        if path == "/api/source/tradovate/login":
+            return s.tradovate_login(body.get("username"), body.get("password"), body.get("cid"), body.get("sec"), body.get("env", "live"),
+                                     body.get("remember") is True)
+        if path == "/api/source/tradovate/logout":
+            return s.tradovate_logout()
         if path == "/api/gex/refresh":
             if s.options is None:
                 raise ApiError(400, "GEX désactivé (NQ_GEX=off)")

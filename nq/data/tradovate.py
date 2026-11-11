@@ -69,6 +69,7 @@ class TradovateSource(Source):
         self.status = "en attente"
         self.error = None
         self._fatal = False                                 # vrai seulement pour un refus définitif (identifiants, accès, données)
+        self._pre = None                                    # jeton obtenu par `preauth` (formulaire de connexion), utilisé une fois
         self.mode = "quote"
         self.heartbeat_s = HEARTBEAT_S
         self._started = False
@@ -135,8 +136,15 @@ class TradovateSource(Source):
                 return
             backoff = min(backoff * 2, 30.0)
 
+    def preauth(self) -> str:
+        """Se connecte TOUT DE SUITE (formulaire de connexion) : lève l'erreur de Tradovate si les identifiants ou l'accès sont refusés.
+        Le jeton obtenu sert à la première session du fil de fond (pas de seconde connexion). Renvoie le libellé du compte."""
+        self._pre = self._authenticate()
+        return self.label
+
     def _session(self):
-        token, md_token, expiry = self._authenticate()
+        token, md_token, expiry = self._pre or self._authenticate()
+        self._pre = None
         self.status = "connecté"
         self.error = None
         url = self.hosts["md"]

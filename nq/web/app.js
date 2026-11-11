@@ -62,7 +62,7 @@
     const m = st.clock.marks[0];
     $('#nextMark').textContent = m ? `${m.label} dans ${m.in} min (${m.paris})` : '';
     const sb = $('#srcBadge');
-    if (st.source.simulated) { sb.textContent = 'DONNÉES SIMULÉES'; sb.className = 'badge sim'; sb.title = 'Prix fictifs. Pour les vraies données : NinjaTrader + NQTickLogger (Outils → Source)'; }
+    if (st.source.simulated) { sb.textContent = 'SIMULÉ · se connecter'; sb.className = 'badge sim'; sb.title = 'Prix fictifs. Clique pour connecter ton compte (Tradovate / Lucid) ou choisir le fichier NinjaTrader'; }
     else {
       const est = st.deltaReal != null && st.deltaReal < 0.8;
       sb.textContent = (st.source.label || 'Source') + (st.source.auto ? ' · NinjaTrader' : '') + (est ? ' · delta estimé' : ''); sb.className = 'badge ' + (est ? 'warn' : 'ok');

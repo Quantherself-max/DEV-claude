@@ -262,3 +262,89 @@ class ErrorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoginFormTests(unittest.TestCase):
+    """Formulaire de connexion (service.tradovate_login / logout), avec un faux Tradovate : rien ne sort sur le réseau."""
+    def setUp(self):
+        import tempfile
+        from unittest import mock
+
+        import data.tradovate as tv
+        from config import Config
+        from data.simulated import SimulatedSource
+        from engine.account import Account
+        from service import Service
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = __import__("pathlib").Path(self.tmp.name) / ".env"
+        self.env.write_text("NQ_PORT=8766\n", encoding="utf-8")
+        self.http_result = dict(AUTH_OK)
+        self.http_error = None
+        events = [quote(25000.0, 25000.25, 25000.25, 100), quote(25000.0, 25000.25, 25000.25, 104)]
+
+        def http(url, body):
+            self.last_body = body
+            if self.http_error:
+                raise self.http_error
+            return self.http_result
+        self.patches = [mock.patch.object(tv, "_http_post", http),
+                        mock.patch.object(tv, "WsClient", lambda url, timeout=30.0: FakeWs(events)),
+                        mock.patch("config.find_logger_file", lambda: None)]
+        for p in self.patches:
+            p.start()
+        now = 1792071001250
+        self.svc = Service(Config(data_dir=self.tmp.name, sim_days=2, gex="OFF"), source=SimulatedSource(days=2, now_fn=lambda: now),
+                           account=Account(f"{self.tmp.name}/c.json", now_ms=lambda: now), env_path=self.env)
+
+    def tearDown(self):
+        self.svc.shutdown()
+        for p in self.patches:
+            p.stop()
+        self.tmp.cleanup()
+
+    def test_login_switches_to_live_feed_without_writing_the_password(self):
+        r = self.svc.tradovate_login("moi", "s3cret!", remember=False)
+        self.assertTrue(r["ok"])
+        self.assertFalse(r["remembered"])
+        self.assertEqual(self.svc.cfg.source, "tradovate")
+        self.assertEqual(self.last_body["name"], "moi")
+        self.assertNotIn("s3cret!", self.env.read_text(encoding="utf-8"))
+        view = json.dumps(self.svc.source_view()) + json.dumps(r)
+        self.assertNotIn("s3cret!", view)                                  # le mot de passe ne ressort jamais par l'API
+        self.assertIn("moi", view)
+        for _ in range(200):
+            self.svc.pump_once()
+            if self.svc.market.count:
+                break
+            time.sleep(0.01)
+        self.assertGreater(self.svc.market.count, 0)                        # le flux alimente le marché
+
+    def test_remember_writes_env_and_logout_erases_it(self):
+        r = self.svc.tradovate_login("moi", "s3cret!", cid="12", sec="abc", env="demo", remember=True)
+        self.assertTrue(r["remembered"])
+        text = self.env.read_text(encoding="utf-8")
+        for line in ("NQ_SOURCE=tradovate", "TRADOVATE_USERNAME=moi", "TRADOVATE_PASSWORD=s3cret!", "TRADOVATE_ENV=demo", "NQ_PORT=8766"):
+            self.assertIn(line, text)
+        out = self.svc.tradovate_logout()
+        self.assertEqual(out["source"], "simulated")
+        text = self.env.read_text(encoding="utf-8")
+        self.assertNotIn("TRADOVATE", text)
+        self.assertNotIn("NQ_SOURCE", text)
+        self.assertIn("NQ_PORT=8766", text)
+        self.assertEqual(self.svc.cfg.tv_password, "")
+
+    def test_refused_login_changes_nothing(self):
+        import urllib.error
+        self.http_error = urllib.error.HTTPError("u", 401, "Unauthorized", {}, None)
+        with self.assertRaises(ValueError) as cm:
+            self.svc.tradovate_login("moi", "mauvais", remember=True)
+        self.assertIn("refusée", str(cm.exception))
+        self.assertNotIn("mauvais", str(cm.exception))
+        self.assertEqual(self.svc.cfg.source, "simulated")
+        self.assertNotIn("TRADOVATE", self.env.read_text(encoding="utf-8"))
+
+    def test_empty_fields_are_rejected(self):
+        with self.assertRaises(ValueError):
+            self.svc.tradovate_login("", "x")
+        with self.assertRaises(ValueError):
+            self.svc.tradovate_login("moi", "")

@@ -4,7 +4,7 @@ Un terminal **local** (il tourne uniquement sur ton PC) pour scalper le **Nasdaq
 
 > **État actuel : la carte, des setups mesurables, et l'outil pour les mesurer.** Le terminal te donne la carte (niveaux, flux, profil, VWAP, risque du compte), propose des **setups** scorés qui intègrent les règles Lucid, et les **rejoue** sur l'historique (backtest prudent, Monte Carlo de l'évaluation, test de robustesse). Les données par défaut sont **simulées** : rien à l'écran ne dit quoi que ce soit du vrai marché tant que tu n'as pas branché tes vraies transactions (NinjaTrader, voir plus bas). **Aucun setup n'est validé tant qu'il n'a pas été mesuré sur plusieurs semaines de vraies données.**
 
-**Nouveau en V0.7** : connexion directe à **Tradovate** (API officielle, tes identifiants dans `.env`) pour le flux NQ en temps réel sans NinjaTrader — voir « Brancher Tradovate » ; client WebSocket écrit en bibliothèque standard (toujours aucune dépendance à installer).
+**Nouveau en V0.7** : **formulaire de connexion** (badge « se connecter » → identifiant et mot de passe Tradovate / Lucid) et connexion directe à **Tradovate** (API officielle, tes identifiants dans `.env`) pour le flux NQ en temps réel sans NinjaTrader — voir « Brancher Tradovate » ; client WebSocket écrit en bibliothèque standard (toujours aucune dépendance à installer).
 
 **V0.6** :
 - **vraies données sans réglage** : si l'enregistreur NinjaTrader tourne (fichier `Documents\NQ-Terminal\nq-ticks.csv`, OneDrive compris), le terminal le prend tout seul ; onglet **Outils → Source** pour voir l'état du fichier, en choisir un autre ou revenir au simulé, **sans redémarrer** ;
@@ -118,7 +118,9 @@ Si ton compte Lucid est relié à **Tradovate**, le terminal peut se connecter d
 - un **abonnement aux données de marché CME** doit être actif (frais de bourse) ; sans lui, la socket s'authentifie mais n'envoie aucune cotation.
 Beaucoup de comptes d'évaluation prop n'ont pas l'accès API : si c'est ton cas, reste sur NinjaTrader. Demande à Lucid / Tradovate en cas de doute, et vérifie que leurs conditions autorisent l'accès par programme.
 
-**Réglage** : dans `.env` (copie de `config.example.env`, à ne jamais partager — il contient ton mot de passe) :
+**Le plus simple : le formulaire de connexion.** Clique sur le badge « SIMULÉ · se connecter » en haut (ou **☰ Outils → Source**), entre ton identifiant et ton mot de passe Tradovate (ceux que Lucid t'a fournis : Lucid n'a pas de connexion à lui, ton compte passe par Tradovate), puis **Se connecter**. Le terminal vérifie tout de suite auprès de Tradovate : accepté, il bascule sur le flux en direct sans redémarrer ; refusé, il affiche la raison et ne change rien. Les identifiants partent uniquement de ton PC vers l'API officielle de Tradovate ; le mot de passe n'est jamais affiché ni journalisé. Par défaut il reste en mémoire (à ressaisir au prochain démarrage) ; coche « Se souvenir sur ce PC » pour l'écrire dans `.env` (en clair : à ne faire que sur ton propre PC). « Se déconnecter » efface les identifiants de la mémoire et de `.env`. « Options avancées » : clé d'API (cid / secret) et compte de démonstration.
+
+**Ou à la main** : dans `.env` (copie de `config.example.env`, à ne jamais partager — il contient ton mot de passe) :
 ```
 NQ_SOURCE=tradovate
 TRADOVATE_USERNAME=ton_identifiant

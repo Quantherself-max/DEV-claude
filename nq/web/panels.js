@@ -682,7 +682,17 @@ const Panels = (() => {
     const host = $('#tab-source');
     if (!$('#srcState', host)) {
       host.innerHTML = '<div id="srcState"></div>'
-        + '<div class="card"><h2>Fichier de l\'enregistreur NinjaTrader</h2><div id="srcCands"></div>'
+        + '<div class="card" id="tvLogin"><h2>Connexion au compte <small>Lucid passe par Tradovate</small></h2>'
+        + '<form id="tvForm" class="f" autocomplete="off"><label>Identifiant Tradovate<input name="username" autocomplete="username"></label>'
+        + '<label>Mot de passe<input name="password" type="password" autocomplete="current-password"></label>'
+        + '<details class="wide" style="grid-column:1/3"><summary class="small" style="cursor:pointer">Options avancées (clé d\'API, compte de démonstration)</summary>'
+        + '<div class="grid2" style="margin-top:6px"><label class="small">Clé d\'API : cid<input name="cid"></label><label class="small">Clé d\'API : secret<input name="sec" type="password"></label>'
+        + '<label class="small">Environnement<select name="env"><option value="live">Réel (live)</option><option value="demo">Démonstration</option></select></label></div></details>'
+        + '<label class="wide" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="remember" style="width:auto"> Se souvenir sur ce PC (écrit dans .env, en clair)</label>'
+        + '<div class="row" style="grid-column:1/3"><button type="submit" id="tvGo" class="primary">Se connecter</button></div></form>'
+        + '<div id="tvMsg" class="small" style="margin-top:6px"></div>'
+        + '<div class="small" style="margin-top:6px">Lucid n\'a pas de connexion à lui : ton compte passe par Tradovate. Entre les identifiants Tradovate que Lucid t\'a fournis. Ils partent uniquement de ton PC vers l\'API officielle de Tradovate ; le terminal ne passe aucun ordre. Il faut que l\'accès API et les données CME soient actifs sur le compte : sinon Tradovate refuse et le message le dit.</div></div>'
+        + '<div class="card" id="srcFileCard"><h2>Fichier de l\'enregistreur NinjaTrader</h2><div id="srcCands"></div>'
         + '<form id="srcForm" class="f" style="margin-top:8px" autocomplete="off"><label class="wide">Autre fichier de transactions (chemin complet)<input name="path" placeholder="C:\\Users\\…\\Documents\\NQ-Terminal\\nq-ticks.csv"></label>'
         + '<div class="row" style="grid-column:1/3"><button type="button" id="srcUse" class="primary">Tester et utiliser</button><button type="button" id="srcSim">Revenir aux données simulées</button></div></form>'
         + '<div id="srcMsg" class="small" style="margin-top:6px"></div>'
@@ -695,7 +705,28 @@ const Panels = (() => {
         catch (e) { msg.textContent = '✗ ' + e.message; }
         finally { $('#srcUse').disabled = false; $('#srcSim').disabled = false; }
       };
-      host.onclick = e => { const b = e.target.closest('[data-use]'); if (b) use(b.dataset.use); };
+      const tvMsg = t => { $('#tvMsg').textContent = t; };
+      $('#tvForm').onsubmit = async e => {
+        e.preventDefault();
+        const f = $('#tvForm'), body = {username: f.username.value.trim(), password: f.password.value, cid: f.cid.value.trim(), sec: f.sec.value.trim(),
+          env: f.env.value, remember: f.remember.checked};
+        if (!body.username || !body.password) { tvMsg('✗ Identifiant et mot de passe requis.'); return; }
+        tvMsg('Connexion à Tradovate…'); $('#tvGo').disabled = true;
+        try {
+          const r = await api('/api/source/tradovate/login', {body});
+          f.password.value = ''; f.sec.value = '';                       // on ne garde pas le mot de passe dans la page
+          tvMsg('✓ ' + r.message); toast('Connecté à Tradovate');
+          if (cb.refreshSource) setTimeout(cb.refreshSource, 800);
+        } catch (err) { tvMsg('✗ ' + err.message); }
+        finally { $('#tvGo').disabled = false; }
+      };
+      host.onclick = async e => {
+        const b = e.target.closest('[data-use]'); if (b) { use(b.dataset.use); return; }
+        if (e.target.closest('[data-tvlogout]')) {
+          try { const r = await api('/api/source/tradovate/logout', {body: {}}); tvMsg(r.message); toast('Déconnecté'); if (cb.refreshSource) setTimeout(cb.refreshSource, 800); }
+          catch (err) { tvMsg('✗ ' + err.message); }
+        }
+      };
       $('#srcUse').onclick = () => { const p = $('#srcForm').path.value.trim(); if (p) use(p); };
       $('#srcSim').onclick = () => use('');
     }
@@ -703,14 +734,16 @@ const Panels = (() => {
     const tv = src.source === 'tradovate' ? (src.tradovate || {}) : null;
     const age = src.file && src.file.ageS != null ? src.file.ageS : null;
     $('#srcSim').hidden = sim;
-    $('#srcForm').hidden = !!tv;
+    $('#tvForm').hidden = !!tv;                             // connecté : le formulaire laisse la place à l'état et au bouton « Se déconnecter »
+    $('#srcFileCard').hidden = !!tv;
     const stTone = tv ? ({'autorisé': 'ok', 'connecté': 'ok', 'refusé': 'bad', 'reconnexion': 'warn'}[tv.status] || 'warn') : '';
     const tvCard = tv ? `<div class="card"><h2>Tradovate <span class="badge ${stTone}">${esc((tv.status || '—').toUpperCase())}</span></h2>`
       + kv('Compte', esc(tv.label || '')) + kv('Environnement', esc(tv.env || '')) + kv('Contrat', esc(tv.symbol || ''))
       + (tv.error ? `<div class="note warn"><i></i><div>${esc(tv.error)}</div></div>` : '')
-      + '<div class="small" style="margin-top:6px">Connexion à l\'API officielle de Tradovate avec tes identifiants (lus dans .env). Si l\'état reste « refusé » : vérifie identifiants, « API Access » activé et abonnement aux données CME sur ton compte Tradovate. Sinon, passe par NinjaTrader.</div></div>' : '';
+      + '<div class="row" style="margin-top:8px"><button data-tvlogout>Se déconnecter</button></div>'
+      + '<div class="small" style="margin-top:6px">Si l\'état reste « refusé » : vérifie les identifiants, l\'accès API et l\'abonnement aux données CME sur ton compte Tradovate. Sinon, passe par NinjaTrader.</div></div>' : '';
     $('#srcState').innerHTML = tvCard + `<div class="card"><h2>Source des données <span class="badge ${sim ? 'sim' : 'ok'}">${sim ? 'SIMULÉES' : 'RÉELLES'}</span></h2>`
-      + (sim ? `<div class="note warn"><i></i><div>Prix fictifs. Pour les vraies données CME : lance NinjaTrader connecté à ton compte Lucid, avec l'indicateur NQTickLogger sur un graphique NQ (README, « Brancher NinjaTrader »). `
+      + (sim ? `<div class="note warn"><i></i><div>Prix fictifs. Pour les vraies données CME : connecte ton compte ci-dessous, ou lance NinjaTrader avec l'indicateur NQTickLogger sur un graphique NQ (README, « Brancher NinjaTrader »). `
           + (src.explicit ? 'Ton fichier .env impose NQ_SOURCE=simulated : choisis le fichier ci-dessous (ou retire cette ligne) pour passer aux vraies données.' : 'Le terminal trouve son fichier tout seul au prochain démarrage, ou choisis-le ci-dessous.') + '</div></div>'
         : tv ? kv('Type', 'Tradovate (temps réel)') + kv('État', esc(tv.status || '—'), stTone)
         : kv('Fichier', `<small>${esc(src.csvPath)}</small>`) + kv('Trouvé automatiquement', src.auto ? 'oui' : 'non')

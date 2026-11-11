@@ -592,6 +592,7 @@ class Service:
             out["lastTick"] = last.t if last else None
         if c.source == "tradovate":
             info = self.source.info()
+            out["tvUser"] = c.tv_user                        # l'identifiant seulement, jamais le mot de passe
             out["tradovate"] = {"status": info.get("status"), "error": info.get("error"), "env": info.get("env"),
                                 "symbol": info.get("symbol"), "mode": info.get("mode"), "label": info.get("label")}
         return out
@@ -606,17 +607,76 @@ class Service:
             if not ok:
                 raise ValueError(msg)
         self._write_env({"NQ_SOURCE": "csv" if path else "simulated", "NQ_CSV_PATH": str(path) if path else ""})   # avant de changer : une erreur ne laisse rien à moitié
+        c = self.cfg
         with self._swap:
-            c = self.cfg
             c.source, c.csv_path, c.auto_source, c.source_explicit = ("csv", str(path), False, True) if path else ("simulated", "", False, True)
             c.oi_path = str(Path(path).with_name("nq-oi.csv")) if path else ""          # pas d'OI réel sur des prix simulés
-            self.source = make_source(c)
-            self.market = Market(self.inst, keep_days=c.history_days + 1)
-            self.composer = profiles.Composer()
-            self._abs_known, self._lv_cache, self._oi, self._bt_cache = {}, (0.0, None), (None, None), None
-            self.loaded = False
-            self.status = {"state": "loading", "msg": "Chargement de la nouvelle source…"}
+            self._install(make_source(c))
         return {"ok": True, "message": msg if path else "Données simulées.", "source": c.source}
+
+    def _install(self, source):
+        """Remplace la source et repart d'un marché vide. À appeler en tenant `self._swap`."""
+        old = self.source
+        if hasattr(old, "shutdown"):                         # arrête le fil de fond de l'ancienne source (Tradovate)
+            try:
+                old.shutdown()
+            except Exception:
+                pass
+        self.source = source
+        self.market = Market(self.inst, keep_days=self.cfg.history_days + 1)
+        self.composer = profiles.Composer()
+        self._abs_known, self._lv_cache, self._oi, self._bt_cache = {}, (0.0, None), (None, None), None
+        self.loaded = False
+        self.status = {"state": "loading", "msg": "Chargement de la nouvelle source…"}
+
+    def tradovate_login(self, username, password, cid="", sec="", env="live", remember=False) -> dict:
+        """Formulaire de connexion : se connecte à l'API officielle de Tradovate avec les identifiants saisis (ceux du compte de l'utilisateur),
+        vérifie tout de suite qu'ils sont acceptés, puis passe le terminal sur ce flux, sans redémarrer. Le mot de passe n'est jamais renvoyé
+        ni journalisé ; il n'est écrit dans .env que si `remember` est coché (en clair, sur ce PC)."""
+        from data.tradovate import TradovateSource, _AuthDenied
+        username, cid, sec = str(username or "").strip(), str(cid or "").strip(), str(sec or "").strip()
+        password = str(password or "")
+        env = "demo" if str(env).lower() == "demo" else "live"
+        if not username or not password:
+            raise ValueError("Identifiant et mot de passe requis.")
+        c = self.cfg
+        src = TradovateSource(username, password, cid, sec, c.tv_app_id, "1.0", env, self.inst.root, debug=c.tv_debug)
+        try:
+            label = src.preauth()
+        except _AuthDenied as e:
+            raise ValueError(f"Connexion refusée par Tradovate : {e}") from None
+        except DataError as e:
+            raise ValueError(str(e)) from None
+        remembered = False
+        note = ""
+        if remember:
+            if password != password.strip().strip('"').strip("'") or "\n" in password or "\r" in password:
+                note = " Mot de passe non mémorisé (il commence ou finit par un espace ou un guillemet : .env ne peut pas le garder tel quel)."
+            else:
+                self._write_env({"NQ_SOURCE": "tradovate", "NQ_CSV_PATH": "", "TRADOVATE_USERNAME": username, "TRADOVATE_PASSWORD": password,
+                                 "TRADOVATE_CID": cid, "TRADOVATE_SECRET": sec, "TRADOVATE_ENV": env})
+                remembered = True
+        with self._swap:
+            c.source, c.csv_path, c.auto_source, c.source_explicit, c.oi_path = "tradovate", "", False, True, ""
+            c.tv_user, c.tv_password, c.tv_cid, c.tv_secret, c.tv_env = username, password, cid, sec, env
+            self._install(src)
+        return {"ok": True, "remembered": remembered, "message": f"Connecté : {label}." + (" Identifiants mémorisés dans .env." if remembered else
+                " Identifiants gardés en mémoire seulement (à ressaisir au prochain démarrage).") + note}
+
+    def tradovate_logout(self) -> dict:
+        """Se déconnecte de Tradovate : efface les identifiants de la mémoire et de .env, puis revient au fichier NinjaTrader s'il existe,
+        sinon aux données simulées."""
+        from config import find_logger_file
+        self._write_env({"NQ_SOURCE": "", "TRADOVATE_USERNAME": "", "TRADOVATE_PASSWORD": "", "TRADOVATE_CID": "", "TRADOVATE_SECRET": "",
+                         "TRADOVATE_ENV": ""})
+        c = self.cfg
+        found = find_logger_file()
+        with self._swap:
+            c.tv_user = c.tv_password = c.tv_cid = c.tv_secret = ""
+            c.source, c.csv_path, c.auto_source, c.source_explicit = ("csv", found, True, False) if found else ("simulated", "", False, False)
+            c.oi_path = str(Path(found).with_name("nq-oi.csv")) if found else ""
+            self._install(make_source(c))
+        return {"ok": True, "source": c.source, "message": "Déconnecté de Tradovate. Identifiants effacés."}
 
     def _write_env(self, values: dict):
         """Remplace (ou ajoute) ces réglages dans .env, en gardant le reste du fichier tel quel."""
