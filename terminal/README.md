@@ -1,4 +1,4 @@
-# Liq Terminal (V42)
+# Liq Terminal (V43)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
@@ -136,6 +136,22 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V43 : des chiffres et des repères dans les sous-fenêtres
+
+Sous le graphique principal (intérêt ouvert, delta et CVD, funding, flux par taille d'ordre) :
+
+- **Les bougies ne débordent plus** sur les sous-fenêtres. Quand au moins une sous-fenêtre est affichée, l'échelle des prix reste
+  automatique (tirer l'échelle à la main faisait descendre les bougies sur l'intérêt ouvert et le CVD). Sans sous-fenêtre, l'échelle se
+  règle à la main comme avant. L'échelle des prix est masquée à côté des sous-fenêtres.
+- **Graduations chiffrées** dans la colonne de droite de chaque fenêtre (environ trois lignes par fenêtre).
+- **Lignes « haut » et « bas »** : 80 % et 20 % des valeurs de l'intérêt ouvert et du CVD sur tout le graphique. En mode variation : les
+  10 % plus fortes entrées et sorties d'intérêt ouvert, les 10 % plus gros achats et ventes agressifs du delta.
+- **Funding** : seuils fixes par 8 heures (zéro ; 0,01 % = taux de base de Binance ; 0,03 % = élevé ; −0,01 % = négatif fort), multipliés
+  par 1 095 en mode « par an ».
+- **Lecture en tête de fenêtre** : le niveau (« haut », « milieu » ou « bas », avec la part des bougies du graphique plus basses) et la
+  tendance sur les 24 dernières bougies : « stable » si la variation fait moins de la moitié de la variation habituelle sur 24 bougies,
+  « en hausse » ou « en baisse » au-delà, « forte » au-delà des 10 % plus fortes variations. Sur téléphone, cette lecture remplace la deuxième ligne.
 
 ## Ce qui est nouveau en V42 : PUMP
 

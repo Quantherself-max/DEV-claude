@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "42"
-API_LEVEL = 42                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "43"
+API_LEVEL = 43                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 

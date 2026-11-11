@@ -150,7 +150,10 @@ class PageTests(unittest.TestCase):
               "console.log(JSON.stringify([Panel.fundText(I, 0, false), Panel.fundText(I, 1, true), Panel.fundText(I, 2, false)]));")
         stub = "const FlowUnder0 = 0;"
         I = {"funding": [0.01, -0.02, None], "fundEst": 1, "fundNext": 3 * H + 5 * 60_000, "fundAvg7": 0.0083}
-        out = subprocess.run(["node", "-e", stub + js], input=json.dumps(I), capture_output=True, text=True, timeout=60)
+        with tempfile.TemporaryDirectory() as d:                         # V43 : panels.js dépasse la taille d'un argument de ligne de commande
+            f = Path(d) / "fund.js"
+            f.write_text(stub + js, encoding="utf-8")
+            out = subprocess.run(["node", str(f)], input=json.dumps(I), capture_output=True, text=True, timeout=60)
         self.assertEqual(out.returncode, 0, out.stderr[-800:])
         a, b, c = json.loads(out.stdout)
         self.assertIn("Funding +0,0100 % / 8 h (+11,0 % par an)", a)

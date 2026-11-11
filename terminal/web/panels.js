@@ -522,6 +522,7 @@ class Panel {
     if (this.kind === 'liq') { this.drawHeat(L, w, h); this.drawLiq(L, w, h); }
     else if (this.kind === 'vp') { this.applySeries(); this.drawVP(L, w, h); }
     else {
+      this.lockPriceScale();
       this.applySeries(); this.syncVolume(L.d); this.syncSubcharts(L.d);
       const cb = this.candleBottom(h);                 // V30 : rien du graphique des prix ne déborde sur les sous-fenêtres
       this.ctx.save(); this.ctx.beginPath(); this.ctx.rect(0, 0, w, cb); this.ctx.clip();
@@ -529,6 +530,18 @@ class Panel {
       this.ctx.restore();
       this.drawPanes(L, w, h);
     }
+  }
+  // V43 : avec des sous-fenêtres (intérêt ouvert, delta, funding, flux par taille), l'échelle des prix reste automatique : une échelle tirée
+  // à la main faisait passer les bougies par-dessus les sous-fenêtres (le dessin du graphique ne peut pas être coupé). Sans sous-fenêtre,
+  // l'échelle se règle à la main comme avant.
+  lockPriceScale() {
+    if (this.kind !== 'main') return;
+    const lock = this.panes().length > 0;
+    if (lock !== this._lockY) {
+      this._lockY = lock;
+      this.chart.applyOptions({handleScale: {axisPressedMouseMove: {time: true, price: !lock}}, handleScroll: {vertTouchDrag: !lock}});
+    }
+    if (lock && !this.chart.priceScale('right').options().autoScale) this.chart.priceScale('right').applyOptions({autoScale: true});
   }
   // ---- V30 : sous-fenêtres sous les bougies (intérêt ouvert en bougies, delta en barres et CVD), chacune sur sa propre échelle ;
   // V35 : funding en barres (% par 8 h ou par an), la dernière barre plus pâle (estimation de la période en cours) ;
@@ -723,6 +736,142 @@ class Panel {
       dp > 0 ? 'le levier achète, le spot vend : hausse fragile' : 'le spot achète, le levier vend : les vendeurs à levier s\'exposent';
     return [l1, [`${N} dernières bougies : ${lead}`]];
   }
+  // ---- V43 : repères chiffrés des sous-fenêtres : graduations, lignes « haut » et « bas » (80 % et 20 % des valeurs du graphique) ou seuils fixes
+  // du funding, et en tête de fenêtre le niveau (haut, milieu, bas) et la tendance sur 24 bougies (en hausse, stable, en baisse) ----
+  static get GRID_N() { return 24; }
+  paneGrid(k, I, idx, ok) {
+    const o = LT.st.mainOpts || {};
+    if (k === 'szs' || k === 'szp') {                                    // flux par taille : graduations seulement sur une échelle commune
+      const se = o.sizeScale === 'shared' ? this[`sz${k === 'szs' ? 's' : 'p'}0`] : null;
+      return se ? {se, fmt: v => Panel.big(v) + ' $', lv: [{v: 0, txt: 'zéro', col: 'rgba(180,186,200,.55)'}], tags: []} : null;
+    }
+    if (!ok || idx < 1) return null;
+    const L = I.times.length - 1;
+    const key = [k, I.symbol, I.tf, L, I.times[L], idx, JSON.stringify(I.oi[L]), I.delta[L], (I.funding || [])[L], o.oiMode, o.cvdMode, o.deltaCvd, o.deltaUnit,
+      o.cvdReset, o.fundMode, !!this.oiS, !!this.oiH, !!this.cvdS, !!this.spS, !!this.dS, !!this.fdS, !!this.fdC].join('|');
+    const c = this._pg || (this._pg = {});
+    if (!c[k] || c[k].key !== key) c[k] = {key, g: this.computePaneGrid(k, I, idx, o)};
+    const g = c[k].g;
+    if (!g) return null;
+    g.se = this[g.sel];
+    return g.se ? g : null;
+  }
+  computePaneGrid(k, I, idx, o) {
+    const N = Math.min(Panel.GRID_N, idx), q = (srt, x) => srt[Math.min(srt.length - 1, Math.max(0, Math.round(x * (srt.length - 1))))];
+    const sg = (x, d) => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(d).replace('.', ',');
+    const hist = vals => { const h = []; for (let i = 0; i <= idx; i++) if (vals[i] != null && !isNaN(vals[i])) h.push(vals[i]); return h.sort((a, b) => a - b); };
+    // niveau : part des bougies du graphique (jusqu'à la bougie visée) plus basses que la valeur visée
+    const level = (vals, name) => {
+      const srt = hist(vals), v = vals[idx];
+      if (srt.length < 30 || v == null) return null;
+      let below = 0; for (const x of srt) if (x < v) below++;
+      const r = below / srt.length, w = r >= 0.8 ? 'haut' : r <= 0.2 ? 'bas' : 'milieu';
+      return {p20: q(srt, 0.2), p80: q(srt, 0.8), tag: {txt: `${name} ${w} (au-dessus de ${Math.round(r * 100)} % des ${srt.length} bougies)`, short: `${name} ${w}`,
+        col: w === 'haut' ? '#ffb74d' : w === 'bas' ? '#6ec8ff' : '#aab0bd', strong: true}};
+    };
+    // tendance : variation sur N bougies comparée à la variation habituelle sur N bougies (médiane) : moins de la moitié = stable
+    const trend = (chg, fmt) => {
+      if (N < 3) return null;
+      const now = chg(idx), abs = [];
+      for (let i = N; i <= idx; i++) { const x = chg(i); if (x != null && !isNaN(x)) abs.push(Math.abs(x)); }
+      if (now == null || isNaN(now) || abs.length < 20) return null;
+      abs.sort((a, b) => a - b);
+      const med = q(abs, 0.5), big = q(abs, 0.9);
+      const w = Math.abs(now) <= 0.5 * med ? 'stable' : now > 0 ? (now >= big ? 'forte hausse' : 'en hausse') : (-now >= big ? 'forte baisse' : 'en baisse');
+      return {txt: `${w} sur ${N} bougies (${fmt(now)})`, short: `${w} (${fmt(now)})`, col: w === 'stable' ? '#aab0bd' : now > 0 ? '#26c281' : '#ff4d6d'};
+    };
+    const tags = [], lv = [];
+    const pushLevel = (Lv, fmt) => { if (!Lv) return; tags.push(Lv.tag); lv.push({v: Lv.p80, txt: 'haut', col: 'rgba(255,183,77,.8)'}, {v: Lv.p20, txt: 'bas', col: 'rgba(110,200,255,.8)'}); };
+    if (k === 'oi') {
+      const C = I.oi.map(c => c ? c[3] : null);
+      const T = trend(i => C[i] && C[i - N] ? C[i] / C[i - N] - 1 : null, x => sg(x * 100, 2) + ' %');
+      if (this.oiH) {                                                    // variation par bougie : seuils des 10 % plus fortes entrées et sorties
+        const ch = I.oi.map(c => c && c[0] != null ? c[3] - c[0] : null), a = hist(ch.map(x => x == null ? null : Math.abs(x)));
+        if (a.length >= 30) { const b = q(a, 0.9); lv.push({v: b, txt: 'forte entrée', col: 'rgba(79,195,247,.8)'}, {v: -b, txt: 'forte sortie', col: 'rgba(255,166,77,.8)'}, {v: 0, txt: 'zéro', col: 'rgba(180,186,200,.5)'}); }
+        if (T) tags.push(T);
+        return {sel: 'oiH', fmt: v => Panel.big(v), lv, tags};
+      }
+      const Lv = level(C, 'niveau');
+      pushLevel(Lv); if (T) tags.push(T);
+      return {sel: 'oiS', fmt: v => Panel.big(v, false), lv, tags};
+    }
+    if (k === 'delta') {
+      const usd = o.deltaUnit === 'usd' && Array.isArray(I.deltaUsd), DV = usd ? I.deltaUsd : I.delta, u = usd ? ' $' : '';
+      const SV = usd && Array.isArray(I.spotDeltaUsd) ? I.spotDeltaUsd : I.spotDelta;
+      const sums = V => { const ps = [0]; for (let i = 0; i < I.times.length; i++) ps.push(ps[i] + (V[i] || 0)); return i => i >= N ? ps[i + 1] - ps[i + 1 - N] : null; };
+      const fmt = v => Panel.big(v) + u;
+      if (this.cvdS || this.spS) {                                       // le CVD perpétuel en priorité, sinon le spot
+        const perp = !!this.cvdS, V = perp ? DV : SV, line = Panel.cvdLine(I, V);
+        pushLevel(level(line, perp ? 'CVD perp' : 'CVD spot'));
+        const T = trend(sums(V), fmt); if (T) tags.push(T);
+        if (this.cvdS && this.spS && Array.isArray(SV)) { const T2 = trend(sums(SV), fmt); if (T2) tags.push({...T2, txt: 'spot ' + T2.txt, short: 'spot ' + T2.short}); }
+        return {sel: perp ? 'cvdS' : 'spS', fmt, lv, tags};
+      }
+      const a = hist(DV.map(x => x == null ? null : Math.abs(x)));      // delta seul : seuils des 10 % plus gros achats et ventes agressifs
+      if (a.length >= 30) { const b = q(a, 0.9); lv.push({v: b, txt: 'gros achats', col: 'rgba(38,194,129,.8)'}, {v: -b, txt: 'grosses ventes', col: 'rgba(255,77,109,.8)'}); }
+      const T = trend(sums(DV), fmt); if (T) tags.push(T);
+      return {sel: 'dS', fmt, lv, tags};
+    }
+    if (k === 'fund') {
+      const F = I.funding || [], an = o.fundMode === 'an', cum = o.fundMode === 'cum' && this.fdC, m = an ? 1095 : 1;
+      if (cum) {
+        pushLevel(level(I.fundCum || [], 'niveau'));
+        return {sel: 'fdC', fmt: v => sg(v, 3) + ' %', lv, tags};
+      }
+      const fmt = v => sg(v, an ? 1 : 4) + ' %';
+      // seuils fixes (par 8 h) : 0,01 % est le taux de base de Binance ; 0,03 % et plus : acheteurs à levier nombreux ; −0,01 % et moins : vendeurs nombreux
+      lv.push({v: 0.03 * m, txt: 'élevé', col: 'rgba(38,166,154,.85)'}, {v: 0.01 * m, txt: 'normal', col: 'rgba(170,176,189,.7)'},
+        {v: 0, txt: 'zéro', col: 'rgba(170,176,189,.45)'}, {v: -0.01 * m, txt: 'négatif fort', col: 'rgba(239,83,80,.85)'});
+      const Lv = level(F, 'niveau'); if (Lv) tags.push(Lv.tag);
+      const T = trend(i => F[i] != null && F[i - N] != null ? F[i] - F[i - N] : null, x => sg(x * m, an ? 1 : 4) + ' %'); if (T) tags.push(T);
+      return {sel: 'fdS', fmt, lv, tags};
+    }
+    return null;
+  }
+  axisBg() {                                                           // couleur pleine derrière le graphique (pour masquer l'échelle des prix)
+    if (this._axBg) return this._axBg;
+    for (let el = this.body; el; el = el.parentElement) {
+      const c = getComputedStyle(el).backgroundColor;
+      if (c && c !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(c)) return (this._axBg = c);
+    }
+    return (this._axBg = '#0f1115');
+  }
+  drawPaneGrid(G, y0, ph, nrows, plotW, w) {
+    const se = G.se, ctx = this.ctx, t = this.th(), yA = y0 + nrows * 16 + 6, yB = y0 + ph - 3;
+    if (yB - yA < 18) return;
+    const pT = se.coordinateToPrice(yA), pB = se.coordinateToPrice(yB);
+    if (pT == null || pB == null || !(pT > pB)) return;
+    ctx.save();
+    ctx.font = `500 10px ${t.font}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    const axis = w - plotW > 30;                                         // les chiffres vont dans la colonne de l'échelle quand elle existe
+    const label = (txt, y, col, name) => {
+      if (axis) {
+        ctx.textAlign = 'left'; ctx.fillStyle = col; ctx.fillText(txt, plotW + 5, y);
+        if (name) { ctx.textAlign = 'right'; const w2 = ctx.measureText(name).width; ctx.fillStyle = 'rgba(10,12,16,.78)'; ctx.fillRect(plotW - w2 - 9, y - 7, w2 + 6, 14); ctx.fillStyle = col; ctx.fillText(name, plotW - 6, y); }
+        return;
+      }
+      const s2 = name ? name + ' ' + txt : txt, w2 = ctx.measureText(s2).width;
+      ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(10,12,16,.78)'; ctx.fillRect(plotW - w2 - 9, y - 7, w2 + 6, 14);
+      ctx.fillStyle = col; ctx.fillText(s2, plotW - 6, y);
+    };
+    const taken = [];
+    G.lv.forEach(l => {                                                   // lignes de repère (prioritaires pour l'étiquette)
+      const y = se.priceToCoordinate(l.v);
+      if (y == null || y < yA - 1 || y > yB + 1) return;
+      ctx.strokeStyle = l.col; ctx.lineWidth = 1; ctx.setLineDash(l.txt === 'zéro' ? [] : [5, 4]);
+      ctx.beginPath(); ctx.moveTo(0, Math.round(y) + 0.5); ctx.lineTo(plotW, Math.round(y) + 0.5); ctx.stroke();
+      if (!taken.some(z => Math.abs(z - y) < 13)) { label(G.fmt(l.v), y, l.col.replace(/,\s*\.?\d+\)$/, ',1)'), l.txt); taken.push(y); }
+    });
+    ctx.setLineDash([]);
+    const step = Panel.nice((pT - pB) / 3);                              // graduations : environ trois lignes par fenêtre
+    for (let v = Math.ceil(pB / step) * step; v <= pT + step * 1e-6; v += step) {
+      const y = se.priceToCoordinate(v);
+      if (y == null || y < yA || y > yB) continue;
+      ctx.strokeStyle = 'rgba(120,130,150,.16)'; ctx.beginPath(); ctx.moveTo(0, Math.round(y) + 0.5); ctx.lineTo(plotW, Math.round(y) + 0.5); ctx.stroke();
+      if (!taken.some(z => Math.abs(z - y) < 13)) { label(G.fmt(Math.abs(v) < step * 1e-6 ? 0 : v), y, 'rgba(178,181,190,.9)'); taken.push(y); }
+    }
+    ctx.restore();
+  }
   drawPanes(L, w, h) {
     const panes = this.panes();
     if (!panes.length) return;
@@ -733,6 +882,8 @@ class Panel {
     const Z = st.size, zok = !!(Z && Z.ready && Z.symbol === L.d.symbol && Z.tf === L.d.tf);
     let zi = zok ? Z.times.length - 1 : -1;
     if (zok && this.crossT != null) { const k = Z.times.indexOf(this.crossT); if (k >= 0) zi = k; }
+    const cb = Math.round(H * (1 - n * P));                               // V43 : l'échelle des prix s'arrête au-dessus des sous-fenêtres
+    if (w - plotW > 8) { ctx.fillStyle = this.axisBg(); ctx.fillRect(plotW, cb, w - plotW, H - cb); }
     ctx.font = `500 11px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
     const fit = parts => {                                                // petit écran : on garde les premiers morceaux qui tiennent
       const out = []; let wsum = 0;
@@ -745,6 +896,11 @@ class Panel {
       const sz = k === 'szs' || k === 'szp';
       const lines = sz ? (zok ? Panel.sizeLines(k, Z, zi) : [(k === 'szs' ? 'Spot' : 'Perpétuel') + ' · par taille d\'ordre · chargement…']) :
         !ok || (k === 'fund' && !Array.isArray(I.funding)) ? [({oi: 'Intérêt ouvert', delta: 'Delta', fund: 'Funding'})[k] + ' · chargement…'] : this.paneLines(k, I, idx);
+      const G = this.paneGrid(k, I, sz ? zi : idx, sz ? zok : ok);         // V43 : repères chiffrés, niveau et tendance
+      if (G && G.tags.length && lines.length && lines[0]) {
+        if (plotW >= 760) { const f0 = typeof lines[0] === 'string' ? lines[0].split(' · ') : lines[0].slice(); f0.splice(1, 0, ...G.tags); lines[0] = f0; }
+        else lines.splice(1, lines.length, G.tags.map(g => ({txt: g.short || g.txt, col: g.col, strong: g.strong})));   // téléphone : le niveau et la tendance d'abord
+      }
       const base = k === 'oi' ? '#8fd3f4' : k === 'fund' ? '#f5c26b' : '#cfd3dc';
       // V39 : dans les fenêtres « flux par taille d'ordre », les morceaux passent à la ligne au lieu d'être coupés (téléphone)
       let rows = lines.filter(Boolean).slice(0, ph > 46 ? 2 : 1).map((ln, li) => ({parts: typeof ln === 'string' ? ln.split(' · ') : ln, li}));
@@ -761,6 +917,7 @@ class Panel {
         });
         rows = wrapped.slice(0, Math.max(1, Math.min(3, Math.floor((ph - 8) / 16) - 1)));
       }
+      if (G) this.drawPaneGrid(G, y0, ph, rows.length, plotW, w);
       rows.forEach(({parts: raw, li}, ri) => {
         const parts = fit(raw), y = y0 + 2 + ri * 16;
         const tw = parts.reduce((s2, p, i) => s2 + ctx.measureText((i ? ' · ' : '') + (typeof p === 'string' ? p : p.txt)).width, 0);
