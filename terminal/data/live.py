@@ -29,6 +29,7 @@ class LiveFeed:
         self.flow = None                                        # V15 : flux d'ordres (data/orderflow.py), recoit chaque transaction
         self.trades = {}                                        # V23 : synchronisation des transactions exactes (data/trades.py), par paire
         self.spot_trades = {}                                   # V39 : la meme chose pour le marche spot
+        self.cex = None                                         # V44 : registre des gros ordres et liquidations BTC (data/cexflow.py)
         self._load_liqs()
 
     # --- messages ---
@@ -46,15 +47,20 @@ class LiveFeed:
         ts = self.trades.get(sym)
         if ts is not None:
             ts.on_live(x)
+        if self.cex is not None and sym == "BTCUSDT":
+            self.cex.on_binance_trade(x, "perp")
 
     def on_spot_trade(self, text: str):
         m = json.loads(text)
         x = m.get("data", m)
         if x.get("e") != "aggTrade":
             return
-        ts = self.spot_trades.get(x["s"].upper())
+        sym = x["s"].upper()
+        ts = self.spot_trades.get(sym)
         if ts is not None:
             ts.on_live(x)
+        if self.cex is not None and sym == "BTCUSDT":
+            self.cex.on_binance_trade(x, "spot")
 
     def on_liq(self, text: str):
         m = json.loads(text)
@@ -68,6 +74,8 @@ class LiveFeed:
         ev = {"t": int(o.get("T") or x.get("E")), "side": "long" if o["S"] == "SELL" else "short",
               "price": px, "qty": qty, "usd": px * qty}
         self.add_liq(sym, ev, persist=True)
+        if self.cex is not None and sym == "BTCUSDT":
+            self.cex.on_binance_liq(ev)
 
     def add_liq(self, sym: str, ev: dict, persist: bool = False):
         with self.lock:

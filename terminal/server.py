@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "43"
-API_LEVEL = 43                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "44"
+API_LEVEL = 44                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -203,6 +203,24 @@ def default_trades(cfg, source, feed):
     return out
 
 
+def default_cex(cfg, source, service, feed):
+    """V44 : liquidations BTC (Binance, Bybit, OKX) et gros ordres executes (Binance, Coinbase, Bitstamp, OKX, Bybit) pour l'onglet GEX ;
+    fabriques en mode simule (rien n'est ecrit sur le disque)."""
+    if not getattr(cfg, "cexflow_on", True) or "BTCUSDT" not in cfg.symbols:
+        return None
+    from data import cexflow
+    if cfg.source != "binance":
+        flow = cexflow.CexFlow(None, now=lambda: source.now_ms() / 1000)
+        return cexflow.SimCex(flow, prices=lambda: price_lookup(service, "BTCUSDT"), last=lambda: _sim_price(service, "BTCUSDT"))
+    from data.external import http_json
+    flow = cexflow.CexFlow(str(Path(cfg.data_dir) / "cexflow" / "BTC.json"))
+    cx = cexflow.CexFeeds(flow, http_json=http_json, binance_spot_ws=getattr(cfg, "binance_spot_ws", None), okx_ws=cfg.okx_ws)
+    if feed is not None:
+        cx.live = feed
+        feed.cex = cx
+    return cx
+
+
 def build_parts(cfg, make_source=default_source, make_feed=default_feed, make_hub=default_hub):
     source = make_source(cfg)
     notifier = TelegramNotifier(cfg.telegram_token, cfg.telegram_chat_id, cfg.telegram_api_base) \
@@ -250,8 +268,10 @@ class App:
     def _install(self, cfg):
         old, old_flow, old_heat = self.feed, getattr(self, "flow", None), getattr(self, "heat", {})
         old_liq = getattr(self, "liqmaps", {})
+        old_cex = getattr(self, "cex", None)
         source, service, alerts, notifier, feed, flow = build_parts(cfg, self.make_source, self.make_feed, self.make_hub)
         self.flow = flow
+        self.cex = default_cex(cfg, source, service, feed)
         self.heat = default_heat(cfg, source, service, flow)
         self.liqmaps = default_liqmaps(cfg, source, service)
         for sym, kp in self.liqmaps.items():                  # V31 : intérêt ouvert archivé pour les idées (poches formées il y a plus de 29 jours)
@@ -280,6 +300,8 @@ class App:
             kp.stop()
         for ts in old_trades.values():
             ts.stop()
+        if old_cex:
+            old_cex.stop()
         if feed and self.running:
             feed.start()
         if flow and self.running:
@@ -291,6 +313,8 @@ class App:
                 kp.start()
             for ts in self.trades.values():
                 ts.start()
+            if self.cex:
+                self.cex.start()
         self._chat_restart()
 
     def _chat_restart(self):
@@ -452,6 +476,8 @@ class App:
             kp.start()
         for ts in self.trades.values():
             ts.start()
+        if self.cex:
+            self.cex.start()
         self._chat_restart()
 
     def shutdown(self):
@@ -471,6 +497,8 @@ class App:
                 ts.flush()                                   # le jour en cours est sauvegarde : rien a retelecharger au redemarrage
             except Exception:
                 pass
+        if self.cex:
+            self.cex.stop()
         if self.tgchat:
             self.tgchat.close()
 
@@ -637,6 +665,35 @@ class App:
         except Exception:
             pass
         return subcharts.aggregate_funding(rows)
+
+    def cex_page(self) -> dict:
+        """V44 : liquidations BTC sur 6, 12, 24 et 48 heures et gros ordres executes par bourse (data/cexflow.py), avec le mouvement du
+        BTC sur chaque fenetre (bougies 5 minutes du terminal) pour lire les deux ensemble."""
+        cx = getattr(self, "cex", None)
+        if cx is None:
+            why = ("coupé dans les réglages (TERMINAL_CEXFLOW=0)" if not getattr(self.cfg, "cexflow_on", True)
+                   else "le BTC n'est pas dans tes paires (TERMINAL_SYMBOLS)")
+            return {"ok": False, "why": why}
+        try:
+            out = cx.flow.summary()
+            out.update(cx.status())
+            now = out["now"]
+            m = self.service.markets.get("BTCUSDT")
+            moves = {}
+            if m is not None and m.ready:
+                px = m.price()
+                cs = m.store.m5 if m.store.m5 and m.store.m5[0].t <= now - 48 * 3_600_000 else (m.store.h1 or m.store.m5)
+                for h in out["windows"]:
+                    a = now - h * 3_600_000
+                    sel = [k for k in cs[-1200:] if k.t + 150_000 >= a]
+                    if sel and px:
+                        moves[str(h)] = {"from": sel[0].o, "to": px, "pct": (px / sel[0].o - 1) * 100 if sel[0].o else None,
+                                         "hi": max(k.h for k in sel), "lo": min(k.l for k in sel)}
+                out["price"] = px
+            out["moves"] = moves
+            return out
+        except Exception as e:                                       # la page ne doit jamais casser le terminal
+            return {"ok": False, "why": f"{type(e).__name__}: {e}"}
 
     POS_WINDOW = {"1m": 60, "5m": 48, "15m": 32, "1h": 24, "4h": 18, "1d": 14, "1w": 8, "1M": 6}
 
@@ -1340,6 +1397,8 @@ def make_handler(app: App):
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.indicators(sym, (q.get("tf") or ["1h"])[0], (q.get("fund") or ["0"])[0] == "1",
                                                      (q.get("spot") or ["0"])[0] == "1"))
+                if u.path == "/api/cexflow":                         # V44 : liquidations BTC et gros ordres des bourses (onglet GEX)
+                    return self._json(app.cex_page())
                 if u.path == "/api/gex":                             # V40 : onglet GEX (options BTC)
                     return self._json(app.service.gex_page((q.get("scope") or ["all"])[0], (q.get("src") or ["all"])[0]))
                 if u.path == "/api/sizeflow":                        # V39 : delta par taille d'ordre, perpétuel et spot

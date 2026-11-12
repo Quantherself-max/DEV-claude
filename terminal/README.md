@@ -1,7 +1,8 @@
-# Liq Terminal (V43)
+# Liq Terminal (V44)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Les liquidations BTC et les gros ordres des bourses dans l'onglet GEX** (V44) : combien de millions de dollars de longs et de shorts ont été liquidés sur 6, 12, 24 et 48 heures (Binance, Bybit, OKX), à côté du mouvement du BTC, et qui achète ou vend en gros ordres sur Binance, Coinbase, Bitstamp, OKX et Bybit (voir « V44 » plus bas).
 - **Le flux par taille d'ordre sur plusieurs mois** (V41) : historique à l'heure (180 jours par défaut, réglable) pour les grandes unités de temps (voir « V41 » plus bas).
 - **Un onglet GEX** (V40) : le gamma des options BTC sur une page à part, à côté de tes graphiques : profil par strike, murs, bascule, régime, flux de couverture, mouvement attendu, échéances et bourses (voir « V40 » plus bas).
 - **Flux par taille d'ordre, spot et perpétuel** (V39) : comme « Volume By Side (delta) » d'Aggr, le delta cumulé en dollars des petits ordres (particuliers), des moyens et des gros (institutions), ou des 5 tailles d'Aggr, sur le spot et le perpétuel Binance, avec une lecture « qui achète, qui vend » (voir « V39 » plus bas).
@@ -137,7 +138,21 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
-## Ce qui est nouveau en V43 : des chiffres et des repères dans les sous-fenêtres
+## Ce qui est nouveau en V44 : liquidations et gros ordres des bourses (onglet GEX)
+
+En haut de la colonne de droite de l'onglet **GEX**, deux nouveaux cadres, relus toutes les 10 secondes :
+
+- **Liquidations BTC · perpétuels** : pour 6, 12, 24 et 48 heures, les millions de dollars de **longs** liquidés (vert) et de **shorts** liquidés (rouge), le total avec une barre de partage, et le mouvement du BTC sur la même période. Toucher une ligne donne le détail par bourse (Binance, Bybit, OKX), la part de la fenêtre réellement enregistrée, la plus grosse liquidation, et une phrase de lecture (surtout des longs : des acheteurs à levier forcés de vendre, ce qui pousse vers le bas ; l'inverse pour les shorts).
+- **Gros ordres exécutés · BTC** : choisis la fenêtre (6, 12, 24 ou 48 heures) et la taille minimale (100 000 $, 500 000 $, 1 million, 5 millions). Pour chaque bourse et marché (Binance perpétuel et comptant, Coinbase, Bitstamp, OKX perpétuel et comptant, Bybit perpétuel et comptant) : achats, ventes, solde net et nombre d'ordres, puis les totaux comptant, perpétuels et toutes bourses, la bourse la plus acheteuse et la plus vendeuse, les plus gros ordres de la fenêtre et la liste des derniers gros ordres (heure, bourse, achat ou vente, montant, prix).
+
+Comment c'est mesuré :
+
+- **Liquidations** : flux publics en direct, sans clé (Binance « forceOrder », Bybit « allLiquidation », OKX « liquidation-orders », contrats en USDT, et aussi en dollars chez OKX). **Binance n'envoie au plus qu'une liquidation par seconde** : pendant une cascade, son chiffre est un minimum. Bybit envoie toutes ses liquidations.
+- **Gros ordres** : les ordres **au marché**, ceux qui prennent la liquidité affichée. Un ordre qui traverse plusieurs prix arrive en plusieurs morceaux : ils sont regroupés (par numéro d'ordre chez Coinbase et Bitstamp, par sens et par milliseconde ailleurs). Les murs du carnet (ordres en attente) restent dans la heatmap.
+- **Enregistrement** : rien n'est enregistré quand le terminal est éteint. Chaque fenêtre affiche la part réellement enregistrée ; « ≈ » signale moins de 90 %. Exception : au démarrage, puis toutes les 3 heures, le terminal reprend les **24 dernières heures de liquidations d'OKX** (adresse publique) pour combler les trous, sans doublon. Au premier lancement de la V44, les liquidations Binance déjà enregistrées par le terminal (48 heures) sont reprises.
+- **Disque et réseau** : 48 heures gardées dans `data_local/cexflow/BTC.json` (moins de 1 Mo, sauvegardé toutes les 2 minutes). Cinq connexions de plus (Bybit perpétuel et comptant, OKX, Coinbase, Bitstamp), de l'ordre de 50 Ko par seconde reçus. Pour couper : `TERMINAL_CEXFLOW=0` dans `.env`.
+- **Si une bourse ne répond pas** (pays bloqué, coupure), sa ligne affiche « pas de données » avec la raison au survol ; les autres continuent.
+
 
 Sous le graphique principal (intérêt ouvert, delta et CVD, funding, flux par taille d'ordre) :
 

@@ -5,9 +5,13 @@
 // échéances (toutes, 7 jours, prochaine), échéances Deribit (intérêt ouvert, put / call, max pain), part de chaque bourse, lecture complète.
 // Survol : le détail d'un strike. Molette : zoom sur les prix. Le même calcul que sur le graphique (engine/gamma.py) : hypothèse sur le sens
 // des teneurs de marché, effet non mesuré sur le passé.
+// V44, en haut de la colonne de droite : les liquidations BTC (Binance, Bybit, OKX) sur 6, 12, 24 et 48 heures avec le mouvement du BTC
+// sur chaque fenêtre, puis les gros ordres exécutés par bourse (Binance, Coinbase, Bitstamp, OKX, Bybit ; comptant et perpétuel) :
+// acheteurs ou vendeurs, et de combien (data/cexflow.py, adresse /api/cexflow, relue toutes les 10 secondes).
 const GEXV = (() => {
   'use strict';
   let LT = null, root = null, on = false, timer = null, data = null, err = null, busy = false, hover = null, livePx = null;
+  let cex = null, cexErr = null, cexBusy = false, cexTimer = null;
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const O = () => LT.st.gexView;
   const fmtP = v => v == null ? '—' : Math.round(v).toLocaleString('fr-FR').replace(/ | /g, ' ');
@@ -33,13 +37,17 @@ const GEXV = (() => {
       `<label class="small" title="La courbe du gamma total : le régime qu'on aurait si le prix allait à cette hauteur"><input type="checkbox" data-gx="curve"${o.curve ? ' checked' : ''}> courbe du total</label>` +
       `<span class="gexreg"></span><span class="spacer"></span><span class="gexmeta muted small"></span>` +
       `<a class="small" href="/docs/guide_gamma.pdf" target="_blank" rel="noopener">Comprendre chaque niveau (PDF) →</a></div>` +
-      `<div class="gexmain"><div class="gexchart"><canvas></canvas><div class="gextip" hidden></div></div><div class="gexside"></div></div>`;
+      `<div class="gexmain"><div class="gexchart"><canvas></canvas><div class="gextip" hidden></div></div><div class="gexside"><div class="gexcx"></div><div class="gexopt"></div></div></div>`;
     root.addEventListener('change', e => {
       const t = e.target.closest('[data-gx]'); if (!t) return;
       const k = t.dataset.gx;
-      O()[k] = t.type === 'checkbox' ? t.checked : k === 'range' ? +t.value : t.value;
+      O()[k] = t.type === 'checkbox' ? t.checked : (k === 'range' || k === 'cexMin') ? +t.value : t.value;
       LT.savePrefs();
-      if (k === 'scope' || k === 'src') load(true); else draw();
+      if (k === 'cexMin') { t.blur(); renderCex(true); } else if (k === 'scope' || k === 'src') load(true); else draw();
+    });
+    root.addEventListener('click', e => {                               // V44 : fenêtre des liquidations et des gros ordres
+      const t = e.target.closest('[data-cxw]'); if (!t) return;
+      O().cexWin = +t.dataset.cxw; LT.savePrefs(); renderCex(true);
     });
     const cv = root.querySelector('canvas');
     cv.addEventListener('mousemove', e => { const r = cv.getBoundingClientRect(); hover = {x: e.clientX - r.left, y: e.clientY - r.top}; draw(); });
@@ -158,7 +166,7 @@ const GEXV = (() => {
   // ---------- panneau de droite ----------
   function render() {
     if (!on || !root) return;
-    const side = root.querySelector('.gexside'), reg = root.querySelector('.gexreg'), meta = root.querySelector('.gexmeta');
+    const side = root.querySelector('.gexopt'), reg = root.querySelector('.gexreg'), meta = root.querySelector('.gexmeta');
     draw();
     if (!data) { side.innerHTML = `<div class="gexcard muted">${esc(err || 'chargement…')}</div>`; reg.innerHTML = ''; meta.textContent = ''; return; }
     const b = data.brief, px = livePx || data.price || b.spot;
@@ -202,14 +210,126 @@ const GEXV = (() => {
     side.innerHTML = regime + levels + flows + moves + cmp + exps + srcs + note;
   }
 
+  // ---------- V44 : liquidations et gros ordres des bourses ----------
+  async function loadCex() {
+    if (!on || cexBusy) return;
+    cexBusy = true;
+    try {
+      const r = await LT.api('/api/cexflow');
+      if (r.ok) { cex = r; cexErr = null; } else cexErr = r.why || 'indisponible';
+    } catch (e) { cexErr = 'terminal injoignable'; } finally { cexBusy = false; }
+    renderCex();
+  }
+  const mu = v => { const a = Math.abs(v || 0); return a >= 1e9 ? (a / 1e9).toFixed(2).replace('.', ',') + ' Md$' : a >= 1e6 ? (a / 1e6).toFixed(a >= 1e8 ? 0 : 1).replace('.', ',') + ' M$' : a >= 1e3 ? Math.round(a / 1e3) + ' k$' : a ? Math.round(a) + ' $' : '0'; };
+  const smu = v => (v > 0 ? '+' : v < 0 ? '−' : '') + mu(v);
+  const tmu = v => Math.abs(v || 0) >= 1e7 && Math.abs(v) < 1e9 ? Math.round(Math.abs(v) / 1e6) + ' M$' : mu(v);   // tableaux : sans décimale à partir de 10 M$
+  const tsmu = v => (v > 0 ? '+' : v < 0 ? '−' : '') + tmu(v);
+  const HMS = new Intl.DateTimeFormat('fr-FR', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+  const ago = t => { const m = Math.max(0, Math.round(((cex && cex.now) || Date.now()) - t) / 60000); return m < 60 ? `il y a ${Math.round(m)} min` : `il y a ${(m / 60).toFixed(m < 600 ? 1 : 0).replace('.', ',')} h`; };
+  const MINS = [[100000, '≥ 100 k$'], [500000, '≥ 500 k$'], [1000000, '≥ 1 M$'], [5000000, '≥ 5 M$']];
+  const LC = '#3ddc97', SC = '#ff6b6b';                                  // couleurs des longs et des shorts, comme sur le graphique
+
+  function cexWin() { const w = String(O().cexWin); return cex && cex.liq[w] ? w : '24'; }
+  function venueName(v, short) {
+    const x = (cex.venues || []).find(y => y.id === v);
+    return x ? `${x.name}${short ? '' : ` <span class="muted">${x.market === 'perp' ? 'perp' : 'spot'}</span>`}` : v;
+  }
+
+  function liqCard() {
+    const W = cex.windows.map(String), sel = cexWin(), ex = cex.liqEx || [], src = cex.sources || {};
+    const rows = W.map(h => {
+      const L = cex.liq[h], mv = (cex.moves || {})[h], tot = L.long + L.short, share = tot ? L.long / tot * 100 : 50;
+      const low = ex.filter(e => L.ex[e.id].cover < 0.9);
+      const tip = ex.map(e => `${e.name} : ${Math.round(L.ex[e.id].cover * 100)} % de la fenêtre enregistrée`).join(' · ');
+      return `<tr data-cxw="${h}" class="${h === sel ? 'on' : ''}" title="${esc(tip)}"><td>${h} h${low.length ? ' <span class="muted">≈</span>' : ''}</td>` +
+        `<td style="color:${LC}">${tmu(L.long)}</td><td style="color:${SC}">${tmu(L.short)}</td>` +
+        `<td><b>${tmu(tot)}</b><div class="cxbar"><i style="width:${share.toFixed(1)}%;background:${LC}"></i><i style="width:${(100 - share).toFixed(1)}%;background:${SC}"></i></div></td>` +
+        `<td class="${mv && mv.pct >= 0 ? 'up' : 'dn'}">${mv && mv.pct != null ? pct(mv.pct) : '—'}</td></tr>`;
+    }).join('');
+    const L = cex.liq[sel], mv = (cex.moves || {})[sel], tot = L.long + L.short, ls = tot ? L.long / tot : 0.5;
+    const verdict = tot < 1e6 ? 'Peu de liquidations : le levier n\'a presque pas été forcé.'
+      : ls >= 0.65 ? `Surtout des <b style="color:${LC}">longs</b> liquidés (${Math.round(ls * 100)} %) : des acheteurs à levier ont été forcés de vendre, ce qui pousse le prix vers le bas.`
+      : ls <= 0.35 ? `Surtout des <b style="color:${SC}">shorts</b> liquidés (${Math.round((1 - ls) * 100)} %) : des vendeurs à levier ont été forcés de racheter, ce qui pousse le prix vers le haut.`
+      : 'Des liquidations des deux côtés : le prix a balayé en haut et en bas.';
+    const range = mv ? ` BTC ${pct(mv.pct)} sur ${sel} h (plus bas ${fmtP(mv.lo)}, plus haut ${fmtP(mv.hi)}).` : '';
+    const per = `<table class="gextab"><tr><th>${sel} h</th><th>longs</th><th>shorts</th><th>enregistré</th></tr>` + ex.map(e => {
+      const r = L.ex[e.id], s = src['liq:' + e.id] || {}, cov = Math.round(r.cover * 100);
+      return `<tr title="${esc(s.error || (s.connected ? 'connecté' : ''))}"><td>${e.name}${s.connected === false ? ' <span class="dn">●</span>' : ''}</td><td style="color:${LC}">${mu(r.long)}</td>` +
+        `<td style="color:${SC}">${mu(r.short)}</td><td class="${cov < 90 ? 'muted' : ''}">${cov} %</td></tr>`;
+    }).join('') + '</table>';
+    const top = (L.top || [])[0];
+    const big = top ? `<p class="small">Plus grosse : <b style="color:${top.side === 'long' ? LC : SC}">${mu(top.usd)} de ${top.side === 'long' ? 'longs' : 'shorts'}</b> sur ${esc((ex.find(e => e.id === top.ex) || {}).name || top.ex)} vers ${fmtP(top.px)}, ${ago(top.t)}.</p>` : '';
+    return `<div class="gexcard"><div class="gexh">Liquidations BTC · perpétuels${cex.simulated ? ' · simulées' : ''}</div>` +
+      `<table class="gextab cxliq"><tr><th></th><th>longs</th><th>shorts</th><th>total</th><th>BTC</th></tr>${rows}</table>` +
+      `<p class="small">${verdict}${range}</p>${per}${big}` +
+      `<p class="muted small">Toucher une ligne pour le détail. Binance n'envoie au plus qu'une liquidation par seconde : son chiffre est un minimum. ` +
+      `Enregistré seulement quand le terminal tourne (OKX : les 24 dernières heures sont reprises au démarrage) ; « ≈ » : moins de 90 % de la fenêtre enregistrée.</p></div>`;
+  }
+
+  function ordCard() {
+    const o = O(), sel = cexWin(), min = MINS.some(m => m[0] === o.cexMin) ? o.cexMin : 1000000, src = cex.sources || {};
+    const ci = cex.classes.findIndex(c => c >= min), V = cex.orders[sel].venues;
+    const sum = (v, from) => { const c = V[v].c.slice(from); return {buy: c.reduce((a, x) => a + x[0], 0), sell: c.reduce((a, x) => a + x[1], 0), n: c.reduce((a, x) => a + x[2] + x[3], 0)}; };
+    const ids = (cex.venues || []).map(v => v.id), mk = id => ((cex.venues || []).find(v => v.id === id) || {}).market;
+    const by = {}; ids.forEach(v => { by[v] = sum(v, ci); });
+    const add = list => list.reduce((a, v) => ({buy: a.buy + by[v].buy, sell: a.sell + by[v].sell, n: a.n + by[v].n}), {buy: 0, sell: 0, n: 0});
+    const spot = add(ids.filter(v => mk(v) === 'spot')), perp = add(ids.filter(v => mk(v) === 'perp')), all = add(ids);
+    const allSizes = ids.reduce((a, v) => { const x = sum(v, 0); return a + x.buy + x.sell; }, 0);
+    const line = (name, x, cls, tip) => `<tr class="${cls || ''}"${tip ? ` title="${esc(tip)}"` : ''}><td>${name}</td><td class="up">${tmu(x.buy)}</td><td class="dn">${tmu(x.sell)}</td>` +
+      `<td class="${x.buy - x.sell >= 0 ? 'up' : 'dn'}"><b>${tsmu(x.buy - x.sell)}</b></td><td>${x.n}</td></tr>`;
+    const vrows = ids.map(v => {
+      const s = src[v] || {}, cov = V[v].cover, dead = !s.alive && cov < 0.05;
+      const tip = `${Math.round(cov * 100)} % de la fenêtre enregistrée${s.error ? ' · ' + s.error : ''}${s.msgs != null ? ` · ${s.msgs} morceaux d'ordres reçus depuis le démarrage` : ''}`;
+      if (dead) return `<tr class="muted" title="${esc(tip)}"><td>${venueName(v)}</td><td colspan="4">pas de données${s.error ? ' (' + esc(String(s.error).slice(0, 40)) + ')' : ''}</td></tr>`;
+      return line(venueName(v) + (cov < 0.9 ? ' <span class="muted">≈</span>' : ''), by[v], '', tip);
+    }).join('');
+    const net = all.buy - all.sell, nv = v => by[v].buy - by[v].sell, ranked = ids.filter(v => by[v].n).sort((a, b) => nv(b) - nv(a));
+    const most = ranked.find(v => nv(v) > 0), least = [...ranked].reverse().find(v => nv(v) < 0);
+    const vlab = v => `${venueName(v, true)} ${mk(v) === 'perp' ? 'perp' : 'spot'} (${smu(nv(v))})`;
+    const lab = (MINS.find(m => m[0] === min) || [0, ''])[1].replace('≥ ', '');
+    let verdict = all.n ? `Sur ${sel} h, les ordres de ${lab} et plus : <b class="${net >= 0 ? 'up' : 'dn'}">${net >= 0 ? 'acheteurs' : 'vendeurs'} nets de ${mu(net)}</b> ` +
+      `(achats ${mu(all.buy)}, ventes ${mu(all.sell)}, ${all.n} ordres). Comptant <b class="${spot.buy >= spot.sell ? 'up' : 'dn'}">${smu(spot.buy - spot.sell)}</b> · perpétuels <b class="${perp.buy >= perp.sell ? 'up' : 'dn'}">${smu(perp.buy - perp.sell)}</b>.`
+      : `Aucun ordre de ${lab} et plus sur ${sel} h.`;
+    if (most || least) verdict += ' ' + [most ? `Le plus acheteur : ${vlab(most)}` : 'Aucune bourse acheteuse nette', least ? `le plus vendeur : ${vlab(least)}` : 'aucune bourse vendeuse nette'].join(' ; ') + '.';
+    const share = allSizes ? ` Ces ordres font ${Math.round((all.buy + all.sell) / allSizes * 100)} % de tout le volume au marché lu.` : '';
+    const ctl = `<div class="cxctl">${cex.windows.map(h => `<button type="button" data-cxw="${h}" class="${String(h) === sel ? 'on' : ''}">${h} h</button>`).join('')}` +
+      `<select data-gx="cexMin" title="Taille minimale d'un ordre (en dollars)">${MINS.map(([v, n]) => `<option value="${v}"${v === min ? ' selected' : ''}>${n}</option>`).join('')}</select></div>`;
+    const list = (min >= 1000000 ? cex.recent1m : cex.recent).filter(x => x.usd >= Math.max(min, cex.bigMin)).slice(0, 12);
+    const tape = list.length ? `<div class="gexh cxsub">Derniers gros ordres${min < cex.bigMin ? ` (${mu(cex.bigMin)} et plus)` : ''}</div><div class="cxtape">` + list.map(x =>
+      `<div title="${esc(`${x.n} morceau${x.n > 1 ? 'x' : ''}, prix moyen ${fmtP(x.px)}`)}"><span class="muted">${HMS.format(new Date(x.t))}</span><span>${venueName(x.v)}</span>` +
+      `<b class="${x.s > 0 ? 'up' : 'dn'}">${x.s > 0 ? 'achat' : 'vente'} ${mu(x.usd)}</b><span class="muted">${fmtP(x.px)}</span></div>`).join('') + '</div>' : '';
+    const tops = (cex.orders[sel].top || []).filter(x => x.usd >= min).slice(0, 3);
+    const topTxt = tops.length ? `<p class="small">Les plus gros sur ${sel} h : ` + tops.map(x => `<b class="${x.s > 0 ? 'up' : 'dn'}">${x.s > 0 ? 'achat' : 'vente'} ${mu(x.usd)}</b> ${venueName(x.v, true)} ${mk(x.v) === 'perp' ? 'perp' : 'spot'} (${ago(x.t)})`).join(' · ') + '.</p>' : '';
+    return `<div class="gexcard"><div class="gexh">Gros ordres exécutés · BTC${cex.simulated ? ' · simulés' : ''}</div>${ctl}` +
+      `<table class="gextab cxord"><tr><th>bourse</th><th>achats</th><th>ventes</th><th>net</th><th>ordres</th></tr>${vrows}` +
+      line('Comptant', spot, 'cxsum') + line('Perpétuels', perp, '') + line('Total', all, 'cxsum') + '</table>' +
+      `<p class="small">${verdict}${share}</p>${topTxt}${tape}` +
+      `<p class="muted small">Ordres au marché : ceux qui prennent la liquidité affichée (un achat paie le prix des vendeurs, une vente celui des acheteurs). ` +
+      `Les morceaux d'un même ordre sont regroupés. Enregistré seulement quand le terminal tourne ; « ≈ » : moins de 90 % de la fenêtre enregistrée.</p></div>`;
+  }
+
+  function renderCex(force) {
+    if (!on || !root) return;
+    const el = root.querySelector('.gexcx');
+    if (!el) return;
+    const ae = document.activeElement;
+    if (!force && ae && ae.tagName === 'SELECT' && el.contains(ae)) return;      // ne pas fermer la liste ouverte
+    if (!cex) { el.innerHTML = `<div class="gexcard muted small">Liquidations et gros ordres : ${esc(cexErr || 'chargement…')}</div>`; return; }
+    try { el.innerHTML = liqCard() + ordCard(); } catch (e) { el.innerHTML = `<div class="gexcard muted small">Liquidations et gros ordres : ${esc(String(e))}</div>`; }
+  }
+
   function show() {
     const was = on;
     on = true;
     render();
-    if (!was) { load(true); clearInterval(timer); timer = setInterval(() => load(false), 20000); window.addEventListener('resize', draw); }
+    renderCex();
+    if (!was) {
+      load(true); clearInterval(timer); timer = setInterval(() => load(false), 20000); window.addEventListener('resize', draw);
+      loadCex(); clearInterval(cexTimer); cexTimer = setInterval(loadCex, 10000);
+    }
     setTimeout(draw, 120);
   }
-  function hide() { on = false; clearInterval(timer); timer = null; window.removeEventListener('resize', draw); }
+  function hide() { on = false; clearInterval(timer); timer = null; clearInterval(cexTimer); cexTimer = null; window.removeEventListener('resize', draw); }
   let lastTick = 0;
   function onTick(price, sym) {                                       // prix en direct du BTC : seule la ligne du prix bouge entre deux chargements
     if (!on || sym !== 'BTCUSDT' || !(price > 0)) return;

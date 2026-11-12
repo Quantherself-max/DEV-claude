@@ -194,6 +194,15 @@ class WSClient:
             self.last_error = f"envoi impossible : {e}"
             return False
 
+    def reconnect(self) -> None:
+        """V44 : ferme la session en cours sans arreter le client (il se reconnecte tout seul), quand la bourse le demande."""
+        s = self.sock
+        if s is not None:
+            try:
+                s.close()
+            except OSError:
+                pass
+
     # --- boucle de reconnexion ---
     def run_forever(self):
         wait = 1.0

@@ -99,7 +99,7 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
     vwapW: false, vwapM: false, vwapY: false, avwap: false, vol: true, heat: false, liqmap: false, oi: false, fund: false, fundMode: '8h', delta: false, deltaCvd: true, cvdMode: 'perp', cvdReset: 'all', deltaUnit: 'coin', oiMode: 'candles', oiColor: 'pos', zones: true}, flow: null,
   mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {M: true, W: true, D: true, '4h': false, '1h': false},
   tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true, expand: false},
-  gexView: {scope: 'all', src: 'all', range: 10, bars: 'net', curve: true},                       // V40 : onglet GEX
+  gexView: {scope: 'all', src: 'all', range: 10, bars: 'net', curve: true, cexWin: 24, cexMin: 1000000},   // V40 : onglet GEX ; V44 : fenêtre et seuil des gros ordres
   tpoGroups: {}, utabs: [], tabOrder: [], tabHide: []};                                         // V35 : tes onglets de graphiques (nom, éléments, unité de temps)                                                    // V34 : séances TPO fusionnées et profils dépliés, par paire et type de séance
 async function api(path, body) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
@@ -733,7 +733,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 43;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille, V42 : prix sous 0,01 $ (PUMP), V43 : repères des sous-fenêtres)
+const NEED_API = 44;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille, V42 : prix sous 0,01 $ (PUMP), V43 : repères des sous-fenêtres, V44 : /api/cexflow, liquidations et gros ordres des bourses)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
