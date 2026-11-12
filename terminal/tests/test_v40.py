@@ -64,7 +64,7 @@ class PageTests(unittest.TestCase):
         self.assertIn('<script src="gex.js"></script>', html)
         app = (WEB / "app.js").read_text(encoding="utf-8")
         for s in ("gex: [], pair: []", "GEXV.init(window.LT, gg)", "GEXV.show()", "GEXV.onTick(price, live.sym)", "gexView: st.gexView",
-                  "gexView: {scope: 'all', src: 'all', range: 10, bars: 'net', curve: true}"):
+                  "gexView: {scope: 'all', src: 'all', range: 10, bars: 'net', curve: true"):      # V44 : + cexWin, cexMin
             self.assertIn(s, app)
         js = (WEB / "gex.js").read_text(encoding="utf-8")
         for s in ("/api/gex?scope=", "Ce que feraient les teneurs de marché", "Selon les échéances prises en compte", "Échéances Deribit", "Bourses",
