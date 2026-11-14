@@ -64,6 +64,7 @@
       <button data-layout="mtf" title="Le même instrument sur plusieurs unités de temps à la fois">Multi-unités</button>
       <button data-layout="tpo" title="TPO (profil de marché) des séances du mois, de la semaine, du jour, de 4 heures et d'1 heure">TPO</button>
       <button data-layout="gex" title="Le gamma des options BTC en entier : profil par strike, murs, bascule, régime, flux de couverture, mouvement attendu, échéances">GEX</button>
+      <button data-layout="quant" title="Moteur exact sur données réelles : CVD transaction par transaction contrôlé contre les bougies officielles, régime de marché, carnet (déséquilibre, murs), profil de volume exact, options, réseau Bitcoin, état de chaque source">Quant</button>
     </span>
     <span id="pairHint" class="muted small" hidden>Les deux instruments côte à côte, avec les setups qui vont ensemble. Chaque instrument a aussi son propre onglet.</span>
     <div class="spacer"></div>
@@ -202,7 +203,6 @@
     <div class="mbody">
       <section>
         <h4><span class="step">1</span> Source des données</h4>
-        <label class="opt"><input type="radio" name="source" value="simulated"> <b>Simulées</b> <span class="muted">— prix fictifs, pour découvrir le terminal sans internet</span></label>
         <label class="opt"><input type="radio" name="source" value="binance"> <b>Binance (réel)</b> <span class="muted">— vrais prix, volumes et Open Interest (gratuit, sans compte)</span></label>
         <div class="line"><button id="testBinance">Tester la connexion Binance</button><span id="binanceRes" class="muted"></span></div>
         <div id="binanceList" class="checks"></div>
@@ -329,6 +329,7 @@
 <script src="mtf.js"></script>
 <script src="tpo.js"></script>
 <script src="gex.js"></script>
+<script src="quant.js"></script>
 <script src="macro.js"></script>
 <script src="app.js"></script>
 </body>

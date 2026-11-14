@@ -1,16 +1,48 @@
 """Client WebSocket minimal (bibliotheque standard uniquement) : handshake, trames texte, fragmentation,
-ping/pong, detection d'inactivite et reconnexion automatique avec attente progressive.
-Sert a lire les flux publics de Binance (transactions, liquidations) cote serveur ; aucun envoi de donnees."""
+ping/pong, detection d'inactivite et reconnexion automatique.
+Sert a lire les flux publics des bourses (transactions, liquidations, carnets) cote serveur.
+V45 : reconnexion a attente EXPONENTIELLE avec alea (1 s, 2 s, 4 s... jusqu'a 60 s, chaque attente tiree entre la moitie et la totalite de
+sa valeur : apres une panne d'une bourse, toutes les connexions ne repartent pas au meme instant) ; retour a 1 s apres une session
+stable (plus d'une minute) ; chaque coupure est datee (`gaps`, et `on_gap(debut_ms, fin_ms)`) pour que les calculs sachent quelles
+periodes sont incompletes ; passage par un proxy HTTP (variables HTTPS_PROXY / HTTP_PROXY, NO_PROXY respecte) par la methode CONNECT."""
 from __future__ import annotations
 import base64
 import hashlib
 import os
+import random
 import socket
 import ssl
 import struct
 import threading
 import time
+from collections import deque
 from urllib.parse import urlparse
+
+BACKOFF_BASE, BACKOFF_MAX, STABLE_S = 1.0, 60.0, 60.0
+
+
+def backoff_wait(failures: int, rnd=random.random, base: float = BACKOFF_BASE, cap: float = BACKOFF_MAX) -> float:
+    """Attente avant la tentative qui suit `failures` echecs de suite (1 = premier echec)."""
+    return min(cap, base * (2 ** max(0, failures - 1))) * (0.5 + 0.5 * rnd())
+
+
+def proxy_for(host: str, tls: bool, env=None):
+    """(hote, port, en-tete d'authentification ou None) du proxy a utiliser pour `host`, ou None (connexion directe)."""
+    env = os.environ if env is None else env
+    raw = (env.get("HTTPS_PROXY") or env.get("https_proxy")) if tls else (env.get("HTTP_PROXY") or env.get("http_proxy"))
+    if not raw:
+        return None
+    for pat in (env.get("NO_PROXY") or env.get("no_proxy") or "").split(","):
+        pat = pat.strip().lstrip("*")
+        if pat and (host == pat.lstrip(".") or host.endswith(pat if pat.startswith(".") else "." + pat)):
+            return None
+    u = urlparse(raw if "://" in raw else "http://" + raw)
+    if not u.hostname:
+        return None
+    auth = None
+    if u.username:
+        auth = "Basic " + base64.b64encode(f"{u.username}:{u.password or ''}".encode()).decode()
+    return u.hostname, u.port or 8080, auth
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 OP_CONT, OP_TEXT, OP_BIN, OP_CLOSE, OP_PING, OP_PONG = 0, 1, 2, 8, 9, 10
@@ -83,14 +115,10 @@ class WSClient:
     """Une connexion qui se reconnecte toute seule. on_message(texte) est appele dans le thread du client."""
 
     def __init__(self, url: str, on_message, name: str = "ws", ssl_context=None, idle_timeout: float = 90.0,
-                 on_open=None):
-        u = urlparse(url)
-        if u.scheme not in ("ws", "wss"):
-            raise ValueError(f"URL WebSocket attendue (ws:// ou wss://) : {url}")
-        self.url, self.name, self.on_message, self.on_open = url, name, on_message, on_open
-        self.host, self.tls = u.hostname, u.scheme == "wss"
-        self.port = u.port or (443 if self.tls else 80)
-        self.path = (u.path or "/") + (("?" + u.query) if u.query else "")
+                 on_open=None, on_gap=None, rnd=random.random, fallbacks=()):
+        self.name, self.on_message, self.on_open = name, on_message, on_open
+        self.urls = [url, *[f for f in fallbacks if f and f != url]]      # V45 : adresses de secours (autre port), essayees a tour de role
+        self._set_url(url)
         self.ctx = ssl_context
         self.idle_timeout = idle_timeout
         self.stop_ev = threading.Event()
@@ -100,6 +128,20 @@ class WSClient:
         self.connects = 0
         self.thread = None
         self.sock = None
+        self.on_gap, self.rnd = on_gap, rnd
+        self.failures = 0                    # echecs de suite depuis la derniere session stable
+        self.next_wait = 0.0                 # attente en cours avant la prochaine tentative (secondes)
+        self.down_since = None               # heure (ms) du dernier message avant la coupure en cours
+        self.gaps = deque(maxlen=200)        # [(debut ms, fin ms)] des coupures passees
+
+    def _set_url(self, url: str) -> None:
+        u = urlparse(url)
+        if u.scheme not in ("ws", "wss"):
+            raise ValueError(f"URL WebSocket attendue (ws:// ou wss://) : {url}")
+        self.url = url
+        self.host, self.tls = u.hostname, u.scheme == "wss"
+        self.port = u.port or (443 if self.tls else 80)
+        self.path = (u.path or "/") + (("?" + u.query) if u.query else "")
 
     # --- une session ---
     def _handshake(self, sock):
@@ -127,9 +169,12 @@ class WSClient:
         return rest
 
     def _session(self):
-        raw = socket.create_connection((self.host, self.port), timeout=10)
+        px = proxy_for(self.host, self.tls)
+        raw = socket.create_connection((px[0], px[1]) if px else (self.host, self.port), timeout=10)
         sock = raw
         try:
+            if px:
+                self._tunnel(raw, px[2])
             if self.tls:
                 ctx = self.ctx or ssl.create_default_context()
                 sock = ctx.wrap_socket(raw, server_hostname=self.host)
@@ -139,6 +184,15 @@ class WSClient:
             self.sock = sock
             self.connected, self.last_msg = True, time.time()
             self.connects += 1
+            if self.down_since is not None:                              # fin d'une coupure : on la date
+                gap = (self.down_since, int(time.time() * 1000))
+                self.down_since = None
+                self.gaps.append(gap)
+                if self.on_gap:
+                    try:
+                        self.on_gap(*gap)
+                    except Exception as e:
+                        self.last_error = f"on_gap : {type(e).__name__}: {e}"
             if self.on_open:
                 self.on_open(self)
             rd, text, kind = FrameReader(), bytearray(), None
@@ -175,12 +229,32 @@ class WSClient:
                     raise WSError("connexion fermee par le serveur")
                 rd.feed(chunk)
         finally:
+            if self.connected and self.down_since is None:
+                self.down_since = int(self.last_msg * 1000)              # les donnees sont sures jusqu'au dernier message recu
             self.connected = False
             self.sock = None
             try:
                 sock.close()
             except OSError:
                 pass
+
+    def _tunnel(self, sock, auth) -> None:
+        """Ouvre un tunnel vers la bourse a travers le proxy (CONNECT) ; la suite (TLS, poignee de main) passe dedans."""
+        req = f"CONNECT {self.host}:{self.port} HTTP/1.1\r\nHost: {self.host}:{self.port}\r\n"
+        if auth:
+            req += f"Proxy-Authorization: {auth}\r\n"
+        sock.sendall((req + "\r\n").encode())
+        data = b""
+        while b"\r\n\r\n" not in data:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise WSError("proxy : connexion fermee")
+            data += chunk
+            if len(data) > 65536:
+                raise WSError("proxy : reponse trop longue")
+        line = data.split(b"\r\n", 1)[0].decode("latin-1")
+        if " 200" not in line:
+            raise WSError(f"proxy : tunnel refuse ({line})")
 
     def send_text(self, text: str) -> bool:
         """Envoie un message texte (abonnement, ping) ; False si la connexion n'est pas ouverte."""
@@ -205,9 +279,8 @@ class WSClient:
 
     # --- boucle de reconnexion ---
     def run_forever(self):
-        wait = 1.0
         while not self.stop_ev.is_set():
-            t0 = time.time()
+            t0, before = time.time(), self.connects
             try:
                 self._session()
                 self.last_error = ""
@@ -215,8 +288,11 @@ class WSClient:
                 self.last_error = f"{type(e).__name__}: {e}"
             if self.stop_ev.is_set():
                 break
-            wait = 1.0 if time.time() - t0 > 60 else min(30.0, wait * 2)      # session stable : on repart vite
-            self.stop_ev.wait(wait)
+            self.failures = 1 if time.time() - t0 > STABLE_S else self.failures + 1     # session stable : on repart vite
+            if self.connects == before and len(self.urls) > 1 and self.failures >= 2:    # jamais ouverte a cette adresse : la suivante
+                self._set_url(self.urls[(self.urls.index(self.url) + 1) % len(self.urls)])
+            self.next_wait = backoff_wait(self.failures, self.rnd)
+            self.stop_ev.wait(self.next_wait)
 
     def start(self):
         if self.thread and self.thread.is_alive():
@@ -233,3 +309,11 @@ class WSClient:
                 s.close()
             except OSError:
                 pass
+
+
+def port_fallbacks(url: str) -> tuple:
+    """Adresse de secours d'un flux servi sur un port inhabituel (OKX : 8443) : la meme sur le port 443, que tous les reseaux laissent passer."""
+    u = urlparse(url)
+    if u.port in (None, 443, 80):
+        return ()
+    return (url.replace(f"{u.hostname}:{u.port}", u.hostname, 1),)

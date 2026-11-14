@@ -76,7 +76,7 @@ def chat_is_bot(cid: str, tok: str) -> bool:
 
 @dataclass
 class Config:
-    source: str = "binance"              # binance = vraies donnees (par defaut) | simulated = prix fictifs (essai hors ligne)
+    source: str = "binance"              # binance = vraies donnees ; V45 : « simulated » n'existe plus que pour les tests automatiques
     symbols: tuple = ("BTCUSDT", "SOLUSDT", "PUMPUSDT")       # V42 : PUMP (jeton de pump.fun, perpetuel Binance depuis le 10 juillet 2025)
     host: str = "127.0.0.1"              # local uniquement : le terminal n'est pas expose sur le reseau
     port: int = 8765
@@ -86,6 +86,7 @@ class Config:
     live_ws: bool = True                 # flux temps reel cote serveur (prix exact pour les alertes, liquidations reelles)
     orderflow_on: bool = True            # V15 : carnet d'ordres Binance (route /public) + nombre d'ordres OKX + ruban (vitesse, gros ordres)
     cexflow_on: bool = True              # V44 : onglet GEX : liquidations BTC (Binance, Bybit, OKX) et gros ordres de 5 bourses (flux publics)
+    quant_on: bool = True                # V45 : moteur exact (onglet Quant) : CVD tick par tick, regime de marche, carnet, options, reseau Bitcoin
     sizeflow_days: int = 14               # V39 : jours de transactions du marche SPOT (flux par taille d'ordre) ; et jours recents du perpetuel dont l'archive est relue une fois pour ce flux ; 0 = spot desactive
     sizeflow_history_days: int = 180      # V40.1 : historique a l'heure du flux par taille (archives relues une fois, quelques Ko gardes par jour) ; 0 = coupe
     binance_spot_ws: str = "wss://stream.binance.com:9443"   # V39 : flux temps reel Binance spot (transactions)
@@ -171,6 +172,12 @@ class Config:
         return bool(self.telegram_token and self.telegram_chat_id)
 
 
+def test_doubles() -> bool:
+    """V45 : vrai seulement pendant les tests automatiques (variable LIQ_TEST_DOUBLES=1, posee par le dossier tests). Les generateurs de
+    donnees fabriquees ne servent plus qu'a eux : ni les reglages, ni la ligne de commande, ni le fichier .env ne peuvent les activer."""
+    return os.environ.get("LIQ_TEST_DOUBLES") == "1"
+
+
 def load_config(env_path: Path | None = None) -> Config:
     env = {}
     for f in env_sources(env_path or ROOT / ".env"):
@@ -180,6 +187,8 @@ def load_config(env_path: Path | None = None) -> Config:
     c = Config()
     g = env.get
     c.source = g("TERMINAL_SOURCE", c.source).lower()
+    if c.source != "binance" and not test_doubles():
+        c.source = "binance"                 # V45 : le terminal ne montre plus que des donnees reelles (un ancien .env « simulated » est ignore)
     c.symbols = tuple(s.strip().upper() for s in g("TERMINAL_SYMBOLS", ",".join(c.symbols)).split(",") if s.strip())
     c.host = g("TERMINAL_HOST", c.host)
     c.port = int(g("TERMINAL_PORT", c.port))
@@ -189,6 +198,7 @@ def load_config(env_path: Path | None = None) -> Config:
     c.live_ws = g("TERMINAL_LIVE_WS", "1").lower() not in ("0", "false", "non", "no")
     c.orderflow_on = g("TERMINAL_ORDERFLOW", "1").lower() not in ("0", "false", "non", "no")
     c.cexflow_on = g("TERMINAL_CEXFLOW", "1").lower() not in ("0", "false", "non", "no")
+    c.quant_on = g("TERMINAL_QUANT", "1").lower() not in ("0", "false", "non", "no")
     c.footprint_days = max(0, min(400, int(float(g("TERMINAL_FOOTPRINT_DAYS", c.footprint_days)))))
     c.sizeflow_days = max(0, min(62, int(float(g("TERMINAL_SIZEFLOW_DAYS", c.sizeflow_days)))))
     c.sizeflow_history_days = max(0, min(1500, int(float(g("TERMINAL_SIZEFLOW_HISTORY_DAYS", c.sizeflow_history_days)))))

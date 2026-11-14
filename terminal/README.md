@@ -1,7 +1,8 @@
-# Liq Terminal (V44)
+# Liq Terminal (V45)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Un moteur de calcul exact sur données réelles uniquement, et l'onglet Quant** (V45) : CVD transaction par transaction contrôlé contre les bougies officielles, régime de marché, carnet (déséquilibre pondéré, murs), profil de volume exact, options (volatilité, skew 25 delta, max pain, gamma), réseau Bitcoin, état de chaque source ; backtest avec financement réel et Monte Carlo (voir « V45 » plus bas et `AUDIT.md`).
 - **Les liquidations BTC et les gros ordres des bourses dans l'onglet GEX** (V44) : combien de millions de dollars de longs et de shorts ont été liquidés sur 6, 12, 24 et 48 heures (Binance, Bybit, OKX), à côté du mouvement du BTC, et qui achète ou vend en gros ordres sur Binance, Coinbase, Bitstamp, OKX et Bybit (voir « V44 » plus bas).
 - **Le flux par taille d'ordre sur plusieurs mois** (V41) : historique à l'heure (180 jours par défaut, réglable) pour les grandes unités de temps (voir « V41 » plus bas).
 - **Un onglet GEX** (V40) : le gamma des options BTC sur une page à part, à côté de tes graphiques : profil par strike, murs, bascule, régime, flux de couverture, mouvement attendu, échéances et bourses (voir « V40 » plus bas).
@@ -137,6 +138,39 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V45 : données réelles uniquement, moteur de calcul exact, onglet Quant
+
+L'audit complet, ce qui a été vérifié sur de vraies données et le plan d'architecture sont dans **`AUDIT.md`**.
+
+**Données réelles uniquement.** Le mode « données simulées » n'existe plus dans le terminal : ni dans les réglages, ni en ligne de commande, ni dans `.env` (un ancien `TERMINAL_SOURCE=simulated` est ignoré). Une source qui ne répond pas affiche son erreur ; aucun chiffre n'est mis à sa place. Les générateurs de données ne servent plus qu'aux tests automatiques.
+
+**Onglet Quant** (bouton « Quant » à côté de « GEX »), pour l'instrument affiché, relu toutes les 5 secondes :
+
+- **Régime de marché** sur 15 minutes, 1 heure et 4 heures : prix, intérêt ouvert, financement, CVD des perpétuels et CVD du comptant croisés. Régimes : cascade de liquidations de longs, short squeeze, ouverture de shorts agressifs, ouverture de longs agressifs, accumulation au comptant, distribution au comptant, compression, neutre. Une mesure absente n'est jamais devinée : elle est écrite « non mesuré ».
+- **CVD exact** : chaque transaction Binance (côté de l'agresseur), en entiers. Delta et part du volume sur 5 minutes, 15 minutes, 1 heure, 4 heures et 24 heures, perpétuels et comptant, avec la courbe sur 24 heures. Toutes les 5 minutes, les minutes fermées sont comparées aux bougies officielles puis remplacées par elles ; le compteur donne les minutes identiques, les minutes décalées et le résidu cumulé.
+- **Divergences prix / CVD** (ordinaires et cachées) et **absorptions** (gros volume agressif sans déplacement du prix). Une divergence n'apparaît qu'après la confirmation du second pivot.
+- **CVD par bourse** (BTC) : Binance, Bybit, OKX, Coinbase et Bitstamp, comptant et perpétuel, en dollars.
+- **Carnet** : déséquilibre pondéré par la distance au prix (± 0,1 %, ± 0,5 %, ± 1 %), murs, et la fin de chaque mur suivi : exécuté, retiré (possible ordre d'affichage) ou rechargé.
+- **Profil de volume exact** : POC, VAH, VAL du jour, des 24 heures et de la veille, à partir des transactions.
+- **Dérivés** : intérêt ouvert et financement de Binance, Bybit et OKX ; part des comptes longs.
+- **Options BTC** (Deribit, chaîne complète) : volatilité au prix, skew et butterfly à 25 delta par échéance, max pain, gamma total, bascule, murs.
+- **Réseau Bitcoin** : frais, transactions en attente, puissance de calcul, difficulté (mempool.space) ; adresses actives, MVRV, entrées et sorties des bourses (CoinMetrics, quotidien).
+- **État des sources** : chaque adresse (répond ou non, latence, quota utilisé) et chaque flux en direct (connecté, coupures).
+
+**Backtest.** Financement réel avec son signe (un short reçoit un financement positif ; l'ancien calcul le comptait comme un coût dans les deux sens), glissement qui grandit avec l'agitation du marché, Sortino, Calmar, durée du drawdown, MAE / MFE, Monte Carlo (1 000 tirages par permutation et 1 000 avec remise : probabilité de ruine, intervalle du drawdown). Un test prouve qu'aucune décision n'utilise l'avenir. Les rapports de l'onglet Backtest gardent leurs anciens chiffres tant que les études ne sont pas relancées.
+
+**Deux outils à lancer sur ton ordinateur :**
+
+- `python tools/check_sources.py` : chaque source répond-elle, et nos formules donnent-elles les mêmes chiffres que les bourses (CVD contre les bougies de Binance, volatilité et grecques contre Deribit) ?
+- `python tools/check_cvd_archive.py --symbol SOLUSDT` : recompte une journée entière de transactions et la compare aux bougies officielles.
+
+**Limites.**
+
+- Depuis la machine de développement, Binance refuse l'accès (par pays) : l'API et les flux en direct de Binance n'ont pas pu être testés en direct, seulement sur ses archives publiques. L'API REST de Bybit non plus. Les deux outils ci-dessus font la vérification chez toi.
+- Le CVD par bourse et le suivi des murs ne comptent que pendant que le terminal tourne.
+- Les modèles de glissement et le sens des teneurs de marché sur les options sont des hypothèses, écrites comme telles.
+- Pour couper le moteur exact : `TERMINAL_QUANT=0` dans `.env`.
 
 ## Ce qui est nouveau en V44 : liquidations et gros ordres des bourses (onglet GEX)
 

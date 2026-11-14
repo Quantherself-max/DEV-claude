@@ -342,7 +342,7 @@ button.mini{padding:1px 6px;font-size:11px}button.mini[hidden]{display:none}
 body.theme-nuit .mcell{background:#0f0f0f}body.theme-nuit .mhead{background:#0f0f0f;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
 @media (max-width:1000px){.mtfcells.n3,.mtfcells.n4,.mtfcells.n5{grid-template-columns:1fr;grid-template-rows:none;grid-auto-rows:minmax(260px,1fr)}.mtfcells .mcell{grid-column:auto!important}}
 /* V17 : vue TPO */
-#desk.ltpo,#desk.lgex{grid-template-columns:minmax(0,1fr)}
+#desk.ltpo,#desk.lgex,#desk.lquant{grid-template-columns:minmax(0,1fr)}
 .tpo{display:flex;flex-direction:column;gap:6px;min-height:0;min-width:0}.tpo.hide{display:none}
 .tpobar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:2px 2px;font-size:12px}.tpobar label{display:flex;align-items:center;gap:4px;cursor:pointer}
 .tpolegend{flex:1;min-width:280px}.tpolegend .tsp{display:inline-block;width:14px;height:9px;background:rgba(170,170,170,0.22);border:1px solid rgba(190,190,190,0.45);color:transparent;vertical-align:middle}.tpolegend .tpr{color:#FFB300;font-weight:700}
@@ -685,3 +685,44 @@ ul.recent li{padding:3px 0;border-bottom:1px solid #1b2030}
 .cxtape div span:last-child{text-align:right}.cxtape .up{color:#3ddc97}.cxtape .dn{color:#ff8a8a}
 @media (max-width:520px){.gextab.cxord td,.gextab.cxord th{padding:3px 2px;font-size:11.5px}}
 @media (max-width:1000px){#desk.lgex{height:auto}.gexmain{grid-template-columns:1fr}.gexchart{height:68vh;min-height:420px}.gexside{max-height:none;overflow:visible}}
+/* V45 : onglet Quant (moteur exact) */
+#desk.lquant{overflow:auto;align-content:start}
+@media (max-width:1000px){#desk.lquant{height:auto;overflow:visible}}
+.qtab td.qwrap{white-space:normal;text-align:left;word-break:break-word}
+.quantv{display:flex;flex-direction:column;gap:8px;min-width:0}
+.quantv.hide{display:none}
+.qbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 2px}
+.qttl{font-size:15px}
+.qgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:8px;align-items:start}
+.qcard{background:var(--panel,#11151b);border:1px solid var(--line,#1f2630);border-radius:8px;padding:9px 11px;min-width:0;overflow-x:auto}
+.qcard.qwide{grid-column:1/-1}
+.qcard p{margin:6px 0 0}
+.qh{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--mut,#8a90a0);margin-bottom:7px}
+.qsub{font-size:11px;color:var(--mut,#8a90a0);margin:9px 0 3px;border-top:1px solid var(--line,#1f2630);padding-top:6px}
+.qtab{width:100%;border-collapse:collapse;font-size:12.5px}
+.qtab th{font-weight:500;color:var(--mut,#8a90a0);text-align:right;padding:2px 5px;font-size:11px}
+.qtab th:first-child,.qtab td:first-child{text-align:left}
+.qtab td{text-align:right;padding:3px 5px;border-top:1px solid var(--line,#1f2630);white-space:nowrap}
+.qtab.qkv td{white-space:normal}
+.qtab .qtot td{border-top:2px solid var(--line,#1f2630);font-weight:600}
+.quantv .up{color:#22c55e}.quantv .dn{color:#ef4444}
+.qreg{padding:6px 0;border-top:1px solid var(--line,#1f2630)}
+.qreg:first-of-type{border-top:0;padding-top:0}
+.qtag{display:inline-block;min-width:48px;font-size:11px;color:var(--mut,#8a90a0)}
+.qchips{display:flex;flex-wrap:wrap;gap:4px;margin:5px 0 3px}
+.qchip{font-size:11px;border:1px solid var(--line,#1f2630);border-radius:10px;padding:1px 7px;white-space:nowrap}
+.qlist{margin:0;padding:0;list-style:none;font-size:12.5px}
+.qlist li{padding:3px 0;border-top:1px solid var(--line,#1f2630)}
+.qlist li:first-child{border-top:0}
+.qchart{width:100%;height:150px;display:block;margin-top:8px;background:rgba(255,255,255,.02);border-radius:6px}
+.qlegend{margin-top:3px}
+.qseg{display:flex;gap:4px;margin-bottom:6px}
+.qseg button{font-size:12px;padding:2px 9px;border-radius:6px;border:1px solid var(--line,#1f2630);background:transparent;color:inherit;cursor:pointer}
+.qseg button.on{background:rgba(56,189,248,.16);border-color:#38bdf8}
+.qobi{display:grid;grid-template-columns:54px 1fr 48px;gap:6px;align-items:center;font-size:12.5px;margin:3px 0}
+.qobi .small{grid-column:2/4}
+.qobar{position:relative;height:9px;background:rgba(255,255,255,.05);border-radius:5px;overflow:hidden}
+.qobar::after{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--mut,#8a90a0)}
+.qobar i{position:absolute;top:0;bottom:0}
+.qobar i.up{background:#22c55e}.qobar i.dn{background:#ef4444}
+@media (max-width:520px){.qgrid{grid-template-columns:1fr}.qtab{font-size:11.5px}.qtab td,.qtab th{padding:3px 3px}}

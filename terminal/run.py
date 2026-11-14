@@ -140,7 +140,8 @@ def main() -> int:
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--telegram-chatid", action="store_true")
     ap.add_argument("--telegram-test", action="store_true")
-    ap.add_argument("--source", choices=("simulated", "binance"))
+    ap.add_argument("--source", choices=("simulated", "binance") if os.environ.get("LIQ_TEST_DOUBLES") == "1" else ("binance",),
+                    help=argparse.SUPPRESS)                          # V45 : donnees reelles uniquement (« simulated » : tests automatiques)
     ap.add_argument("--port", type=int)
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
@@ -183,7 +184,7 @@ def main() -> int:
     url = f"http://127.0.0.1:{cfg.port}/"
     print("=" * 64)
     print(f"  Terminal ouvert dans ton navigateur : {url}")
-    print(f"  Source : {'donnees SIMULEES (prix fictifs)' if cfg.source == 'simulated' else 'Binance (reel)'}"
+    print(f"  Source : {'donnees de TEST (fabriquees)' if cfg.source == 'simulated' else 'donnees reelles (Binance et sources publiques)'}"
           f" | alertes : {'Telegram' if cfg.telegram_on else 'console seulement'}")
     print("  Reglages (donnees reelles, Telegram) : bouton  Reglages  en haut a droite du terminal.")
     print("  Pour arreter : ferme cette fenetre (ou Ctrl+C).")

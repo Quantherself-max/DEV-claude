@@ -580,7 +580,7 @@ def run(ds: "bt.Dataset", label: str, start_ms: int, end_ms: int, split_ms: int,
     p_tr = bt.percentile_of(ex_tr, real) if ex_tr and real is not None else None
     gross = (sum(t["r_gross"] for t in cur_trades) / len(cur_trades)) if cur_trades else None
     bh = bt.buy_hold(ds, start_ms, end_ms)
-    m_all = bt.metrics(cur_trades, start_ms, end_ms)
+    m_all = bt.metrics(cur_trades, start_ms, end_ms, mc=1000)          # V45 : avec Monte Carlo (1 000 tirages) pour le résultat principal
     eq_bh = []
     b1h = ds.b1h
     i0, i1 = b1h.idx(start_ms), b1h.idx(end_ms)
@@ -655,6 +655,8 @@ def run(ds: "bt.Dataset", label: str, start_ms: int, end_ms: int, split_ms: int,
             "trend": {"aligned": al_row["all"], "counter": co_row["all"], "neutral": ne_row["all"], "alignedEras": al_row["eras"], "counterEras": co_row["eras"]},
             "terminal": {"name": CURRENT, **{k: cur_row[k] for k in ("all", "eras", "years")}, "grossR": gross, "pValue": p_un, "pValueTrend": p_tr,
                          "control": ctrl_un, "controlTrend": ctrl_tr, "buyHold": bh, "equity": m_all.get("equity", []), "equityBuyHold": eq_bh,
+                         "quant": {k: m_all.get(k) for k in ("sharpe", "sortino", "calmar", "pf", "expR", "maxDD", "ddDays", "ddRecovered", "payoff",
+                                                             "maxLossStreak", "maxWinStreak", "excursions", "mc")},
                          "legacy": {"name": LEGACY, **{k: leg_row[k] for k in ("all", "eras", "years")}}},
             "variants": [row for row, _ in vr], "bestVariant": best["name"], "costSens": sens, "events": events, "touch": touch, "regime": reg,
             "eventThreshold": 3.0}

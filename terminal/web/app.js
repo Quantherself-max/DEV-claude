@@ -188,7 +188,7 @@ function buildHeatImage(h) {
 const panels = [];
 // V28 : main = Graphique (épuré), blank = Vierge, heat = Heatmap du carnet ; les trois sont le graphique principal avec SES éléments (desk.js) ;
 // 3 = Grille (principal + liquidité + VWAP·VP) ; pair = onglet « BTC + SOL » (deux instruments côte à côte, setups liés)
-const LAYOUTS = {main: ['main'], blank: ['main'], heat: ['main'], '1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: [], gex: [], pair: []};
+const LAYOUTS = {main: ['main'], blank: ['main'], heat: ['main'], '1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: [], gex: [], quant: [], pair: []};
 const needs = k => (LAYOUTS[st.layout] || LAYOUTS.main).includes(k) && st.page === 'desk';
 // ---------- V36 : mêmes réglages sur tous tes ordinateurs : la page envoie ses réglages au terminal (copie sur le disque et, si
 // choisi, dans un dossier synchronisé par le cloud) et reprend la version la plus récente au démarrage et quand tu reviens sur la fenêtre ----------
@@ -306,6 +306,8 @@ function applyLayout() {
   if (tg) { tg.classList.toggle('hide', st.layout !== 'tpo'); if (st.layout === 'tpo' && st.page === 'desk') TPO.show(); else TPO.hide(); }
   const gg = $('#gexGrid');                                             // V40 : onglet GEX
   if (gg) { gg.classList.toggle('hide', st.layout !== 'gex'); if (st.layout === 'gex' && st.page === 'desk') GEXV.show(); else GEXV.hide(); }
+  const qg = $('#quantGrid');                                           // V45 : onglet Quant (moteur exact)
+  if (qg) { qg.classList.toggle('hide', st.layout !== 'quant'); if (st.layout === 'quant' && st.page === 'desk') QUANTV.show(); else QUANTV.hide(); }
   document.querySelectorAll('#layouts button').forEach(b => b.classList.toggle('on', b.dataset.layout === st.layout || (b.dataset.layout === 'main' && st.layout === '1')));
   $('#deskwrap').classList.toggle('noside', !st.sideOpen);
   $('#sideToggle').textContent = st.sideOpen ? 'Panneau ▸' : '◂ Panneau';
@@ -324,6 +326,7 @@ function createPanels() {
   const g = document.createElement('section'); g.id = 'mtfGrid'; g.className = 'mtf hide'; desk.appendChild(g); MTF.init(window.LT, g);
   const tg = document.createElement('section'); tg.id = 'tpoGrid'; tg.className = 'tpo hide'; desk.appendChild(tg); TPO.init(window.LT, tg);
   const gg = document.createElement('section'); gg.id = 'gexGrid'; gg.className = 'gexv hide'; desk.appendChild(gg); GEXV.init(window.LT, gg);   // V40 : onglet GEX
+  const qg = document.createElement('section'); qg.id = 'quantGrid'; qg.className = 'quantv hide'; desk.appendChild(qg); QUANTV.init(window.LT, qg);   // V45 : onglet Quant
   let sr = false, sx = false;
   panels.forEach(p => {
     p.chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
@@ -733,7 +736,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 44;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille, V42 : prix sous 0,01 $ (PUMP), V43 : repères des sous-fenêtres, V44 : /api/cexflow, liquidations et gros ordres des bourses)
+const NEED_API = 45;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille, V42 : prix sous 0,01 $ (PUMP), V43 : repères des sous-fenêtres, V44 : /api/cexflow, liquidations et gros ordres des bourses, V45 : /api/quant, moteur exact)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -901,6 +904,7 @@ function navigate(page, sub) {
   if (page === 'desk' && st.layout === 'mtf') MTF.show(); else MTF.hide();
   if (page === 'desk' && st.layout === 'tpo') TPO.show(); else TPO.hide();
   if (page === 'desk' && st.layout === 'gex') GEXV.show(); else GEXV.hide();
+  if (page === 'desk' && st.layout === 'quant') QUANTV.show(); else QUANTV.hide();
   if (page === 'overview') pollOverview();
   if (page === 'backtest') Backtest.show();
   if (page === 'history') History.show();

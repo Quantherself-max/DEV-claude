@@ -30,6 +30,7 @@ class LiveFeed:
         self.trades = {}                                        # V23 : synchronisation des transactions exactes (data/trades.py), par paire
         self.spot_trades = {}                                   # V39 : la meme chose pour le marche spot
         self.cex = None                                         # V44 : registre des gros ordres et liquidations BTC (data/cexflow.py)
+        self.quant = None                                       # V45 : moteur exact (ingest/hub.py), recoit chaque transaction de chaque paire
         self._load_liqs()
 
     # --- messages ---
@@ -49,6 +50,8 @@ class LiveFeed:
             ts.on_live(x)
         if self.cex is not None and sym == "BTCUSDT":
             self.cex.on_binance_trade(x, "perp")
+        if self.quant is not None:
+            self.quant.on_binance_agg(x, "perp")
 
     def on_spot_trade(self, text: str):
         m = json.loads(text)
@@ -61,6 +64,8 @@ class LiveFeed:
             ts.on_live(x)
         if self.cex is not None and sym == "BTCUSDT":
             self.cex.on_binance_trade(x, "spot")
+        if self.quant is not None:
+            self.quant.on_binance_agg(x, "spot")
 
     def on_liq(self, text: str):
         m = json.loads(text)

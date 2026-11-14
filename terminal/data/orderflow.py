@@ -19,7 +19,7 @@ import zlib
 from bisect import insort
 from collections import deque
 
-from .ws import WSClient
+from .ws import WSClient, port_fallbacks
 
 MIN_BIG_USD = {"BTC": 250_000.0, "ETH": 100_000.0, "SOL": 50_000.0, "PUMP": 25_000.0}
 DEFAULT_MIN_BIG = 25_000.0
@@ -582,7 +582,8 @@ class OrderFlow:
             return
         streams = "/".join(f"{s.lower()}@depth@100ms" for s in self.symbols)
         self.clients["depth"] = WSClient(f"{self.ws_public}/stream?streams={streams}", self.on_depth, "carnet", self.ctx)
-        self.clients["okx"] = WSClient(self.okx_ws, self.on_okx, "okx", self.ctx, idle_timeout=45.0, on_open=self._on_okx_open)
+        self.clients["okx"] = WSClient(self.okx_ws, self.on_okx, "okx", self.ctx, idle_timeout=45.0, on_open=self._on_okx_open,
+                                       fallbacks=port_fallbacks(self.okx_ws))
         for c in self.clients.values():
             c.start()
 

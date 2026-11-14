@@ -20,6 +20,8 @@ import time
 from bisect import bisect_left
 from datetime import datetime, timezone
 
+from quant import execution
+from quant import metrics as qmetrics
 from . import cvd, fine, liqsweep, signals, sigtest
 from .confluence import Level, find_zones
 from .periods import NakedPocs, PeriodTracker
@@ -113,7 +115,7 @@ def simulate(b: fine.Bars, t0: float, side: str, etype: str, entry: float, stop:
     if risk <= 0 or (stop - fp) * sgn >= 0:
         return {"result": "cancel", "filled": False}
     hold_end = min(n, j + int(hold_h * per_h))
-    pos, stop_cur, tp1_done = 1.0, stop, False
+    pos, stop_cur, tp1_done, tp1_t = 1.0, stop, False, None
     legs, mfe, mae, res, exit_q = [], 0.0, 0.0, None, hold_end - 1
     q = j
     while q < hold_end:
@@ -132,7 +134,7 @@ def simulate(b: fine.Bars, t0: float, side: str, etype: str, entry: float, stop:
             if not tp1_done and ((hi >= tp1) if long_ else (lo <= tp1)):
                 legs.append(("maker", partial, tp1))
                 pos -= partial
-                tp1_done, stop_cur = True, fp                                          # stop a l'entree
+                tp1_done, stop_cur, tp1_t = True, fp, int(T[q] + b.step)                # stop a l'entree
                 if (lo <= fp) if long_ else (hi >= fp):                              # meme minute : on suppose le retour a l'entree
                     legs.append(("taker", pos, fp))
                     pos, exit_q, res = 0.0, q, "tp1_be"
@@ -149,11 +151,31 @@ def simulate(b: fine.Bars, t0: float, side: str, etype: str, entry: float, stop:
     r_gross = sum(f * (px - fp) * sgn for _, f, px in legs) / risk
     return {"result": res, "filled": True, "fill_t": int(T[j]), "exit_t": int(T[exit_q] + b.step), "fill_px": fp, "risk": risk,
             "r_gross": r_gross, "entry_kind": entry_kind, "legs": [(k, f) for k, f, _ in legs],
-            "hours": (T[exit_q] + b.step - T[j]) / HOUR, "mfe": mfe, "mae": mae, "tp1": tp1_done}
+            "hours": (T[exit_q] + b.step - T[j]) / HOUR, "mfe": mfe, "mae": mae, "tp1": tp1_done,
+            # V45 : ce qu'il faut au modele de couts realiste (quant.execution) : sens, part vendue a l'objectif 1 et son heure, agitation
+            # du marche (amplitude moyenne des 14 bougies FERMEES avant l'ordre, en fraction du prix) a l'entree et a la sortie
+            "side": side, "partial": partial, "tp1_t": tp1_t, "atr_in": _range_frac(H, L, C, j), "atr_out": _range_frac(H, L, C, exit_q)}
+
+
+def _range_frac(H, L, C, i: int, n: int = 14) -> float:
+    """Amplitude moyenne (haut - bas) des n bougies fermees AVANT la bougie i, en fraction du prix : connue au moment de l'ordre."""
+    a = max(0, i - n)
+    if i <= a or C[i - 1] <= 0:
+        return 0.0
+    return sum(H[k] - L[k] for k in range(a, i)) / (i - a) / C[i - 1]
+
+
+REALISTIC_COSTS = {"maker": 0.0002, "taker": 0.0005, "slip_base": 0.00005, "slip_vol": 0.10, "impact_band": 0.001, "funding8h": 0.0001}
+# V45 : frais reglables, glissement qui grandit avec l'agitation du marche, financement REEL si costs["funding"] porte la serie publiee
+# (quant.execution.FundingSeries), paye par les longs et RECU par les shorts. Voir quant/execution.py.
 
 
 def net_r(sim: dict, costs: dict) -> float:
-    """Resultat en multiples du risque APRES frais, glissement (ordres au marche) et financement."""
+    """Resultat en multiples du risque APRES frais, glissement (ordres au marche) et financement.
+    Deux modeles : l'ancien (cles « slip » et « funding8h » : glissement fixe, financement constant compte comme un cout dans les deux
+    sens, garde pour relire les anciens rapports a l'identique) et le modele realiste de la V45 (cle « slip_base » ou « funding »)."""
+    if "slip_base" in costs or "funding" in costs:
+        return execution.net_r(sim, costs)["net"]
     k = sim["fill_px"] / sim["risk"]                       # notionnel par unite de risque : le cout en R est k x taux
     taker = costs["taker"] + costs["slip"]
     c = k * (taker if sim["entry_kind"] == "taker" else costs["maker"])
@@ -393,7 +415,7 @@ def simulate_swing(ds: "Dataset", ma, t0: float, side: str, etype: str, entry: f
     if risk <= 0 or (stop - fp) * sgn >= 0:
         return {"result": "cancel", "filled": False}
     hold_end = min(n, j + int(hold_days * 24 * per_h))
-    pos, stop_cur, tp1_done = 1.0, stop, False
+    pos, stop_cur, tp1_done, tp1_t = 1.0, stop, False, None
     legs, mfe, mae, res, exit_q = [], 0.0, 0.0, None, hold_end - 1
     b1h, fast = ds.b1h, ma[0]
     per_bar_h = max(1, int(HOUR // b.step))
@@ -436,7 +458,18 @@ def simulate_swing(ds: "Dataset", ma, t0: float, side: str, etype: str, entry: f
     r_gross = sum(f * (px - fp) * sgn for _, f, px in legs) / risk
     return {"result": res, "filled": True, "fill_t": int(T[j]), "exit_t": int(T[exit_q] + b.step), "fill_px": fp, "risk": risk,
             "r_gross": r_gross, "entry_kind": entry_kind, "legs": [(k, f) for k, f, _ in legs],
-            "hours": (T[exit_q] + b.step - T[j]) / HOUR, "mfe": mfe, "mae": mae, "tp1": tp1_done}
+            "hours": (T[exit_q] + b.step - T[j]) / HOUR, "mfe": mfe, "mae": mae, "tp1": tp1_done,
+            # V45 : ce qu'il faut au modele de couts realiste (quant.execution) : sens, part vendue a l'objectif 1 et son heure, agitation
+            # du marche (amplitude moyenne des 14 bougies FERMEES avant l'ordre, en fraction du prix) a l'entree et a la sortie
+            "side": side, "partial": partial, "tp1_t": tp1_t, "atr_in": _range_frac(H, L, C, j), "atr_out": _range_frac(H, L, C, exit_q)}
+
+
+def _range_frac(H, L, C, i: int, n: int = 14) -> float:
+    """Amplitude moyenne (haut - bas) des n bougies fermees AVANT la bougie i, en fraction du prix : connue au moment de l'ordre."""
+    a = max(0, i - n)
+    if i <= a or C[i - 1] <= 0:
+        return 0.0
+    return sum(H[k] - L[k] for k in range(a, i)) / (i - a) / C[i - 1]
 
 
 # =====================================================================================================
@@ -474,8 +507,11 @@ def select(cands: list[dict], rule, costs: dict, max_week: int = 5, thr: float |
     return chosen
 
 
-def metrics(trades: list[dict], start_ms: int, end_ms: int, risk_pct: float = 0.01, max_lev: float = 10.0, seed: int = 11) -> dict:
-    """Metriques d'une liste de trades (r = resultat net en multiples du risque). Rendement compose a risque fixe."""
+def metrics(trades: list[dict], start_ms: int, end_ms: int, risk_pct: float = 0.01, max_lev: float = 10.0, seed: int = 11, mc: int = 0) -> dict:
+    """Metriques d'une liste de trades (r = resultat net en multiples du risque). Rendement compose a risque fixe.
+    V45 : Sortino, Calmar, duree du drawdown, excursions (MAE / MFE) ; `mc` > 0 : simulation de Monte Carlo sur l'ordre des trades
+    (mc tirages par permutation et autant avec remise : probabilite de ruine, intervalle du drawdown). Elle coute du temps : les etudes
+    ne la demandent que pour leur resultat principal."""
     days = max(1.0, (end_ms - start_ms) / DAY)
     m = {"n": len(trades), "days": days}
     if not trades:
@@ -527,6 +563,18 @@ def metrics(trades: list[dict], start_ms: int, end_ms: int, risk_pct: float = 0.
         sd = math.sqrt(sum((x - m["expR"]) ** 2 for x in rs) / (len(rs) - 1))
         m["tstat"] = m["expR"] / (sd / math.sqrt(len(rs))) if sd > 0 else None
     m["equity"] = [(int(a), round(b, 5)) for a, b in pts[:: max(1, len(pts) // 400)]]
+    # V45 : mesures completes (quant.metrics) sur la meme courbe de capital : Sortino, Calmar, duree du drawdown, excursions, Monte Carlo
+    order = sorted(trades, key=lambda x: x["exit_t"])
+    frac = [min(risk_pct, max_lev * t["stop_pct"]) * t["r"] for t in order]
+    dd = qmetrics.drawdown(pts + [(end_ms, pts[-1][1])])
+    m["sortino"] = qmetrics.sortino(rets) if len(rets) > 5 else None
+    m["calmar"] = m["cagr"] / m["maxDD"] if m["maxDD"] > 0 else None
+    m["ddDays"], m["ddRecovered"] = dd["longestMs"] / DAY, dd["recovered"]
+    st = qmetrics.trade_stats(rs)
+    m["payoff"], m["maxLossStreak"], m["maxWinStreak"] = st["payoff"], st["maxLossStreak"], st["maxWinStreak"]
+    m["excursions"] = qmetrics.excursions([{"r": t["r"], "mae": t["mae"], "mfe": t["mfe"]} for t in order])
+    if mc > 0:
+        m["mc"] = {"shuffle": qmetrics.monte_carlo(frac, mc, "shuffle", 0.5, seed), "bootstrap": qmetrics.monte_carlo(frac, mc, "bootstrap", 0.5, seed + 1)}
     return m
 
 

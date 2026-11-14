@@ -22,7 +22,7 @@ from alerts.notifier import ConsoleNotifier, TelegramNotifier
 from alerts import readings as readings_mod
 from alerts.rules import AlertEngine
 from alerts.trades import OPEN, TradeDesk
-from config import ROOT, chat_is_bot, chat_ok, clean_chat, clean_token, env_sources, load_config, token_ok, write_env
+from config import ROOT, chat_is_bot, chat_ok, clean_chat, clean_token, env_sources, load_config, test_doubles, token_ok, write_env
 from data import reports as reports_mod
 from data import heatbook as heat_mod
 from data.binance import BinanceSource
@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "44"
-API_LEVEL = 44                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "45"
+API_LEVEL = 45                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -221,6 +221,39 @@ def default_cex(cfg, source, service, feed):
     return cx
 
 
+def default_quant(cfg, source, service, feed, flow, cex):
+    """V45 : moteur exact (ingest/hub.py). Il se branche sur les flux deja lus par le terminal (transactions Binance de chaque paire,
+    transactions BTC de Bybit, OKX, Coinbase et Bitstamp, carnet Binance synchronise) et lit les autres sources par leurs adresses
+    publiques. Uniquement sur des donnees reelles."""
+    if not getattr(cfg, "quant_on", True) or cfg.source != "binance":
+        return None
+    from ingest.hub import QuantHub
+
+    def books(sym):
+        b = (getattr(flow, "books", None) or {}).get(sym)
+        return b.levels() if b is not None else ([], [])
+
+    def footprint(sym):
+        ts = service.trades.get(sym)
+        return getattr(ts, "fp", None) if ts is not None else None
+
+    def liqs(sym, since_ms):
+        return feed.recent_liqs(sym, since_ms, 5000) if feed is not None else []
+
+    def ws_clients():
+        out = dict(getattr(feed, "clients", None) or {})
+        out.update({"carnet:" + k: c for k, c in (getattr(flow, "clients", None) or {}).items()})
+        out.update({"bourses:" + k: c for k, c in (getattr(cex, "clients", None) or {}).items()})
+        return out
+
+    hub = QuantHub(cfg.symbols, books=books, footprint=footprint, liqs=liqs, ws_clients=ws_clients)
+    if feed is not None:
+        feed.quant = hub
+    if cex is not None and hasattr(cex, "tap"):
+        cex.tap = hub.on_venue_trade
+    return hub
+
+
 def build_parts(cfg, make_source=default_source, make_feed=default_feed, make_hub=default_hub):
     source = make_source(cfg)
     notifier = TelegramNotifier(cfg.telegram_token, cfg.telegram_chat_id, cfg.telegram_api_base) \
@@ -269,9 +302,11 @@ class App:
         old, old_flow, old_heat = self.feed, getattr(self, "flow", None), getattr(self, "heat", {})
         old_liq = getattr(self, "liqmaps", {})
         old_cex = getattr(self, "cex", None)
+        old_quant = getattr(self, "quant", None)
         source, service, alerts, notifier, feed, flow = build_parts(cfg, self.make_source, self.make_feed, self.make_hub)
         self.flow = flow
         self.cex = default_cex(cfg, source, service, feed)
+        self.quant = default_quant(cfg, source, service, feed, flow, self.cex)
         self.heat = default_heat(cfg, source, service, flow)
         self.liqmaps = default_liqmaps(cfg, source, service)
         for sym, kp in self.liqmaps.items():                  # V31 : intérêt ouvert archivé pour les idées (poches formées il y a plus de 29 jours)
@@ -302,6 +337,8 @@ class App:
             ts.stop()
         if old_cex:
             old_cex.stop()
+        if old_quant:
+            old_quant.stop()
         if feed and self.running:
             feed.start()
         if flow and self.running:
@@ -315,6 +352,8 @@ class App:
                 ts.start()
             if self.cex:
                 self.cex.start()
+            if self.quant:
+                self.quant.start()
         self._chat_restart()
 
     def _chat_restart(self):
@@ -478,6 +517,8 @@ class App:
             ts.start()
         if self.cex:
             self.cex.start()
+        if self.quant:
+            self.quant.start()
         self._chat_restart()
 
     def shutdown(self):
@@ -499,6 +540,8 @@ class App:
                 pass
         if self.cex:
             self.cex.stop()
+        if getattr(self, "quant", None):
+            self.quant.stop()
         if self.tgchat:
             self.tgchat.close()
 
@@ -665,6 +708,18 @@ class App:
         except Exception:
             pass
         return subcharts.aggregate_funding(rows)
+
+    def quant_page(self, sym: str) -> dict:
+        """V45 : mesures exactes d'une paire (CVD tick par tick, regime de marche, carnet, profil exact, options, reseau Bitcoin) et
+        etat de sante de chaque source."""
+        hub = getattr(self, "quant", None)
+        if hub is None:
+            return {"ok": False, "why": "coupé dans les réglages (TERMINAL_QUANT=0)" if not getattr(self.cfg, "quant_on", True)
+                    else "le moteur exact ne tourne que sur les données réelles"}
+        try:
+            return hub.snapshot(sym)
+        except Exception as e:                                       # la page ne doit jamais casser le terminal
+            return {"ok": False, "why": f"{type(e).__name__}: {e}"}
 
     def cex_page(self) -> dict:
         """V44 : liquidations BTC sur 6, 12, 24 et 48 heures et gros ordres executes par bourse (data/cexflow.py), avec le mouvement du
@@ -1147,7 +1202,7 @@ class App:
 
     def save_settings(self, body: dict):
         upd = {}
-        if body.get("source") in ("simulated", "binance"):
+        if body.get("source") == "binance" or (body.get("source") == "simulated" and test_doubles()):   # V45 : plus de mode simule dans le produit
             upd["TERMINAL_SOURCE"] = body["source"]
         if isinstance(body.get("symbols"), list):
             syms = [s.strip().upper() for s in body["symbols"] if isinstance(s, str) and s.strip().isalnum()]
@@ -1399,6 +1454,8 @@ def make_handler(app: App):
                                                      (q.get("spot") or ["0"])[0] == "1"))
                 if u.path == "/api/cexflow":                         # V44 : liquidations BTC et gros ordres des bourses (onglet GEX)
                     return self._json(app.cex_page())
+                if u.path == "/api/quant":                           # V45 : moteur exact (onglet Quant)
+                    return self._json(app.quant_page((q.get("symbol") or [app.cfg.symbols[0]])[0].upper()))
                 if u.path == "/api/gex":                             # V40 : onglet GEX (options BTC)
                     return self._json(app.service.gex_page((q.get("scope") or ["all"])[0], (q.get("src") or ["all"])[0]))
                 if u.path == "/api/sizeflow":                        # V39 : delta par taille d'ordre, perpétuel et spot

@@ -26,9 +26,10 @@ import threading
 import time
 from bisect import bisect_right
 from collections import deque
+from decimal import Decimal
 from pathlib import Path
 
-from .ws import WSClient
+from .ws import WSClient, port_fallbacks
 
 H = 3_600_000
 BUCKET = 300_000                        # tranches de 5 minutes
@@ -362,6 +363,7 @@ class CexFeeds:
         self.clients: dict = {}
         self.live = None                          # LiveFeed : Binance perpétuel, ses liquidations, et peut-être le comptant
         self.errors: dict = {}
+        self.tap = None                                         # V45 : tap(bourse, heure ms, prix texte, quantité texte, côté, dollars texte) pour le moteur exact
         self.backfill = {"t": None, "added": 0, "error": None}
         self.stop_ev = threading.Event()
         self.thread = None
@@ -379,6 +381,8 @@ class CexFeeds:
         x = m.get("data", m)
         if x.get("e") == "aggTrade":
             self.on_binance_trade(x, "spot")
+            if self.tap is not None:                               # V45 : la connexion comptant propre a ce module nourrit aussi le moteur exact
+                self.tap("binance_spot", int(x["T"]), x["p"], x["q"], -1 if x.get("m") else 1, None)
 
     def on_bybit(self, text: str, market: str) -> None:
         m = json.loads(text)
@@ -386,6 +390,8 @@ class CexFeeds:
         if topic.startswith("publicTrade."):
             for d in m.get("data") or ():
                 self.flow.fill("bybit_" + market, int(d["T"]), 1 if d.get("S") == "Buy" else -1, float(d["v"]), float(d["p"]))
+                if self.tap is not None:
+                    self.tap("bybit_" + market, int(d["T"]), d["p"], d["v"], 1 if d.get("S") == "Buy" else -1, None)
         elif topic.startswith("allLiquidation."):
             for d in m.get("data") or ():
                 px = float(d["p"])
@@ -412,6 +418,14 @@ class CexFeeds:
                 else:
                     continue
                 self.flow.fill(venue, int(d["ts"]), 1 if d.get("side") == "buy" else -1, qty, px, stream="okx:" + inst)
+                if self.tap is not None:                           # V45 : textes exacts ; contrat en dollars -> notionnel exact, pas de quantite
+                    sd = 1 if d.get("side") == "buy" else -1
+                    if ct is None:
+                        self.tap(venue, int(d["ts"]), d["px"], d["sz"], sd, None)
+                    elif ct[0] == "coin":
+                        self.tap(venue, int(d["ts"]), d["px"], format(Decimal(d["sz"]) * Decimal(str(ct[1])), "f"), sd, None)
+                    else:
+                        self.tap(venue, int(d["ts"]), d["px"], None, sd, format(Decimal(d["sz"]) * Decimal(str(ct[1])), "f"))
         elif ch == "liquidation-orders":
             for item in m.get("data") or ():
                 for t, side, usd, px in okx_liq_events(item):
@@ -428,6 +442,8 @@ class CexFeeds:
             return
         self.flow.fill("coinbase", iso_ms(m["time"]), -1 if m.get("side") == "buy" else 1, float(m["size"]), float(m["price"]),
                        key=("o", m.get("taker_order_id")) if m.get("taker_order_id") else None)
+        if self.tap is not None:
+            self.tap("coinbase", iso_ms(m["time"]), m["price"], m["size"], -1 if m.get("side") == "buy" else 1, None)
 
     def on_bitstamp(self, text: str) -> None:
         """Canal live_trades : « type » 0 = acheteur au marché, 1 = vendeur ; l'ordre au marché est l'ordre d'achat ou de vente selon le cas."""
@@ -445,6 +461,8 @@ class CexFeeds:
         oid = d.get("buy_order_id") if side > 0 else d.get("sell_order_id")
         t = int(d["microtimestamp"]) // 1000 if d.get("microtimestamp") else int(d["timestamp"]) * 1000
         self.flow.fill("bitstamp", t, side, float(d["amount"]), float(d["price"]), key=("o", oid) if oid else None)
+        if self.tap is not None:                                   # Bitstamp envoie aussi le texte exact (amount_str, price_str)
+            self.tap("bitstamp", t, d.get("price_str") or repr(float(d["price"])), d.get("amount_str") or repr(float(d["amount"])), side, None)
 
     # --- abonnements ---
     def _open_bybit(self, c, market):
@@ -471,7 +489,8 @@ class CexFeeds:
                                        on_open=lambda c: self._open_bybit(c, "perp")),
               "bybit_spot": WSClient(u["bybit_spot"], lambda t: self.on_bybit(t, "spot"), "bybit-spot", ctx, idle_timeout=120.0,
                                      on_open=lambda c: self._open_bybit(c, "spot")),
-              "okx": WSClient(u["okx"], self.on_okx, "okx-ordres", ctx, idle_timeout=45.0, on_open=self._open_okx),
+              "okx": WSClient(u["okx"], self.on_okx, "okx-ordres", ctx, idle_timeout=45.0, on_open=self._open_okx,
+                              fallbacks=port_fallbacks(u["okx"])),
               "coinbase": WSClient(u["coinbase"], self.on_coinbase, "coinbase", ctx, idle_timeout=120.0, on_open=self._open_coinbase),
               "bitstamp": WSClient(u["bitstamp"], self.on_bitstamp, "bitstamp", ctx, idle_timeout=300.0, on_open=self._open_bitstamp)}
         if self.binance_spot_ws and self.own_spot():
