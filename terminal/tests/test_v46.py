@@ -171,6 +171,19 @@ class StatePageTest(unittest.TestCase):
         other = app.state_page("BTCUSDT", "4h", have="")                         # autre unité de temps : état complet
         self.assertNotIn("tail", other)
 
+    def test_a_setting_change_invalidates_the_kept_state(self):
+        app = self.app
+        full = app.state_page("BTCUSDT", "1h")
+        s = app.series_page("BTCUSDT", "1h")
+        app.forget_states()                                                      # appelé par chaque enregistrement de réglage
+        again = app.state_page("BTCUSDT", "1h", have=full["v"])
+        self.assertNotIn("same", again)                                          # la page n'a plus la bonne version : elle reçoit l'état
+        self.assertNotEqual(again["v"], full["v"])
+        self.assertIsNot(app.state_page("BTCUSDT", "1h"), full)
+        self.assertNotIn("same", app.series_page("BTCUSDT", "1h", have=s["v"]))
+        src = (ROOT / "server.py").read_text(encoding="utf-8")
+        self.assertIn('if path != "/api/prefs":', src)
+
     def test_series_is_slim_and_skipped_when_unchanged(self):
         app = self.app
         s = app.series_page("BTCUSDT", "1h")

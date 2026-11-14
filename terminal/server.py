@@ -729,7 +729,7 @@ class App:
         ok = m is not None and m.ready and tf in TFS and m.store.h1
         st_ = m.store if ok else None                                # version : dernieres bougies connues (1 h, 5 min, 1 min) et minute en cours
         ver = (f"{st_.h1[-1].t}:{len(st_.h1)}:{st_.m5[-1].t if st_.m5 else 0}:{st_.m1[-1].t if tf == '1m' and st_.m1 else 0}:"
-               f"{int(time.time() // 60)}") if ok else ""
+               f"{int(time.time() // 60)}:{getattr(self, '_epoch', 0)}") if ok else ""
         if have and ver and have == ver:
             return {"same": True, "ready": True, "v": ver}
         cache = self.__dict__.setdefault("_series_cache", {})
@@ -746,6 +746,12 @@ class App:
                 cache.pop(next(iter(cache)), None)
         return d
 
+    def forget_states(self) -> None:
+        """V46 : vide les etats et courbes gardes, et change la version annoncee a la page (qui redemande alors tout)."""
+        self.__dict__.setdefault("_state_cache", {}).clear()
+        self.__dict__.setdefault("_series_cache", {}).clear()
+        self._epoch = getattr(self, "_epoch", 0) + 1
+
     STATE_TAIL = 80                                                  # bougies renvoyees a une page qui a deja l'historique
 
     def state_page(self, sym: str, tf: str, scope: str = "all", src: str = "all", have: str = "") -> dict:
@@ -755,7 +761,7 @@ class App:
           2 secondes). Du neuf : seules les dernieres bougies sont renvoyees (« tail »), la page garde le reste.
         - deux demandes du meme etat entre deux rafraichissements (autre onglet, telephone, changement d'unite) : calcule une seule fois."""
         svc = self.service
-        ver = f"{svc.last_update:.3f}"
+        ver = f"{svc.last_update:.3f}.{getattr(self, '_epoch', 0)}"
         m = svc.markets.get(sym)
         ready = m is not None and m.ready
         if have and have == ver and ready:
@@ -1612,6 +1618,8 @@ def make_handler(app: App):
                 path = urlparse(self.path).path
                 cap = 1_000_000 if path.startswith("/api/prefs") else 20000      # V36 : les réglages de la page peuvent dépasser 20 Ko
                 body = json.loads(self.rfile.read(min(n, cap)).decode("utf-8") or "{}") if n else {}
+                if path != "/api/prefs":                             # V46 : un reglage change peut changer l'etat : plus rien de garde en cache
+                    app.forget_states()
                 if path == "/api/settings":
                     return self._json(app.save_settings(body))
                 if path == "/api/prefs":                             # V36 : réglages de la page, gardés et partagés entre ordinateurs

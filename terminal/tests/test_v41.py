@@ -133,7 +133,7 @@ class WiringTests(unittest.TestCase):
             out = default_trades(cfg, Src(), None)
             self.assertEqual(out["BTCUSDT:hist:perp"].minute, out["BTCUSDT"])
             self.assertEqual(out["BTCUSDT:hist:spot"].minute, out["BTCUSDT:spot"])
-            self.assertEqual(out["BTCUSDT:hist:spot"].days, 180)
+            self.assertEqual(out["BTCUSDT:hist:spot"].days, 90)
             cfg.sizeflow_history_days = 0
             self.assertFalse(any(":hist:" in k for k in default_trades(cfg, Src(), None)))
         self.assertGreaterEqual(API_LEVEL, 41)
