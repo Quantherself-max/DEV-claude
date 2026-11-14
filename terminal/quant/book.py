@@ -77,8 +77,9 @@ def _median(xs: list) -> Decimal:
     return s[n // 2] if n % 2 else CTX.divide(CTX.add(s[n // 2 - 1], s[n // 2]), TWO)
 
 
-def walls(bids, asks, band="0.02", k="8", min_usd="0", top: int = 5) -> dict:
-    """Murs de chaque côté dans ± band : [(prix, dollars, multiple de la médiane, distance en fraction du prix milieu)]."""
+def walls(bids, asks, band="0.02", k="8", min_usd="0", top: int = 5, median=None) -> dict:
+    """Murs de chaque côté dans ± band : [(prix, dollars, multiple de la médiane, distance en fraction du prix milieu)].
+    `median` : médiane déjà calculée sur le carnet complet, quand `bids` et `asks` ne contiennent que les niveaux candidats."""
     mid = mid_price(bids, asks)
     out = {"bid": [], "ask": [], "mid": mid, "median": ZERO}
     if mid is None:
@@ -94,7 +95,7 @@ def walls(bids, asks, band="0.02", k="8", min_usd="0", top: int = 5) -> dict:
             rows.append((p, CTX.multiply(p, q)))
         sides[name] = rows
         allv += [u for _, u in rows if u > 0]
-    med = _median(allv)
+    med = _median(allv) if median is None else D(median)
     out["median"] = med
     if med <= 0:
         return out
@@ -127,10 +128,11 @@ class WallTracker:
         if len(self.events) > self.max_events:
             del self.events[:len(self.events) - self.max_events]
 
-    def update(self, t_ms: int, bids, asks) -> list:
-        """Met à jour les murs suivis ; renvoie les événements de cette photo."""
+    def update(self, t_ms: int, bids, asks, median=None) -> list:
+        """Met à jour les murs suivis ; renvoie les événements de cette photo. `median` : voir walls (carnet réduit aux candidats, qui
+        doit alors contenir le meilleur niveau de chaque côté et tous les murs déjà suivis)."""
         new = []
-        found = walls(bids, asks, self.band, self.k, self.min_usd, top=8)
+        found = walls(bids, asks, self.band, self.k, self.min_usd, top=8, median=median)
         mid = found["mid"]
         if mid is None:
             return new

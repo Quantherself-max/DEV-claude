@@ -298,6 +298,8 @@ class HubTest(unittest.TestCase):
         c, net, _ = client(routes or {}, ck, rate=1000, burst=1000, retries=1)
         hub = QuantHub(["BTCUSDT"], binance=ib.Binance(c, c), bybit=venues.Bybit(c), okx=venues.Okx(c), deribit=venues.Deribit(c),
                        onchain=onchain.OnChain(c, c, c), now=ck.now, **kw)
+        hub.autostart, hub.seed_pause = False, 0.0                              # tests : aucune tâche de fond, tout est lancé à la main
+        hub.touch("BTCUSDT", start=False)                                       # la page a demandé le BTC : le moteur est en marche
         return hub, net, ck
 
     def agg(self, t, p, q, maker=False, s="BTCUSDT"):
@@ -377,6 +379,53 @@ class HubTest(unittest.TestCase):
         self.assertIn("error", s["regime"]["1h"])
         self.assertIn("error", s["onchain"])
         self.assertTrue(s["sources"]["errors"])
+
+    def test_engine_sleeps_until_the_page_asks(self):
+        """V45.1 : tant que l'onglet Quant n'est pas ouvert, le moteur ne compte rien et n'envoie aucune requête ; il ne suit que les
+        paires demandées et s'arrête quand plus personne ne regarde."""
+        ck = Clock(self.T0 / 1000 + 400)
+        c, net, _ = client({"/fapi/v1/klines": [[]], "/api/v3/klines": [[]]}, ck, rate=1000, burst=1000, retries=1)
+        hub = QuantHub(["BTCUSDT", "SOLUSDT"], binance=ib.Binance(c, c), bybit=venues.Bybit(c), okx=venues.Okx(c), deribit=venues.Deribit(c),
+                       onchain=onchain.OnChain(c, c, c), now=ck.now, books=lambda s: FakeBook().levels())
+        hub.autostart, hub.seed_pause = False, 0.0
+        hub.start()                                                              # appelé au démarrage du terminal : ne fait plus rien
+        self.assertIsNone(hub.thread)
+        hub.on_binance_agg(self.agg(self.T0, "100", "1"), "perp")
+        hub.on_venue_trade("coinbase", self.T0, "100", "1", 1)
+        hub.step(force=True)
+        self.assertEqual((hub.cvd[("BTCUSDT", "perp")].ticks, hub.venues.venues, net.calls, hub.book_last), (0, {}, [], {}))
+        self.assertTrue(hub.snapshot("SOLUSDT")["warming"])                      # la page demande le SOL : seul le SOL est suivi
+        self.assertEqual((hub.active, list(hub.wanted)), (True, ["SOLUSDT"]))
+        hub.on_binance_agg(self.agg(self.T0, "100", "1"), "perp")                # BTC : toujours ignoré
+        hub.on_binance_agg(self.agg(self.T0, "150", "2", s="SOLUSDT"), "perp")
+        hub.step(force=True)
+        self.assertEqual((hub.cvd[("BTCUSDT", "perp")].ticks, hub.cvd[("SOLUSDT", "perp")].ticks, list(hub.book_last)), (0, 1, ["SOLUSDT"]))
+        self.assertTrue(net.calls and all("BTCUSDT" not in u for u in net.calls))
+        self.assertEqual(hub.binance.fapi.weight_guard, 0.5)                     # le moteur s'efface à 50 % du quota partagé avec le terminal
+        hub.last_used -= 1000                                                    # plus personne ne regarde depuis longtemps
+        hub.stop_ev.wait = lambda s: False
+        hub._loop()
+        self.assertEqual((hub.active, hub.wanted, hub.idle_since is not None), (False, {}, True))
+        hub.touch("SOLUSDT", start=False)                                        # réouverture : l'arrêt est marqué comme une coupure
+        m = int(ck.now() * 1000) // MIN * MIN
+        self.assertFalse(hub.cvd[("SOLUSDT", "perp")].bars[m][flow.OK])            # la minute de l'arrêt n'est plus complète
+        self.assertTrue(hub.cvd[("SOLUSDT", "perp")].bars[self.T0][flow.OK])       # ce qui a été compté avant reste valable
+
+    def test_book_measures_match_the_decimal_reference(self):
+        from quant import book as qb
+        hub, _, _ = self.make({}, books=lambda s: FakeBook().levels())
+        hub.sample_books()
+        got = hub.book_last["BTCUSDT"]
+        bids, asks = FakeBook().levels()
+        db = [(D(repr(round(p, 8))), D(repr(q))) for p, q in sorted(bids, reverse=True)]
+        da = [(D(repr(round(p, 8))), D(repr(q))) for p, q in sorted(asks)]
+        for band in ("0.001", "0.005", "0.01"):                                  # le calcul en entiers donne le même résultat que la référence en décimal
+            ref = qb.obi(db, da, band)
+            self.assertAlmostEqual(got["obi"][band], float(ref["obi"]), places=12)
+            self.assertAlmostEqual(got["depth"][band]["bid"], float(qb.depth_usd(db, ref["mid"], band)), places=6)
+        ref = qb.walls(db, da, "0.01", "8")
+        self.assertEqual([(w["price"], w["usd"]) for w in got["walls"]["bid"]], [(p, u) for p, u, _, _ in ref["bid"]])
+        self.assertEqual(len(hub.walls["BTCUSDT"].active()), 1)
 
     def test_gaps_from_the_ws_client_mark_minutes_incomplete(self):
         class C:

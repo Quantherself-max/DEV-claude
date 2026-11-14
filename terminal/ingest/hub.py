@@ -12,6 +12,8 @@ Contrôle d'intégrité : toutes les 5 minutes, chaque minute fermée comptée t
 officielle de Binance (volume et volume acheteur, à l'unité près), puis remplacée par elle. Voir `reconcile` : le compteur donne les
 minutes identiques, les minutes décalées au passage de la minute, les minutes complétées après une coupure, et le résidu cumulé.
 
+V45.1 : le moteur ne tourne que pendant que la page le demande (voir `touch`) ; il ne suit que les paires demandées.
+
 Rien n'est fabriqué : une source en panne donne `error` dans sa partie, les autres continuent."""
 from __future__ import annotations
 import threading
@@ -32,6 +34,8 @@ from .onchain import OnChain
 from .venues import Bybit, Deribit, Okx, okx_inst
 
 MIN, HOUR, DAY = 60_000, 3_600_000, 86_400_000
+IDLE_S = 300.0                # arret du moteur 5 minutes apres la derniere demande de la page
+SEED_PAUSE = 0.4              # secondes entre deux pages de bougies au demarrage (requetes etalees : jamais de rafale vers Binance)
 WINDOWS = (("5m", 5 * MIN), ("15m", 15 * MIN), ("1h", HOUR), ("4h", 4 * HOUR), ("24h", DAY))
 REGIME_WINDOWS = (("15m", 15 * MIN), ("1h", HOUR), ("4h", 4 * HOUR))
 BANDS = ("0.001", "0.005", "0.01")
@@ -57,13 +61,17 @@ def js(x):
 class QuantHub:
     def __init__(self, symbols, binance: Binance | None = None, bybit: Bybit | None = None, okx: Okx | None = None,
                  deribit: Deribit | None = None, onchain: OnChain | None = None, books=None, footprint=None, liqs=None,
-                 ws_clients=None, now=time.time, seed_hours: int = 48):
+                 ws_clients=None, now=time.time, seed_hours: int = 24):
         self.symbols = [s.upper() for s in symbols]
         self.binance, self.bybit, self.okx = binance or Binance(), bybit or Bybit(), okx or Okx()
+        for c in self.binance.clients():      # le quota de Binance est partage avec tout le terminal : le moteur s'efface des 50 %
+            c.weight_guard = min(getattr(c, "weight_guard", 0.8), 0.5)
         self.deribit, self.onchain = deribit or Deribit(), onchain or OnChain()
         self.books, self.footprint, self.liqs, self.ws_clients = books, footprint, liqs, ws_clients
         self.now = now
         self.seed_hours = seed_hours
+        self.seed_pause = SEED_PAUSE
+        self.autostart = True                 # faux dans les tests : les taches sont alors lancees a la main
         self.lock = threading.RLock()
         self.cvd = {(s, m): qflow.TickCvd(MIN, keep=seed_hours * 60 + 120) for s in self.symbols for m in ("perp", "spot")}
         self.venues = qflow.VenueFlow(MIN, keep=24 * 60)
@@ -85,6 +93,14 @@ class QuantHub:
         self.stop_ev = threading.Event()
         self.thread = None
         self._snap: dict = {}
+        # V45.1 : le moteur ne tourne QUE quand l'onglet Quant est ouvert. Tant que personne ne demande /api/quant, il ne lit rien, ne
+        # compte rien et n'envoie aucune requete : le terminal demarre exactement comme avant. Il s'arrete IDLE_S secondes apres la
+        # derniere demande. Seules les paires demandees sont suivies.
+        self.active = False
+        self.last_used = 0.0
+        self.wanted: dict = {}                # paire -> heure de la derniere demande
+        self.seeded: set = set()
+        self.idle_since = None                # heure (ms) du dernier arret : a la reprise, les minutes manquees sont marquees incompletes
 
     def now_ms(self) -> int:
         return int(self.now() * 1000)
@@ -94,6 +110,8 @@ class QuantHub:
     # =================================================================================================
     def on_binance_agg(self, x: dict, market: str) -> None:
         """Transaction agrégée Binance ; `m` vrai = acheteur passif = vente agressive. Textes lus en entiers exacts."""
+        if not self.active or x["s"].upper() not in self.wanted:
+            return
         c = self.cvd.get((x["s"].upper(), market))
         if c is None:
             return
@@ -110,6 +128,8 @@ class QuantHub:
 
     def on_venue_trade(self, venue: str, t_ms: int, px_text, qty_text, side: int, quote_text=None) -> None:
         """Transaction BTC d'une autre bourse. Contrat coté en dollars : `quote_text` (notionnel exact), sans quantité."""
+        if not self.active or "BTCUSDT" not in self.wanted:
+            return
         try:
             px = units(px_text)
             if quote_text is not None:
@@ -153,16 +173,24 @@ class QuantHub:
             self.errors[name] = str(e)[:200] or type(e).__name__
             return False
 
-    def seed(self) -> None:
-        """Bougies officielles d'une minute des dernières heures : le CVD a un passé exact dès le démarrage."""
+    def seed(self, symbols=None) -> None:
+        """Bougies officielles d'une minute des dernieres heures, pour les paires demandees : le CVD a un passe exact. Petites pages
+        (499 bougies : poids 2 chez Binance au lieu de 10) et une pause entre deux pages : aucune rafale."""
         now = self.now_ms()
         for (s, m), c in self.cvd.items():
+            if symbols is not None and s not in symbols:
+                continue
+
             def one(s=s, m=m, c=c):
-                rows = self.binance.klines_exact(s, "1m", now - self.seed_hours * HOUR, now, m)
+                rows = self.binance.klines_exact(s, "1m", now - self.seed_hours * HOUR, now, m, page=499, pause=self.seed_pause, wait=self.stop_ev.wait)
                 closed = [r for r in rows if r[0] + MIN <= self.now_ms()]
                 with self.lock:
                     self.integrity[(s, m)]["seeded"] += c.seed(closed, replace=False)
             self._run(f"bougies {m} {s}", one)
+            if self.stop_ev.is_set():
+                return
+        if symbols:
+            self.seeded.update(symbols)
 
     def reconcile(self, n: int = 12) -> None:
         """Compare les dernières minutes fermées aux bougies officielles, puis les remplace par elles (la bougie officielle est la
@@ -173,6 +201,9 @@ class QuantHub:
         minutes identiques, les minutes décalées, et surtout le RÉSIDU cumulé (transactions comptées - bougies officielles) : il doit
         rester proche de zéro ; un résidu qui grandit veut dire que des transactions manquent ou sont en double."""
         for (s, m), c in self.cvd.items():
+            if s not in self.wanted:
+                continue
+
             def one(s=s, m=m, c=c):
                 rows = self.binance.klines_exact(s, "1m", market=m, limit=n)
                 now = self.now_ms()
@@ -202,39 +233,84 @@ class QuantHub:
             self._run(f"contrôle {m} {s}", one)
 
     def sample_books(self) -> None:
+        """Carnet de chaque paire demandee. Le desequilibre et la profondeur se calculent en ENTIERS (exacts et rapides : un carnet BTC a
+        plus de 10 000 niveaux dans +/- 1 %) ; seuls les niveaux candidats a etre des murs passent en decimal pour le suivi."""
         if self.books is None:
             return
         t = self.now_ms()
         for s in self.symbols:
+            if s not in self.wanted:
+                continue
             try:
                 bids, asks = self.books(s)
+                if not bids or not asks:
+                    continue
+                out = self._book_measures(s, t, bids, asks)
             except ERRS as e:
                 self.errors[f"carnet {s}"] = str(e)[:120]
                 continue
-            if not bids or not asks:
-                continue
-            bb, ba = max(p for p, _ in bids), min(p for p, _ in asks)
-            mid = (bb + ba) / 2.0
-            lo, hi = mid * (1 - BOOK_BAND * 1.05), mid * (1 + BOOK_BAND * 1.05)
-            db = [(from_float(p), from_float(q)) for p, q in sorted(((p, q) for p, q in bids if p >= lo and q > 0), reverse=True)]
-            da = [(from_float(p), from_float(q)) for p, q in sorted((p, q) for p, q in asks if p <= hi and q > 0)]
-            if not db or not da:
-                continue
-            out = {"t": t, "mid": qbook.mid_price(db, da), "spreadBps": qbook.spread_bps(db, da), "obi": {}, "depth": {}}
-            for band in BANDS:
-                o = qbook.obi(db, da, band)
-                out["obi"][band] = o["obi"]
-                out["depth"][band] = {"bid": qbook.depth_usd(db, o["mid"], band), "ask": qbook.depth_usd(da, o["mid"], band)}
-            w = qbook.walls(db, da, str(BOOK_BAND), "8")
-            out["walls"] = {k: [{"price": p, "usd": u, "mult": m, "dist": d} for p, u, m, d in w[k]] for k in ("bid", "ask")}
-            with self.lock:
-                self.walls[s].update(t, db, da)
-                self.book_last[s] = out
-            self.errors.pop(f"carnet {s}", None)
+            if out is not None:
+                with self.lock:
+                    self.book_last[s] = out
+                self.errors.pop(f"carnet {s}", None)
+
+    def _book_measures(self, s: str, t: int, bids, asks):
+        bb, ba = max(p for p, _ in bids), min(p for p, _ in asks)
+        mid = (bb + ba) / 2.0
+        lo, hi = mid * (1 - BOOK_BAND * 1.02), mid * (1 + BOOK_BAND * 1.02)
+        # entiers exacts : un prix ou une quantite de bourse a au plus 8 decimales, l'arrondi du produit flottant redonne donc l'entier juste
+        bu = sorted(((round(p * UNIT), round(q * UNIT)) for p, q in bids if p >= lo and q > 0), reverse=True)
+        au = sorted((round(p * UNIT), round(q * UNIT)) for p, q in asks if p <= hi and q > 0)
+        if not bu or not au:
+            return None
+        mid2 = bu[0][0] + au[0][0]                                       # deux fois le prix milieu (reste entier)
+        out = {"t": t, "mid": mid2 / (2 * UNIT), "spreadBps": (au[0][0] - bu[0][0]) * 20000 / mid2, "obi": {}, "depth": {}}
+        notion = {"bid": [(p, p * q) for p, q in bu], "ask": [(p, p * q) for p, q in au]}
+        for band in BANDS:
+            num, den = D(band).as_integer_ratio()
+            lim = mid2 * num                                             # distance maximale, a la meme echelle que d ci-dessous
+            w, dep = {}, {}
+            for side in ("bid", "ask"):
+                ws = ds = 0
+                for p, n in notion[side]:
+                    d = abs(2 * p - mid2) * den
+                    if d > lim:
+                        break
+                    ws += n * (lim - d)                                  # poids lineaire : 1 au prix milieu, 0 au bord de la bande
+                    ds += n
+                w[side], dep[side] = ws, ds
+            tot = w["bid"] + w["ask"]
+            out["obi"][band] = (w["bid"] - w["ask"]) / tot if tot else 0.0
+            out["depth"][band] = {"bid": qflow.usd(dep["bid"]), "ask": qflow.usd(dep["ask"])}
+        # murs : mediane exacte sur tous les niveaux de la bande, puis seuls les candidats (et les murs deja suivis) passent en decimal
+        num, den = D(str(BOOK_BAND)).as_integer_ratio()
+        lim = mid2 * num
+        inband = {side: [(p, n) for p, n in notion[side] if abs(2 * p - mid2) * den <= lim] for side in ("bid", "ask")}
+        allv = sorted(n for side in inband.values() for _, n in side if n > 0)
+        if not allv:
+            return out
+        k = len(allv)
+        med = from_units(allv[k // 2], 16) if k % 2 else CTX.divide(from_units(allv[k // 2 - 1] + allv[k // 2], 16), Decimal(2))
+        thr = int(CTX.multiply(med, Decimal(8)).scaleb(16).to_integral_value()) // 4      # marge : tout ce qui pese au moins 2 medianes
+        wt = self.walls[s]
+        with self.lock:
+            tracked = {(name, int(p.scaleb(8))) for (name, p) in wt.live}
+        dec = {}
+        for side in ("bid", "ask"):
+            rows = inband[side]
+            keep = [(p, n) for i, (p, n) in enumerate(rows) if i == 0 or n >= thr or (side, p) in tracked]
+            dec[side] = [(from_units(p), CTX.divide(from_units(n, 16), from_units(p))) for p, n in keep]
+        w = qbook.walls(dec["bid"], dec["ask"], str(BOOK_BAND), "8", median=med)
+        out["walls"] = {k2: [{"price": p, "usd": u, "mult": m, "dist": d} for p, u, m, d in w[k2]] for k2 in ("bid", "ask")}
+        with self.lock:
+            wt.update(t, dec["bid"], dec["ask"], median=med)
+        return out
 
     def poll_fast(self) -> None:
         """Toutes les 30 secondes : intérêt ouvert à l'instant, prix de marque et taux de financement en cours."""
         for s in self.symbols:
+            if s not in self.wanted:
+                continue
             def oi(s=s):
                 t, v = self.binance.open_interest(s)
                 with self.lock:
@@ -246,6 +322,8 @@ class QuantHub:
     def poll_slow(self) -> None:
         """Toutes les 5 minutes : historique d'intérêt ouvert (première fois), ratio long / short, Bybit et OKX."""
         for s in self.symbols:
+            if s not in self.wanted:
+                continue
             def hist(s=s):
                 rows = self.binance.open_interest_hist(s, "5m", 500)
                 with self.lock:
@@ -270,7 +348,7 @@ class QuantHub:
             self._run(f"OKX {s}", okx)
 
     def poll_options(self) -> None:
-        if "BTCUSDT" not in self.symbols:
+        if "BTCUSDT" not in self.wanted:
             return
 
         def go():
@@ -301,7 +379,7 @@ class QuantHub:
         self._run("options Deribit", go)
 
     def poll_onchain(self) -> None:
-        if "BTCUSDT" not in self.symbols:
+        if "BTCUSDT" not in self.wanted:
             return
 
         def go():
@@ -320,7 +398,7 @@ class QuantHub:
             self.oc = snap
         self._run("réseau Bitcoin", go)
 
-    TASKS = (("books", 2.0), ("gaps", 5.0), ("fast", 30.0), ("reconcile", 300.0), ("slow", 300.0), ("options", 300.0), ("onchain", 300.0))
+    TASKS = (("books", 5.0), ("gaps", 5.0), ("fast", 30.0), ("reconcile", 300.0), ("slow", 300.0), ("options", 300.0), ("onchain", 300.0))
 
     def step(self, force: bool = False) -> None:
         """Un tour des tâches arrivées à échéance (appelé chaque seconde par le fil du hub ; `force` : toutes, pour les tests)."""
@@ -335,21 +413,52 @@ class QuantHub:
                 except Exception as e:                                   # une tâche ne doit jamais arrêter les autres
                     self.errors[name] = f"{type(e).__name__}: {str(e)[:160]}"
 
+    def touch(self, symbol: str, start: bool = True) -> None:
+        """La page demande cette paire : le moteur se met en marche (ou reste en marche) pour elle."""
+        s = symbol.upper()
+        now = self.now()
+        self.last_used = now
+        fresh = s not in self.wanted
+        self.wanted[s] = now
+        if not self.active:
+            if self.idle_since is not None:                              # reprise : ce qui s'est passe pendant l'arret n'a pas ete compte
+                t1 = self.now_ms()
+                t0 = max(self.idle_since, t1 - self.seed_hours * HOUR)
+                with self.lock:
+                    for cv in list(self.cvd.values()) + list(self.venues.venues.values()):
+                        if cv.first_tick is not None:
+                            cv.gap(t0, t1)
+                self.idle_since = None
+            self.active = True
+            self._due.clear()
+        elif fresh:
+            for k in ("fast", "slow", "books", "options", "onchain"):
+                self._due.pop(k, None)                                   # une nouvelle paire est lue tout de suite
+        if start and not (self.thread and self.thread.is_alive()):
+            self.stop_ev.clear()
+            self.thread = threading.Thread(target=self._loop, name="quant-hub", daemon=True)
+            self.thread.start()
+
     def _loop(self) -> None:
-        self.seed()
-        self._due["reconcile"] = self.now() + 90.0
+        self._due.setdefault("reconcile", self.now() + 90.0)
         while not self.stop_ev.wait(1.0):
+            if self.now() - self.last_used > IDLE_S:                     # plus personne ne regarde : on s'arrete, sans rien garder a jour
+                self.active = False
+                self.idle_since = self.now_ms()
+                self.wanted.clear()
+                self.seeded.clear()
+                return
+            todo = [s for s in list(self.wanted) if s not in self.seeded]
+            if todo:
+                self.seed(todo)
             self.step()
 
     def start(self) -> None:
-        if self.thread and self.thread.is_alive():
-            return
-        self.stop_ev.clear()
-        self.thread = threading.Thread(target=self._loop, name="quant-hub", daemon=True)
-        self.thread.start()
+        """Garde par compatibilite : le moteur ne demarre plus avec le terminal, mais a la premiere demande de la page (touch)."""
 
     def stop(self) -> None:
         self.stop_ev.set()
+        self.active = False
 
     # =================================================================================================
     #  lecture
@@ -456,11 +565,12 @@ class QuantHub:
         s = symbol.upper()
         if s not in self.symbols:
             return {"ok": False, "why": f"paire non suivie : {s}"}
+        self.touch(s, start=self.autostart)
         cached = self._snap.get(s)
         if cached and self.now() - cached[0] <= max_age:
             return cached[1]
         now = self.now_ms()
-        out = {"ok": True, "symbol": s, "now": now}
+        out = {"ok": True, "symbol": s, "now": now, "warming": s not in self.seeded}
         with self.lock:
             perp, spot = self.cvd[(s, "perp")], self.cvd[(s, "spot")]
             end = now - now % MIN + MIN

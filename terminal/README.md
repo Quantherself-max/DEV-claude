@@ -145,6 +145,8 @@ L'audit complet, ce qui a été vérifié sur de vraies données et le plan d'ar
 
 **Données réelles uniquement.** Le mode « données simulées » n'existe plus dans le terminal : ni dans les réglages, ni en ligne de commande, ni dans `.env` (un ancien `TERMINAL_SOURCE=simulated` est ignoré). Une source qui ne répond pas affiche son erreur ; aucun chiffre n'est mis à sa place. Les générateurs de données ne servent plus qu'aux tests automatiques.
 
+**Correctif V45.1.** Le moteur exact démarrait avec le terminal : il occupait environ 40 % d'un processeur en continu et ajoutait des requêtes vers Binance au moment où le terminal en fait déjà le plus, ce qui pouvait bloquer le chargement. Il ne tourne plus que pendant que l'onglet Quant est ouvert (arrêt 5 minutes après), seulement pour l'instrument affiché, avec des requêtes étalées et un calcul du carnet cinq fois plus léger. Onglet fermé, le terminal démarre et tourne exactement comme en V44. Conséquence : le CVD par bourse et le suivi des murs repartent de zéro à chaque ouverture de l'onglet ; le CVD de Binance, lui, reprend 24 heures de bougies officielles.
+
 **Onglet Quant** (bouton « Quant » à côté de « GEX »), pour l'instrument affiché, relu toutes les 5 secondes :
 
 - **Régime de marché** sur 15 minutes, 1 heure et 4 heures : prix, intérêt ouvert, financement, CVD des perpétuels et CVD du comptant croisés. Régimes : cascade de liquidations de longs, short squeeze, ouverture de shorts agressifs, ouverture de longs agressifs, accumulation au comptant, distribution au comptant, compression, neutre. Une mesure absente n'est jamais devinée : elle est écrite « non mesuré ».

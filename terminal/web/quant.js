@@ -3,6 +3,7 @@
 // rien n'est jamais remplacé par une valeur fabriquée.
 //   Régime de marché   prix + intérêt ouvert + financement + CVD des perpétuels + CVD du comptant, sur 15 minutes, 1 heure et 4 heures
 //   CVD exact          transaction par transaction (côté de l'agresseur), contrôlé chaque minute contre la bougie officielle de Binance
+// V45.1 : le moteur ne tourne que pendant que cet onglet est ouvert (il s'arrête 5 minutes après) : aucun effet sur le démarrage du terminal.
 //   Divergences, absorptions, bourses (BTC), carnet (déséquilibre pondéré, murs, ordres retirés), profil de volume exact, dérivés,
 //   options (volatilité, skew 25 delta, max pain, gamma), réseau Bitcoin, état de chaque source.
 const QUANTV = (() => {
@@ -232,7 +233,8 @@ const QUANTV = (() => {
     if (!data) { meta.textContent = ''; g.innerHTML = card('Moteur exact', bad(err || 'Chargement…')); return; }
     if (data.symbol !== LT.st.symbol) { g.innerHTML = card('Moteur exact', bad('Chargement…')); return; }
     const last = data.cvd && data.cvd.last && data.cvd.last.perp;
-    meta.textContent = `${last ? 'dernier prix ' + px(last) + ' · ' : ''}mis à jour ${HM.format(data.now)}${err ? ' · ' + err : ''}`;
+    meta.textContent = `${last ? 'dernier prix ' + px(last) + ' · ' : ''}mis à jour ${HM.format(data.now)}${err ? ' · ' + err : ''}` +
+      (data.warming ? ' · démarrage du moteur : les premières mesures arrivent en quelques secondes, l\'historique de 24 heures en moins d\'une minute' : '');
     g.innerHTML = regimeCard(data) + cvdCard(data) + signalsCard(data) + venuesCard(data) + bookCard(data) + profileCard(data) + derivsCard(data) +
       optionsCard(data) + chainCard(data) + sourcesCard(data);
   }

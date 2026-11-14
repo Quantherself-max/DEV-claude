@@ -126,6 +126,7 @@ class HttpClient:
         self.name, self.base = name, base.rstrip("/")
         self.timeout, self.retries, self.backoff, self.backoff_max = timeout, retries, backoff, backoff_max
         self.weight_limit, self.weight_header = weight_limit, (weight_header or "").lower()
+        self.weight_guard = 0.8               # part du quota au-dela de laquelle ce client se met en pause jusqu'a la minute suivante
         self.transport, self.sleep, self.now, self.rnd = transport, sleep, now, rnd
         self.limiter = RateLimiter(rate, burst, sleep=sleep)
         self.cache = TTLCache(now=now)
@@ -155,7 +156,7 @@ class HttpClient:
                     self.used_weight = int(v)
                 except (TypeError, ValueError):
                     return
-                if self.weight_limit and self.used_weight >= 0.8 * self.weight_limit:
+                if self.weight_limit and self.used_weight >= self.weight_guard * self.weight_limit:
                     self.limiter.penalize(60.0 - self.now() % 60.0 + 0.5)        # jusqu'à la minute suivante (le compteur y repart de zéro)
 
     def get(self, path: str, params: dict | None = None, ttl: float = 0.0, weight: float = 1.0, stale_ok: bool = False,

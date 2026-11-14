@@ -14,6 +14,7 @@ Poids des appels (limite : 2 400 par minute sur les perpétuels, 6 000 sur le co
   long_short            /futures/data/globalLongShortAccountRatio  part des comptes longs et shorts
 Flux en direct : noms `<paire>@aggTrade`, `<paire>@depth20@100ms` ; `parse_agg_trade` et `parse_depth20` lisent leurs messages."""
 from __future__ import annotations
+import time
 
 from quant.num import D, to_ms, units
 from .core import HttpClient, IngestError, need
@@ -82,9 +83,13 @@ class Binance:
         return [parse_agg_trade(x) for x in rows]
 
     def klines_exact(self, symbol: str, interval: str = "1m", start_ms: int | None = None, end_ms: int | None = None,
-                     market: str = "perp", limit: int | None = None) -> list:
-        """Barres exactes ; `limit` seul = les dernières ; avec start_ms : toutes les barres de l'intervalle (pagination)."""
+                     market: str = "perp", limit: int | None = None, page: int | None = None, pause: float = 0.0, wait=None) -> list:
+        """Barres exactes ; `limit` seul = les dernières ; avec start_ms : toutes les barres de l'intervalle (pagination).
+        `page` : taille d'une page (499 = poids 2 sur les perpétuels au lieu de 10 pour 1 500) ; `pause` : secondes entre deux pages
+        (`wait(secondes)` renvoie vrai s'il faut arrêter)."""
         path, cap = ("/api/v3/klines", 1000) if market == "spot" else ("/fapi/v1/klines", 1500)
+        if page:
+            cap = min(cap, int(page))
         c = self._c(market)
         if start_ms is None:
             n = min(limit or cap, cap)
@@ -94,12 +99,14 @@ class Binance:
         out, t, step = [], start_ms, INTERVAL_MS[interval]
         while end_ms is None or t <= end_ms:
             rows = c.get(path, {"symbol": symbol, "interval": interval, "startTime": t, "endTime": end_ms, "limit": cap},
-                         weight=2 if market == "spot" else 10)
+                         weight=2 if market == "spot" else (1 if cap < 100 else 2 if cap < 500 else 5 if cap <= 1000 else 10))
             if not rows:
                 break
             out += [kline_row(r) for r in rows]
             t = int(rows[-1][0]) + step
             if len(rows) < cap:
+                break
+            if pause and (wait(pause) if wait else time.sleep(pause)):
                 break
         return out
 
