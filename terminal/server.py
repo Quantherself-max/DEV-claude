@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "45"
-API_LEVEL = 45                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "46"
+API_LEVEL = 46                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -219,6 +219,17 @@ def default_cex(cfg, source, service, feed):
         cx.live = feed
         feed.cex = cx
     return cx
+
+
+def _slim(x):
+    """Copie d'une reponse ou chaque nombre a virgule est ramene a 8 chiffres significatifs (affichage de courbes : moitie moins lourd)."""
+    if isinstance(x, float):
+        return float(f"{x:.8g}") if x == x and x not in (float("inf"), float("-inf")) else x
+    if isinstance(x, list):
+        return [_slim(v) for v in x]
+    if isinstance(x, dict):
+        return {k: _slim(v) for k, v in x.items()}
+    return x
 
 
 def default_quant(cfg, source, service, feed, flow, cex):
@@ -708,6 +719,64 @@ class App:
         except Exception:
             pass
         return subcharts.aggregate_funding(rows)
+
+    def series_page(self, sym: str, tf: str, have: str = "") -> dict:
+        """V46 : courbes des VWAP pour la page. Elles ne changent vraiment qu'a chaque nouvelle bougie : tant que la page a la version
+        en cours (meme derniere bougie, meme minute), la reponse tient en quelques octets au lieu de 390 Ko toutes les 20 secondes.
+        Les nombres sont ecrits avec 8 chiffres significatifs (bien plus fin qu'un pixel) : la reponse pese moitie moins."""
+        svc = self.service
+        m = svc.markets.get(sym)
+        ok = m is not None and m.ready and tf in TFS and m.store.h1
+        st_ = m.store if ok else None                                # version : dernieres bougies connues (1 h, 5 min, 1 min) et minute en cours
+        ver = (f"{st_.h1[-1].t}:{len(st_.h1)}:{st_.m5[-1].t if st_.m5 else 0}:{st_.m1[-1].t if tf == '1m' and st_.m1 else 0}:"
+               f"{int(time.time() // 60)}") if ok else ""
+        if have and ver and have == ver:
+            return {"same": True, "ready": True, "v": ver}
+        cache = self.__dict__.setdefault("_series_cache", {})
+        key = (id(svc), sym, tf)
+        c = cache.get(key)
+        if c is not None and c[0] == ver and ver:
+            return c[1]
+        d = svc.get_series(sym, tf)
+        if d.get("ready") and ver:
+            d = _slim(d)
+            d["v"] = ver
+            cache[key] = (ver, d)
+            if len(cache) > 12:
+                cache.pop(next(iter(cache)), None)
+        return d
+
+    STATE_TAIL = 80                                                  # bougies renvoyees a une page qui a deja l'historique
+
+    def state_page(self, sym: str, tf: str, scope: str = "all", src: str = "all", have: str = "") -> dict:
+        """V46 : etat d'un graphique pour la page, sans travail inutile.
+        - `have` : version que la page affiche deja (champ « v » de sa derniere reponse, pour le meme instrument et la meme unite de
+          temps). Rien de neuf depuis : reponse de quelques octets {"same": true} (avant : 310 Ko recalcules et renvoyes toutes les
+          2 secondes). Du neuf : seules les dernieres bougies sont renvoyees (« tail »), la page garde le reste.
+        - deux demandes du meme etat entre deux rafraichissements (autre onglet, telephone, changement d'unite) : calcule une seule fois."""
+        svc = self.service
+        ver = f"{svc.last_update:.3f}"
+        m = svc.markets.get(sym)
+        ready = m is not None and m.ready
+        if have and have == ver and ready:
+            return {"same": True, "ready": True, "symbol": sym, "tf": tf, "v": ver, "lastUpdate": svc.last_update,
+                    "now": self.source.now_ms(), "error": svc.errors.get(sym)}
+        cache = self.__dict__.setdefault("_state_cache", {})
+        key = (id(svc), sym, tf, scope, src)
+        c = cache.get(key)
+        if c is not None and c[0] == ver and time.time() - c[2] < 6.0:
+            st = c[1]
+        else:
+            st = svc.get_state(sym, tf, scope, src)
+            if st.get("ready"):
+                st["v"] = ver
+                cache[key] = (ver, st, time.time())
+                if len(cache) > 16:
+                    for k in sorted(cache, key=lambda k: cache[k][2])[:len(cache) - 16]:
+                        cache.pop(k, None)
+        if have and st.get("ready") and len(st.get("candles") or ()) > self.STATE_TAIL:
+            return {**st, "candles": st["candles"][-self.STATE_TAIL:], "tail": True}
+        return st
 
     def quant_page(self, sym: str) -> dict:
         """V45 : mesures exactes d'une paire (CVD tick par tick, regime de marche, carnet, profil exact, options, reseau Bitcoin) et
@@ -1350,7 +1419,8 @@ def make_handler(app: App):
                 if u.path == "/api/state":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     tf = (q.get("tf") or ["1h"])[0]
-                    return self._json(app.service.get_state(sym, tf, (q.get("gexScope") or ["all"])[0], (q.get("gexSrc") or ["all"])[0]))
+                    return self._json(app.state_page(sym, tf, (q.get("gexScope") or ["all"])[0], (q.get("gexSrc") or ["all"])[0],
+                                                     (q.get("v") or [""])[0]))
                 if u.path == "/api/config":
                     c = app.cfg
                     return self._json({"symbols": list(c.symbols), "tfs": list(TFS), "alertTfs": list(ALERT_TFS), "source": c.source,
@@ -1384,7 +1454,7 @@ def make_handler(app: App):
                     return self._json(app.service.get_mtf(sym, (q.get("tf") or ["1h"])[0]))
                 if u.path == "/api/series":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
-                    return self._json(app.service.get_series(sym, (q.get("tf") or ["1h"])[0]))
+                    return self._json(app.series_page(sym, (q.get("tf") or ["1h"])[0], (q.get("v") or [""])[0]))
                 if u.path == "/api/overview":
                     o = app.service.overview()
                     o["alerts"] = [{"t": a["t"], "text": a["text"].split("\n")[0], "sent": a.get("sent")} for a in app.alerts.log[-6:][::-1]]

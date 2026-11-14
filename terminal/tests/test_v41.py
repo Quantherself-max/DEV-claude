@@ -129,7 +129,7 @@ class WiringTests(unittest.TestCase):
                 return []
         with tempfile.TemporaryDirectory(**TMP_KW) as tmp:
             cfg = Config(source="binance", symbols=("BTCUSDT",), data_dir=tmp, port=0)
-            self.assertEqual(cfg.sizeflow_history_days, 180)
+            self.assertEqual(cfg.sizeflow_history_days, 90)                         # V46 : 90 jours par défaut (180 avant)
             out = default_trades(cfg, Src(), None)
             self.assertEqual(out["BTCUSDT:hist:perp"].minute, out["BTCUSDT"])
             self.assertEqual(out["BTCUSDT:hist:spot"].minute, out["BTCUSDT:spot"])

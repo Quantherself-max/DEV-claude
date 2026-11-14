@@ -469,7 +469,8 @@ class WiringTest(unittest.TestCase):
 
     def test_server_and_page(self):
         import server
-        self.assertEqual((server.VERSION, server.API_LEVEL), ("45", 45))
+        self.assertGreaterEqual(server.API_LEVEL, 45)
+        self.assertEqual(server.VERSION, str(server.API_LEVEL))
         src = (ROOT / "server.py").read_text(encoding="utf-8")
         for needle in ('"/api/quant"', "def default_quant", "def quant_page", "self.quant.start()", "cex.tap = hub.on_venue_trade"):
             self.assertIn(needle, src)
@@ -478,7 +479,7 @@ class WiringTest(unittest.TestCase):
         self.assertIn('<script src="quant.js"></script>', html)
         self.assertNotIn('value="simulated"', html)                                                # plus de données simulées dans les réglages
         app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
-        self.assertIn("const NEED_API = 45;", app)
+        self.assertIn(f"const NEED_API = {server.API_LEVEL};", app)
         self.assertIn("QUANTV.init(window.LT, qg)", app)
         for f in ("quant.js", "app.js"):
             self.assertEqual(subprocess.run(["node", "--check", str(ROOT / "web" / f)], capture_output=True).returncode, 0, f)

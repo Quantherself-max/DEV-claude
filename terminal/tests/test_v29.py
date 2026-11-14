@@ -368,7 +368,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(load_config(d / ".env").heatmap_days, 0)
         (d / ".env").write_text("TERMINAL_HEATMAP_DAYS=99999\n", encoding="utf-8")
         self.assertEqual(load_config(d / ".env").heatmap_days, 1100)
-        self.assertEqual(Config().heatmap_days, 180)
+        self.assertEqual(Config().heatmap_days, 90)                                 # V46 : 90 jours par défaut (180 avant)
         app = App(Config(source="simulated", symbols=("BTCUSDT",), data_dir=tempfile.mkdtemp(), port=0, heatmap_days=0), env_path=None)
         self.assertEqual(app.liqmaps, {})
         self.assertIsNone(app.heat["BTCUSDT"].book.long)                       # 0 : seulement les 24 dernières heures, comme en V28

@@ -90,51 +90,72 @@ class DataStore:
         except OSError:
             pass
 
-    def refresh(self) -> None:
+    def fetch(self) -> dict:
+        """V46 : partie RESEAU du rafraichissement. Ne modifie aucune liste lue par l'affichage : elle se fait donc SANS le verrou du
+        service (avant, chaque graphique attendait la fin de ces echanges avec Binance). Le resultat passe ensuite a apply()."""
         now = self.source.now_ms()
         self._load_cache()
+        d = {"now": now}
         s1 = self.h1[-1].t if self.h1 else self.history_start - self.history_start % H1
-        merge(self.h1, self.source.candles(self.symbol, "1h", s1, now))
+        d["h1"] = self.source.candles(self.symbol, "1h", s1, now)
         s5 = self.m5[-1].t if self.m5 else now - OI_DAYS * DAY
         s5 -= s5 % M5
-        merge(self.m5, self.source.candles(self.symbol, "5m", s5, now))
-        self._load_old_m5(now)
+        d["m5"] = self.source.candles(self.symbol, "5m", s5, now)
+        self._load_old_m5(now, self.m5[0].t if self.m5 else (d["m5"][0].t if d["m5"] else None))
         try:                                                     # V36 : bougies 1 minute ; un échec n'arrête rien (le reste continue)
             sm = self.m1[-1].t if self.m1 else now - M1_BARS * M1
-            merge(self.m1, self.source.candles(self.symbol, "1m", sm - sm % M1, now))
+            d["m1"] = self.source.candles(self.symbol, "1m", sm - sm % M1, now)
+            d["m1_error"] = None
+        except Exception as e:
+            d["m1"], d["m1_error"] = None, f"{type(e).__name__}: {str(e)[:120]}"
+        so = (self.oi_t[-1] + M5 + M5) if self.oi_t else now - OI_DAYS * DAY
+        d["oi"] = self.source.open_interest(self.symbol, "5m", so, now)
+        try:                                                     # V37 : intérêt ouvert à l'instant (la bougie en cours n'attend plus le relevé 5 min)
+            d["oi_now"] = self.source.open_interest_now(self.symbol)
+        except Exception:
+            d["oi_now"] = None
+        return d
+
+    def apply(self, d: dict) -> None:
+        """V46 : range en memoire ce que fetch() a lu. Rapide (aucun reseau) : c'est la seule partie faite sous le verrou du service."""
+        merge(self.h1, d["h1"])
+        merge(self.m5, d["m5"])
+        if d.get("m1") is not None:
+            merge(self.m1, d["m1"])
             if len(self.m1) > M1_BARS + 300:
                 del self.m1[:-M1_BARS]
-            self.m1_error = None
-        except Exception as e:
-            self.m1_error = f"{type(e).__name__}: {str(e)[:120]}"
-        so = (self.oi_t[-1] + M5 + M5) if self.oi_t else now - OI_DAYS * DAY
-        for ts, v in self.source.open_interest(self.symbol, "5m", so, now):
+        self.m1_error = d.get("m1_error")
+        for ts, v in d["oi"]:
             k = ts - M5
             if k not in self.oi:
                 self.oi[k] = v
                 if not self.oi_t or k > self.oi_t[-1]:
                     self.oi_t.append(k)
                     self.oi_v.append(v)
-        try:                                                     # V37 : intérêt ouvert à l'instant (la bougie en cours n'attend plus le relevé 5 min)
-            self.oi_now = self.source.open_interest_now(self.symbol)
-        except Exception:
-            pass
-        self.last_refresh = now
+        if d.get("oi_now") is not None:
+            self.oi_now = d["oi_now"]
+        self.last_refresh = d["now"]
         self.last_error = None
         self._save_cache()
 
-    def _load_old_m5(self, now: int) -> None:
-        """Une seule fois : les bougies 5 min des (M5_FINE_DAYS - OI_DAYS) jours qui precedent m5. Un echec n'arrete rien (nouvel essai dans l'heure)."""
-        if self.m5_old or not self.m5 or time.time() - self._m5_old_try < 3600:
+    def refresh(self) -> None:
+        self.apply(self.fetch())
+
+    def _load_old_m5(self, now: int, first_t=None) -> None:
+        """Une seule fois : les bougies 5 min des (M5_FINE_DAYS - OI_DAYS) jours qui precedent m5. Un echec n'arrete rien (nouvel essai dans l'heure).
+        `first_t` : debut de la premiere bougie 5 min connue (celle de m5, ou celle qui vient d'etre lue au premier passage)."""
+        if first_t is None:
+            first_t = self.m5[0].t if self.m5 else None
+        if self.m5_old or first_t is None or time.time() - self._m5_old_try < 3600:
             return
         self._m5_old_try = time.time()
         a = now - M5_FINE_DAYS * DAY
         a -= a % M5
-        b = self.m5[0].t - M5
+        b = first_t - M5
         if b <= a:
             return
         try:
-            self.m5_old = [k for k in self.source.candles(self.symbol, "5m", a, b) if k.t < self.m5[0].t]
+            self.m5_old = [k for k in self.source.candles(self.symbol, "5m", a, b) if k.t < first_t]
         except Exception:
             self.m5_old = []
 

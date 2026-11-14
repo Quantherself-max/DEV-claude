@@ -215,8 +215,19 @@ class Market:
         self._naked_cache = cache
         return out
 
-    def update(self) -> None:
-        self.store.refresh()
+    def update(self, lock=None) -> None:
+        """V46 : les echanges avec Binance se font AVANT de prendre le verrou du service ; le verrou ne couvre plus que la mise en
+        memoire et le calcul des niveaux. Avant, chaque graphique attendait la fin des requetes reseau de chaque instrument."""
+        fresh = self.store.fetch()
+        if lock is None:
+            self._apply(fresh)
+        else:
+            with lock:
+                self._apply(fresh)
+        self.store.refresh_context()                             # reseau, hors verrou (simples affectations)
+
+    def _apply(self, fresh: dict) -> None:
+        self.store.apply(fresh)
         now = self.source.now_ms()
         for k in self.store.h1:
             if k.t > self._fed_h1 and k.t + H1 <= now:       # bougies FERMEES uniquement, dans l'ordre
@@ -237,7 +248,6 @@ class Market:
                 self.liq.step(self.store.oi.get(k.t), k.h, k.l, k.c, k.v, k.tb if k.tb > 0 else None, k.t + M5)
                 self._fed_m5 = k.t
         self.ready = bool(self.store.h1)
-        self.store.refresh_context()
 
     # ---------- donnees pour un timeframe ----------
     def chart_candles(self, tf: str):
@@ -1296,8 +1306,7 @@ class Service:
     def refresh_all(self) -> None:
         for sym, m in self.markets.items():
             try:
-                with self.lock:
-                    m.update()
+                m.update(self.lock)                        # V46 : le reseau hors du verrou (voir Market.update)
                 self.errors.pop(sym, None)
             except Exception as e:                     # une panne reseau ne doit pas arreter le terminal
                 self.errors[sym] = f"{type(e).__name__}: {e}"

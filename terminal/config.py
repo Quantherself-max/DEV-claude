@@ -88,11 +88,11 @@ class Config:
     cexflow_on: bool = True              # V44 : onglet GEX : liquidations BTC (Binance, Bybit, OKX) et gros ordres de 5 bourses (flux publics)
     quant_on: bool = True                # V45 : moteur exact (onglet Quant) : CVD tick par tick, regime de marche, carnet, options, reseau Bitcoin
     sizeflow_days: int = 14               # V39 : jours de transactions du marche SPOT (flux par taille d'ordre) ; et jours recents du perpetuel dont l'archive est relue une fois pour ce flux ; 0 = spot desactive
-    sizeflow_history_days: int = 180      # V40.1 : historique a l'heure du flux par taille (archives relues une fois, quelques Ko gardes par jour) ; 0 = coupe
+    sizeflow_history_days: int = 90       # V40.1 : historique a l'heure du flux par taille (archives relues une fois, quelques Ko gardes par jour) ; 0 = coupe
     binance_spot_ws: str = "wss://stream.binance.com:9443"   # V39 : flux temps reel Binance spot (transactions)
     footprint_days: int = 62              # V23 : jours de transactions exactes (archives Binance Vision + API + direct) ; 62 couvre le mois precedent ; 0 = desactive
     heatmap_symbols: tuple = ("BTCUSDT",)   # V28 : heatmap du carnet (photos des carnets Binance, OKX, Bybit, Coinbase) ; () = desactivee
-    heatmap_days: int = 180                 # V29 : memoire longue de la heatmap et archives Binance (jours) ; aussi la carte des liquidations ; 0 = rien de plus que les 24 h
+    heatmap_days: int = 90                  # V29 : memoire longue de la heatmap et archives Binance (jours) ; aussi la carte des liquidations ; 0 = rien de plus que les 24 h
     binance_ws_public: str = "wss://fstream.binance.com/public"   # flux a haute frequence de Binance futures (profondeur du carnet)
     okx_ws: str = "wss://ws.okx.com:8443/ws/v5/public"            # carnet OKX (nombre d'ordres par prix), public, sans cle
     anchor_date: str = "2024-01-01"      # VWAP ancree
@@ -280,10 +280,32 @@ def write_env(path: Path, updates: dict) -> None:
 
 
 def migrate_env(path: Path, data_dir) -> bool:
-    """Migrations uniques de .env (V13.1 : sens des idees ; V42 : PUMPUSDT ajoute aux paires). True si .env a change."""
+    """Migrations uniques de .env (V13.1 : sens des idees ; V42 : PUMPUSDT ajoute aux paires ; V46 : historique long a 90 jours).
+    True si .env a change."""
     a = _migrate_direction(path, data_dir)
     b = _migrate_pump(path, data_dir)
-    return a or b
+    c = _migrate_history(path, data_dir)
+    return a or b or c
+
+
+def _migrate_history(path: Path, data_dir) -> bool:
+    """Migration unique (V46) : l'historique long (heatmap, carte des liquidations, flux par taille) passe de 180 a 90 jours quand .env
+    porte encore l'ancienne valeur par defaut (180). Une seule fois : si tu remets 180 ensuite, la valeur reste. True si .env a change."""
+    mark = Path(data_dir) / ".migrated-history90"
+    if mark.exists():
+        return False
+    changed = False
+    try:
+        cur = _load_env_file(path) if path.exists() else {}
+        upd = {k: "90" for k in ("TERMINAL_HEATMAP_DAYS", "TERMINAL_SIZEFLOW_HISTORY_DAYS") if cur.get(k, "").strip() == "180"}
+        if upd:
+            write_env(path, upd)
+            changed = True
+        mark.parent.mkdir(parents=True, exist_ok=True)
+        mark.write_text("V46 : historique long ramene de 180 a 90 jours, une seule fois\n", encoding="utf-8")
+    except OSError:
+        pass
+    return changed
 
 
 def _migrate_direction(path: Path, data_dir) -> bool:

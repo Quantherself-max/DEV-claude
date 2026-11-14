@@ -25,12 +25,17 @@ class BinanceSource(Source):
                  spot_base: str = SPOT, coinbase_base: str = COINBASE):
         self.base, self.timeout, self.pause, self.retries = base.rstrip("/"), timeout, pause, retries
         self.spot_base, self.coinbase_base = spot_base.rstrip("/"), coinbase_base.rstrip("/")
+        self.cool_until: dict = {}           # V46 : serveur -> heure avant laquelle on ne l'appelle plus (il a repondu « trop de requetes »)
 
     def _get(self, path: str, params: dict | None = None, host: str | None = None, retries: int | None = None,
              timeout: float | None = None):
         url = (host or self.base) + path + ("?" + urllib.parse.urlencode(params) if params else "")
         last = None
         retries = retries or self.retries
+        srv = host or self.base
+        left = self.cool_until.get(srv, 0.0) - time.time()
+        if left > 0:                                              # V46 : le serveur a demande une pause : on la respecte, sans insister
+            raise DataError(f"pause demandée par le serveur (trop de requêtes) : reprise dans {int(left) + 1} s ({srv.split('//')[-1]})")
         for attempt in range(retries):
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "liq-terminal/1.0"})
@@ -38,7 +43,17 @@ class BinanceSource(Source):
                     return json.loads(r.read().decode("utf-8"))
             except urllib.error.HTTPError as e:
                 body = e.read().decode("utf-8", "replace")[:200]
-                if e.code in (429, 418, 500, 502, 503, 504) and attempt < retries - 1:
+                if e.code in (429, 418):
+                    # V46 : « trop de requetes » (429) ou adresse bannie (418). Reessayer tout de suite aggrave le blocage (Binance
+                    # allonge le bannissement) : on arrete d'appeler ce serveur pendant la duree qu'il annonce (sinon 60 s / 120 s).
+                    try:
+                        wait = float(e.headers.get("Retry-After")) if e.headers and e.headers.get("Retry-After") else 0.0
+                    except (TypeError, ValueError):
+                        wait = 0.0
+                    wait = min(3600.0, max(wait, 60.0 if e.code == 429 else 120.0))
+                    self.cool_until[srv] = time.time() + wait
+                    raise DataError(f"HTTP {e.code} : trop de requêtes, pause de {int(wait)} s demandée par le serveur ({url.split('?')[0]})") from e
+                if e.code in (500, 502, 503, 504) and attempt < retries - 1:
                     time.sleep(1.5 * (attempt + 1))
                     last = f"HTTP {e.code}"
                     continue
@@ -72,13 +87,14 @@ class BinanceSource(Source):
         step = INTERVAL_MS[interval]
         out, t = [], listing.clamp(symbol, start_ms)                # V42 : jamais avant le premier jour de la paire (data/listing.py)
         while t <= end_ms:
+            lim = page_limit(t, end_ms, step, 1500)
             rows = self._get("/fapi/v1/klines", {"symbol": symbol, "interval": interval,
-                                                   "startTime": t, "endTime": end_ms, "limit": 1500})
+                                                   "startTime": t, "endTime": end_ms, "limit": lim})
             if not rows:
                 break
             out += self.parse_klines(rows)
             t = int(rows[-1][0]) + step
-            if len(rows) < 1500:
+            if len(rows) < lim:
                 break
             time.sleep(self.pause)
         return out
@@ -108,13 +124,14 @@ class BinanceSource(Source):
         step = INTERVAL_MS[interval]
         out, t = [], listing.clamp(symbol, start_ms, "spot")
         while t <= end_ms:
-            rows = self._get("/api/v3/klines", {"symbol": symbol, "interval": interval, "startTime": t, "endTime": end_ms, "limit": 1000},
+            lim = page_limit(t, end_ms, step, 1000)
+            rows = self._get("/api/v3/klines", {"symbol": symbol, "interval": interval, "startTime": t, "endTime": end_ms, "limit": lim},
                              host=self.spot_base)
             if not rows:
                 break
             out += self.parse_klines(rows)
             t = int(rows[-1][0]) + step
-            if len(rows) < 1000:
+            if len(rows) < lim:
                 break
             time.sleep(self.pause)
         return out
@@ -194,6 +211,17 @@ class BinanceSource(Source):
             except (DataError, KeyError, ValueError) as e:
                 res.append((name, False, str(e) + " (optionnel : le terminal fonctionne sans)"))
         return res
+
+
+def page_limit(start_ms: int, end_ms: int, step: int, cap: int) -> int:
+    """V46 : nombre de bougies a demander pour couvrir [start, end], au plus `cap`. Binance facture une requete de bougies selon ce
+    nombre (perpetuels : 1 point jusqu'a 99 bougies, 2 jusqu'a 499, 5 jusqu'a 1 000, 10 au-dela). Le terminal demandait toujours 1 500
+    bougies, meme pour n'en lire que deux a chaque cycle : presque tout le quota de 2 400 points par minute y passait."""
+    need = (end_ms - start_ms) // step + 2
+    for tier in (99, 499, 1000):
+        if need <= tier <= cap:
+            return tier
+    return cap
 
 
 def coinbase_product(symbol: str) -> str:

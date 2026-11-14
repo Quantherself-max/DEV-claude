@@ -1,7 +1,8 @@
-# Liq Terminal (V45)
+# Liq Terminal (V46)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Des graphiques qui se chargent vite** (V46) : les échanges avec Binance ne bloquent plus l'affichage, dix fois moins de quota Binance consommé, la page ne redemande plus ce qu'elle a déjà, historique long ramené à 90 jours (voir « V46 » plus bas).
 - **Un moteur de calcul exact sur données réelles uniquement, et l'onglet Quant** (V45) : CVD transaction par transaction contrôlé contre les bougies officielles, régime de marché, carnet (déséquilibre pondéré, murs), profil de volume exact, options (volatilité, skew 25 delta, max pain, gamma), réseau Bitcoin, état de chaque source ; backtest avec financement réel et Monte Carlo (voir « V45 » plus bas et `AUDIT.md`).
 - **Les liquidations BTC et les gros ordres des bourses dans l'onglet GEX** (V44) : combien de millions de dollars de longs et de shorts ont été liquidés sur 6, 12, 24 et 48 heures (Binance, Bybit, OKX), à côté du mouvement du BTC, et qui achète ou vend en gros ordres sur Binance, Coinbase, Bitstamp, OKX et Bybit (voir « V44 » plus bas).
 - **Le flux par taille d'ordre sur plusieurs mois** (V41) : historique à l'heure (180 jours par défaut, réglable) pour les grandes unités de temps (voir « V41 » plus bas).
@@ -138,6 +139,21 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V46 : chargements rapides, moins de données
+
+Quatre causes de lenteur et de blocages trouvées dans le code, toutes corrigées :
+
+1. **Les graphiques attendaient Binance.** Toutes les 5 secondes, pour chaque instrument, le terminal faisait six à dix requêtes vers Binance en gardant le verrou dont l'affichage a besoin. Chaque graphique, chaque changement d'unité de temps attendait donc la fin de ces échanges ; quand Binance répondait lentement, tout se figeait. Les requêtes se font maintenant hors du verrou ; il ne sert plus qu'à ranger les données en mémoire (quelques millisecondes).
+2. **Le quota de Binance était presque épuisé en permanence.** Le terminal demandait 1 500 bougies à chaque cycle pour n'en lire que deux. Binance facture une telle demande 10 points au lieu de 1 : environ 1 000 points par minute sur un quota de 2 400, avant même le reste. Il ne demande plus que les bougies nécessaires (environ 150 points par minute).
+3. **Un refus de Binance était aggravé.** Sur une réponse « trop de requêtes », le terminal réessayait aussitôt, ce qui allonge le blocage côté Binance. Il respecte maintenant la pause annoncée (60 secondes au moins) et l'affiche.
+4. **La page redemandait tout, tout le temps.** Toutes les 2 secondes : 310 Ko recalculés, renvoyés et redessinés, alors que les données ne changent que toutes les 5 secondes. La page annonce maintenant ce qu'elle affiche déjà : rien de neuf, la réponse tient en quelques octets ; du neuf, seules les dernières bougies reviennent. Les courbes des VWAP (390 Ko toutes les 20 secondes) ne reviennent qu'à chaque nouvelle bougie.
+
+Mesuré dans le navigateur (données de test) : au repos, 0,8 Mo échangés en 20 secondes au lieu de 3,7 Mo ; un changement d'unité de temps pèse 0,57 Mo au lieu de 1,35 Mo.
+
+**Moins de données.** L'historique long (heatmap, carte des liquidations, flux par taille d'ordre) passe de 180 à 90 jours : moitié moins d'archives à télécharger et à relire au premier lancement. Un ancien réglage à 180 jours est ramené à 90 une seule fois ; pour revenir à 180 : `TERMINAL_HEATMAP_DAYS=180` et `TERMINAL_SIZEFLOW_HISTORY_DAYS=180` dans `.env`.
+
+**Non vérifié.** Binance refuse l'accès depuis la machine de développement : ces corrections sont prouvées par des tests (dont un graphique servi pendant qu'un faux Binance ne répond pas) et par des mesures sur données de test, pas sur ton réseau.
 
 ## Ce qui est nouveau en V45 : données réelles uniquement, moteur de calcul exact, onglet Quant
 

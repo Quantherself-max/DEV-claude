@@ -736,7 +736,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 45;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille, V42 : prix sous 0,01 $ (PUMP), V43 : repères des sous-fenêtres, V44 : /api/cexflow, liquidations et gros ordres des bourses, V45 : /api/quant, moteur exact)
+const NEED_API = 46;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille, V42 : prix sous 0,01 $ (PUMP), V43 : repères des sous-fenêtres, V44 : /api/cexflow, liquidations et gros ordres des bourses, V45 : /api/quant, moteur exact, V46 : états allégés (« v », « same », « tail »))
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -796,13 +796,28 @@ function apply(d) {
   Desk.renderLegend();
   st.version++;
 }
+// V46 : recolle les dernières bougies reçues à l'historique déjà affiché (même longueur qu'avant) ; null s'il manque des bougies entre les deux
+function mergeTail(prev, tail) {
+  if (!prev || !prev.length || !tail || !tail.length) return null;
+  const t0 = tail[0][0];
+  let i = prev.length - 1;
+  while (i >= 0 && prev[i][0] > t0) i--;
+  if (i < 0 || prev[i][0] !== t0) return null;                     // la première bougie reçue doit exister dans l'historique
+  const out = prev.slice(0, i).concat(tail);
+  return out.length > prev.length && prev.length >= 1500 ? out.slice(out.length - prev.length) : out;
+}
 let timer = null;
 async function poll() {
   clearTimeout(timer);
   timer = setTimeout(poll, 2000);
   let d;
   try {
-    const mo = st.mainOpts || {}, r = await fetch(`/api/state?symbol=${st.symbol}&tf=${st.tf}&gexScope=${mo.gexScope || 'all'}&gexSrc=${mo.gexSrc || 'all'}`);
+    // V46 : la page dit quelle version elle affiche déjà (« v ») : rien de neuf -> réponse de quelques octets ; du neuf -> seules les
+    // dernières bougies reviennent, le reste est gardé ici. Avant : 310 Ko recalculés, renvoyés et redessinés toutes les 2 secondes.
+    const mo = st.mainOpts || {}, key = [st.symbol, st.tf, mo.gexScope || 'all', mo.gexSrc || 'all'].join('|');
+    const have = st.data && st.data.v && st.stateKey === key ? st.data : null;
+    var reqKey = key, prev = have;
+    const r = await fetch(`/api/state?symbol=${st.symbol}&tf=${st.tf}&gexScope=${mo.gexScope || 'all'}&gexSrc=${mo.gexSrc || 'all'}${have ? '&v=' + have.v : ''}`);
     const boot = r.headers.get('X-Terminal-Boot');                 // le terminal a redemarre (mise a jour installee) : on recharge la page
     if (boot && st.boot && boot !== st.boot) { location.reload(); return; }
     if (boot) st.boot = boot;
@@ -811,7 +826,16 @@ async function poll() {
   }
   catch (e) { $('#status').textContent = 'terminal injoignable : redémarrage en cours, ou la fenêtre du programme est fermée'; $('#status').className = 'bad'; return; }
   try {
-    if (d.ready) apply(d);
+    if (d.same) {                                                  // rien de neuf : on ne recalcule ni ne redessine rien
+      if (st.data && st.stateKey === reqKey) { st.data.error = d.error; if (d.now) st.clockOff = d.now - Date.now(); header(st.data); }
+      return;
+    }
+    if (d.tail) {                                                  // seulement les dernières bougies : on les recolle à celles qu'on a
+      const full = prev && st.stateKey === reqKey ? mergeTail(prev.candles, d.candles) : null;
+      if (!full) { st.stateKey = null; clearTimeout(timer); timer = setTimeout(poll, 50); return; }      // trou : on redemande tout
+      d.candles = full; delete d.tail;
+    }
+    if (d.ready) { st.stateKey = reqKey; apply(d); }
     else {
       const err = d.error && d.error !== 'chargement des donnees...';
       $('#status').textContent = err ? 'erreur' : 'chargement des données...';
@@ -947,9 +971,11 @@ async function pollVP() {
   vpTimer = setTimeout(pollVP, 20000);
   try {
     const sym = st.symbol, tf = st.tf;
-    const [S, V] = await Promise.all([api(`/api/series?symbol=${sym}&tf=${tf}`), api(`/api/vp?symbol=${sym}&tf=${tf}`)]);
+    const sk = sym + '|' + tf, hv = st.series && st.series.v && st.seriesKey === sk ? '&v=' + st.series.v : '';   // V46 : courbes inchangées -> réponse vide
+    const [S, V] = await Promise.all([api(`/api/series?symbol=${sym}&tf=${tf}${hv}`), api(`/api/vp?symbol=${sym}&tf=${tf}`)]);
     if (sym !== st.symbol || tf !== st.tf) return;
-    S.stampN = ++st.serN; st.series = S; st.vpd = V;
+    if (!S.same) { S.stampN = ++st.serN; st.series = S; st.seriesKey = sk; }
+    st.vpd = V;
     if (V.ready && !V.profiles.find(p => p.id === st.vpFocus)) st.vpFocus = V.profiles[0] ? V.profiles[0].id : null;
     renderVPList(); st.version++;
   } catch (e) { /* rien */ }

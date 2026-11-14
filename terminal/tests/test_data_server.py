@@ -154,7 +154,12 @@ class BinanceAdapterTests(unittest.TestCase):
         self.assertAlmostEqual(ctx["coinbase"]["premium"], (80030.0 / 80005.0 - 1) * 100)
         n = FakeBinance.calls.__len__()
         svc.refresh_all()                                         # 2e passage : seulement l'increment
-        self.assertLess(len(FakeBinance.calls) - n, 8)
+        # V46 : le réseau ne se fait plus sous le verrou du service ; le calcul de fond lancé par le premier passage (historique du
+        # financement) tourne donc en même temps que le second, et ses requêtes ne sont pas celles du rafraîchissement
+        own = [c for c in FakeBinance.calls[n:] if c[0] != "/fapi/v1/fundingRate"]
+        self.assertLess(len(own), 8)
+        kl = [c[1] for c in own if c[0] == "/fapi/v1/klines" and c[1]["interval"] in ("1h", "5m")]
+        self.assertTrue(kl and all(c["limit"] == "99" for c in kl))            # seulement les bougies nécessaires (poids 1 chez Binance, pas 10)
 
 
 class HistoryCacheTests(unittest.TestCase):
