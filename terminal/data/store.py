@@ -166,7 +166,7 @@ class DataStore:
     def refresh_context(self) -> None:
         """Donnees de contexte (V2). Chacune peut echouer sans bloquer le reste."""
         now = self.source.now_ms()
-        errs = self.ctx["errors"]
+        errs = dict(self.ctx["errors"])                 # V46 : copie, remplacee d'un coup a la fin (cette fonction tourne hors du verrou du service)
 
         def safe(name, fn):
             try:
@@ -197,6 +197,7 @@ class DataStore:
             if tp is not None:
                 self.ctx["ls_top"] = tp
             self._ctx_due["ls"] = wall + 900
+        self.ctx["errors"] = errs
 
     def forming_h1(self):
         k = self.h1[-1] if self.h1 else None
