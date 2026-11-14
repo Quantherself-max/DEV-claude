@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 
 # V45 : les donnees fabriquees (source « simulated », carnets, flux et series d'essai) n'existent plus que pour les tests automatiques.

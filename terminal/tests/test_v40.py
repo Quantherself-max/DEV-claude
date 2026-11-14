@@ -63,7 +63,7 @@ class PageTests(unittest.TestCase):
         self.assertIn('data-layout="gex"', html)
         self.assertIn('<script src="gex.js"></script>', html)
         app = (WEB / "app.js").read_text(encoding="utf-8")
-        for s in ("gex: [], pair: []", "GEXV.init(window.LT, gg)", "GEXV.show()", "GEXV.onTick(price, live.sym)", "gexView: st.gexView",
+        for s in ("gex: [], quant: [], pair: []", "GEXV.init(window.LT, gg)", "GEXV.show()", "GEXV.onTick(price, live.sym)", "gexView: st.gexView",
                   "gexView: {scope: 'all', src: 'all', range: 10, bars: 'net', curve: true"):      # V44 : + cexWin, cexMin
             self.assertIn(s, app)
         js = (WEB / "gex.js").read_text(encoding="utf-8")

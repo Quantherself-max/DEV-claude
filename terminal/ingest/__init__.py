@@ -11,3 +11,4 @@ Tout ce qui entre dans le terminal depuis une bourse ou un service public passe 
   hub       assemble ces sources et les flux en direct, nourrit le moteur exact (paquet quant) et répond à /api/quant.
 Règles : aucune donnée fabriquée (une source en panne donne une erreur lisible, jamais un chiffre de remplacement) ; heures en
 millisecondes UTC (quant.num.to_ms) ; prix et quantités lus du TEXTE de la bourse (jamais par un flottant)."""
+from __future__ import annotations

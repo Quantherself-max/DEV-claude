@@ -358,7 +358,7 @@ class SimAndWiring(unittest.TestCase):
             self.assertFalse(load_config(env).cexflow_on)
 
     def test_page(self):
-        self.assertEqual(API_LEVEL, 44)
+        self.assertGreaterEqual(API_LEVEL, 44)                                    # V45 : la page Quant a monté le niveau
         self.assertEqual(VERSION, str(API_LEVEL))
         app = (WEB / "app.js").read_text(encoding="utf-8")
         self.assertIn(f"const NEED_API = {API_LEVEL};", app)
