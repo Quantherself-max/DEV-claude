@@ -92,7 +92,8 @@ class Config:
     binance_spot_ws: str = "wss://stream.binance.com:9443"   # V39 : flux temps reel Binance spot (transactions)
     footprint_days: int = 62              # V23 : jours de transactions exactes (archives Binance Vision + API + direct) ; 62 couvre le mois precedent ; 0 = desactive
     heatmap_symbols: tuple = ("BTCUSDT",)   # V28 : heatmap du carnet (photos des carnets Binance, OKX, Bybit, Coinbase) ; () = desactivee
-    heatmap_days: int = 90                  # V29 : memoire longue de la heatmap et archives Binance (jours) ; aussi la carte des liquidations ; 0 = rien de plus que les 24 h
+    heatmap_days: int = 180                 # V29 : memoire longue de la heatmap du carnet et archives Binance (jours) ; V47 : la carte des liquidations a son propre reglage (liqmap_days) ; 0 = rien de plus que les 24 h
+    liqmap_days: int = 1900               # V47 : carte des liquidations (jours) : jusqu'au debut des archives d'interet ouvert de Binance (decembre 2021) ; 0 = coupee
     binance_ws_public: str = "wss://fstream.binance.com/public"   # flux a haute frequence de Binance futures (profondeur du carnet)
     okx_ws: str = "wss://ws.okx.com:8443/ws/v5/public"            # carnet OKX (nombre d'ordres par prix), public, sans cle
     anchor_date: str = "2024-01-01"      # VWAP ancree
@@ -206,6 +207,7 @@ def load_config(env_path: Path | None = None) -> Config:
     hm = g("TERMINAL_HEATMAP", ",".join(c.heatmap_symbols)).strip()
     c.heatmap_symbols = () if hm.lower() in ("0", "false", "non", "no", "") else tuple(x.strip().upper() for x in hm.split(",") if x.strip())
     c.heatmap_days = max(0, min(1100, int(float(g("TERMINAL_HEATMAP_DAYS", c.heatmap_days)))))
+    c.liqmap_days = max(0, min(4000, int(float(g("TERMINAL_LIQMAP_DAYS", c.liqmap_days)))))
     c.binance_ws_public = g("TERMINAL_BINANCE_WS_PUBLIC", c.binance_ws_public).rstrip("/")
     c.okx_ws = g("TERMINAL_OKX_WS", c.okx_ws)
     c.anchor_date = g("TERMINAL_ANCHOR_DATE", c.anchor_date)
@@ -285,7 +287,27 @@ def migrate_env(path: Path, data_dir) -> bool:
     a = _migrate_direction(path, data_dir)
     b = _migrate_pump(path, data_dir)
     c = _migrate_history(path, data_dir)
-    return a or b or c
+    d = _migrate_heatmap_back(path, data_dir)
+    return a or b or c or d
+
+
+def _migrate_heatmap_back(path: Path, data_dir) -> bool:
+    """Migration unique (V47) : la V46 avait ramene la heatmap du carnet de 180 a 90 jours ; elle revient a 180 si c'est la V46 qui
+    l'avait ecrit (marque .migrated-history90 presente et valeur 90 dans .env). True si .env a change."""
+    mark, v46 = Path(data_dir) / ".migrated-heatmap180", Path(data_dir) / ".migrated-history90"
+    if mark.exists():
+        return False
+    changed = False
+    try:
+        cur = _load_env_file(path) if path.exists() else {}
+        if v46.exists() and cur.get("TERMINAL_HEATMAP_DAYS", "").strip() == "90":
+            write_env(path, {"TERMINAL_HEATMAP_DAYS": "180"})
+            changed = True
+        mark.parent.mkdir(parents=True, exist_ok=True)
+        mark.write_text("V47 : heatmap du carnet remise a 180 jours, une seule fois\n", encoding="utf-8")
+    except OSError:
+        pass
+    return changed
 
 
 def _migrate_history(path: Path, data_dir) -> bool:
@@ -297,7 +319,7 @@ def _migrate_history(path: Path, data_dir) -> bool:
     changed = False
     try:
         cur = _load_env_file(path) if path.exists() else {}
-        upd = {k: "90" for k in ("TERMINAL_HEATMAP_DAYS", "TERMINAL_SIZEFLOW_HISTORY_DAYS") if cur.get(k, "").strip() == "180"}
+        upd = {k: "90" for k in ("TERMINAL_SIZEFLOW_HISTORY_DAYS",) if cur.get(k, "").strip() == "180"}      # V47 : la heatmap garde 180 jours
         if upd:
             write_env(path, upd)
             changed = True

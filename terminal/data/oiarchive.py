@@ -3,6 +3,7 @@
 (le même dossier que tools/fetch_history.py : ce qui y est déjà n'est pas retéléchargé). 11 Ko par jour, 2 Mo pour 180 jours.
 SimOiArchive fabrique un intérêt ouvert plausible pour le mode « données simulées » (rien n'est écrit sur le disque)."""
 from __future__ import annotations
+import calendar
 import json
 import math
 import os
@@ -99,6 +100,7 @@ class OiArchive:
             return True
 
         got, err = 0, None
+        self.new_days = []                                     # V47 : jours ajoutés par ce passage (la carte décide s'il faut la rejouer)
         with ThreadPoolExecutor(max_workers=self.workers) as ex:
             futs = [(d, ex.submit(one, d)) for d in todo]
             for d, fu in futs:
@@ -109,6 +111,7 @@ class OiArchive:
                     continue
                 if ok:
                     got += 1
+                    self.new_days.append(d)
                 elif ok is False:
                     tried[_ymd(d)] = now
         try:
@@ -208,6 +211,8 @@ class DeepOi:
                 if oi:
                     last[(t + 3_599_999) // 3_600_000 * 3_600_000] = oi              # clé : fin de l'heure ; le dernier relevé de l'heure l'emporte
             names.append(os.path.basename(f))
+        self.new_days = sorted({calendar.timegm(time.strptime(n.rsplit("-metrics-", 1)[1][:10], "%Y-%m-%d")) * 1000
+                                for n in names if "-metrics-" in n})
         if not names:
             return 0
         with self.lock:

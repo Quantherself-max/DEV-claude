@@ -1,7 +1,8 @@
-# Liq Terminal (V46)
+# Liq Terminal (V47)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **La carte des liquidations depuis décembre 2021** (V47) : plus de quatre ans au lieu de 90 jours, visible en 4 heures et en journalier (voir « V47 » plus bas).
 - **Des graphiques qui se chargent vite** (V46) : les échanges avec Binance ne bloquent plus l'affichage, dix fois moins de quota Binance consommé, la page ne redemande plus ce qu'elle a déjà, historique long ramené à 90 jours (voir « V46 » plus bas).
 - **Un moteur de calcul exact sur données réelles uniquement, et l'onglet Quant** (V45) : CVD transaction par transaction contrôlé contre les bougies officielles, régime de marché, carnet (déséquilibre pondéré, murs), profil de volume exact, options (volatilité, skew 25 delta, max pain, gamma), réseau Bitcoin, état de chaque source ; backtest avec financement réel et Monte Carlo (voir « V45 » plus bas et `AUDIT.md`).
 - **Les liquidations BTC et les gros ordres des bourses dans l'onglet GEX** (V44) : combien de millions de dollars de longs et de shorts ont été liquidés sur 6, 12, 24 et 48 heures (Binance, Bybit, OKX), à côté du mouvement du BTC, et qui achète ou vend en gros ordres sur Binance, Coinbase, Bitstamp, OKX et Bybit (voir « V44 » plus bas).
@@ -139,6 +140,18 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V47 : la carte des liquidations sur plusieurs années
+
+En V46, j'avais ramené l'historique long de 180 à 90 jours : sur un graphique 4 heures ou journalier, la carte des liquidations ne couvrait plus que les trois derniers mois. C'est corrigé, et elle va beaucoup plus loin :
+
+- **Depuis décembre 2021**, début des archives publiques d'intérêt ouvert de Binance. Il n'existe pas de source gratuite plus ancienne : avant cette date, la carte reste vide.
+- **Aucun téléchargement de plus** : l'intérêt ouvert heure par heure depuis 2021 est déjà téléchargé par le terminal (bougies d'intérêt ouvert sous le graphique) ; la carte s'en sert maintenant.
+- **Une photo par heure sur la dernière année, une toutes les 4 heures avant.** Assez fin pour les graphiques 4 heures et journalier, et environ 30 Mo de mémoire par instrument pour cinq ans.
+- **Réglage séparé** : `TERMINAL_LIQMAP_DAYS` (1900 jours par défaut, soit depuis décembre 2021 ; 0 = carte coupée). La heatmap du carnet garde son propre réglage, `TERMINAL_HEATMAP_DAYS`, revenu à 180 jours (un réglage ramené à 90 par la V46 revient à 180, une seule fois).
+- Au premier lancement, la carte s'affiche d'abord sur les derniers mois, puis s'étend jusqu'à 2021 une fois les archives lues (quelques minutes la première fois, immédiat ensuite).
+
+C'est toujours une estimation : on ne connaît ni les leviers réels ni les prix d'entrée.
 
 ## Ce qui est nouveau en V46 : chargements rapides, moins de données
 

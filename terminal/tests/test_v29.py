@@ -368,10 +368,15 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(load_config(d / ".env").heatmap_days, 0)
         (d / ".env").write_text("TERMINAL_HEATMAP_DAYS=99999\n", encoding="utf-8")
         self.assertEqual(load_config(d / ".env").heatmap_days, 1100)
-        self.assertEqual(Config().heatmap_days, 90)                                 # V46 : 90 jours par défaut (180 avant)
+        self.assertEqual(Config().heatmap_days, 180)                                # V47 : de nouveau 180 jours (90 en V46)
         app = App(Config(source="simulated", symbols=("BTCUSDT",), data_dir=tempfile.mkdtemp(), port=0, heatmap_days=0), env_path=None)
-        self.assertEqual(app.liqmaps, {})
+        self.assertIn("BTCUSDT", app.liqmaps)                                  # V47 : la carte des liquidations a son propre réglage
         self.assertIsNone(app.heat["BTCUSDT"].book.long)                       # 0 : seulement les 24 dernières heures, comme en V28
+        app = App(Config(source="simulated", symbols=("BTCUSDT",), data_dir=tempfile.mkdtemp(), port=0, liqmap_days=0), env_path=None)
+        self.assertEqual(app.liqmaps, {})
+        (d / ".env").write_text("TERMINAL_LIQMAP_DAYS=99999\n", encoding="utf-8")
+        self.assertEqual(load_config(d / ".env").liqmap_days, 4000)
+        self.assertEqual(Config().liqmap_days, 1900)                           # depuis décembre 2021 (début des archives d'intérêt ouvert)
 
 
 class PageTests(unittest.TestCase):

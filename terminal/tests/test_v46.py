@@ -214,17 +214,81 @@ class StatePageTest(unittest.TestCase):
     def test_defaults_carry_less_history(self):
         from config import load_config, migrate_env
         c = Config()
-        self.assertEqual((c.heatmap_days, c.sizeflow_history_days), (90, 90))
-        with tempfile.TemporaryDirectory() as tmp:                              # un ancien .env à 180 jours passe à 90, une seule fois
+        self.assertEqual((c.heatmap_days, c.sizeflow_history_days), (180, 90))   # V47 : la heatmap du carnet revient à 180 jours
+        with tempfile.TemporaryDirectory() as tmp:                              # le flux par taille à 180 jours passe à 90, une seule fois
             env = Path(tmp) / ".env"
             env.write_text("TERMINAL_HEATMAP_DAYS=180\nTERMINAL_SIZEFLOW_HISTORY_DAYS=180\nTERMINAL_FOOTPRINT_DAYS=62\n", encoding="utf-8")
             self.assertTrue(migrate_env(env, tmp))
             c = load_config(env)
-            self.assertEqual((c.heatmap_days, c.sizeflow_history_days, c.footprint_days), (90, 90, 62))
-            env.write_text("TERMINAL_HEATMAP_DAYS=180\n", encoding="utf-8")       # remis à 180 par choix : on n'y touche plus
+            self.assertEqual((c.heatmap_days, c.sizeflow_history_days, c.footprint_days), (180, 90, 62))
+            env.write_text("TERMINAL_SIZEFLOW_HISTORY_DAYS=180\n", encoding="utf-8")   # remis à 180 par choix : on n'y touche plus
             self.assertFalse(migrate_env(env, tmp))
-            self.assertEqual(load_config(env).heatmap_days, 180)
+            self.assertEqual(load_config(env).sizeflow_history_days, 180)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiqMapHistoryTest(unittest.TestCase):
+    """V47 : carte des liquidations sur plusieurs années (intérêt ouvert horaire depuis décembre 2021), photos espacées au-delà d'un an."""
+
+    def bars(self, days, now):
+        import math
+        import random
+        from engine.atr import Candle
+        r, p, out, ois = random.Random(5), 30000.0, [], {}
+        t0, oi = now - days * 86_400_000, 50000.0
+        for i in range(days * 24):
+            o = p
+            p *= math.exp(r.gauss(0, 0.006))
+            v = 2000.0
+            out.append(Candle(t0 + i * 3_600_000, o, max(o, p) * 1.002, min(o, p) * 0.998, p, v, v * 0.5, v * p, 0.0))
+            oi *= math.exp(r.gauss(0, 0.004))
+            ois[t0 + (i + 1) * 3_600_000] = oi
+        return out, ois
+
+    def test_old_years_are_kept_every_4_hours(self):
+        from engine.liqmap import COARSE, LiqMap
+        now = 1_794_700_800_000
+        bars, ois = self.bars(800, now)
+        mp = LiqMap(1900)
+        mp.feed(bars, ois.get, now)
+        cut = now - 365 * 86_400_000
+        old, recent = [s for s in mp.snaps if s[0] < cut], [s for s in mp.snaps if s[0] >= cut]
+        self.assertTrue(old and all(s[0] % COARSE == 0 for s in old))
+        self.assertEqual(len(recent), 365 * 24)                                  # chaque heure de la dernière année
+        self.assertAlmostEqual(len(old), (800 - 365) * 6, delta=6)
+        q = mp.query(bars[0].t, bars[3000].t, 20000, 60000, 300, 100)            # une période ancienne, vue à l'heure : pas de trous
+        self.assertTrue(q["ready"] and not q["empty"])
+        import base64
+        filled = base64.b64decode(q["data"])
+        cols = [any(filled[j * 300 + c] for j in range(100)) for c in range(300)]
+        self.assertGreater(sum(cols), 280)
+        later = now + 400 * 86_400_000                                            # le temps passe : l'heure d'hier devient « ancienne »
+        mp._thin_t = 0
+        mp.feed([], ois.get, later)
+        self.assertTrue(all(s[0] % COARSE == 0 for s in mp.snaps if s[0] < later - 365 * 86_400_000))
+
+    def test_keeper_reads_hourly_deep_oi_and_rebuilds_only_for_old_news(self):
+        from engine.liqmap import LiqMapKeeper
+        now = 1_794_700_800_000
+        bars, ois = self.bars(400, now)
+
+        class Store:
+            h1, oi = bars, {}
+
+        class M:
+            ready, store = True, Store()
+
+        class Deep:
+            new_days = []
+
+            def points(self):
+                return ois                                                       # une valeur par heure, clé = fin de l'heure
+
+        kp = LiqMapKeeper("BTCUSDT", lambda: M(), None, 1900, now=lambda: now / 1000, deep=Deep())
+        self.assertTrue(kp.step())
+        self.assertEqual(kp.map.oi_first, bars[0].t)                              # la carte part du premier jour d'intérêt ouvert
+        self.assertFalse(kp._old_news([now - 86_400_000]))                       # hier : déjà connu, pas de reconstruction
+        self.assertTrue(kp._old_news([now - 200 * 86_400_000]))                  # un jour ancien arrive : on rejoue

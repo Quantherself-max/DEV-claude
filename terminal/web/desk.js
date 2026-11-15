@@ -17,7 +17,7 @@ const Desk = (() => {
   const EL = {
     zones: ['Confluences', 'zones où des niveaux de sources différentes se superposent, notées sur 14', 'Niveaux'],
     pools: ['Poches de liquidation', 'estimées par l\'intérêt ouvert', 'Niveaux'],
-    liqmap: ['Carte des liquidations', 'estimée sur 6 mois : où des positions à levier seraient liquidées ; une ligne s\'éteint quand le prix la touche', 'Niveaux'],
+    liqmap: ['Carte des liquidations', 'estimée depuis décembre 2021 (début des archives d\'intérêt ouvert de Binance) : où des positions à levier seraient liquidées ; une ligne s\'éteint quand le prix la touche', 'Niveaux'],
     ppools: ['Plus hauts / plus bas', 'ordres d\'arrêt visibles dans le prix : veille, semaine, mois', 'Niveaux'],
     npoc: ['POC vierges', 'des jours et semaines passés, jamais retraversés', 'Niveaux'],
     sess: ['Profil du jour', 'volume par prix depuis 00 h UTC, POC, VAH, VAL', 'Profils de volume'],

@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "46"
-API_LEVEL = 46                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "47"
+API_LEVEL = 47                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -152,8 +152,10 @@ def default_heat(cfg, source, service, flow) -> dict:
 
 def default_liqmaps(cfg, source, service) -> dict:
     """V29 : carte des liquidations sur plusieurs mois (affichage seulement), pour chaque paire : moteur separe rejoue sur les bougies d'une
-    heure avec l'interet ouvert de l'adresse Binance (29 jours) et des archives publiques (heatmap_days jours) ; fabrique en mode simule."""
-    days = int(getattr(cfg, "heatmap_days", 180) or 0)
+    heure avec l'interet ouvert de l'adresse Binance (29 jours) et des archives publiques ; V47 : liqmap_days jours (depuis decembre 2021 par
+    defaut), l'interet ouvert horaire des annees precedentes venant de DeepOi (deja telecharge pour les bougies d'interet ouvert)."""
+    days = int(getattr(cfg, "liqmap_days", 1900) or 0)               # V47 : réglage propre à la carte (avant : celui de la heatmap)
+    arch_days = max(30, int(getattr(cfg, "heatmap_days", 180) or 0))   # intérêt ouvert toutes les 5 minutes (idées) : inchangé
     if days <= 0:
         return {}
     from data import oiarchive
@@ -169,10 +171,10 @@ def default_liqmaps(cfg, source, service) -> dict:
                 t = m.store.oi_t[0]
                 return t + 300_000, m.store.oi[t]
             clock = lambda: source.now_ms() / 1000
-            out[sym] = LiqMapKeeper(sym, market, oiarchive.SimOiArchive(sym, first, days, now=clock), days, now=clock)
+            out[sym] = LiqMapKeeper(sym, market, oiarchive.SimOiArchive(sym, first, min(days, arch_days), now=clock), days, now=clock)
         else:
             folder = str(Path(cfg.data_dir) / "history" / sym / "raw_metrics")
-            arch = oiarchive.OiArchive(sym, folder, days)
+            arch = oiarchive.OiArchive(sym, folder, arch_days)
             out[sym] = LiqMapKeeper(sym, market, arch, days, deep=oiarchive.DeepOi(sym, folder))
     return out
 
@@ -1542,7 +1544,7 @@ def make_handler(app: App):
                     kp = app.liqmaps.get(sym)
                     if kp is None:
                         return self._json({"ready": False, "symbol": sym, "off": True,
-                                           "why": "carte coupée (TERMINAL_HEATMAP_DAYS=0)" if sym in app.cfg.symbols else "paire inconnue"})
+                                           "why": "carte coupée (TERMINAL_LIQMAP_DAYS=0)" if sym in app.cfg.symbols else "paire inconnue"})
                     f1 = lambda k, d: float((q.get(k) or [d])[0])
                     mp = kp.map
                     out = mp.query(int(f1("t0", 0)), int(f1("t1", 0)), f1("lo", 0), f1("hi", 0), int(f1("cols", 300)), int(f1("rows", 250)),

@@ -1,4 +1,6 @@
 """Carte des liquidations sur plusieurs mois (V29), pour l'AFFICHAGE seulement.
+V47 : sur plusieurs années (depuis décembre 2021, début des archives d'intérêt ouvert de Binance), une photo par heure sur la dernière
+année et une toutes les 4 heures avant.
 
 Même moteur que les poches de liquidation (engine/liquidity.py : leviers 10x, 25x, 50x et 100x, répartition longs / shorts par le
 volume acheteur agressif, un niveau s'éteint quand le prix le touche, réduction quand l'intérêt ouvert baisse), rejoué sur les bougies
@@ -21,6 +23,8 @@ H1 = 3_600_000
 DAY = 86_400_000
 SPAN = 0.30                                   # tranches gardées à ±30 % du prix de l'heure
 GAP = 3 * H1                                  # trou dans l'intérêt ouvert au-delà duquel on repart de zéro (pas de bloc artificiel)
+FINE_DAYS = 365                               # V47 : une photo par heure sur la dernière année...
+COARSE = 4 * H1                               # ... et une toutes les 4 heures avant (graphiques 4 h et journalier : mémoire divisée par 4)
 
 
 def _at_or_after(s, t) -> int:
@@ -37,8 +41,10 @@ def _at_or_after(s, t) -> int:
 class LiqMap:
     """photos : [(début de l'heure, première tranche longs, tailles longs, première tranche shorts, tailles shorts)], en pièces."""
 
-    def __init__(self, days: int = 180):
+    def __init__(self, days: int = 180, fine_days: int = FINE_DAYS):
         self.days = max(1, int(days))
+        self.fine_days = max(1, int(fine_days))
+        self._thin_t = 0
         self.eng = LiqEngine(max_snaps=2)
         self.snaps: list = []
         self.fed = None                       # ouverture de la dernière bougie rangée
@@ -65,10 +71,12 @@ class LiqMap:
         """bars : bougies d'une heure FERMÉES, dans l'ordre ; oi_at(fin de l'heure) -> intérêt ouvert (pièces) ou None. Rend le nombre rangé."""
         n = 0
         with self.lock:
+            fine_from = (now_ms - self.fine_days * DAY) if now_ms is not None else None
             for k in bars:
                 if self.fed is not None and k.t <= self.fed:
                     continue
-                self.snaps.append((k.t, *self._bands(k.o)))          # l'état au début de l'heure
+                if fine_from is None or k.t >= fine_from or k.t % COARSE == 0:
+                    self.snaps.append((k.t, *self._bands(k.o)))      # l'état au début de l'heure (toutes les 4 h avant la dernière année)
                 oi = oi_at(k.t + H1)
                 if oi is not None:
                     if self.oi_t is not None and k.t + H1 - self.oi_t > GAP:
@@ -81,6 +89,11 @@ class LiqMap:
                 n += 1
             if now_ms is not None and self.snaps and self.snaps[0][0] < now_ms - self.days * DAY - DAY:
                 del self.snaps[:_at_or_after(self.snaps, now_ms - self.days * DAY)]
+            if now_ms is not None and now_ms - self._thin_t > DAY:  # une fois par jour : les photos qui passent au-delà d'un an sont espacées
+                self._thin_t = now_ms
+                cut = _at_or_after(self.snaps, now_ms - self.fine_days * DAY)
+                if any(s[0] % COARSE for s in self.snaps[:cut]):
+                    self.snaps[:cut] = [s for s in self.snaps[:cut] if s[0] % COARSE == 0]
         return n
 
     def since(self):
@@ -103,6 +116,7 @@ class LiqMap:
             snaps.append(live)
         rowsz = (hi - lo) / rows
         dt = (t1 - t0) / cols
+        fine_from = (self.fed or 0) - self.fine_days * DAY
         mat = [0.0] * (cols * rows)
         alloc: dict = {}
 
@@ -124,7 +138,7 @@ class LiqMap:
             tc = t0 + (ci + 1) * dt
             while p + 1 < len(snaps) and snaps[p + 1][0] <= tc:
                 p += 1
-            if p < 0 or tc - snaps[p][0] > max(2 * H1, dt):
+            if p < 0 or tc - snaps[p][0] > max(2 * H1 if snaps[p][0] >= fine_from else COARSE + H1, dt):
                 continue
             _, b0l, al, b0s, ash = snaps[p]
             for b0, arr in ((b0l, al), (b0s, ash)):
@@ -166,6 +180,7 @@ class LiqMapKeeper:
         m = self.market()
         live = dict(m.store.oi) if m is not None else {}
         arch = self.archive.points() if self.archive is not None else {}
+        deep = self.deep.points() if self.deep is not None else {}          # V47 : une valeur par heure depuis décembre 2021
 
         def at(t_end):
             v = live.get(t_end - 300_000)                    # OI de l'adresse Binance : clé = ouverture de la bougie 5 min
@@ -173,8 +188,16 @@ class LiqMapKeeper:
                 v = arch.get(t_end)
                 if v is None:
                     v = arch.get(t_end - 300_000)
+                    if v is None:
+                        v = deep.get(t_end)                  # clé : fin de l'heure (dernier relevé de l'heure)
             return v
         return at
+
+    def _old_news(self, days) -> bool:
+        """V47 : des jours d'intérêt ouvert arrivés plus anciens que les 27 derniers jours (déjà connus par l'adresse Binance) : il faut
+        rejouer la carte. Un nouveau jour récent (le cas de chaque jour) ne demande pas de tout rejouer : quelques secondes d'économie."""
+        lim = int(self.now() * 1000) - 27 * DAY
+        return any(d < lim for d in days)
 
     def _bars(self, after=None):
         m = self.market()
@@ -211,7 +234,7 @@ class LiqMapKeeper:
             self.state["error"] = f"{type(e).__name__}: {e}"[:160]
             return 0
         self.state["archiveDays"] = self.archive.days_count()
-        if n:
+        if n and self._old_news(getattr(self.archive, "new_days", None) or [0]):
             self._rebuild = True
         return n
 
@@ -228,6 +251,9 @@ class LiqMapKeeper:
                         try:
                             self.deep.fetch(self.stop_ev)
                             self.state["deepDays"] = self.deep.days_count()
+                            if self._old_news(getattr(self.deep, "new_days", None) or []):
+                                self._rebuild = True          # V47 : la carte remonte aussi loin que l'intérêt ouvert archivé
+                                self.step()
                         except Exception as e:
                             self.state["deepError"] = f"{type(e).__name__}: {e}"[:160]
             except Exception as e:                            # une erreur ici ne doit jamais arrêter le terminal
