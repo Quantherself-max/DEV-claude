@@ -151,6 +151,10 @@ En V46, j'avais ramené l'historique long de 180 à 90 jours : sur un graphique 
 - **Réglage séparé** : `TERMINAL_LIQMAP_DAYS` (1900 jours par défaut, soit depuis décembre 2021 ; 0 = carte coupée). La heatmap du carnet garde son propre réglage, `TERMINAL_HEATMAP_DAYS`, revenu à 180 jours (un réglage ramené à 90 par la V46 revient à 180, une seule fois).
 - Au premier lancement, la carte s'affiche d'abord sur les derniers mois, puis s'étend jusqu'à 2021 une fois les archives lues (quelques minutes la première fois, immédiat ensuite).
 
+- **Comptée en dollars**, et non plus en pièces : sinon 2022 (BTC à 20 000 $) paraissait trois fois plus chargé que 2025 pour les mêmes dollars en jeu.
+
+Vérifié sur de vraies données Binance : l'intérêt ouvert de 1 810 jours (du 1er décembre 2021 au 15 novembre 2026) et les bougies d'une heure du BTC donnent une carte remplie sur toute la largeur des vues 5 ans, 1 an et 90 jours.
+
 C'est toujours une estimation : on ne connaît ni les leviers réels ni les prix d'entrée.
 
 ## Ce qui est nouveau en V46 : chargements rapides, moins de données

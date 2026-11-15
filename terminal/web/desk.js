@@ -672,7 +672,7 @@ const Desk = (() => {
     if (S.mainOpts.liqmap) {
       const c = cellAt(S.liqMap, panel, x, y);
       if (c) {
-        const H = S.liqMap, coins = H.ref * Math.pow(c.q / 255, 1 / 0.85), px = (c.lo + c.hi) / 2;
+        const H = S.liqMap, px = (c.lo + c.hi) / 2, amt = H.ref * Math.pow(c.q / 255, 1 / 0.85), coins = H.usd ? amt / px : amt;   // V47 : la carte est en dollars
         out.push(`≈ <b>${LT.fmtQty(coins)} ${esc(H.unit || '')}</b> (${LT.usdFmt(coins * px)}) de positions à liquider entre ${LT.fmtP(c.lo)} et ${LT.fmtP(c.hi)}<div class="muted small">${c.q >= 255 ? 'au plus fort de l\'image · ' : ''}carte des liquidations : estimation (intérêt ouvert Binance, leviers 10× à 100×)</div>`);
       }
     }

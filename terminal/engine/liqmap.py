@@ -102,7 +102,8 @@ class LiqMap:
 
     def query(self, t0: int, t1: int, lo: float, hi: float, cols: int = 300, rows: int = 250, price: float | None = None) -> dict:
         """Image temps x prix (lignes de prix régulières) : chaque colonne montre la dernière photo horaire (l'heure en cours : l'état
-        actuel), longs et shorts additionnés. Valeurs codées sur 0-255 (puissance 0,85 jusqu'au 98,5e centile ; sous 5 % : rien)."""
+        actuel), longs et shorts additionnés. Valeurs codées sur 0-255 (puissance 0,85 jusqu'au 98,5e centile ; sous 5 % : rien).
+        V47 : en DOLLARS (pièces x prix de la tranche) : sur plusieurs années, les périodes à bas prix ne paraissent plus surchargées."""
         cols = max(10, min(600, int(cols)))
         rows = max(10, min(400, int(rows)))
         if not (t1 > t0 and hi > lo > 0):
@@ -133,6 +134,7 @@ class LiqMap:
             return r
 
         b_lo, b_hi = band_of(lo) - 1, band_of(hi) + 1
+        px_of: dict = {}                                                   # V47 : prix de chaque tranche (montants en dollars)
         p = -1
         for ci in range(cols):
             tc = t0 + (ci + 1) * dt
@@ -145,9 +147,14 @@ class LiqMap:
                 for i in range(max(0, b_lo - b0), min(len(arr), b_hi - b0 + 1)):
                     v = arr[i]
                     if v > 0:
-                        for j, f in rows_of(b0 + i):
+                        b = b0 + i
+                        pb = px_of.get(b)
+                        if pb is None:
+                            pb = px_of[b] = band_price(b)
+                        v *= pb                                    # V47 : en dollars, pas en pièces (sinon 2022, à 20 000 $, paraît 3 fois plus chargé)
+                        for j, f in rows_of(b):
                             mat[j * cols + ci] += v * f
-        base = {"ready": True, "t0": t0, "t1": t1, "cols": cols, "rows": rows, "lo": lo, "rowsz": rowsz,
+        base = {"ready": True, "usd": True, "t0": t0, "t1": t1, "cols": cols, "rows": rows, "lo": lo, "rowsz": rowsz,
                 "since": snaps[0][0] if snaps else None, "oiSince": self.oi_first}
         nz = sorted(v for v in mat if v > 0)
         if not nz:
