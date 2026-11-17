@@ -1,7 +1,8 @@
-# Liq Terminal (V47)
+# Liq Terminal (V48)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Un onglet Quant plus clair, et le comptant comparé aux perpétuels** (V48) : synthèse en tête, cinq rubriques, explications repliées, graphique des achats du comptant contre ceux des perpétuels sur 24 et 48 heures (voir « V48 » plus bas).
 - **La carte des liquidations depuis décembre 2021** (V47) : plus de quatre ans au lieu de 90 jours, visible en 4 heures et en journalier (voir « V47 » plus bas).
 - **Des graphiques qui se chargent vite** (V46) : les échanges avec Binance ne bloquent plus l'affichage, dix fois moins de quota Binance consommé, la page ne redemande plus ce qu'elle a déjà, historique long ramené à 90 jours (voir « V46 » plus bas).
 - **Un moteur de calcul exact sur données réelles uniquement, et l'onglet Quant** (V45) : CVD transaction par transaction contrôlé contre les bougies officielles, régime de marché, carnet (déséquilibre pondéré, murs), profil de volume exact, options (volatilité, skew 25 delta, max pain, gamma), réseau Bitcoin, état de chaque source ; backtest avec financement réel et Monte Carlo (voir « V45 » plus bas et `AUDIT.md`).
@@ -140,6 +141,36 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V48 : l'onglet Quant réorganisé, le comptant contre les perpétuels
+
+**Présentation.** En tête, une rangée de tuiles résume l'essentiel :
+- le prix et sa variation sur 24 heures ;
+- le régime de marché sur 1 heure ;
+- la conviction sur 24 heures ;
+- le CVD sur 1 heure, des perpétuels et du comptant ;
+- le déséquilibre du carnet à ± 0,5 % ;
+- le financement et l'intérêt ouvert ;
+- pour le BTC, la bascule du gamma.
+
+Dessous, les cartes sont rangées en rubriques : Flux d'ordres, Signaux, Liquidité, Dérivés, Réseau Bitcoin. Les longues explications sont repliées sous « Comment lire » : un toucher les ouvre. Les divergences et les absorptions montrent les 4 plus récentes ; les autres sont repliées.
+
+**Comptant contre perpétuels.** Nouvelle carte, en tête de la rubrique Flux d'ordres. Pour 24 heures et pour 48 heures, elle donne pour le comptant et pour les perpétuels Binance :
+- les achats moins les ventes au marché, en dollars ;
+- la part nette de chaque marché dans son propre volume. C'est elle qui compare les deux marchés, car les perpétuels échangent bien plus que le comptant.
+
+Une phrase donne la lecture :
+- comptant et perpétuels acheteurs : conviction acheteuse forte ;
+- comptant acheteur, perpétuels vendeurs : accumulation face à des vendeurs à découvert ;
+- perpétuels acheteurs, comptant vendeur : hausse portée par le levier, fragile ;
+- comptant et perpétuels vendeurs : conviction vendeuse forte ;
+- et les cas où un seul des deux marchés bouge.
+
+Un marché « achète » quand sa part nette dépasse + 1 %, et « vend » quand elle passe sous − 1 %. Le petit graphique montre le net de chaque heure sur 48 heures (en barres) et son cumul : le comptant en haut, les perpétuels en bas.
+
+**D'où viennent les chiffres.** Des bougies officielles d'une heure de Binance, qui donnent le volume acheté au marché. Elles sont relues chaque minute, l'heure en cours comprise. Les chiffres sont donc complets dès l'ouverture de l'onglet, sans attendre 48 heures. Cela coûte 3 unités de quota Binance par paire et par minute, seulement pendant que l'onglet est ouvert.
+
+**État des sources.** Supprimé de la page.
 
 ## Ce qui est nouveau en V47 : la carte des liquidations sur plusieurs années
 

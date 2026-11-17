@@ -38,6 +38,8 @@ IDLE_S = 300.0                # arret du moteur 5 minutes apres la derniere dema
 SEED_PAUSE = 0.4              # secondes entre deux pages de bougies au demarrage (requetes etalees : jamais de rafale vers Binance)
 WINDOWS = (("5m", 5 * MIN), ("15m", 15 * MIN), ("1h", HOUR), ("4h", 4 * HOUR), ("24h", DAY))
 REGIME_WINDOWS = (("15m", 15 * MIN), ("1h", HOUR), ("4h", 4 * HOUR))
+FLOW_HOURS = 48               # V48 : comptant contre perpétuels, bougies d'une heure officielles de Binance (24 et 48 heures)
+CONV_THR = Fraction(1, 100)   # V48 : un marché « achète » quand ses achats agressifs dépassent ses ventes de plus de 1 % du volume
 BANDS = ("0.001", "0.005", "0.01")
 BOOK_BAND = 0.01
 VENUE_NAMES = {"binance_perp": "Binance perpétuel", "binance_spot": "Binance comptant", "bybit_perp": "Bybit perpétuel", "bybit_spot": "Bybit comptant",
@@ -56,6 +58,35 @@ def js(x):
     if isinstance(x, (list, tuple)):
         return [js(v) for v in x]
     return x
+
+
+def conviction(spot, perp, thr=CONV_THR) -> dict:
+    """V48 : lecture comptant contre perpétuels. `spot` et `perp` : part nette des achats agressifs dans le volume de chaque marché
+    (Fraction, de -1 à 1, ou None). Les deux marchés n'ont pas la même taille : on compare leurs PARTS, pas leurs dollars.
+      comptant achète et perpétuels achètent   conviction acheteuse forte (de l'argent réel suit le levier)
+      comptant achète, perpétuels vendent      accumulation réelle face à des vendeurs à découvert
+      comptant achète seul                     achat réel, sans levier
+      perpétuels achètent, comptant vend       hausse portée par le levier : conviction fragile
+      perpétuels achètent seuls                achat du levier, le comptant ne suit pas
+      comptant vend et perpétuels vendent      conviction vendeuse forte
+      comptant vend, perpétuels neutres        distribution du comptant
+      perpétuels vendent seuls                 pression du levier, le comptant ne suit pas
+    `bias` : de -2 à +2 (signe = sens, 2 = les deux marchés d'accord)."""
+    if spot is None or perp is None:
+        return {"code": "missing", "bias": 0, "label": "comptant ou perpétuels absent : pas de lecture"}
+    s = 1 if spot >= thr else -1 if spot <= -thr else 0
+    p = 1 if perp >= thr else -1 if perp <= -thr else 0
+    table = {(1, 1): ("both_buy", 2, "Achats sur les deux marchés : conviction acheteuse forte"),
+             (1, -1): ("spot_vs_shorts", 1, "Le comptant achète, les perpétuels vendent : accumulation réelle face à des vendeurs à découvert"),
+             (1, 0): ("spot_buy", 1, "Le comptant achète, les perpétuels sont neutres : achat réel, sans levier"),
+             (-1, 1): ("lev_buy_spot_sell", -1, "Les perpétuels achètent, le comptant vend : hausse portée par le levier, conviction fragile"),
+             (0, 1): ("lev_buy", 0, "Seuls les perpétuels achètent : achat du levier, le comptant ne suit pas"),
+             (-1, -1): ("both_sell", -2, "Ventes sur les deux marchés : conviction vendeuse forte"),
+             (-1, 0): ("spot_sell", -1, "Le comptant vend, les perpétuels sont neutres : distribution"),
+             (0, -1): ("lev_sell", -1, "Seuls les perpétuels vendent : pression du levier, le comptant ne suit pas"),
+             (0, 0): ("flat", 0, "Pas de conviction nette : achats et ventes s'équilibrent sur les deux marchés")}
+    code, bias, label = table[(s, p)]
+    return {"code": code, "bias": bias, "label": label, "spot": s, "perp": p}
 
 
 class QuantHub:
@@ -78,6 +109,7 @@ class QuantHub:
         self.walls = {s: qbook.WallTracker(band=str(BOOK_BAND), k="8", near="0.0015") for s in self.symbols}
         self.book_last: dict = {}
         self.oi = {s: deque(maxlen=4000) for s in self.symbols}
+        self.hourly: dict = {}                # V48 : (paire, marché) -> bougies d'une heure exactes (kline_row) des 48 dernières heures
         self.premium: dict = {}
         self.ls: dict = {}
         self.others: dict = {}
@@ -319,6 +351,20 @@ class QuantHub:
             self._run(f"intérêt ouvert {s}", oi)
             self._run(f"financement {s}", lambda s=s: self.premium.__setitem__(s, self.binance.premium_index(s)))
 
+    def poll_flows(self) -> None:
+        """V48 : toutes les minutes, les 48 dernières bougies d'une heure du comptant et des perpétuels (l'heure en cours comprise). Chaque
+        bougie officielle porte le volume acheteur agressif en dollars : achats et ventes au marché exacts, sans dépendre du temps
+        pendant lequel l'onglet est resté ouvert. Poids : 1 (perpétuels) + 2 (comptant) par paire et par minute."""
+        for s in self.symbols:
+            if s not in self.wanted:
+                continue
+            for m in ("perp", "spot"):
+                def one(s=s, m=m):
+                    rows = self.binance.klines_exact(s, "1h", market=m, limit=FLOW_HOURS)
+                    with self.lock:
+                        self.hourly[(s, m)] = rows
+                self._run(f"bougies horaires {m} {s}", one)
+
     def poll_slow(self) -> None:
         """Toutes les 5 minutes : historique d'intérêt ouvert (première fois), ratio long / short, Bybit et OKX."""
         for s in self.symbols:
@@ -398,12 +444,12 @@ class QuantHub:
             self.oc = snap
         self._run("réseau Bitcoin", go)
 
-    TASKS = (("books", 5.0), ("gaps", 5.0), ("fast", 30.0), ("reconcile", 300.0), ("slow", 300.0), ("options", 300.0), ("onchain", 300.0))
+    TASKS = (("books", 5.0), ("gaps", 5.0), ("fast", 30.0), ("flows", 60.0), ("reconcile", 300.0), ("slow", 300.0), ("options", 300.0), ("onchain", 300.0))
 
     def step(self, force: bool = False) -> None:
         """Un tour des tâches arrivées à échéance (appelé chaque seconde par le fil du hub ; `force` : toutes, pour les tests)."""
         t = self.now()
-        fns = {"books": self.sample_books, "gaps": self._mark_gaps, "fast": self.poll_fast, "reconcile": self.reconcile,
+        fns = {"books": self.sample_books, "gaps": self._mark_gaps, "fast": self.poll_fast, "flows": self.poll_flows, "reconcile": self.reconcile,
                "slow": self.poll_slow, "options": self.poll_options, "onchain": self.poll_onchain}
         for name, every in self.TASKS:
             if force or t >= self._due.get(name, 0.0):
@@ -432,7 +478,7 @@ class QuantHub:
             self.active = True
             self._due.clear()
         elif fresh:
-            for k in ("fast", "slow", "books", "options", "onchain"):
+            for k in ("fast", "flows", "slow", "books", "options", "onchain"):
                 self._due.pop(k, None)                                   # une nouvelle paire est lue tout de suite
         if start and not (self.thread and self.thread.is_alive()):
             self.stop_ev.clear()
@@ -515,6 +561,40 @@ class QuantHub:
             out[name] = {"code": r["code"], "label": r["label"], "bias": r["bias"], "score": r["score"], "tags": r["tags"], "notes": r["notes"],
                          "crowd": r["crowd"], "missing": r["missing"], "inputs": r["inputs"],
                          "cover": {"perp": float(wp["cover"]), "spot": float(ws["cover"])}}
+        return out
+
+    def _spot_perp(self, s: str) -> dict:
+        """V48 : achats et ventes au marché du comptant et des perpétuels sur 24 et 48 heures (bougies officielles d'une heure, l'heure
+        en cours comprise), en dollars exacts (entiers de 10^-16 $), et la lecture de conviction qui en découle (voir `conviction`)."""
+        p, sp = self.hourly.get((s, "perp")), self.hourly.get((s, "spot"))
+        if not p and not sp:
+            return {"error": self.errors.get(f"bougies horaires perp {s}") or "bougies d'une heure pas encore lues"}
+        out = {"windows": {}, "hours": FLOW_HOURS}
+        for name, n in (("24h", 24), ("48h", 48)):
+            w = {}
+            for m, rows in (("perp", p), ("spot", sp)):
+                sel = (rows or [])[-n:]
+                if not sel:
+                    w[m] = {"error": self.errors.get(f"bougies horaires {m} {s}") or ("pas encore lu" if rows is None else "aucune bougie")}
+                    continue
+                b, v = sum(r[7] for r in sel), sum(r[8] for r in sel)
+                w[m] = {"buyUsd": qflow.usd(b), "sellUsd": qflow.usd(v), "deltaUsd": qflow.usd(b - v), "volUsd": qflow.usd(b + v),
+                        "imb": Fraction(b - v, b + v) if b + v else None, "hours": len(sel), "from": sel[0][0],
+                        "move": qregime.change(sel[0][1], sel[-1][4]) if sel[0][1] else None, "close": from_units(sel[-1][4]), "_b": b, "_v": v}
+            a, c = w.get("perp", {}), w.get("spot", {})
+            if "_b" in a and "_b" in c:
+                tb, tv = a["_b"] + c["_b"], a["_b"] + a["_v"] + c["_b"] + c["_v"]
+                w["spotShareBuy"] = Fraction(c["_b"], tb) if tb else None
+                w["spotShareVol"] = Fraction(c["_b"] + c["_v"], tv) if tv else None
+            w["read"] = conviction(c.get("imb"), a.get("imb"))
+            for x in (a, c):
+                x.pop("_b", None), x.pop("_v", None)
+            out["windows"][name] = w
+        by = {}
+        for m, rows in (("perp", p), ("spot", sp)):
+            for r in rows or []:
+                by.setdefault(r[0], {})[m] = qflow.usd(r[7] - r[8])
+        out["series"] = [[t, by[t].get("spot"), by[t].get("perp")] for t in sorted(by)][-FLOW_HOURS:]
         return out
 
     def _profiles(self, s: str, now: int) -> dict:
@@ -624,11 +704,12 @@ class QuantHub:
                              "others": self.others.get(s) or {}}
             if s == "BTCUSDT":
                 out["venues"] = self._venues(now)
+            out["spotPerp"] = self._spot_perp(s)
         out["profile"] = self._profiles(s, now)
         if s == "BTCUSDT":
             out["options"] = self.opt or {"error": self.errors.get("options Deribit") or "chaîne d'options pas encore lue"}
             out["onchain"] = self.oc or {"error": self.errors.get("réseau Bitcoin") or "réseau Bitcoin pas encore lu"}
-        out["sources"] = self.status()
+        out["errors"] = dict(self.errors)                               # V48 : l'état détaillé des sources n'est plus envoyé à la page
         out = js(out)
         self._snap[s] = (self.now(), out)
         return out

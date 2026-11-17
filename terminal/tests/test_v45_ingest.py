@@ -378,7 +378,8 @@ class HubTest(unittest.TestCase):
         self.assertIsNone(s["derivs"]["oi"])
         self.assertIn("error", s["regime"]["1h"])
         self.assertIn("error", s["onchain"])
-        self.assertTrue(s["sources"]["errors"])
+        self.assertTrue(s["errors"])
+        self.assertNotIn("sources", s)                                              # V48 : plus d'état des sources dans la page
 
     def test_engine_sleeps_until_the_page_asks(self):
         """V45.1 : tant que l'onglet Quant n'est pas ouvert, le moteur ne compte rien et n'envoie aucune requête ; il ne suit que les

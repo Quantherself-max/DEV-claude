@@ -726,3 +726,37 @@ ul.recent li{padding:3px 0;border-bottom:1px solid #1b2030}
 .qobar i{position:absolute;top:0;bottom:0}
 .qobar i.up{background:#22c55e}.qobar i.dn{background:#ef4444}
 @media (max-width:520px){.qgrid{grid-template-columns:1fr}.qtab{font-size:11.5px}.qtab td,.qtab th{padding:3px 3px}}
+/* V48 : onglet Quant réorganisé */
+.qtop:empty{display:none}
+.qtiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px}
+.qtile{background:var(--panel,#11151b);border:1px solid var(--line,#1f2630);border-radius:8px;padding:7px 10px;min-width:0}
+.qtl{font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--mut,#8a90a0)}
+.qtv{font-size:16px;font-weight:600;margin:3px 0 2px;line-height:1.2}
+.qts{font-size:11.5px;line-height:1.35}
+.qsec{grid-column:1/-1;font-size:12px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#38bdf8;margin:8px 0 -2px;padding-bottom:3px;border-bottom:1px solid var(--line,#1f2630)}
+.qhelp{margin-top:7px;font-size:12px}
+.qhelp summary{cursor:pointer;color:var(--mut,#8a90a0);font-size:11.5px;list-style:none}
+.qhelp summary::before{content:"▸ "}
+.qhelp[open] summary::before{content:"▾ "}
+.qsps{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.qsp{min-width:0}
+.qsph{display:flex;gap:6px;align-items:baseline;margin-bottom:3px}
+.qverdict{font-size:13px;font-weight:600;margin-bottom:5px}
+.qspr{display:grid;grid-template-columns:78px 1fr 84px 58px;gap:7px;align-items:center;font-size:12.5px;margin:4px 0}
+.qspr b,.qspr .small{text-align:right;white-space:nowrap}
+.qspr .qspe{grid-column:2/5}
+.qhw{position:relative;margin-top:10px}
+.qhourly{width:100%;height:132px;display:block;background:rgba(255,255,255,.02);border-radius:6px}
+.qhl{position:absolute;left:6px;font-size:10.5px;color:var(--mut,#8a90a0);pointer-events:none}
+.qregh{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.qmeter{display:inline-block;width:60px;height:5px;background:rgba(255,255,255,.07);border-radius:3px;overflow:hidden;margin-left:auto}
+.qmeter i{display:block;height:100%;background:var(--mut,#8a90a0)}
+.qmeter i.up{background:#22c55e}.qmeter i.dn{background:#ef4444}
+@media (max-width:520px){.qtiles{grid-template-columns:repeat(2,minmax(0,1fr))}.qtv{font-size:14px}.qspr{grid-template-columns:66px 1fr 72px 50px;gap:5px}.qsps{grid-template-columns:1fr}}
+
+.qhaxis{position:relative;height:16px;margin-top:2px}
+.qhaxis span{position:absolute;top:0;white-space:nowrap}
+.qhaxis span:first-child{left:0}.qhaxis span:nth-child(2){transform:translateX(-50%)}.qhaxis span:last-child{right:0}
+.qhourly{height:150px}
+.qmore summary{cursor:pointer;color:var(--mut,#8a90a0);font-size:11.5px;padding:3px 0}
+@media (max-width:520px){.qhaxis span:nth-child(2){display:none}}
