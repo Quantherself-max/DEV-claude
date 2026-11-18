@@ -23,6 +23,11 @@ const Desk = (() => {
     sess: ['Profil du jour', 'volume par prix depuis 00 h UTC, POC, VAH, VAL', 'Profils de volume'],
     sessW: ['Profil de la semaine', 'depuis lundi 00 h UTC', 'Profils de volume'],
     sessM: ['Profil du mois', 'depuis le 1er à 00 h UTC', 'Profils de volume'],
+    sessQ: ['Profil du trimestre', 'depuis le 1er jour du trimestre, 00 h UTC (bougies d\'une heure)', 'Profils de volume'],
+    sessPM: ['Profil du mois précédent', 'le mois calendaire complet d\'avant', 'Profils de volume'],
+    sessY: ['Profil de l\'année', 'depuis le 1er janvier, 00 h UTC (bougies d\'une heure)', 'Profils de volume'],
+    sessPY: ['Profil de l\'année précédente', 'l\'année calendaire complète d\'avant', 'Profils de volume'],
+    sessA: ['Profil de tout l\'historique', 'toutes les bougies d\'une heure chargées (depuis 2019 pour le BTC) : les grandes zones de valeur', 'Profils de volume'],
     nodes: ['Nœuds de volume', 'acceptation (HVN, bleu) et rejet (LVN, violet) du jour', 'Profils de volume'],
     dpoc: ['POC, VAH et VAL évolutifs', 'du jour, tels qu\'ils ont évolué pendant la séance', 'Profils de volume'],
     tpoM: ['TPO du mois', 'single prints et poor highs / lows non réparés', 'TPO'],
@@ -51,7 +56,7 @@ const Desk = (() => {
   const VIEWS = {main: 'Graphique', blank: 'Vierge', heat: 'Heatmap'};
   const PRESET = {main: {zones: true, sess: true, vwap: true, vol: true, plan: true}, blank: {}, heat: {heat: true, liqmap: false, big: true, vol: true, plan: true}};
   const VIEW_TF = {heat: '5m'};                                   // unité de temps de départ d'une vue (ensuite : la dernière choisie dans cette vue)
-  const MO_KEYS = ['sess', 'sessW', 'sessM', 'nodes', 'dpoc', 'npoc', 'tpoM', 'tpoW', 'tpoD', 'tpo4', 'tpo1', 'vwap', 'vwapW', 'vwapM', 'vwapY', 'avwap',
+  const MO_KEYS = ['sess', 'sessW', 'sessM', 'sessQ', 'sessPM', 'sessY', 'sessPY', 'sessA', 'nodes', 'dpoc', 'npoc', 'tpoM', 'tpoW', 'tpoD', 'tpo4', 'tpo1', 'vwap', 'vwapW', 'vwapM', 'vwapY', 'avwap',
     'vol', 'heat', 'liqmap', 'oi', 'fund', 'delta', 'sizes', 'dom', 'big', 'absorb', 'gex', 'zones'];
   const freshSet = view => ({els: {...PRESET[view]}, minGrade: 9, bigMin: 2, absorbMode: 'fortes', bigLabels: 'top', heatEx: EX.map(e => e[0]), tf: VIEW_TF[view] || null});
 
@@ -82,6 +87,8 @@ const Desk = (() => {
   const allowed = k => !(EL[k] && EL[k][3]) || (k === 'heat' ? heatSyms().includes(st().symbol) : isBtc(st().symbol));
   // éléments du jeu courant -> anciens réglages lus par le dessin (panels.js)
   const cvdOf = s => ['off', 'perp', 'spot', 'both'].includes(s.cvdMode) ? s.cvdMode : s.deltaCvd === false ? 'off' : 'perp';   // V37 (avant : deltaCvd oui / non)
+  const PROF_KEYS = ['sess', 'sessW', 'sessM', 'sessQ', 'sessPM', 'sessY', 'sessPY', 'sessA'];
+  const vpDeltaOf = s => ['side', 'in', 'off'].includes(s.vpDelta) ? s.vpDelta : 'side';       // V50 : colonne delta en face de chaque profil
   function apply() {
     const S = st(), s = curSet(), on = k => s.els[k] === true && allowed(k);
     S.pools = on('pools'); S.ppools = on('ppools'); S.planOn = on('plan'); S.mode = 'ess';
@@ -93,7 +100,8 @@ const Desk = (() => {
       gexScope: ['week', 'front'].includes(s.gexScope) ? s.gexScope : 'all', gexSrc: s.gexSrc === 'deribit' ? 'deribit' : 'all', gexLevels: s.gexLevels === 'all' ? 'all' : 'ess',
       gexZones: s.gexZones === 'on', gexBars: s.gexBars === 'split' ? 'split' : 'net',
       sizeMkt: ['spot', 'perp'].includes(s.sizeMkt) ? s.sizeMkt : 'both', sizeGroups: s.sizeGroups === '5' ? '5' : '3',
-      sizeReset: ['D', 'W', 'M'].includes(s.sizeReset) ? s.sizeReset : 'all', sizeScale: s.sizeScale === 'shared' ? 'shared' : 'own'});
+      sizeReset: ['D', 'W', 'M'].includes(s.sizeReset) ? s.sizeReset : 'all', sizeScale: s.sizeScale === 'shared' ? 'shared' : 'own',
+      vpDelta: vpDeltaOf(s)});
     S.minGrade = s.minGrade; S.heatEx = s.heatEx;
   }
   function changed(reset) {
@@ -107,7 +115,7 @@ const Desk = (() => {
   function setEl(k, val) {                            // true : visible ; false : masqué (gardé dans la légende) ; null : retiré
     const s = curSet();
     if (val == null) delete s.els[k]; else s.els[k] = !!val;
-    changed(['sess', 'sessW', 'sessM', 'dom'].includes(k));
+    changed([...PROF_KEYS, 'dom'].includes(k));
   }
   function preset(name) {
     const s = curSet();
@@ -210,6 +218,8 @@ const Desk = (() => {
       sel('gexZones', 'Une fine bande au bord droit du graphique : verte là où le gamma total est positif (marché amorti), rouge là où il est négatif (marché amplifié)', [['off', 'sans zones'], ['on', 'zones en bande à droite']], s.gexZones === 'on' ? 'on' : 'off') +
       sel('gexBars', 'Barres de gamma au bord gauche : le net de chaque strike, ou les calls et les puts séparés', [['net', 'barres nettes'], ['split', 'calls et puts']], s.gexBars === 'split' ? 'split' : 'net') +
       '<a class="ddlink" href="/docs/guide_gamma.pdf" target="_blank" rel="noopener">Comprendre chaque niveau (PDF) →</a></span>';
+    if (PROF_KEYS.includes(k)) return sel('vpDelta', 'Delta à chaque prix (acheteurs agressifs moins vendeurs agressifs) : dans une colonne en face du profil (à droite : les acheteurs dominent, à gauche : les vendeurs), en bout de barre du profil (comme avant), ou sans delta. Le réglage vaut pour tous les profils de ce graphique.',
+      [['side', 'delta en face du profil'], ['in', 'delta en bout de barre'], ['off', 'sans delta']], vpDeltaOf(s));
     if (k === 'absorb') return `<select class="mini" data-copt="absorbMode"><option value="fortes"${s.absorbMode === 'fortes' ? ' selected' : ''}>fortes</option><option value="toutes"${s.absorbMode === 'toutes' ? ' selected' : ''}>toutes</option></select>`;
     return '';
   }
@@ -258,8 +268,8 @@ const Desk = (() => {
     document.body.appendChild(chooser);
     chooser.addEventListener('change', e => {
       const t = e.target, s = curSet();
-      if (t.dataset.chel) { if (t.checked) s.els[t.dataset.chel] = true; else delete s.els[t.dataset.chel]; changed(['sess', 'sessW', 'sessM', 'dom'].includes(t.dataset.chel)); }
-      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset', 'gexScope', 'gexSrc', 'gexLevels', 'gexZones', 'gexBars', 'sizeMkt', 'sizeGroups', 'sizeReset', 'sizeScale'].includes(t.dataset.copt) ? t.value : t.dataset.copt === 'deltaCvd' ? t.value === '1' : +t.value; changed(false); }
+      if (t.dataset.chel) { if (t.checked) s.els[t.dataset.chel] = true; else delete s.els[t.dataset.chel]; changed([...PROF_KEYS, 'dom'].includes(t.dataset.chel)); }
+      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset', 'gexScope', 'gexSrc', 'gexLevels', 'gexZones', 'gexBars', 'sizeMkt', 'sizeGroups', 'sizeReset', 'sizeScale', 'vpDelta'].includes(t.dataset.copt) ? t.value : t.dataset.copt === 'deltaCvd' ? t.value === '1' : +t.value; changed(t.dataset.copt === 'vpDelta'); }
       else if (t.dataset.ptog != null) { LT.togglePlan(t.dataset.ptog); fillChooser(); }
     });
     chooser.addEventListener('click', e => {

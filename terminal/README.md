@@ -1,7 +1,8 @@
-# Liq Terminal (V49)
+# Liq Terminal (V50)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Des profils de volume plus longs, et le delta à chaque prix** (V50) : trimestre, mois précédent, année, année précédente et tout l'historique, chacun avec une colonne delta en face (voir « V50 » plus bas).
 - **Un onglet Quant plus clair, et le comptant comparé aux perpétuels** (V48) : synthèse en tête, cinq rubriques, explications repliées, graphique des achats du comptant contre ceux des perpétuels sur 24 et 48 heures (voir « V48 » plus bas).
 - **La carte des liquidations depuis décembre 2021** (V47) : plus de quatre ans au lieu de 90 jours, visible en 4 heures et en journalier (voir « V47 » plus bas).
 - **Des graphiques qui se chargent vite** (V46) : les échanges avec Binance ne bloquent plus l'affichage, dix fois moins de quota Binance consommé, la page ne redemande plus ce qu'elle a déjà, historique long ramené à 90 jours (voir « V46 » plus bas).
@@ -141,6 +142,25 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V50 : profils de volume longs et delta à chaque prix
+
+**Nouveaux profils** dans « ＋ Éléments », rubrique Profils de volume, en plus du jour, de la semaine et du mois :
+- **Profil du trimestre** : depuis le 1er jour du trimestre, 00 h UTC.
+- **Profil du mois précédent** : le mois calendaire complet d'avant, utile en début de mois quand le mois en cours a encore peu de volume.
+- **Profil de l'année** : depuis le 1er janvier, 00 h UTC.
+- **Profil de l'année précédente** : l'année calendaire complète d'avant.
+- **Profil de tout l'historique** : toutes les bougies d'une heure chargées (depuis 2019 pour le BTC) ; il montre les grandes zones de valeur.
+
+Ils se calculent sur les bougies d'une heure de Binance, avec le volume acheteur agressif de chaque bougie. Ils ont plus de lignes que les profils courts (jusqu'à 300) pour rester précis sur une large fourchette de prix. Ils se placent à gauche des profils courts, du plus court au plus long, chacun avec sa couleur. Chaque profil est mis à l'échelle des prix visibles à l'écran, pour rester lisible quand on zoome. Ils ne sont demandés au terminal que s'ils sont affichés, puis relus toutes les minutes.
+
+**Delta à chaque prix, en face de chaque profil.** Une colonne à gauche de chaque profil donne, à chaque prix, les achats agressifs moins les ventes agressives :
+- barre à droite de l'axe : les acheteurs ont dominé à ce prix ;
+- barre à gauche : les vendeurs ont dominé.
+
+Au-dessus de la colonne s'affichent le delta total de la période et la part des achats. Le réglage se fait dans les options de n'importe quel profil et vaut pour tous les profils du graphique : « delta en face du profil » (par défaut), « delta en bout de barre » (l'affichage d'avant), ou « sans delta ».
+
+Contrôle sur les vraies bougies d'une heure du BTC en 2025 : la somme du delta de toutes les lignes du profil est exactement celle des bougies.
 
 ## Ce qui est nouveau en V49 : plus de page bloquée sur « chargement… »
 

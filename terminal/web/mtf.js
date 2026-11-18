@@ -88,7 +88,7 @@ const MTF = (() => {
     }
     resetView() {
       const n = this.bars.length; if (!n) return;
-      const w = this.chart.timeScale().width() || 400, k = Math.max(1, Panel.profKinds(LT.st.mainOpts).length), f = Math.min(0.55, (k * (this.profW(w) + 8) + 28) / w);
+      const w = this.chart.timeScale().width() || 400, k = Math.max(1, Panel.profKinds(LT.st.mainOpts).filter(k => ['D', 'W', 'M'].includes(k)).length), f = Math.min(0.55, (k * (this.profW(w) + 8) + 28) / w);
       this.chart.timeScale().setVisibleLogicalRange({from: Math.max(0, n - 110), to: n + Math.ceil(110 * f / (1 - f)) + 3});
     }
     profW(w) { return Math.round(Math.min(90, Math.max(40, w * 0.16))); }
@@ -143,7 +143,7 @@ const MTF = (() => {
       (d.levels || []).forEach(l => {                                             // nom des niveaux cles, au bord gauche, au-dessus de leur ligne
         const y = this.series.priceToCoordinate(l.price); if (y != null && y > 12 && y < h - 28) ctx.fillText(l.name, 4, y - 1);
       });
-      const plotW = this.chart.timeScale().width(), kinds = Panel.profKinds(o), W = Math.round(this.profW(plotW) * (kinds.length > 1 ? 0.8 : 1));
+      const plotW = this.chart.timeScale().width(), kinds = Panel.profKinds(o).filter(k => ['D', 'W', 'M'].includes(k)), W = Math.round(this.profW(plotW) * (kinds.length > 1 ? 0.8 : 1));
       const r = kinds.length ? Panel.drawProfiles(ctx, this.series, d.profiles || {D: d.session}, kinds, plotW - 1, W, h, t, true) : {used: 0, cols: []};
       const dc = r.cols.find(c => c.k === 'D');
       if (dc) {
@@ -163,7 +163,7 @@ const MTF = (() => {
     tick() {
       if (!this.data) return;
       const s = [this.series.priceToCoordinate(this.data.price) | 0, this.body.clientWidth, this.body.clientHeight, this.chart.timeScale().width(), LT.st.theme,
-        Panel.profKinds(LT.st.mainOpts).join('') + Panel.tpoKinds(LT.st.mainOpts).join('') + (LT.st.mainOpts.absorb ? 'A' + (LT.st.mainOpts.absorbMode || '') : ''),
+        Panel.profKinds(LT.st.mainOpts).filter(k => ['D', 'W', 'M'].includes(k)).join('') + Panel.tpoKinds(LT.st.mainOpts).join('') + (LT.st.mainOpts.absorb ? 'A' + (LT.st.mainOpts.absorbMode || '') : ''),
         (() => { const r = this.chart.timeScale().getVisibleLogicalRange(); return r ? r.from.toFixed(1) + ':' + r.to.toFixed(1) : ''; })()].join();
       if (s !== this.sig) { this.sig = s; this.draw(); }
       const now = LT.serverNow() / 1000, left = Math.max(0, Math.ceil(LT.barEnd(now, this.tf) - now));

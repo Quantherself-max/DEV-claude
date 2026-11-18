@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "49"
-API_LEVEL = 49                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "50"
+API_LEVEL = 50                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -1505,6 +1505,10 @@ def make_handler(app: App):
                 if u.path == "/api/vp":
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.service.get_vp(sym, (q.get("tf") or ["1h"])[0]))
+                if u.path == "/api/profiles":                         # V50 : profils longs (trimestre, année, mois et année précédents, tout)
+                    sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
+                    kinds = [k for k in (q.get("kinds") or [""])[0].split(",") if k][:8]
+                    return self._json(_slim(app.service.get_profiles(sym, kinds)))
                 if u.path == "/api/vps":
                     return self._json({**app.service.vp_state, "auto": {tf: list(v) for tf, v in __import__("engine.vpx", fromlist=["x"]).AUTO_BY_TF.items()}})
                 if u.path == "/api/macroweek":

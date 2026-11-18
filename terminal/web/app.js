@@ -95,7 +95,7 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
   vpOpts: {vD: true, vW: true, vM: false, vY: false, bands: false, avwap: true, profiles: true, range: false},
   layout: 'main', prevLayout: null, sideOpen: true, sbCollapsed: false, ws: {}, instTab: null, minGrade: 9, heatEx: ['binance', 'okx', 'bybit', 'coinbase'], bookHeat: null, liqMap: null, ind: null,
   page: 'desk', sub: 'synth', planOn: true, planKey: null, plans: [], planHide: [], planShow: [], planSig: '', sig: null,
-  theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, nodes: true, dpoc: true, npoc: true, tpoM: true, tpoW: true, tpoD: true, tpo4: false, tpo1: false, vwap: true, dom: false, big: true, bigMin: 2, bigLabels: 'top', absorb: true, absorbMode: 'fortes', gex: true, gexScope: 'all', gexSrc: 'all', gexLevels: 'ess', gexZones: false, gexBars: 'net', sizes: false, sizeMkt: 'both', sizeGroups: '3', sizeReset: 'all', sizeScale: 'own',
+  theme: 'nuit', mainOpts: {sess: true, sessW: false, sessM: false, sessQ: false, sessPM: false, sessY: false, sessPY: false, sessA: false, vpDelta: 'side', nodes: true, dpoc: true, npoc: true, tpoM: true, tpoW: true, tpoD: true, tpo4: false, tpo1: false, vwap: true, dom: false, big: true, bigMin: 2, bigLabels: 'top', absorb: true, absorbMode: 'fortes', gex: true, gexScope: 'all', gexSrc: 'all', gexLevels: 'ess', gexZones: false, gexBars: 'net', sizes: false, sizeMkt: 'both', sizeGroups: '3', sizeReset: 'all', sizeScale: 'own',
     vwapW: false, vwapM: false, vwapY: false, avwap: false, vol: true, heat: false, liqmap: false, oi: false, fund: false, fundMode: '8h', delta: false, deltaCvd: true, cvdMode: 'perp', cvdReset: 'all', deltaUnit: 'coin', oiMode: 'candles', oiColor: 'pos', zones: true}, flow: null,
   mtf: {n: 4, tfs: ['5m', '15m', '1h', '4h', '1d']}, tpoKinds: {M: true, W: true, D: true, '4h': false, '1h': false},
   tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true, expand: false},
@@ -279,7 +279,7 @@ function loadPrefs() {
 }
 function syncAllTools() { panels.forEach(p => p.syncTools()); }
 const needsSeries = () => needs('vp') || st.tab === 'vp' || (needs('main') && ['vwap', 'vwapW', 'vwapM', 'vwapY', 'avwap'].some(k => st.mainOpts[k]));
-function refreshAll() { panels.forEach(p => { p.stamp = ''; p.rebuildLines(); }); st.version++; if (needs('liq')) { pollHeat(); pollLiqs(); } if (needsSeries()) pollVP(); }
+function refreshAll() { panels.forEach(p => { p.stamp = ''; p.rebuildLines(); }); st.version++; if (needs('liq')) { pollHeat(); pollLiqs(); } if (needsSeries()) pollVP(); pollXProf(); }
 function syncRange() {
   const first = panels.find(p => p.visible()); if (!first) return;
   const r = first.chart.timeScale().getVisibleLogicalRange(); if (!r) return;
@@ -739,7 +739,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 49;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille, V42 : prix sous 0,01 $ (PUMP), V43 : repères des sous-fenêtres, V44 : /api/cexflow, liquidations et gros ordres des bourses, V45 : /api/quant, moteur exact, V46 : états allégés (« v », « same », « tail »), V47 : carte des liquidations depuis 2021, V48 : comptant contre perpétuels dans /api/quant, V49 : démarrage qui réessaie)
+const NEED_API = 50;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille, V42 : prix sous 0,01 $ (PUMP), V43 : repères des sous-fenêtres, V44 : /api/cexflow, liquidations et gros ordres des bourses, V45 : /api/quant, moteur exact, V46 : états allégés (« v », « same », « tail »), V47 : carte des liquidations depuis 2021, V48 : comptant contre perpétuels dans /api/quant, V49 : démarrage qui réessaie, V50 : /api/profiles, profils longs et delta par prix)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -982,6 +982,24 @@ async function pollVP() {
     if (V.ready && !V.profiles.find(p => p.id === st.vpFocus)) st.vpFocus = V.profiles[0] ? V.profiles[0].id : null;
     renderVPList(); st.version++;
   } catch (e) { /* rien */ }
+}
+
+// V50 : profils de volume longs (trimestre, année, mois et année précédents, tout l'historique), demandés seulement quand ils sont
+// affichés, puis relus toutes les minutes (ils bougent lentement). Les profils du jour, de la semaine et du mois restent dans l'état.
+let xprofTimer = null;
+async function pollXProf() {
+  clearTimeout(xprofTimer);
+  const kinds = Panel.longKinds(st.mainOpts);
+  if (!kinds.length || !needs('main')) { st.xprof = null; return; }
+  xprofTimer = setTimeout(pollXProf, 60000);
+  const sym = st.symbol, key = sym + '|' + kinds.join(',');
+  if (pollXProf.key === key && Date.now() - pollXProf.at < 4000) return;     // même demande il y a moins de 4 s (démarrage) : inutile
+  pollXProf.key = key; pollXProf.at = Date.now();
+  try {
+    const r = await api(`/api/profiles?symbol=${sym}&kinds=${kinds.join(',')}`);
+    if (sym !== st.symbol || !r.ready) return;
+    st.xprof = {symbol: sym, profiles: r.profiles || {}}; st.version++;
+  } catch (e) { /* rien : la prochaine lecture réessaie */ }
 }
 
 // ---------- V15 : flux d'ordres (carnet aligne sur les prix, gros ordres, vitesse du ruban, latence) ----------

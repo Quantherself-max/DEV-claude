@@ -964,6 +964,44 @@ class Market:
     def profiles(self):
         return {k: self.session_profile(k) for k in ("D", "W", "M")}
 
+    # V50 : profils de volume longs, demandés à part (/api/profiles) quand ils sont affichés : trimestre et année en cours, mois et année
+    # précédents, tout l'historique. Bougies d'une heure (historique depuis 2019), avec le volume acheteur agressif de chaque bougie : la
+    # colonne delta (acheteurs moins vendeurs à chaque prix) en vient. Plus de lignes que les profils courts : un profil d'un an couvre
+    # une large fourchette de prix, il lui faut plus de lignes pour rester précis.
+    EXTRA_PROFILES = {"Q": ("trimestre en cours (depuis le 1er jour du trimestre, 00 h UTC)", "quarter", 0, 150),
+                      "PM": ("mois précédent (mois calendaire complet, UTC)", "month", 1, 120),
+                      "Y": ("année en cours (depuis le 1er janvier, 00 h UTC)", "year", 0, 200),
+                      "PY": ("année précédente (année calendaire complète, UTC)", "year", 1, 200),
+                      "A": ("tout l'historique chargé", None, 0, 300)}
+
+    def extra_profile(self, kind: str):
+        label, per, back, rows = self.EXTRA_PROFILES[kind]
+        h1 = self.store.h1
+        if not h1:
+            return None
+        now = self.source.now_ms()
+        if per is None:
+            start, end = h1[0].t, now + H1
+            label = f"{label} (depuis le {datetime.fromtimestamp(h1[0].t / 1000, timezone.utc).strftime('%d/%m/%Y')})"
+        else:
+            start, end = vpx.period_bounds(per, back, now)
+        i0, i1 = bisect_left_t(h1, start), bisect_left_t(h1, end)
+        if i1 - i0 < 3:
+            return None
+        last = h1[i1 - 1]
+        key = (start, end, i1 - i0, last.t, last.v, last.c, self.fp_sig())
+        cache = self.__dict__.setdefault("_xprof", {})
+        hit = cache.get(kind)
+        if hit and hit[0] == key:
+            return hit[1]
+        memo = self.__dict__.setdefault("_sess_memo", {}).setdefault(("x" + kind, start), {})
+        res = sessionvp.build(h1[i0:i1], target_rows=rows, developing=False, fp=self.fp, span=H1, now=now, memo=memo, memo_sig=self.fp_sig())
+        if res is not None:
+            res.update(kind=kind, label=label, start=start, end=min(end, now), source="1 h")
+            res.pop("developing", None)
+        cache[kind] = (key, res)
+        return res
+
     def tpo(self, kind: str, n: int | None = None, rows: int | None = None):
         """Profils TPO des dernieres seances (engine/tpo.py) : 1 jour, 4 heures et 1 heure sur bougies 5 min ; semaine et mois (V20) sur
         bougies 1 h (la bougie en cours comprise), a partir du debut de la plus ancienne seance utile."""
@@ -1208,6 +1246,18 @@ class Service:
             profs = m.vp_profiles(tf)
         return {"ready": True, "symbol": symbol, "tf": tf, "specs": self.vp_state["specs"], "anchors": self.vp_state["anchors"],
                 "auto": AUTO_NOTE, "profiles": profs}
+
+    def get_profiles(self, symbol: str, kinds) -> dict:
+        """V50 : profils longs demandés par la page (Q, PM, Y, PY, A) ; les inconnus sont ignorés."""
+        m = self.markets.get(symbol)
+        if m is None:
+            raise KeyError(f"symbole inconnu : {symbol}")
+        if not m.ready:
+            return {"ready": False, "symbol": symbol}
+        want = [k for k in dict.fromkeys(kinds) if k in Market.EXTRA_PROFILES]
+        with self.lock:
+            out = {k: m.extra_profile(k) for k in want}
+        return {"ready": True, "symbol": symbol, "profiles": out}
 
     def get_series(self, symbol: str, tf: str) -> dict:
         m = self.markets.get(symbol)

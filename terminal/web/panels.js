@@ -83,12 +83,14 @@ class Panel {
       cross: '#5a5a5a', crossLabel: '#2a2a2a', vwap: '#8296c0', band: 'rgba(120,173,247,0.32)', vpGrey: [98, 98, 98], vpVA: [124, 124, 124], vpPoc: [236, 236, 236],
       vpBuy: [120, 173, 247], vpSell: [242, 242, 242], label: '#9a9a9a', domBg: 'rgba(8,8,8,0.12)',
       vpW: [86, 102, 138], vpWVA: [112, 132, 178], vpM: [134, 112, 88], vpMVA: [170, 142, 108],
+      vpX: {Q: [[76, 122, 112], [100, 160, 146]], PM: [[108, 94, 78], [138, 120, 98]], Y: [[112, 92, 146], [146, 120, 188]], PY: [[92, 84, 116], [120, 108, 148]], A: [[122, 120, 74], [160, 158, 98]]},
       spFill: 'rgba(170,170,170,0.12)', spLine: 'rgba(190,190,190,0.30)', poor: 'rgba(255,179,0,0.75)'},
     classique: {bg: 'rgba(0,0,0,0)', text: '#b2b5be', fontSize: 12, font: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif',
       grid: 'rgba(40,46,64,.35)', border: '#2a2e39', up: '#26a69a', down: '#ef5350', ownTag: false, price: '#4c8dff', priceText: '#ffffff', cd: null, cdText: '#ffffff',
       cross: '#758696', crossLabel: '#4c525e', vwap: '#FFB300', band: 'rgba(255,179,0,0.4)', vpGrey: [90, 98, 120], vpVA: [112, 126, 160], vpPoc: [255, 179, 0],
       vpBuy: [61, 220, 151], vpSell: [255, 107, 107], label: '#a8acb8', domBg: 'rgba(11,14,17,0.14)',
       vpW: [70, 110, 170], vpWVA: [96, 140, 205], vpM: [150, 118, 80], vpMVA: [190, 150, 100],
+      vpX: {Q: [[60, 130, 118], [84, 168, 152]], PM: [[120, 100, 76], [156, 130, 98]], Y: [[120, 90, 170], [156, 120, 214]], PY: [[100, 86, 130], [132, 114, 170]], A: [[140, 136, 70], [180, 176, 92]]},
       spFill: 'rgba(160,165,180,0.13)', spLine: 'rgba(180,184,196,0.35)', poor: 'rgba(255,179,0,0.8)'},
   };
   th() { return Panel.TH[LT.st.theme] || Panel.TH.nuit; }
@@ -106,7 +108,14 @@ class Panel {
   }
   // largeurs (pixels) du profil de la seance et du carnet, colles a droite du graphique principal
   static DOMW = 318;
-  static profKinds(o) { return ['D', 'W', 'M'].filter(k => o && o[{D: 'sess', W: 'sessW', M: 'sessM'}[k]]); }
+  // V50 : du bord de l'échelle vers la gauche, du plus court au plus long (jour, semaine, mois, trimestre, mois précédent, année, année
+  // précédente, tout l'historique). Les cinq derniers viennent de /api/profiles (longKinds).
+  static PROF_EL = {D: 'sess', W: 'sessW', M: 'sessM', Q: 'sessQ', PM: 'sessPM', Y: 'sessY', PY: 'sessPY', A: 'sessA'};
+  static PROF_NAME = {D: 'jour', W: 'semaine', M: 'mois', Q: 'trimestre', PM: 'mois préc.', Y: 'année', PY: 'année préc.', A: 'historique'};
+  static PROF_SHORT = {D: 'jour', W: 'sem.', M: 'mois', Q: 'trim.', PM: 'mois-1', Y: 'an', PY: 'an-1', A: 'tout'};
+  static profKinds(o) { return ['D', 'W', 'M', 'Q', 'PM', 'Y', 'PY', 'A'].filter(k => o && o[Panel.PROF_EL[k]]); }
+  static longKinds(o) { return Panel.profKinds(o).filter(k => !['D', 'W', 'M'].includes(k)); }
+  static deltaMode(o) { return o && ['side', 'in', 'off'].includes(o.vpDelta) ? o.vpDelta : 'side'; }
   static get PANE() { return 0.17; }                 // hauteur d'une sous-fenêtre (part du graphique)
   static get FUND_UP() { return '#26a69a'; }         // V35 : funding positif (les acheteurs paient) / négatif (les vendeurs paient)
   static get FUND_DN() { return '#ef5350'; }
@@ -138,14 +147,29 @@ class Panel {
   }
   static tpoKinds(o) { return ['M', 'W', 'D', '4h', '1h'].filter(k => o && o[{M: 'tpoM', W: 'tpoW', D: 'tpoD', '4h': 'tpo4', '1h': 'tpo1'}[k]]); }
   // V17 : profils de volume colles a droite, une colonne par periode (jour au bord de l'echelle, puis semaine, puis mois)
-  static drawProfiles(ctx, series, profs, kinds, x1, W, h, t, small = false) {
-    const rgba = LT.rgba, NAME = {D: 'jour', W: 'semaine', M: 'mois'}, cols = [];
+  // V50 : `delta` = « side » : colonne delta EN FACE du profil (à sa gauche) : à chaque prix, acheteurs agressifs moins vendeurs
+  // agressifs ; barre à droite de l'axe = les acheteurs dominent, à gauche = les vendeurs ; « in » : surplus en bout de barre (V17) ;
+  // « off » : profil seul. `Wd` : largeur de la colonne delta.
+  static drawProfiles(ctx, series, profs, kinds, x1, W, h, t, small = false, delta = 'in', Wd = 0) {
+    const rgba = LT.rgba, NAME = Panel.PROF_NAME, cols = [];
+    const side = delta === 'side' && Wd > 6;
     let x = x1;
     kinds.forEach(k => {
       const s = profs && profs[k];
       if (!s || !s.rows || !s.rows.length) return;
-      const g = k === 'D' ? t.vpGrey : k === 'W' ? t.vpW : t.vpM, gva = k === 'D' ? t.vpVA : k === 'W' ? t.vpWVA : t.vpMVA;
-      const mx = Math.max(...s.rows.map(r => r[1])) || 1, len = {};
+      const X = (t.vpX || {})[k];
+      const g = k === 'D' ? t.vpGrey : k === 'W' ? t.vpW : k === 'M' ? t.vpM : X ? X[0] : t.vpM;
+      const gva = k === 'D' ? t.vpVA : k === 'W' ? t.vpWVA : k === 'M' ? t.vpMVA : X ? X[1] : t.vpMVA;
+      // V50 : échelle des lignes VISIBLES (un profil d'un an ou de tout l'historique reste lisible quand on zoome sur quelques lignes)
+      const vis = s.rows.filter(([lo]) => { const yt = series.priceToCoordinate(lo + s.step), yb = series.priceToCoordinate(lo); return yt != null && yb != null && yb >= 0 && yt <= h; });
+      const base = vis.length ? vis : s.rows, len = {};
+      const mx = Math.max(...base.map(r => r[1])) || 1;
+      const hasB = s.rows.some(r => r[2] != null);
+      const mxD = hasB ? Math.max(...base.map(r => r[2] == null ? 0 : Math.abs(2 * r[2] - r[1]))) || 1 : 1;
+      ctx.font = `500 9px ${t.font}`;
+      const nm = ctx.measureText(NAME[k]).width <= W - 2 ? NAME[k] : Panel.PROF_SHORT[k];
+      const sl = x - W - 4 - Wd, xc = sl + Wd / 2;                       // colonne delta : bord gauche, axe
+      let yTop = null, yBot = null;
       s.rows.forEach(([lo, v, b]) => {
         const yt = series.priceToCoordinate(lo + s.step), yb = series.priceToCoordinate(lo);
         if (yt == null || yb == null || yb < 0 || yt > h) return;
@@ -154,32 +178,60 @@ class Panel {
         len[lo] = l;
         ctx.fillStyle = rgba(poc ? t.vpPoc : inVA ? gva : g, poc ? 0.9 : inVA ? 0.8 : 0.55);
         ctx.fillRect(x - l, yt, l, hh);
-        if (b != null && v > 0) {
-          const dl = Math.abs(2 * b - v) / mx * W;
-          if (dl >= 1) { ctx.fillStyle = rgba(2 * b >= v ? t.vpBuy : t.vpSell, 0.95); ctx.fillRect(x - l, yt, dl, hh); }
+        if (b == null || v <= 0) return;
+        const dv = 2 * b - v;
+        if (side) {
+          yTop = yTop == null ? Math.max(0, yt) : Math.min(yTop, Math.max(0, yt)); yBot = Math.max(yBot == null ? 0 : yBot, Math.min(h, yb));
+          const dl = Math.abs(dv) / mxD * (Wd / 2 - 1);
+          if (dl >= 0.5) { ctx.fillStyle = rgba(dv >= 0 ? t.vpBuy : t.vpSell, dv >= 0 ? 0.9 : 0.8); ctx.fillRect(dv >= 0 ? xc : xc - dl, yt, Math.max(1, dl), hh); }
+        } else if (delta === 'in') {
+          const dl = Math.abs(dv) / mx * W;
+          if (dl >= 1) { ctx.fillStyle = rgba(dv >= 0 ? t.vpBuy : t.vpSell, 0.95); ctx.fillRect(x - l, yt, dl, hh); }
         }
       });
-      if (k !== 'D') {                                        // semaine / mois : POC nomme, VAH et VAL en pointilles sur leur colonne
+      if (side && hasB && yTop != null) {                               // axe du delta et total de la période
+        ctx.strokeStyle = 'rgba(150,150,150,.35)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(Math.round(xc) + 0.5, yTop); ctx.lineTo(Math.round(xc) + 0.5, yBot); ctx.stroke();
+      }
+      if (k !== 'D') {                                        // semaine, mois et plus longs : POC nomme, VAH et VAL en pointilles sur leur colonne
         ctx.font = `500 9px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
         [[s.poc, true], [s.vah, false], [s.val, false]].forEach(([px, strong]) => {
           const y = series.priceToCoordinate(px); if (y == null || y < 8 || y > h - 30) return;
           ctx.strokeStyle = strong ? 'rgba(236,236,236,.75)' : rgba(gva, 0.8); ctx.lineWidth = 1; ctx.setLineDash(strong ? [] : [3, 3]);
           ctx.beginPath(); ctx.moveTo(x - W, Math.round(y) + 0.5); ctx.lineTo(x, Math.round(y) + 0.5); ctx.stroke(); ctx.setLineDash([]);
-          if (strong) { ctx.fillStyle = t.label; ctx.fillText('POC ' + NAME[k], x - W + 1, y - 1); }
+          if (strong) { ctx.fillStyle = t.label; ctx.fillText(W >= 60 ? 'POC ' + nm : 'POC', x - W + 1, y - 1); }
         });
       }
       // V19 : noeuds de volume sur le bord gauche de la colonne (bleu = HVN, zone d'acceptation ; violet = LVN, zone de rejet) et titre
+      const edge = side ? sl : x - W;
       ctx.font = `500 9px ${t.font}`; ctx.textBaseline = 'middle'; ctx.textAlign = 'right';
       [[s.hvn, 'rgba(120,173,247,0.9)', 'HVN'], [s.lvn, 'rgba(190,120,255,0.9)', 'LVN']].forEach(([arr, col, lab]) => (arr || []).forEach(([a, b]) => {
         const ya = series.priceToCoordinate(a), yb = series.priceToCoordinate(b);
         if (ya == null || yb == null || ya < 0 || yb > h) return;
-        ctx.fillStyle = col; ctx.fillRect(x - W - 4, yb, 2, Math.max(2, ya - yb));
-        if (!small && (ya - yb >= 10 || lab === 'LVN')) ctx.fillText(lab, x - W - 7, (ya + yb) / 2);
+        ctx.fillStyle = col; ctx.fillRect(edge - 4, yb, 2, Math.max(2, ya - yb));
+        if (!small && W >= 60 && (ya - yb >= 10 || lab === 'LVN')) ctx.fillText(lab, edge - 7, (ya + yb) / 2);
       }));
-      ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = t.label;
-      if (!small) ctx.fillText(NAME[k] + (s.shape ? ' · forme ' + s.shape : ''), x - W, 4);
-      cols.push({k, x, W, s, len});
-      x -= W + 8;
+      // en-tête sur deux lignes, coupé à la largeur de sa colonne : nom puis forme ; au-dessus de la colonne delta, le delta de la période
+      // et la part des achats
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillStyle = t.label; ctx.font = `500 9px ${t.font}`;
+      const fit = (txt, w) => { let out = txt; while (out.length > 1 && ctx.measureText(out).width > w) out = out.slice(0, -1); return out === txt ? out : out.replace(/\s+$/, '') + '…'; };
+      const dTxt = side && hasB && s.delta != null ? 'Δ ' + (s.delta >= 0 ? '+' : '−') + LT.fmtQty(Math.abs(s.delta)) : null;
+      const dIn = dTxt && ctx.measureText(dTxt).width <= Wd + 4;          // le delta tient au-dessus de sa colonne, sinon sous le nom
+      if (!small) {
+        ctx.fillText(fit(nm, W - 2), x - W, 4);
+        if (dTxt && !dIn) { ctx.fillStyle = rgba(s.delta >= 0 ? t.vpBuy : t.vpSell, 0.95); ctx.fillText(fit(dTxt, W - 2), x - W, 15); }
+        else if (s.shape && W >= 46) { ctx.fillStyle = 'rgba(150,150,150,.8)'; ctx.fillText(fit('forme ' + s.shape, W - 2), x - W, 15); }
+      }
+      if (dIn && !small) {
+        ctx.fillStyle = rgba(s.delta >= 0 ? t.vpBuy : t.vpSell, 0.95); ctx.textAlign = 'center';
+        ctx.fillText(dTxt, xc, 4);
+        if (s.buyShare != null) {
+          const sh = Math.round(s.buyShare * 100) + ' %', full = sh + ' ach.';
+          ctx.fillStyle = t.label; ctx.fillText(ctx.measureText(full).width <= Wd + 4 ? full : ctx.measureText(sh).width <= Wd + 4 ? sh : '', xc, 15);
+        }
+      }
+      cols.push({k, x, W, s, len, left: side ? sl : x - W});
+      x -= W + 8 + (side ? Wd + 4 : 0);
     });
     return {used: x1 - x, cols};
   }
@@ -278,8 +330,12 @@ class Panel {
     ctx.textBaseline = 'middle';
   }
   overlayW(plotW) {
-    const o = LT.st.mainOpts || {}, k = Panel.profKinds(o).length, W = Math.round(Math.min(150, Math.max(70, plotW * 0.15)) * (k > 1 ? 0.8 : 1));
-    return {W, sess: k ? k * (W + 8) + 30 : 0, dom: o.dom ? Panel.DOMW + 12 : 0};
+    // V50 : plus de colonnes possibles (jusqu'à 8 profils) et la colonne delta : la place prise reste sous 62 % de la largeur du graphique
+    const o = LT.st.mainOpts || {}, k = Panel.profKinds(o).length, side = Panel.deltaMode(o) === 'side', dr = side ? 0.5 : 0, gap = 8 + (side ? 4 : 0);
+    let W = Math.round(Math.min(150, Math.max(70, plotW * 0.15)) * (k > 4 ? 0.55 : k > 2 ? 0.65 : k > 1 ? 0.8 : 1));
+    if (k) W = Math.max(24, Math.min(W, Math.floor((plotW * (plotW < 600 ? 0.55 : 0.62) - 30 - k * gap) / (k * (1 + dr)))));
+    const Wd = side ? Math.round(W * dr) : 0;
+    return {W, Wd, sess: k ? k * (W + Wd + gap) + 30 : 0, dom: o.dom ? Panel.DOMW + 12 : 0};
   }
   // place vide a droite des bougies (en bougies) pour que le profil et le carnet ne cachent pas les dernieres bougies
   rightSpace() {
@@ -1258,15 +1314,16 @@ class Panel {
   // ---- V15 / V17 : profils colles a l'echelle des prix (gris = volume, bout bleu / blanc = surplus d'acheteurs / de vendeurs) ----
   drawSession(L, h) {
     const st = LT.st, t = this.th(), ctx = this.ctx, rgba = LT.rgba, fmtP = LT.fmtP, kinds = Panel.profKinds(st.mainOpts);
-    const profs = L.d.profiles || {D: L.d.session};
+    const X = st.xprof && st.xprof.symbol === st.symbol ? st.xprof.profiles || {} : {};           // V50 : profils longs (/api/profiles)
+    const profs = {...X, ...(L.d.profiles || {D: L.d.session})};
     if (!kinds.length) return 0;
-    const W = this.overlayW(L.plotW).W, x1 = L.plotW - 1;
-    const r = Panel.drawProfiles(ctx, this.series, profs, kinds, x1, W, h, t);
+    const ow = this.overlayW(L.plotW), W = ow.W, x1 = L.plotW - 1, dm = Panel.deltaMode(st.mainOpts);
+    const r = Panel.drawProfiles(ctx, this.series, profs, kinds, x1, W, h, t, false, dm, ow.Wd);
     const d = r.cols.find(c => c.k === 'D');
     if (d) {                                                    // jour : delta chiffre, POC / VAH / VAL et reperes de la seance
       const s = d.s, len = d.len;
       ctx.font = `500 10px ${t.font}`; ctx.textBaseline = 'middle';
-      (s.marks || []).forEach(([px, dv]) => {
+      if (dm === 'in') (s.marks || []).forEach(([px, dv]) => {      // V50 : avec la colonne delta, les chiffres y sont déjà lisibles
         const y = this.series.priceToCoordinate(px); if (y == null || y < 10 || y > h - 30) return;
         const lo = Math.floor(px / s.step + 1e-9) * s.step, k = Object.keys(len).find(x => Math.abs(+x - lo) < s.step / 2);
         ctx.fillStyle = dv > 0 ? rgba(t.vpBuy, 1) : rgba(t.vpSell, 0.95); ctx.textAlign = 'right';
@@ -1277,9 +1334,9 @@ class Panel {
       const lab = items.map(([px, text, strong]) => ({y: this.series.priceToCoordinate(px), text, strong})).filter(it => it.y != null && it.y > 8 && it.y < h - 32);
       LT.placeLabels(lab, 13, 10, h - 32).forEach(it => {
         ctx.strokeStyle = it.strong ? 'rgba(236,236,236,.85)' : 'rgba(150,150,150,.5)'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(d.x - W - 4, Math.round(it.y) + 0.5); ctx.lineTo(d.x, Math.round(it.y) + 0.5); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(d.left - 4, Math.round(it.y) + 0.5); ctx.lineTo(d.x, Math.round(it.y) + 0.5); ctx.stroke();
         ctx.textAlign = 'right';
-        if (it.text.length <= 4) { ctx.fillStyle = t.label; ctx.fillText(it.text, d.x - W - 6, it.ly); return; }
+        if (it.text.length <= 4) { ctx.fillStyle = t.label; ctx.fillText(it.text, d.left - 6, it.ly); return; }
         const tw = ctx.measureText(it.text).width + 8;
         ctx.fillStyle = 'rgba(10,10,10,.45)'; ctx.fillRect(d.x - tw - 2, it.ly - 7, tw, 14);
         ctx.fillStyle = t.label; ctx.fillText(it.text, d.x - 6, it.ly);
@@ -1289,7 +1346,7 @@ class Panel {
         ctx.font = `500 9px ${t.font}`; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
         ctx.fillStyle = ex >= 0.995 ? rgba(t.vpBuy, 0.9) : t.label;
         ctx.textAlign = 'left';
-        ctx.fillText(tag, d.x - W, 16);                        // sous l'en-tete de la colonne (« jour · forme »)
+        if (W >= 60) ctx.fillText(tag, d.x - W, 26);           // sous l'en-tete de la colonne (« jour », puis « forme »)
       }
     }
     return r.cols.length ? r.used + 30 : 0;
