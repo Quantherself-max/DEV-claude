@@ -195,4 +195,12 @@ class PrefSync:
         ok = bool(cf) and cf.parent.parent.is_dir()
         meta = lambda e: {"t": e["t"], "from": e.get("from"), "mine": e.get("from") == self.device} if e else None
         return {"device": self.device, "syncDir": self.sync_dir, "syncOk": ok, "syncFile": str(cf) if cf else None,
-                "error": self.error if self.sync_dir else None, "ui": meta(ui), "env": meta(env), "candidates": cloud_dirs()}
+                "error": self.error if self.sync_dir else None, "ui": meta(ui), "env": meta(env), "candidates": self.candidates()}
+
+    def candidates(self, max_age: float = 600.0) -> list:
+        """V49 : dossiers synchronisés trouvés sur l'ordinateur, gardés 10 minutes. La page demande l'état des réglages au démarrage et
+        toutes les 30 secondes : un lecteur réseau ou cloud qui répond mal (G:, H:...) ne la ralentit plus à chaque fois."""
+        c = getattr(self, "_cand", None)
+        if c is None or time.time() - c[0] > max_age:
+            c = self._cand = (time.time(), cloud_dirs())
+        return c[1]

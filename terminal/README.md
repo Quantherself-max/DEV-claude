@@ -1,4 +1,4 @@
-# Liq Terminal (V48)
+# Liq Terminal (V49)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
@@ -141,6 +141,13 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V49 : plus de page bloquée sur « chargement… »
+
+- **Au redémarrage** (mise à jour automatique installée), l'ancien serveur libère son adresse en premier, puis laisse 20 secondes au plus à ses tâches de fond pour s'arrêter, et se ferme pour de bon. Avant, une tâche lente pouvait garder l'adresse ouverte sans personne pour répondre : la page attendait sans fin et la nouvelle version ne démarrait pas.
+- **La page ne reste plus muette.** Si le serveur ne répond pas, elle réessaie toutes les 2 secondes et l'écrit en haut à droite. Après 30 secondes, un encadré explique quoi faire ; dès que le serveur répond, tout se charge seul. La synchronisation des réglages entre ordinateurs ne peut plus retenir le démarrage plus de 6 secondes.
+- **La fenêtre noire signale ce qui bloque** : une ligne « Requête lente : … » apparaît pour toute requête qui attend plus de 15 secondes.
+- La recherche des dossiers iCloud, Google Drive, OneDrive et Dropbox se fait au plus toutes les 10 minutes, et non plus à chaque passage de la page.
 
 ## Ce qui est nouveau en V48 : l'onglet Quant réorganisé, le comptant contre les perpétuels
 

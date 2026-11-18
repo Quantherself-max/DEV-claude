@@ -179,7 +179,7 @@ class PageTests(unittest.TestCase):
 
     def test_pages(self):
         for k in ("function barStart(", "function barEnd(", "'1w': 604800", "TF_LABEL", "function syncPull(", "function syncPush(",
-                  "await syncPull(true);", "'/api/prefs/syncdir'", "'/api/prefs/import'", "visibilitychange"):
+                  "await Promise.race([syncPull(true)", "'/api/prefs/syncdir'", "'/api/prefs/import'", "visibilitychange"):
             self.assertIn(k, self.APP)
         self.assertGreaterEqual(int(re.search(r"NEED_API = (\d+)", self.APP).group(1)), 35)
         self.assertIn("'1M'", self.MTF)

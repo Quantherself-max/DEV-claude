@@ -202,13 +202,39 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\nArret.")
     finally:
-        app.shutdown()
+        # V49 : l'adresse du terminal est liberee AVANT l'arret des taches de fond. Avant, si une tache tardait a s'arreter, le port restait
+        # ouvert sans personne pour repondre : la page attendait sans fin (« chargement… ») et la nouvelle version ne pouvait pas demarrer.
         httpd.server_close()
+        stop_within(app.shutdown, SHUTDOWN_S)
     if app.restart_requested:
         from updater import RESTART_CODE
         return RESTART_CODE
     return 0
 
 
+SHUTDOWN_S = 20.0             # V49 : temps laisse aux taches de fond pour s'arreter (sauvegarde du jour en cours comprise)
+
+
+def stop_within(fn, seconds: float) -> bool:
+    """Lance fn dans un fil et ne l'attend pas plus de `seconds` secondes. Vrai si elle a fini a temps."""
+    t = threading.Thread(target=fn, name="arret", daemon=True)
+    t.start()
+    t.join(seconds)
+    if t.is_alive():
+        print(f"\n== L'arrêt des tâches de fond dépasse {seconds:.0f} s : fermeture forcée ==\n", flush=True)
+        return False
+    return True
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    code = main()
+    if "--child" in sys.argv:
+        # V49 : le processus du terminal se termine pour de bon, meme si un fil ou un telechargement ne s'est pas arrete : sinon le
+        # superviseur l'attendrait sans fin et la nouvelle version ne serait jamais lancee.
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except (OSError, ValueError):
+                pass
+        os._exit(code or 0)
+    sys.exit(code)

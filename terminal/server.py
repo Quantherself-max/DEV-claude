@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "48"
-API_LEVEL = 48                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "49"
+API_LEVEL = 49                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -1392,6 +1392,64 @@ class App:
         return self.settings()
 
 
+class SlowRequests:
+    """V49 : requêtes en cours. Une requête qui dure plus de `limit` secondes est signalée UNE fois dans la fenêtre du terminal, avec son
+    adresse : si la page reste sur « chargement… », la fenêtre noire dit ce qui bloque (au lieu de rien)."""
+
+    def __init__(self, limit: float = 15.0, now=time.monotonic, out=print):
+        self.limit, self.now, self.out = limit, now, out
+        self.lock = threading.Lock()
+        self.live: dict = {}
+        self.n = 0
+        self.thread = None
+
+    def track(self, what: str):
+        hub = self
+
+        class _Ctx:
+            def __enter__(self):
+                with hub.lock:
+                    hub.n += 1
+                    self.k = hub.n
+                    hub.live[self.k] = [what[:120], hub.now(), False]
+                return self
+
+            def __exit__(self, *exc):
+                with hub.lock:
+                    e = hub.live.pop(self.k, None)
+                if e and e[2]:
+                    hub.out(f"   (terminée après {hub.now() - e[1]:.0f} s : {e[0]})", flush=True)
+                return False
+        return _Ctx()
+
+    def check(self) -> list:
+        """Signale les requêtes devenues lentes (une seule fois chacune). Renvoie les adresses signalées."""
+        t, said = self.now(), []
+        with self.lock:
+            for e in self.live.values():
+                if not e[2] and t - e[1] >= self.limit:
+                    e[2] = True
+                    said.append(e[0])
+        for w in said:
+            self.out(f"\n== Requête lente : {w} attend depuis plus de {self.limit:.0f} s ==", flush=True)
+        return said
+
+    def start(self, every: float = 5.0) -> None:
+        if self.thread is None:
+            def loop():
+                while True:
+                    time.sleep(every)
+                    try:
+                        self.check()
+                    except Exception:
+                        pass
+            self.thread = threading.Thread(target=loop, name="requetes-lentes", daemon=True)
+            self.thread.start()
+
+
+SLOW = SlowRequests()
+
+
 def make_handler(app: App):
     class Handler(BaseHTTPRequestHandler):
         server_version = "LiqTerminal/2.0"
@@ -1419,6 +1477,10 @@ def make_handler(app: App):
             return self.headers.get("Host", "") in (f"127.0.0.1:{port}", f"localhost:{port}")
 
         def do_GET(self):
+            with SLOW.track("GET " + self.path):
+                return self._do_get()
+
+        def _do_get(self):
             if not self._host_ok():
                 return self._json({"error": "hote refuse"}, 403)
             u = urlparse(self.path)
@@ -1613,6 +1675,10 @@ def make_handler(app: App):
             return self._static(u.path)
 
         def do_POST(self):
+            with SLOW.track("POST " + self.path.split("?")[0]):
+                return self._do_post()
+
+        def _do_post(self):
             if not self._host_ok() or self.headers.get("X-Terminal-Token") != app.token:
                 return self._json({"error": "requete refusee"}, 403)
             try:
@@ -1717,4 +1783,5 @@ def make_handler(app: App):
 def serve(app: App):
     httpd = ThreadingHTTPServer((app.cfg.host, app.cfg.port), make_handler(app))
     httpd.daemon_threads = True
+    SLOW.start()
     return httpd

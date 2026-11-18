@@ -101,9 +101,12 @@ const st = {symbol: null, tf: '1h', data: null, mode: 'ess', pools: true, ppools
   tpoOpts: {mode: 'auto', fine: false, vol: true, comp: true, naked: true, ib: true, expand: false},
   gexView: {scope: 'all', src: 'all', range: 10, bars: 'net', curve: true, cexWin: 24, cexMin: 1000000},   // V40 : onglet GEX ; V44 : fenêtre et seuil des gros ordres
   tpoGroups: {}, utabs: [], tabOrder: [], tabHide: []};                                         // V35 : tes onglets de graphiques (nom, éléments, unité de temps)                                                    // V34 : séances TPO fusionnées et profils dépliés, par paire et type de séance
-async function api(path, body) {
+async function api(path, body, timeoutMs) {
   const opt = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Terminal-Token': st.cfg ? st.cfg.csrf : ''}, body: JSON.stringify(body)};
-  const r = await fetch(path, opt);
+  let tm = null;
+  if (timeoutMs && typeof AbortController !== 'undefined') { const ac = new AbortController(); opt.signal = ac.signal; tm = setTimeout(() => ac.abort(), timeoutMs); }   // V49
+  let r;
+  try { r = await fetch(path, opt); } finally { if (tm) clearTimeout(tm); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
   return j;
@@ -736,7 +739,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 48;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille, V42 : prix sous 0,01 $ (PUMP), V43 : repères des sous-fenêtres, V44 : /api/cexflow, liquidations et gros ordres des bourses, V45 : /api/quant, moteur exact, V46 : états allégés (« v », « same », « tail »), V47 : carte des liquidations depuis 2021, V48 : comptant contre perpétuels dans /api/quant)
+const NEED_API = 49;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille, V42 : prix sous 0,01 $ (PUMP), V43 : repères des sous-fenêtres, V44 : /api/cexflow, liquidations et gros ordres des bourses, V45 : /api/quant, moteur exact, V46 : états allégés (« v », « same », « tail »), V47 : carte des liquidations depuis 2021, V48 : comptant contre perpétuels dans /api/quant, V49 : démarrage qui réessaie)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -1499,16 +1502,39 @@ function headStatus() {
 }
 $('#hStatus').onclick = e => { e.stopPropagation(); const p = $('#hStatusPop'); p.hidden = !p.hidden; };
 document.addEventListener('click', e => { const p = $('#hStatusPop'); if (!p.hidden && !e.target.closest('.hstat')) p.hidden = true; });
+async function bootConfig() {
+  const t0 = Date.now();
+  for (;;) {
+    let why;
+    try { const c = await api('/api/config', undefined, 8000); bootNote(''); return c; }
+    catch (e) { why = e && e.name === 'AbortError' ? 'le serveur ne répond pas' : 'serveur injoignable'; }
+    const s = Math.round((Date.now() - t0) / 1000);
+    const msg = s < 15 ? 'connexion au terminal…' : `${why} depuis ${s} s : nouvel essai…`;
+    $('#hStatusTxt').textContent = msg; $('#status').textContent = msg;
+    if (s >= 30) bootNote(`Le terminal ne répond pas depuis ${s} secondes (${why}). La page réessaie toute seule. ` +
+      `S'il vient d'installer une mise à jour, il redémarre : patiente une minute. Sinon, regarde la fenêtre noire du terminal : ` +
+      `une ligne « Requête lente » ou une erreur y dit ce qui bloque. Si rien ne bouge, ferme la fenêtre noire et relance le terminal.`);
+    await new Promise(r => setTimeout(r, 2000));
+  }
+}
+function bootNote(text) {
+  let n = document.getElementById('bootNote');
+  if (!text) { if (n) n.remove(); return; }
+  if (!n) { n = document.createElement('div'); n.id = 'bootNote'; n.className = 'bootnote'; document.body.appendChild(n); }
+  n.textContent = text;
+}
 function switchSymbol(sym) { const sel = $('#symbol'); if (!st.cfg || !st.cfg.symbols.includes(sym)) return; sel.value = sym; sel.onchange(); }
 function openSymbol(sym, page) {
   if (st.cfg && st.cfg.symbols.includes(sym) && sym !== st.symbol) switchSymbol(sym);
   location.hash = page === 'analysis' ? '#/analysis/synth' : page === 'signals' ? '#/signals' : '#/desk';
 }
 (async () => {
-  await syncPull(true);                               // V36 : la version la plus récente (cet ordinateur ou un autre) avant de tout lire
+  // V49 : le démarrage ne peut plus rester bloqué sans rien dire. La synchronisation des réglages a 6 secondes au plus (elle est
+  // facultative) ; la configuration est redemandée toutes les 2 secondes tant que le serveur ne répond pas (redémarrage après une mise à
+  // jour, par exemple), et la page dit ce qui se passe au lieu d'afficher « chargement… » sans fin.
+  await Promise.race([syncPull(true).catch(() => false), new Promise(r => setTimeout(r, 6000))]);
   loadPrefs();
-  let cfg;
-  try { cfg = await api('/api/config'); } catch (e) { $('#status').textContent = 'terminal injoignable'; return; }
+  const cfg = await bootConfig();
   window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, pxDec, pxFormat, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, TF_LABEL, TF_TITLE, barStart, barEnd, leftTxt, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
     serverOld, LAUNCHER, OPEN_ST, shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, oppOf, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan, togglePlan, planReset, planVisible,
     panels: () => panels, switchSymbol, applyLayout, setTf};
