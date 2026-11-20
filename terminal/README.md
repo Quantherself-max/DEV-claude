@@ -1,7 +1,8 @@
-# Liq Terminal (V50)
+# Liq Terminal (V51)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Les baleines des options et les positions ouvertes sur 24 heures, dans un onglet Quant rangé** (V51) : chaque gros ordre d'options BTC avec sa stratégie, sa prime et son sens ; les options où les positions s'ouvrent et se ferment ; l'onglet en rubriques fixes (voir « V51 » plus bas).
 - **Des profils de volume plus longs, et le delta à chaque prix** (V50) : trimestre, mois précédent, année, année précédente et tout l'historique, chacun avec une colonne delta en face (voir « V50 » plus bas).
 - **Un onglet Quant plus clair, et le comptant comparé aux perpétuels** (V48) : synthèse en tête, cinq rubriques, explications repliées, graphique des achats du comptant contre ceux des perpétuels sur 24 et 48 heures (voir « V48 » plus bas).
 - **La carte des liquidations depuis décembre 2021** (V47) : plus de quatre ans au lieu de 90 jours, visible en 4 heures et en journalier (voir « V47 » plus bas).
@@ -142,6 +143,37 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V51 : baleines des options, positions ouvertes, onglet Quant rangé
+
+**Onglet Quant rangé.** Une barre en haut mène à chaque rubrique : Synthèse, Flux d'ordres, Signaux, Liquidité, Dérivés, Options BTC et Réseau Bitcoin. Chaque rubrique :
+- commence par une ligne qui résume ce qu'elle dit ;
+- se replie d'un clic sur son titre, et le terminal s'en souvient ;
+- range ses cartes par paires de même hauteur, sur toute la largeur ;
+- passe en une seule colonne sur téléphone.
+
+La synthèse tient en huit tuiles sur deux rangées. La rubrique Options s'affiche sur toutes les paires, parce que les options BTC servent de référence à tout le marché.
+
+**Baleines des options BTC (24 heures).** Ce sont les ordres d'options de Deribit dont le notionnel (contrats × prix du BTC) atteint le seuil choisi : 1, 5 (par défaut) ou 10 millions de dollars. Les jambes d'un même bloc négocié sont regroupées, ce qui donne la position complète. Pour chaque ordre :
+- la stratégie reconnue : achat ou vente de call ou de put, spreads, straddle, strangle, risk reversal, calendrier, échelle, papillon, condor ; une structure sans nom usuel est décrite par ce qu'elle fait ;
+- la prime payée ou reçue ;
+- le delta net en BTC, c'est-à-dire le sens de la position, et si elle achète ou vend de la volatilité.
+
+En tête de la carte : le nombre d'ordres, le notionnel, le delta net cumulé, la volatilité achetée ou vendue, et les primes nettes sur les calls et sur les puts. Tri : plus gros ou plus récents.
+
+**Positions ouvertes des options BTC, variations sur 24 heures.** Option par option, l'intérêt ouvert actuel comparé à celui d'il y a 24 heures. La carte montre :
+- les principales accumulations, où des positions s'ouvrent ;
+- les principales réductions, où des positions se ferment ;
+- le total des calls et des puts, avec une lecture (protection, appétit pour la hausse, désengagement).
+
+**D'où viennent les données.** Ces deux cartes demandent un historique. Un petit lecteur tourne donc en continu, même onglet fermé :
+- toutes les 5 minutes, les nouvelles transactions d'options ;
+- toutes les heures, une photo de l'intérêt ouvert de chaque option ;
+- au premier lancement, la lecture des 24 dernières heures de transactions (environ 13 pages, quelques secondes).
+
+Tout est gardé 3 jours sur le disque. La première comparaison complète sur 24 heures arrive 24 heures après le premier lancement ; avant, la carte dit l'écart réel entre les deux photos comparées. Réglages : `TERMINAL_OPTION_WHALES=0` coupe ce lecteur, et `TERMINAL_WHALE_USD` fixe le seuil d'enregistrement (1 000 000 par défaut).
+
+**Les gamma, max pain, volatilité et skew** sont séparés en deux cartes côte à côte.
 
 ## Ce qui est nouveau en V50 : profils de volume longs et delta à chaque prix
 

@@ -87,6 +87,8 @@ class Config:
     orderflow_on: bool = True            # V15 : carnet d'ordres Binance (route /public) + nombre d'ordres OKX + ruban (vitesse, gros ordres)
     cexflow_on: bool = True              # V44 : onglet GEX : liquidations BTC (Binance, Bybit, OKX) et gros ordres de 5 bourses (flux publics)
     quant_on: bool = True                # V45 : moteur exact (onglet Quant) : CVD tick par tick, regime de marche, carnet, options, reseau Bitcoin
+    whales_on: bool = True               # V51 : baleines des options BTC et photos horaires de l'intérêt ouvert (Deribit, en continu, léger)
+    whale_usd: float = 1_000_000.0       # V51 : notionnel minimal d'un ordre d'options pour être une baleine (dollars)
     sizeflow_days: int = 14               # V39 : jours de transactions du marche SPOT (flux par taille d'ordre) ; et jours recents du perpetuel dont l'archive est relue une fois pour ce flux ; 0 = spot desactive
     sizeflow_history_days: int = 90       # V40.1 : historique a l'heure du flux par taille (archives relues une fois, quelques Ko gardes par jour) ; 0 = coupe
     binance_spot_ws: str = "wss://stream.binance.com:9443"   # V39 : flux temps reel Binance spot (transactions)
@@ -200,6 +202,11 @@ def load_config(env_path: Path | None = None) -> Config:
     c.orderflow_on = g("TERMINAL_ORDERFLOW", "1").lower() not in ("0", "false", "non", "no")
     c.cexflow_on = g("TERMINAL_CEXFLOW", "1").lower() not in ("0", "false", "non", "no")
     c.quant_on = g("TERMINAL_QUANT", "1").lower() not in ("0", "false", "non", "no")
+    c.whales_on = g("TERMINAL_OPTION_WHALES", "1").lower() not in ("0", "false", "non", "no")
+    try:
+        c.whale_usd = max(100_000.0, min(100_000_000.0, float(g("TERMINAL_WHALE_USD", c.whale_usd))))
+    except ValueError:
+        pass
     c.footprint_days = max(0, min(400, int(float(g("TERMINAL_FOOTPRINT_DAYS", c.footprint_days)))))
     c.sizeflow_days = max(0, min(62, int(float(g("TERMINAL_SIZEFLOW_DAYS", c.sizeflow_days)))))
     c.sizeflow_history_days = max(0, min(1500, int(float(g("TERMINAL_SIZEFLOW_HISTORY_DAYS", c.sizeflow_history_days)))))

@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "50"
-API_LEVEL = 50                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "51"
+API_LEVEL = 51                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -259,7 +259,11 @@ def default_quant(cfg, source, service, feed, flow, cex):
         out.update({"bourses:" + k: c for k, c in (getattr(cex, "clients", None) or {}).items()})
         return out
 
-    hub = QuantHub(cfg.symbols, books=books, footprint=footprint, liqs=liqs, ws_clients=ws_clients)
+    optflow = None
+    if getattr(cfg, "whales_on", True):                              # V51 : baleines des options BTC (ingest/optflow.py)
+        from ingest.optflow import OptionsFlow
+        optflow = OptionsFlow(cfg.data_dir, min_usd=getattr(cfg, "whale_usd", 1_000_000.0))
+    hub = QuantHub(cfg.symbols, books=books, footprint=footprint, liqs=liqs, ws_clients=ws_clients, optflow=optflow)
     if feed is not None:
         feed.quant = hub
     if cex is not None and hasattr(cex, "tap"):
@@ -786,7 +790,7 @@ class App:
             return {**st, "candles": st["candles"][-self.STATE_TAIL:], "tail": True}
         return st
 
-    def quant_page(self, sym: str) -> dict:
+    def quant_page(self, sym: str, whale_min: float | None = None) -> dict:
         """V45 : mesures exactes d'une paire (CVD tick par tick, regime de marche, carnet, profil exact, options, reseau Bitcoin) et
         etat de sante de chaque source."""
         hub = getattr(self, "quant", None)
@@ -794,7 +798,7 @@ class App:
             return {"ok": False, "why": "coupé dans les réglages (TERMINAL_QUANT=0)" if not getattr(self.cfg, "quant_on", True)
                     else "le moteur exact ne tourne que sur les données réelles"}
         try:
-            return hub.snapshot(sym)
+            return hub.snapshot(sym, whale_min=whale_min)
         except Exception as e:                                       # la page ne doit jamais casser le terminal
             return {"ok": False, "why": f"{type(e).__name__}: {e}"}
 
@@ -1599,7 +1603,11 @@ def make_handler(app: App):
                 if u.path == "/api/cexflow":                         # V44 : liquidations BTC et gros ordres des bourses (onglet GEX)
                     return self._json(app.cex_page())
                 if u.path == "/api/quant":                           # V45 : moteur exact (onglet Quant)
-                    return self._json(app.quant_page((q.get("symbol") or [app.cfg.symbols[0]])[0].upper()))
+                    try:
+                        wmin = float((q.get("whale") or ["0"])[0] or 0) or None       # V51 : seuil des baleines choisi dans la page
+                    except ValueError:
+                        wmin = None
+                    return self._json(app.quant_page((q.get("symbol") or [app.cfg.symbols[0]])[0].upper(), wmin))
                 if u.path == "/api/gex":                             # V40 : onglet GEX (options BTC)
                     return self._json(app.service.gex_page((q.get("scope") or ["all"])[0], (q.get("src") or ["all"])[0]))
                 if u.path == "/api/sizeflow":                        # V39 : delta par taille d'ordre, perpétuel et spot

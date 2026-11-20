@@ -8,16 +8,23 @@
 //   options (volatilité, skew 25 delta, max pain, gamma), réseau Bitcoin.
 // V48 : page réorganisée (synthèse en tête, puis cinq rubriques ; les explications sont repliées sous « Comment lire »), nouvelle carte
 //   « Comptant contre perpétuels » (24 et 48 heures, bougies officielles d'une heure) et plus d'état des sources.
+// V51 : page rangée en rubriques fixes (navigation en haut, chaque rubrique repliable, cartes par paires de même hauteur) ; rubrique
+//   Options : baleines (ordres d'options d'au moins 1, 5 ou 10 millions de dollars, avec leur stratégie, leur prime et leur delta) et
+//   positions ouvertes (variations de l'intérêt ouvert de chaque option sur 24 heures), lues en continu chez Deribit (ingest/optflow.py).
 const QUANTV = (() => {
   'use strict';
-  let LT = null, root = null, on = false, timer = null, data = null, err = null, busy = false, win = '1h', vwin = '1h';
+  let LT = null, root = null, on = false, timer = null, data = null, err = null, busy = false, win = '1h', vwin = '1h', wsort = 'big';
+  const ls = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* rien */ } };
+  let wmin = [1e6, 5e6, 1e7].includes(ls('qWhaleMin', 5e6)) ? ls('qWhaleMin', 5e6) : 5e6;
+  const folded = new Set(ls('qFold', []));
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const sgn = v => v > 0 ? '+' : v < 0 ? '−' : '';
   const nf = (v, d = 0) => v == null || !isFinite(v) ? '—' : Math.abs(v).toLocaleString('fr-FR', {minimumFractionDigits: d, maximumFractionDigits: d}).replace(/ | /g, ' ');
   const sn = (v, d = 0) => v == null || !isFinite(v) ? '—' : sgn(v) + nf(v, d);
   const pct = (v, d = 1) => v == null || !isFinite(v) ? '—' : sgn(v) + nf(v * 100, d) + ' %';
   const usd = v => { if (v == null || !isFinite(v)) return '—'; const a = Math.abs(v);
-    return a >= 1e9 ? nf(a / 1e9, 2) + ' Md$' : a >= 1e6 ? nf(a / 1e6, a >= 1e8 ? 0 : 1) + ' M$' : a >= 1e3 ? nf(a / 1e3, 0) + ' k$' : nf(a, 0) + ' $'; };
+    return a >= 1e9 ? nf(a / 1e9, 2) + ' Md$' : a >= 1e6 ? nf(a / 1e6, a >= 1e8 || a % 1e6 === 0 ? 0 : 1) + ' M$' : a >= 1e3 ? nf(a / 1e3, 0) + ' k$' : nf(a, 0) + ' $'; };
   const susd = v => v == null ? '—' : sgn(v) + usd(v);
   const px = v => v == null ? '—' : LT.fmtP ? LT.fmtP(v) : nf(v, 2);
   const HM = new Intl.DateTimeFormat('fr-FR', {timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit'});
@@ -27,17 +34,23 @@ const QUANTV = (() => {
     return s < 90 ? `il y a ${s} s` : s < 5400 ? `il y a ${Math.round(s / 60)} min` : s < 172800 ? `il y a ${Math.round(s / 3600)} h` : `il y a ${Math.round(s / 86400)} j`; };
   const cls = v => v > 0 ? 'up' : v < 0 ? 'dn' : '';
   const WLAB = {'5m': '5 min', '15m': '15 min', '1h': '1 h', '4h': '4 h', '24h': '24 h'};
-  const card = (title, body, extra = '') => `<section class="qcard ${extra}"><div class="qh">${title}</div>${body}</section>`;
+  const card = (title, body, extra = '', meta = '') => `<section class="qcard ${extra}"><div class="qh"><span class="qht">${title}</span>${meta ? `<span class="qhm">${meta}</span>` : ''}</div>${body}</section>`;
   const bad = t => `<p class="muted small">${esc(t)}</p>`;
   const coin = () => (LT.st.symbol || '').replace(/USDT$/, '');
 
   function init(lt, host) {
     LT = lt; root = host;
     root.innerHTML = `<div class="qbar"><b class="qttl"></b><span class="qmeta muted small"></span><span class="spacer"></span>` +
-      `<span class="muted small">Données réelles uniquement · calculs exacts</span></div><div class="qtop"></div><div class="qgrid"></div>`;
+      `<span class="muted small">Données réelles uniquement · calculs exacts</span></div><nav class="qnav"></nav><div class="qgrid"></div>`;
     root.addEventListener('click', e => {
       const b = e.target.closest('[data-qw]'); if (b) { win = b.dataset.qw; render(); return; }
-      const v = e.target.closest('[data-qv]'); if (v) { vwin = v.dataset.qv; render(); }
+      const v = e.target.closest('[data-qv]'); if (v) { vwin = v.dataset.qv; render(); return; }
+      const ws = e.target.closest('[data-qws]'); if (ws) { wsort = ws.dataset.qws; render(); return; }
+      const wm = e.target.closest('[data-qwm]'); if (wm) { wmin = +wm.dataset.qwm; lsSet('qWhaleMin', wmin); load(); return; }
+      const go = e.target.closest('[data-qgo]');
+      if (go) { const el = root.querySelector('#qs-' + go.dataset.qgo); if (el) { folded.delete(go.dataset.qgo); lsSet('qFold', [...folded]); render(); root.querySelector('#qs-' + go.dataset.qgo).scrollIntoView({behavior: 'smooth', block: 'start'}); } return; }
+      const f = e.target.closest('[data-qfold]');
+      if (f) { const k = f.dataset.qfold; if (folded.has(k)) folded.delete(k); else folded.add(k); lsSet('qFold', [...folded]); render(); }
     });
   }
 
@@ -45,7 +58,7 @@ const QUANTV = (() => {
     if (busy || !on) return;
     busy = true;
     try {
-      const r = await fetch(`/api/quant?symbol=${encodeURIComponent(LT.st.symbol)}`);
+      const r = await fetch(`/api/quant?symbol=${encodeURIComponent(LT.st.symbol)}&whale=${wmin}`);
       if (!r.ok) throw new Error(r.status === 404 ? 'cette page demande la version 45 du terminal : ferme la fenêtre noire et relance-le' : 'HTTP ' + r.status);
       const d = await r.json();
       if (d.ok === false) { err = d.why || 'indisponible'; data = null; } else { data = d; err = null; }
@@ -77,8 +90,9 @@ const QUANTV = (() => {
     t.push(cv('perpétuels', c && c.perp), cv('comptant', c && c.spot));
     t.push(b && !b.error ? tile('Carnet ± 0,5 %', pct(b.obi['0.005'], 0), `${usd(b.depth['0.005'].bid)} / ${usd(b.depth['0.005'].ask)}`, cls(b.obi['0.005'])) : tile('Carnet ± 0,5 %', '—', 'pas encore synchronisé'));
     t.push(tile('Financement / 8 h', pct(x.funding, 4), x.oi24h != null ? `intérêt ouvert <span class="${cls(x.oi24h)}">${pct(x.oi24h, 2)}</span> sur 24 h` : '', cls(x.funding)));
-    const g = d.options && d.options.gex;
-    if (g) t.push(tile('Bascule du gamma', px(g.flip), `calls ${px(g.callWall)} · puts ${px(g.putWall)}`));
+    const ws = d.optFlow && d.optFlow.whales && d.optFlow.whales.sum;
+    t.push(ws && ws.n ? tile('Baleines options 24 h', `${sn(ws.delta)} BTC`, `delta net de ${nf(ws.n)} ordre${ws.n > 1 ? 's' : ''} ≥ ${usd(d.optFlow.whales.minUsd)} · ${(w => w === 'quasi neutre' ? w : 'biais ' + w)(deltaWord(ws.delta, ws.notional / ((d.options && d.options.index) || 1), 0.03))}`, cls(ws.delta))
+      : tile('Baleines options 24 h', '—', d.optFlow && d.optFlow.error ? esc(d.optFlow.error) : 'aucun ordre pour l\'instant'));
     return `<div class="qtiles">${t.join('')}</div>`;
   }
 
@@ -86,7 +100,7 @@ const QUANTV = (() => {
   function spotPerpCard(d) {
     const s = d.spotPerp;
     const title = 'Comptant contre perpétuels · conviction sur 24 et 48 heures';
-    if (!s || s.error) return card(title, bad(s ? s.error : 'indisponible'), 'qwide');
+    if (!s || s.error) return card(title, bad(s ? s.error : 'indisponible'));
     const W = s.windows || {};
     const imbs = [];
     ['24h', '48h'].forEach(k => ['spot', 'perp'].forEach(m => { const v = W[k] && W[k][m] && W[k][m].imb; if (v != null) imbs.push(Math.abs(v)); }));
@@ -103,7 +117,7 @@ const QUANTV = (() => {
     return card(title, `<div class="qsps">${block('24h')}${block('48h')}</div>${hourly(s.series || [])}` + help(
       `<p class="small">Chaque bougie officielle d'une heure de Binance donne le volume acheté au marché (l'acheteur traverse l'écart) ; le reste est vendu au marché. Net = achats − ventes, en dollars. Le pourcentage est la part nette dans le volume de ce marché : c'est lui qui compare les deux marchés, car les perpétuels échangent bien plus que le comptant.</p>` +
       `<p class="small">Un marché « achète » quand sa part nette dépasse + 1 %, « vend » sous − 1 %. Le comptant, c'est de l'argent réel qui achète la pièce ; les perpétuels, c'est du levier. Comptant et perpétuels acheteurs : conviction forte. Perpétuels acheteurs et comptant vendeur : hausse portée par le levier, fragile (risque de liquidation des longs). Comptant acheteur et perpétuels vendeurs : accumulation face à des vendeurs à découvert, qui peut finir en rachat forcé des shorts.</p>` +
-      `<p class="muted small">Barres d'une heure de 48 heures, l'heure en cours comprise (elle se complète au fil de l'heure). Relu chaque minute.</p>`), 'qwide');
+      `<p class="muted small">Barres d'une heure de 48 heures, l'heure en cours comprise (elle se complète au fil de l'heure). Relu chaque minute.</p>`), '');
   }
 
   function hourly(rows) {
@@ -263,19 +277,99 @@ const QUANTV = (() => {
       `<div class="qchips">${chips}</div>`);
   }
 
-  function optionsCard(d) {
+  // ---------- options BTC (Deribit) ----------
+  // sens d'une position d'après son delta net rapporté à sa taille (contrats) : sous 10 %, elle est surtout un pari sur la volatilité
+  function deltaWord(delta, contracts, thr = 0.1) {
+    if (delta == null || !isFinite(delta)) return 'delta inconnu';
+    const r = contracts > 0 ? Math.abs(delta) / contracts : 1;
+    return r < thr ? 'quasi neutre' : delta > 0 ? 'haussier' : 'baissier';
+  }
+  const KIND = {C: 'Call', P: 'Put'}, KIND_FR = {C: 'option d\'achat', P: 'option de vente'};
+  const EXP = new Intl.DateTimeFormat('fr-FR', {timeZone: 'UTC', day: '2-digit', month: '2-digit', year: '2-digit'});
+  const inDays = (t, now) => { const dd = (t - now) / 86400000; return dd < 1 ? `dans ${nf(dd * 24)} h` : `dans ${nf(dd)} j`; };
+  const legTxt = g => `${g.dir > 0 ? 'achat' : 'vente'} ${nf(g.amount, g.amount < 10 ? 1 : 0)} ${KIND[g.kind].toLowerCase()} ${nf(g.strike)} ${DAYF.format(g.expiry)}`;
+
+  function whalesCard(d) {
+    const f = d.optFlow;
+    const title = 'Baleines des options BTC · 24 heures';
+    if (!f) return card(title, bad('lecteur des baleines coupé dans les réglages (TERMINAL_OPTION_WHALES=0)'));
+    const W = f.whales || {}, S = W.sum || {};
+    const meta = `Deribit${W.last ? ' · lu ' + ago(d.now - W.last) : ''}`;
+    const seg = `<div class="qctl"><div class="qseg">${[['big', 'Plus gros'], ['new', 'Plus récents']].map(([k, n]) => `<button data-qws="${k}" class="${k === wsort ? 'on' : ''}">${n}</button>`).join('')}</div>` +
+      `<div class="qseg">${[[1e6, '≥ 1 M$'], [5e6, '≥ 5 M$'], [1e7, '≥ 10 M$']].map(([v, n]) => `<button data-qwm="${v}" class="${v === wmin ? 'on' : ''}" title="Notionnel minimal d'un ordre (contrats × prix du BTC)">${n}</button>`).join('')}</div></div>`;
+    if (f.error && !(W.biggest || []).length) return card(title, seg + bad(f.error), '', meta);
+    const idx = (d.options && d.options.index) || null;
+    const stats = S.n ? `<div class="qstats">` +
+      `<div><span class="muted">Ordres</span><b>${nf(S.n)}</b><small class="muted">dont ${nf(S.blocks)} blocs négociés</small></div>` +
+      `<div><span class="muted">Notionnel</span><b>${usd(S.notional)}</b><small class="muted">${nf(S.bull)} haussiers · ${nf(S.bear)} baissiers</small></div>` +
+      `<div><span class="muted">Delta net</span><b class="${cls(S.delta)}">${sn(S.delta)} BTC</b><small class="muted">${idx ? susd(S.delta * idx) + ' d\'exposition' : ''}</small></div>` +
+      `<div><span class="muted">Volatilité</span><b class="${S.vega > 0 ? 'up' : S.vega < 0 ? 'dn' : ''}">${S.vega > 0 ? 'achetée' : S.vega < 0 ? 'vendue' : '—'}</b><small class="muted">${susd(S.vega)} par point</small></div>` +
+      `<div><span class="muted">Primes nettes</span><b class="small">calls ${S.premiumCalls >= 0 ? 'payées' : 'reçues'} ${usd(Math.abs(S.premiumCalls))}</b><small class="muted">puts ${S.premiumPuts >= 0 ? 'payées' : 'reçues'} ${usd(Math.abs(S.premiumPuts))}</small></div></div>` : '';
+    const list = (wsort === 'new' ? W.latest : W.biggest) || [];
+    const rows = list.map(o => {
+      const word = deltaWord(o.delta, o.contracts);
+      return `<div class="qwr"><div class="qwt">${DM.format(o.t)}${o.block ? '<span class="qbadge">bloc</span>' : ''}${o.liq ? '<span class="qbadge dn">liquidation</span>' : ''}</div>` +
+        `<div class="qwp"><b class="${word === 'quasi neutre' ? '' : cls(o.delta)}">${esc(o.name)}</b> <span class="muted small">· ${esc(o.reading)}</span>` +
+        `<div class="small qwl">${o.legs.map(legTxt).join(' · ')}</div></div>` +
+        `<div class="qwn"><b>${usd(o.notional)}</b><small class="muted">${nf(o.contracts)} BTC</small></div>` +
+        `<div class="qwn"><b class="${o.premium >= 0 ? '' : 'muted'}">${usd(Math.abs(o.premium))}</b><small class="muted">prime ${o.premium >= 0 ? 'payée' : 'reçue'}</small></div>` +
+        `<div class="qwn"><b class="${cls(o.delta)}">${sn(o.delta, Math.abs(o.delta) < 10 ? 1 : 0)} BTC</b><small class="muted">${word}${o.vega ? ' · vol. ' + (o.vega > 0 ? 'achetée' : 'vendue') : ''}</small></div></div>`;
+    }).join('');
+    const head = `<div class="qwr qwh muted"><div>Heure</div><div>Position</div><div>Taille</div><div>Prime</div><div>Delta net</div></div>`;
+    return card(title, seg + stats + (rows ? `<div class="qwlist">${head}${rows}</div>` : bad(`aucun ordre d'au moins ${usd(W.minUsd || wmin)} sur les dernières 24 heures`)) + help(
+      `<p class="small">Une baleine est un ordre d'options dont le notionnel (contrats × prix du BTC, 1 contrat = 1 BTC) atteint le seuil choisi. Les jambes d'un même bloc négocié (ou d'un combo) sont regroupées : c'est la position complète. Le sens est celui de l'initiateur : celui qui traverse le carnet ou demande le bloc. On ne sait pas s'il ouvre ou ferme une position : la carte « Positions ouvertes » le dit pour la journée.</p>` +
+      `<p class="small">Delta net : l'exposition de la position en BTC équivalents. +100 BTC se comporte comme 100 BTC achetés (gagne à la hausse), −100 BTC comme 100 BTC vendus à découvert (gagne à la baisse) ; proche de zéro (moins de 10 % de la taille) : un pari sur la volatilité plutôt que sur le sens. Il est calculé avec le modèle de Black, la volatilité de chaque exécution et le prix de l'indice : une estimation. Volatilité achetée (vega positif) : il gagne si les mouvements s'amplifient ; vendue : il parie sur le calme.</p>` +
+      `<p class="muted small">Lu toutes les 5 minutes, même onglet fermé, et gardé 3 jours sur le disque${f.whales && f.whales.since ? ` ; données depuis le ${DM.format(f.whales.since)}` : ''}.</p>`), '', meta);
+  }
+
+  function oiChangeCard(d) {
+    const f = d.optFlow;
+    const title = 'Positions ouvertes des options BTC · variations 24 heures';
+    if (!f) return '';
+    const o = f.oi;
+    if (!o) {
+      const first = f.firstSnap ? `Première photo de l'intérêt ouvert prise ${ago(d.now - f.firstSnap)} : la comparaison apparaît après une heure et couvre 24 heures dès le ${DM.format(f.firstSnap + 86400000)}.` : 'Pas encore de photo de l\'intérêt ouvert (prise toutes les heures).';
+      return card(title, bad(f.error || first), '', 'Deribit');
+    }
+    const row = (r, up) => `<div class="qoi"><div><b>${KIND_FR[r.kind][0].toUpperCase() + KIND_FR[r.kind].slice(1)} ${nf(r.strike)} $</b>` +
+      `<small class="muted">${EXP.format(r.expiry)} · ${inDays(r.expiry, d.now)} · ouvert ${nf(r.oi)} BTC</small></div>` +
+      `<div class="qoin"><b class="${up ? 'up' : 'dn'}">${sn(r.change, Math.abs(r.change) < 10 ? 1 : 0)}</b><small class="muted">${r.usd != null ? susd(r.usd) : ''}</small></div></div>`;
+    const tot = (n, v) => `<span class="qchip ${cls(v)}">${n} ${sn(v)} BTC</span>`;
+    const read = o.calls > 0 && o.puts > 0 ? (o.puts > o.calls * 1.3 ? 'les puts s\'accumulent davantage : demande de protection à la baisse' : o.calls > o.puts * 1.3 ? 'les calls s\'accumulent davantage : appétit pour la hausse' : 'calls et puts s\'accumulent ensemble : on prend position des deux côtés')
+      : o.calls < 0 && o.puts < 0 ? 'les positions se ferment des deux côtés : le marché se désengage' : o.calls > 0 ? 'des calls s\'ouvrent pendant que des puts se ferment : biais haussier' : o.puts > 0 ? 'des puts s\'ouvrent pendant que des calls se ferment : biais baissier' : '';
+    const gap = o.gapH;
+    const note = gap < 20 ? `Photos espacées de ${nf(gap, 1)} h seulement : le terminal photographie l'intérêt ouvert chaque heure, la comparaison couvrira 24 heures dès le ${DM.format(o.ref + 86400000)}.` : `Photos espacées de ${nf(gap, 1)} h.`;
+    return card(title, `<p class="small muted">Intérêt ouvert = contrats encore ouverts (1 contrat = 1 BTC). ${note}</p>` +
+      `<div class="qchips">${tot('Calls', o.calls)}${tot('Puts', o.puts)}${read ? `<span class="small">${read}</span>` : ''}</div>` +
+      `<div class="qoic"><div><div class="qoih up">Principales accumulations</div>${o.up.map(r => row(r, true)).join('') || '<p class="muted small">aucune</p>'}</div>` +
+      `<div><div class="qoih dn">Principales réductions</div>${o.down.map(r => row(r, false)).join('') || '<p class="muted small">aucune</p>'}</div></div>` +
+      help(`<p class="small">Différence, option par option, entre la photo la plus récente de l'intérêt ouvert et celle d'il y a environ 24 heures. Une accumulation = des positions s'ouvrent sur cette option (acheteurs et vendeurs ensemble : le sens se lit avec les baleines) ; une réduction = des positions se ferment. Les options arrivées à échéance entre les deux photos sont écartées. En dollars : contrats × prix du BTC.</p>`), '', `Deribit · photo ${ago(d.now - o.t)}`);
+  }
+
+  function gammaCard(d) {
     const o = d.options;
     if (!o) return '';
-    if (o.error) return card('Options BTC · Deribit', bad(o.error));
+    if (o.error) return card('Gamma et max pain', bad(o.error), '', 'Deribit');
     const g = o.gex || {};
+    const mp = (o.maxPain || []).map(m => `<tr><td>${DAYF.format(m.expiry)}</td><td>${nf(m.days, m.days < 3 ? 1 : 0)} j</td><td><b>${px(m.maxPain)}</b></td><td>${nf(m.calls)} / ${nf(m.puts)}</td><td>${m.putCall == null ? '—' : nf(m.putCall, 2)}</td></tr>`).join('');
+    return card('Gamma et max pain', `<div class="qkvg">` +
+      `<div><span class="muted">Exposition gamma</span><b class="${cls(g.total)}">${susd(g.total)}</b><small class="muted">pour 1 % de mouvement</small></div>` +
+      `<div><span class="muted">Bascule du gamma</span><b>${px(g.flip)}</b><small class="muted">indice ${px(o.index)}</small></div>` +
+      `<div><span class="muted">Mur de calls</span><b>${px(g.callWall)}</b><small class="muted">résistance des options</small></div>` +
+      `<div><span class="muted">Mur de puts</span><b>${px(g.putWall)}</b><small class="muted">support des options</small></div></div>` +
+      `<div class="qsub">Max pain et intérêt ouvert par échéance</div><table class="qtab"><tr><th>Échéance</th><th>Dans</th><th>Max pain</th><th>Calls / puts (BTC)</th><th>Put / call</th></tr>${mp}</table>` +
+      help(`<p class="muted small">Gamma : calls +, puts − (hypothèse habituelle sur les teneurs de marché, non observable). Sous la bascule du gamma, les teneurs de marché amplifient les mouvements ; au-dessus, ils les freinent. Max pain : prix où les détenteurs d'options perdraient le plus à l'échéance. ${nf(o.n)} options lues, ${nf(o.withOi)} avec de l'intérêt ouvert.</p>`), '', `Deribit · ${ago(d.now - o.t)}`);
+  }
+
+  function volCard(d) {
+    const o = d.options;
+    if (!o || o.error) return '';
     const sm = (o.smile || []).map(s => `<tr><td>${DAYF.format(s.expiry)}</td><td>${nf(s.days, s.days < 3 ? 1 : 0)} j</td><td>${s.atm == null ? '—' : nf(s.atm * 100, 1) + ' %'}</td>` +
       `<td class="${s.skew25 > 0 ? 'dn' : s.skew25 < 0 ? 'up' : ''}">${s.skew25 == null ? '—' : sn(s.skew25 * 100, 1)}</td><td>${s.fly25 == null ? '—' : sn(s.fly25 * 100, 1)}</td></tr>`).join('');
-    const mp = (o.maxPain || []).map(m => `<tr><td>${DAYF.format(m.expiry)}</td><td>${nf(m.days, m.days < 3 ? 1 : 0)} j</td><td><b>${px(m.maxPain)}</b></td><td>${nf(m.calls)} / ${nf(m.puts)}</td><td>${m.putCall == null ? '—' : nf(m.putCall, 2)}</td></tr>`).join('');
-    return card('Options BTC · Deribit', `<div class="qchips"><span class="qchip ${cls(g.total)}">gamma ${susd(g.total)} / 1 %</span><span class="qchip">bascule ${px(g.flip)}</span>` +
-      `<span class="qchip">mur de calls ${px(g.callWall)}</span><span class="qchip">mur de puts ${px(g.putWall)}</span><span class="qchip">indice ${px(o.index)}</span></div>` +
-      `<div class="qsub">Volatilité implicite et skew à 25 delta</div><table class="qtab"><tr><th>Échéance</th><th>Dans</th><th>Au prix</th><th>Skew</th><th>Butterfly</th></tr>${sm}</table>` +
-      `<div class="qsub">Max pain et intérêt ouvert</div><table class="qtab"><tr><th>Échéance</th><th>Dans</th><th>Max pain</th><th>Calls / puts</th><th>Put / call</th></tr>${mp}</table>` +
-      help(`<p class="muted small">Skew (put − call) positif : les puts de protection coûtent plus cher que les calls (crainte de baisse). Calls et puts en BTC. ${nf(o.n)} options lues, ${nf(o.withOi)} avec de l'intérêt ouvert · ${ago(d.now - o.t)}. Gamma : calls +, puts − (hypothèse habituelle sur les teneurs de marché, non observable). Sous la bascule du gamma, les teneurs de marché amplifient les mouvements ; au-dessus, ils les freinent.</p>`));
+    const near = (o.smile || [])[0];
+    const lede = near && near.skew25 != null ? `<p class="small">Échéance la plus proche : skew ${sn(near.skew25 * 100, 1)} point${near.skew25 > 0 ? ' : les puts coûtent plus cher, le marché se protège de la baisse' : ' : les calls coûtent plus cher, le marché paie pour la hausse'}.</p>` : '';
+    return card('Volatilité implicite et skew', lede + `<table class="qtab"><tr><th>Échéance</th><th>Dans</th><th>Au prix</th><th>Skew 25 delta</th><th>Butterfly</th></tr>${sm}</table>` +
+      help(`<p class="muted small">Au prix : volatilité implicite des options au prix actuel. Skew (put − call à 25 delta) positif : les puts de protection coûtent plus cher que les calls (crainte de baisse). Butterfly positif : les ailes (grands mouvements) sont chères.</p>`), '', 'Deribit');
   }
 
   function chainCard(d) {
@@ -303,22 +397,49 @@ const QUANTV = (() => {
       `${c.crossCheck && c.crossCheck.difficultyGapPct != null ? ` Difficulté recoupée avec blockchain.info : écart ${nf(c.crossCheck.difficultyGapPct, 4)} %.` : ''}</p>`));
   }
 
+  // ---------- mise en page : rubriques fixes, cartes par paires de même hauteur ----------
+  const row = (...cards) => { const c = cards.filter(Boolean); return c.length ? `<div class="qrow${c.length === 1 ? ' q1' : ''}">${c.join('')}</div>` : ''; };
+  function section(id, title, lede, body) {
+    const f = folded.has(id);
+    return `<section class="qsect${f ? ' folded' : ''}" id="qs-${id}"><header class="qsh" data-qfold="${id}" title="${f ? 'Déplier' : 'Replier'} la rubrique">` +
+      `<span class="qfold">${f ? '▸' : '▾'}</span><h3>${title}</h3>${lede ? `<span class="qlede">${lede}</span>` : ''}</header>${f ? '' : `<div class="qbody">${body}</div>`}</section>`;
+  }
+  function ledes(d) {
+    const sp = d.spotPerp && d.spotPerp.windows && d.spotPerp.windows['24h'], r = d.regime && d.regime['1h'], b = d.book, x = d.derivs || {};
+    const p = d.profile && d.profile.windows && d.profile.windows.day, ws = d.optFlow && d.optFlow.whales && d.optFlow.whales.sum, o = d.optFlow && d.optFlow.oi;
+    const cm = d.onchain && d.onchain.coinmetrics && d.onchain.coinmetrics.last;
+    const nDiv = ((d.cvd && d.cvd.divergences) || []).length;
+    return {
+      flux: sp && sp.read ? `<span class="${bcls(sp.read.bias)}">${esc(sp.read.label)}</span>` : '',
+      sig: r && !r.error ? `1 h : <span class="${bcls(r.bias)}">${esc(r.label)}</span>${nDiv ? ` · ${nDiv} divergence${nDiv > 1 ? 's' : ''} sur 24 h` : ''}` : '',
+      liq: [b && !b.error ? `carnet ± 0,5 % <span class="${cls(b.obi['0.005'])}">${pct(b.obi['0.005'], 0)}</span>` : '', p && !p.error && p.poc ? `POC du jour ${px(p.poc)}` : ''].filter(Boolean).join(' · '),
+      der: [x.oi24h != null ? `intérêt ouvert <span class="${cls(x.oi24h)}">${pct(x.oi24h, 2)}</span> sur 24 h` : '', x.funding != null ? `financement <span class="${cls(x.funding)}">${pct(x.funding, 4)}</span>` : ''].filter(Boolean).join(' · '),
+      opt: [ws && ws.n ? `baleines : delta net <span class="${cls(ws.delta)}">${sn(ws.delta)} BTC</span> (${nf(ws.n)} ordres)` : '', o ? `calls <span class="${cls(o.calls)}">${sn(o.calls)}</span> · puts <span class="${cls(o.puts)}">${sn(o.puts)}</span> BTC ouverts sur ${nf(o.gapH, o.gapH < 10 ? 1 : 0)} h` : ''].filter(Boolean).join(' · '),
+      net: cm && cm.CapMVRVCur != null ? `MVRV ${nf(cm.CapMVRVCur, 2)}` : '',
+    };
+  }
+
   function render() {
     if (!root) return;
     root.querySelector('.qttl').textContent = `Quant · ${coin()}`;
-    const g = root.querySelector('.qgrid'), meta = root.querySelector('.qmeta'), top = root.querySelector('.qtop');
-    if (!data || data.symbol !== LT.st.symbol) { meta.textContent = ''; top.innerHTML = ''; g.innerHTML = card('Moteur exact', bad(!data && err || 'Chargement…')); return; }
+    const g = root.querySelector('.qgrid'), meta = root.querySelector('.qmeta'), nav = root.querySelector('.qnav');
+    if (!data || data.symbol !== LT.st.symbol) { meta.textContent = ''; nav.innerHTML = ''; g.innerHTML = card('Moteur exact', bad(!data && err || 'Chargement…')); return; }
     meta.textContent = `mis à jour ${HM.format(data.now)}${err ? ' · ' + err : ''}` +
       (data.warming ? ' · démarrage du moteur : les premières mesures arrivent en quelques secondes, l\'historique de 24 heures en moins d\'une minute' : '');
-    const open = new Set([...root.querySelectorAll('details.qhelp[open], details.qmore[open]')].map(e => e.closest('.qcard').querySelector('.qh').textContent + e.className));
-    top.innerHTML = summary(data);
-    const btc = data.options || data.onchain;
-    g.innerHTML = sec('Flux d\'ordres') + spotPerpCard(data) + cvdCard(data) + venuesCard(data) +
-      sec('Signaux') + regimeCard(data) + signalsCard(data) +
-      sec('Liquidité') + bookCard(data) + profileCard(data) +
-      sec('Dérivés') + derivsCard(data) + (btc ? optionsCard(data) : '') +
-      (data.onchain ? sec('Réseau Bitcoin') + chainCard(data) : '');
-    root.querySelectorAll('details.qhelp, details.qmore').forEach(e => { if (open.has(e.closest('.qcard').querySelector('.qh').textContent + e.className)) e.open = true; });
+    const keyOf = e => (e.closest('.qcard').querySelector('.qht') || {}).textContent + e.className;
+    const open = new Set([...root.querySelectorAll('details.qhelp[open], details.qmore[open]')].map(keyOf));
+    const L = ledes(data), btc = data.symbol === 'BTCUSDT';
+    const secs = [['synth', 'Synthèse'], ['flux', 'Flux d\'ordres'], ['sig', 'Signaux'], ['liq', 'Liquidité'], ['der', 'Dérivés'], ['opt', 'Options BTC'], ...(data.onchain ? [['net', 'Réseau Bitcoin']] : [])];
+    nav.innerHTML = secs.map(([k, n]) => `<button data-qgo="${k}">${n}</button>`).join('');
+    g.innerHTML =
+      section('synth', 'Synthèse', '', summary(data)) +
+      section('flux', 'Flux d\'ordres', L.flux, row(spotPerpCard(data)) + row(cvdCard(data), btc ? venuesCard(data) : '')) +
+      section('sig', 'Signaux', L.sig, row(regimeCard(data), signalsCard(data))) +
+      section('liq', 'Liquidité', L.liq, row(bookCard(data), profileCard(data))) +
+      section('der', 'Dérivés', L.der, row(derivsCard(data))) +
+      section('opt', 'Options BTC' + (btc ? '' : ' <small class="muted">· référence du marché</small>'), L.opt, row(whalesCard(data)) + row(oiChangeCard(data)) + row(gammaCard(data), volCard(data))) +
+      (data.onchain ? section('net', 'Réseau Bitcoin', L.net, row(chainCard(data))) : '');
+    root.querySelectorAll('details.qhelp, details.qmore').forEach(e => { if (open.has(keyOf(e))) e.open = true; });
   }
 
   function show() { if (on) { load(); return; } on = true; render(); load(); timer = setInterval(load, 5000); }

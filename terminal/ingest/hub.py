@@ -92,13 +92,14 @@ def conviction(spot, perp, thr=CONV_THR) -> dict:
 class QuantHub:
     def __init__(self, symbols, binance: Binance | None = None, bybit: Bybit | None = None, okx: Okx | None = None,
                  deribit: Deribit | None = None, onchain: OnChain | None = None, books=None, footprint=None, liqs=None,
-                 ws_clients=None, now=time.time, seed_hours: int = 24):
+                 ws_clients=None, now=time.time, seed_hours: int = 24, optflow=None):
         self.symbols = [s.upper() for s in symbols]
         self.binance, self.bybit, self.okx = binance or Binance(), bybit or Bybit(), okx or Okx()
         for c in self.binance.clients():      # le quota de Binance est partage avec tout le terminal : le moteur s'efface des 50 %
             c.weight_guard = min(getattr(c, "weight_guard", 0.8), 0.5)
         self.deribit, self.onchain = deribit or Deribit(), onchain or OnChain()
         self.books, self.footprint, self.liqs, self.ws_clients = books, footprint, liqs, ws_clients
+        self.optflow = optflow                # V51 : baleines des options et variations de l'intérêt ouvert (ingest/optflow.py)
         self.now = now
         self.seed_hours = seed_hours
         self.seed_pause = SEED_PAUSE
@@ -394,7 +395,7 @@ class QuantHub:
             self._run(f"OKX {s}", okx)
 
     def poll_options(self) -> None:
-        if "BTCUSDT" not in self.wanted:
+        if not self.wanted:                    # V51 : les options BTC servent de référence au marché, quelle que soit la paire affichée
             return
 
         def go():
@@ -500,11 +501,16 @@ class QuantHub:
             self.step()
 
     def start(self) -> None:
-        """Garde par compatibilite : le moteur ne demarre plus avec le terminal, mais a la premiere demande de la page (touch)."""
+        """Le moteur ne demarre plus avec le terminal, mais a la premiere demande de la page (touch). Seul le lecteur des baleines
+        d'options (V51, leger) tourne en continu : une variation sur 24 heures demande une photo prise il y a 24 heures."""
+        if self.optflow is not None:
+            self.optflow.start()
 
     def stop(self) -> None:
         self.stop_ev.set()
         self.active = False
+        if self.optflow is not None:
+            self.optflow.stop()
 
     # =================================================================================================
     #  lecture
@@ -641,12 +647,12 @@ class QuantHub:
         out["since"] = min(first) if first else None
         return out
 
-    def snapshot(self, symbol: str, max_age: float = 2.0) -> dict:
+    def snapshot(self, symbol: str, max_age: float = 2.0, whale_min: float | None = None) -> dict:
         s = symbol.upper()
         if s not in self.symbols:
             return {"ok": False, "why": f"paire non suivie : {s}"}
         self.touch(s, start=self.autostart)
-        cached = self._snap.get(s)
+        cached = self._snap.get((s, whale_min))
         if cached and self.now() - cached[0] <= max_age:
             return cached[1]
         now = self.now_ms()
@@ -706,12 +712,19 @@ class QuantHub:
                 out["venues"] = self._venues(now)
             out["spotPerp"] = self._spot_perp(s)
         out["profile"] = self._profiles(s, now)
+        out["options"] = self.opt or {"error": self.errors.get("options Deribit") or "chaîne d'options pas encore lue"}
+        if self.optflow is not None:
+            try:
+                out["optFlow"] = self.optflow.summary(now, min_usd=whale_min)
+            except Exception as e:                                       # la page ne doit jamais casser
+                out["optFlow"] = {"error": f"{type(e).__name__}: {e}"}
         if s == "BTCUSDT":
-            out["options"] = self.opt or {"error": self.errors.get("options Deribit") or "chaîne d'options pas encore lue"}
             out["onchain"] = self.oc or {"error": self.errors.get("réseau Bitcoin") or "réseau Bitcoin pas encore lu"}
         out["errors"] = dict(self.errors)                               # V48 : l'état détaillé des sources n'est plus envoyé à la page
         out = js(out)
-        self._snap[s] = (self.now(), out)
+        if len(self._snap) > 12:
+            self._snap.clear()
+        self._snap[(s, whale_min)] = (self.now(), out)
         return out
 
     def status(self) -> dict:

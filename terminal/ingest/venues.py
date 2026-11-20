@@ -195,6 +195,15 @@ class Deribit:
             raise IngestError(f"Deribit {currency} : aucune option exploitable", "format")
         return {"t": t, "index": float(index) if index is not None else None, "rows": rows, "skipped": skipped}
 
+    def option_trades(self, currency: str, start_ms: int, end_ms: int, count: int = 1000) -> tuple:
+        """V51 : une page de transactions d'options, de la plus ancienne à la plus récente : (transactions brutes, il en reste). Une journée
+        de BTC fait environ 13 pages (4 Mo)."""
+        res, _ = self._call("get_last_trades_by_currency_and_time", {"currency": currency, "kind": "option", "start_timestamp": int(start_ms),
+                                                                      "end_timestamp": int(end_ms), "count": count, "sorting": "asc"}, retries=2)
+        if not isinstance(res, dict) or not isinstance(res.get("trades"), list):
+            raise IngestError("Deribit : transactions d'options illisibles", "format")
+        return res["trades"], bool(res.get("has_more"))
+
     def ticker(self, name: str) -> dict:
         res, us = self._call("ticker", {"instrument_name": name}, retries=2)
         return {"t": to_ms(res.get("timestamp") or us), "raw": res}
