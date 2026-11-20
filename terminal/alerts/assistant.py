@@ -25,6 +25,7 @@ DEFAULT_MODEL = "claude-opus-5-5"
 WEB_SEARCH_USD = 0.01                 # 10 $ les 1000 recherches
 HISTORY_TURNS = 6                     # echanges gardes pour la suite de la conversation
 MAX_CONTINUE = 3
+MAX_TOOL_ROUNDS = 6                   # V52 : tours d'outils au plus par question (chaque tour peut lire plusieurs parties en parallele)
 
 SYSTEM = """Tu es l'assistant du terminal de trading de l'utilisateur (« Liq Terminal »). Il trade surtout SOL et BTC avec levier ; il lit le volume profile, le CVD, les VWAP et VWAP ancrés, la liquidité (poches de liquidation), et relie le marché à la macro, à la géopolitique et aux flux institutionnels. Il cherche l'argent partout où il se trouve.
 
@@ -35,6 +36,16 @@ Comment répondre :
 - Pour expliquer un mouvement de prix : donne la chronologie, puis sépare ce qui est MESURÉ (liquidations, intérêt ouvert, flux d'ordres, annonces, autres marchés au même moment) de ce qui est une HYPOTHÈSE. Si les données du terminal ne suffisent pas, cherche l'actualité du moment sur le web (annonces, géopolitique, ETF, déclarations, piratages, gros transferts) et donne tes sources.
 - Niveaux de preuve du terminal : seule la tendance de fond (moyennes 50 et 200 jours) est validée par son backtest ; le reste (financement, intérêt ouvert, flux, squeezes, options, macro) est du contexte sans avantage démontré. Ne présente jamais un indicateur non prouvé comme prédictif.
 - Si on te demande quoi faire : des scénarios avec leurs niveaux d'invalidation et ce qui ferait changer d'avis, le risque du levier en une phrase, sans moraliser. Ce n'est pas un conseil financier et tu ne passes aucun ordre."""
+
+# V52 : ajouté au système quand l'assistant a les outils du terminal (alerts/terminaltools.py). Texte FIXE : il reste en cache d'une
+# question à l'autre.
+SYSTEM_TOOLS = """
+
+Outils du terminal :
+- Tu as des outils qui lisent les données du terminal À L'INSTANT : niveaux et zones, bougies avec delta et intérêt ouvert, profils de volume (du jour à tout l'historique), TPO, onglet Quant (CVD exact, comptant contre perpétuels, régime, carnet), options BTC et baleines, liquidations réelles et carte estimée, flux par taille d'ordre, idées de trade, macro, divergences, stratégie et régime, gamma.
+- Le résumé joint au message ne donne que l'essentiel. Dès que la question porte sur un niveau, un flux, un chiffre précis ou une partie du terminal, appelle les outils utiles au lieu de deviner ; plusieurs à la fois si besoin, en restant sobre (deux à quatre appels suffisent d'habitude).
+- La paire et l'unité de temps que l'utilisateur regarde sont indiquées : prends-les par défaut s'il n'en nomme pas.
+- Un outil qui renvoie « erreur » : dis que cette donnée manque, n'invente rien. Cite les chiffres avec leur unité et leur heure (heure de Paris)."""
 
 WEEK_PROMPT = """Écris le commentaire macro de la semaine à partir du bilan chiffré joint (chiffres officiels américains, réactions mesurées des marchés, lecture du terminal).
 La « vision de la semaine » du terminal est en tête du bilan (régime de croissance et d'inflation, surprises face au consensus, ce que le marché anticipe pour la Fed, estimation du terminal pour chaque annonce à venir) : discute-la, confirme-la ou nuance-la avec ce que tu trouves.
@@ -237,6 +248,8 @@ class Assistant:
         self.lock = threading.Lock()
         self.busy = threading.Lock()
         self.state = self._load()
+        self.tools = None                     # V52 : alerts.terminaltools.TerminalTools (branché par le serveur)
+        self.progress = None                  # V52 : ce que l'assistant lit pendant qu'il répond (affiché par la page)
 
     def _load(self) -> dict:
         try:
@@ -265,6 +278,7 @@ class Assistant:
         c = self.cfg
         m = c.chat_model if c.chat_model in MODELS else DEFAULT_MODEL
         return {"configured": bool(c.chat_key), "sdk": sdk() is not None, "model": m, "modelName": MODELS[m][0], "web": c.chat_web, "telegram": c.chat_telegram and c.telegram_on,
+                "tools": self.tools is not None, "progress": dict(self.progress) if self.progress and self.busy.locked() else None,
                 "telegramConfigured": c.telegram_on, "budget": c.chat_budget, "spent": round(self.spent(), 4), "busy": self.busy.locked(),
                 "keyHint": ("..." + c.chat_key[-4:]) if c.chat_key else "", "models": [{"id": k, "name": v[0], "in": v[1], "out": v[2]} for k, v in MODELS.items()]}
 
@@ -299,11 +313,14 @@ class Assistant:
             usd += (getattr(stu, "web_search_requests", 0) or 0) * WEB_SEARCH_USD if stu else 0.0
         return usd
 
-    def _request(self, client, model: str, messages: list, web_uses: int = 3):
-        tools = []
+    def _request(self, client, model: str, messages: list, web_uses: int = 3, client_tools=None):
+        tools = list(client_tools or [])
         if self.cfg.chat_web:
-            tools = [{"type": "web_search_20250305" if model == "claude-haiku-4-5" else "web_search_20260209", "name": "web_search", "max_uses": web_uses}]
-        kw = {"model": model, "max_tokens": 16000, "system": SYSTEM, "messages": messages}
+            tools.append({"type": "web_search_20250305" if model == "claude-haiku-4-5" else "web_search_20260209", "name": "web_search", "max_uses": web_uses})
+        system = SYSTEM + (SYSTEM_TOOLS if client_tools else "")
+        # V52 : outils et système fixes en tête, mis en cache ; le dernier bloc envoyé porte le second repère (voir _mark_cache)
+        kw = {"model": model, "max_tokens": 16000, "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+              "messages": messages}
         if tools:
             kw["tools"] = tools
         if model == "claude-haiku-4-5":
@@ -311,9 +328,31 @@ class Assistant:
         kw["output_config"] = {"effort": "medium"}
         return client.beta.messages.create(betas=["server-side-fallback-2026-07-01"], fallbacks="default", **kw)    # refus d'un filtre : autre modele, meme appel
 
-    def ask(self, question: str, src: str = "web", now_ms: int | None = None, context: str | None = None, web_uses: int = 3) -> dict:
-        """Repond a une question. {ok, answer, usd, model, seconds} ; ok False avec un message lisible en cas de probleme.
-        context : donnees fournies a la place de celles du terminal (bilan macro), sans reprendre la conversation en cours."""
+    @staticmethod
+    def _mark_cache(msgs: list) -> None:
+        """V52 : un seul repère de cache dans les messages, sur le dernier bloc envoyé : chaque tour d'outils relit le précédent en cache."""
+        for m in msgs:
+            if isinstance(m.get("content"), list):
+                for b in m["content"]:
+                    if isinstance(b, dict):
+                        b.pop("cache_control", None)
+        last = msgs[-1]
+        if isinstance(last.get("content"), str):
+            last["content"] = [{"type": "text", "text": last["content"]}]
+        blocks = [b for b in last["content"] if isinstance(b, dict)]
+        if blocks:
+            blocks[-1]["cache_control"] = {"type": "ephemeral"}
+
+    def _step(self, label: str) -> None:
+        if self.progress is not None:
+            self.progress["steps"].append(label)
+
+    def ask(self, question: str, src: str = "web", now_ms: int | None = None, context: str | None = None, web_uses: int = 3,
+            focus: dict | None = None) -> dict:
+        """Repond a une question. {ok, answer, usd, model, seconds, tools} ; ok False avec un message lisible en cas de probleme.
+        context : donnees fournies a la place de celles du terminal (bilan macro), sans reprendre la conversation en cours.
+        V52 : sans `context`, l'assistant a les outils du terminal (self.tools) et lit lui-meme ce qu'il lui faut ; `focus` : la paire et
+        l'unite de temps que l'utilisateur regarde."""
         question = (question or "").strip()[:4000]
         c = self.cfg
         if not question:
@@ -339,23 +378,54 @@ class Assistant:
                     ctx = build_context(svc, now)
                 except Exception as e:
                     ctx = f"(Données du terminal indisponibles : {type(e).__name__})"
+            tools = self.tools if context is None else None
+            defs = tools.defs() if tools is not None else None
             with self.lock:
                 msgs = self._turns() if context is None else []
                 self.state["history"].append({"role": "user", "text": question, "t": now, "src": src})
-            msgs.append({"role": "user", "content": f"<donnees_du_terminal>\n{ctx}\n</donnees_du_terminal>\n\n{question}"})
+            seen = ""
+            if focus and focus.get("symbol"):
+                seen = f"\n(L'utilisateur regarde {focus['symbol']}" + (f" en {focus['tf']}" if focus.get("tf") else "") + \
+                       (f", onglet {focus['layout']}" if focus.get("layout") else "") + ".)"
+            msgs.append({"role": "user", "content": f"<donnees_du_terminal>\n{ctx}\n</donnees_du_terminal>{seen}\n\n{question}"})
             client = anthropic.Anthropic(api_key=c.chat_key, timeout=180.0, max_retries=2)
-            usages, resp, done = [], None, []
+            usages, resp, done, read = [], None, [], []
+            self.progress = {"t0": time.time(), "q": question[:200], "steps": []}
             try:
-                resp = self._request(client, model, msgs, web_uses)
-                usages.append(resp.usage)
-                done.append(resp)
-                for _ in range(MAX_CONTINUE):                                   # recherche web longue : la reponse reprend la ou elle s'est arretee
-                    if resp.stop_reason != "pause_turn":
-                        break
-                    msgs = msgs + [{"role": "assistant", "content": resp.content}]
-                    resp = self._request(client, model, msgs, web_uses)
+                rounds = 0
+                for _ in range(MAX_TOOL_ROUNDS + MAX_CONTINUE + 1):
+                    self._mark_cache(msgs)
+                    resp = self._request(client, model, msgs, web_uses, defs)
                     usages.append(resp.usage)
                     done.append(resp)
+                    for b in resp.content:                                      # recherches web faites par le serveur
+                        if getattr(b, "type", "") == "server_tool_use" and getattr(b, "name", "") == "web_search":
+                            lab = "recherche web" + (f" · « {str((b.input or {}).get('query', ''))[:60]} »" if isinstance(getattr(b, "input", None), dict) else "")
+                            read.append(lab)
+                            self._step(lab)
+                    if resp.stop_reason == "pause_turn":                       # recherche web longue : la reponse reprend la ou elle s'est arretee
+                        msgs = msgs + [{"role": "assistant", "content": resp.content}]
+                        continue
+                    if resp.stop_reason != "tool_use" or tools is None:
+                        break
+                    uses = [b for b in resp.content if getattr(b, "type", "") == "tool_use"]
+                    if not uses or rounds > MAX_TOOL_ROUNDS:
+                        break
+                    rounds += 1
+                    results = []
+                    for b in uses:                                              # toutes les reponses dans UN message (appels en parallele)
+                        args = b.input if isinstance(b.input, dict) else {}
+                        lab = tools.label(b.name, args)
+                        self._step(lab)
+                        read.append(lab)
+                        out = tools.run(b.name, args)
+                        r = {"type": "tool_result", "tool_use_id": b.id, "content": out}
+                        if out.startswith('{"erreur"'):
+                            r["is_error"] = True
+                        results.append(r)
+                    if rounds >= MAX_TOOL_ROUNDS:
+                        results.append({"type": "text", "text": "Tu as lu assez de données : réponds maintenant, sans appeler d'autre outil."})
+                    msgs = msgs + [{"role": "assistant", "content": resp.content}, {"role": "user", "content": results}]
             except anthropic.AuthenticationError:
                 return self._fail("Clé API refusée par Anthropic : vérifie-la dans Réglages → 7.")
             except anthropic.PermissionDeniedError:
@@ -388,10 +458,12 @@ class Assistant:
                 text += "\n\n(réponse coupée : trop longue)"
             text = text or "(réponse vide)"
             with self.lock:
-                self.state["history"].append({"role": "assistant", "text": text, "t": ex.now_ms(), "src": src, "usd": round(usd, 4), "model": model})
+                self.state["history"].append({"role": "assistant", "text": text, "t": ex.now_ms(), "src": src, "usd": round(usd, 4), "model": model,
+                                              **({"read": read} if read else {})})
                 self._save()
-            return {"ok": True, "answer": text, "usd": usd, "model": model, "seconds": round(time.time() - t0, 1)}
+            return {"ok": True, "answer": text, "usd": usd, "model": model, "seconds": round(time.time() - t0, 1), "read": read}
         finally:
+            self.progress = None
             self.busy.release()
 
     def _fail(self, msg: str, usd: float = 0.0) -> dict:

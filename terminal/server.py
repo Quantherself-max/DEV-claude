@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "51"
-API_LEVEL = 51                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "52"
+API_LEVEL = 52                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -339,6 +339,8 @@ class App:
         self._spot = {}                                   # V37 : bougies spot par (symbole, unité de temps) : CVD du spot
         self._size_cache = {}                             # V39 : flux par taille d'ordre par (symbole, unité de temps)
         self.assistant = Assistant(cfg, lambda: self.service, cfg.data_dir)
+        from alerts.terminaltools import TerminalTools
+        self.assistant.tools = TerminalTools(self)                    # V52 : l'assistant lit lui-même chaque partie du terminal
         self.readings = readings_mod.ReadingLog(cfg)
         old_trades = getattr(self, "trades", {})
         self.trades = service.trades
@@ -1709,7 +1711,9 @@ def make_handler(app: App):
                 if path == "/api/prefs/import":
                     return self._json(app.prefs_import(body))
                 if path == "/api/chat":
-                    return self._json(app.assistant.ask(str(body.get("question") or ""), src="web"))
+                    fo = body.get("focus") if isinstance(body.get("focus"), dict) else None
+                    focus = {k: str(fo[k])[:20] for k in ("symbol", "tf", "layout") if fo and fo.get(k)} if fo else None
+                    return self._json(app.assistant.ask(str(body.get("question") or ""), src="web", focus=focus))
                 if path == "/api/macroweek/comment":
                     return self._json(app.macro_week_comment(str(body.get("week") or "") or None))
                 if path == "/api/macromonth/research":

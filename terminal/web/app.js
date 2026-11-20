@@ -191,7 +191,7 @@ function buildHeatImage(h) {
 const panels = [];
 // V28 : main = Graphique (épuré), blank = Vierge, heat = Heatmap du carnet ; les trois sont le graphique principal avec SES éléments (desk.js) ;
 // 3 = Grille (principal + liquidité + VWAP·VP) ; pair = onglet « BTC + SOL » (deux instruments côte à côte, setups liés)
-const LAYOUTS = {main: ['main'], blank: ['main'], heat: ['main'], '1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: [], gex: [], quant: [], pair: []};
+const LAYOUTS = {main: ['main'], blank: ['main'], heat: ['main'], '1': ['main'], liq: ['liq'], vp: ['vp'], '2': ['main', 'liq'], '3': ['main', 'liq', 'vp'], mtf: [], tpo: [], gex: [], quant: [], chat: [], pair: []};
 const needs = k => (LAYOUTS[st.layout] || LAYOUTS.main).includes(k) && st.page === 'desk';
 // ---------- V36 : mêmes réglages sur tous tes ordinateurs : la page envoie ses réglages au terminal (copie sur le disque et, si
 // choisi, dans un dossier synchronisé par le cloud) et reprend la version la plus récente au démarrage et quand tu reviens sur la fenêtre ----------
@@ -311,6 +311,8 @@ function applyLayout() {
   if (gg) { gg.classList.toggle('hide', st.layout !== 'gex'); if (st.layout === 'gex' && st.page === 'desk') GEXV.show(); else GEXV.hide(); }
   const qg = $('#quantGrid');                                           // V45 : onglet Quant (moteur exact)
   if (qg) { qg.classList.toggle('hide', st.layout !== 'quant'); if (st.layout === 'quant' && st.page === 'desk') QUANTV.show(); else QUANTV.hide(); }
+  const cv = $('#chatView');                                            // V52 : onglet Assistant (la discussion quitte le panneau de droite)
+  if (cv) { cv.classList.toggle('hide', st.layout !== 'chat'); if (st.layout === 'chat' && st.page === 'desk') { loadChat(); setTimeout(() => $('#chatQ').focus(), 50); } else clearTimeout(chatTimer); }
   document.querySelectorAll('#layouts button').forEach(b => b.classList.toggle('on', b.dataset.layout === st.layout || (b.dataset.layout === 'main' && st.layout === '1')));
   $('#deskwrap').classList.toggle('noside', !st.sideOpen);
   $('#sideToggle').textContent = st.sideOpen ? 'Panneau ▸' : '◂ Panneau';
@@ -330,6 +332,9 @@ function createPanels() {
   const tg = document.createElement('section'); tg.id = 'tpoGrid'; tg.className = 'tpo hide'; desk.appendChild(tg); TPO.init(window.LT, tg);
   const gg = document.createElement('section'); gg.id = 'gexGrid'; gg.className = 'gexv hide'; desk.appendChild(gg); GEXV.init(window.LT, gg);   // V40 : onglet GEX
   const qg = document.createElement('section'); qg.id = 'quantGrid'; qg.className = 'quantv hide'; desk.appendChild(qg); QUANTV.init(window.LT, qg);   // V45 : onglet Quant
+  const cv = document.createElement('section'); cv.id = 'chatView'; cv.className = 'chatv hide'; desk.appendChild(cv);   // V52 : onglet Assistant
+  const card = document.querySelector('[data-pane="chat"] .chatcard'); if (card) cv.appendChild(card);
+  renderSugg();
   let sr = false, sx = false;
   panels.forEach(p => {
     p.chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
@@ -739,7 +744,7 @@ function banner(kind, html) {
   b.className = kind; b.hidden = false;
   if (b.innerHTML !== html) b.innerHTML = html;
 }
-const NEED_API = 51;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille, V42 : prix sous 0,01 $ (PUMP), V43 : repères des sous-fenêtres, V44 : /api/cexflow, liquidations et gros ordres des bourses, V45 : /api/quant, moteur exact, V46 : états allégés (« v », « same », « tail »), V47 : carte des liquidations depuis 2021, V48 : comptant contre perpétuels dans /api/quant, V49 : démarrage qui réessaie, V50 : /api/profiles, profils longs et delta par prix, V51 : baleines des options et variations de l'intérêt ouvert dans /api/quant)
+const NEED_API = 52;                                                   // adresses /api attendues par ces pages (V17 : /api/tpo, V18 : /api/macroweek, V19 : TPO enrichi, V20 : TPO semaine et mois, V21 : absorptions, V24 : fiche détaillée des idées /api/history/trade, V24.2 : diagnostic Telegram /api/telegram/diagnose, V25 : /api/macromonth, V25.1 et V25.2 : idées dans l'autre sens et leur réglage, V25.3 : état d'envoi de chaque configuration, V26 : gamma des options BTC, V28 : heatmap du carnet /api/heatmap, V35 : funding dans /api/indicators, V37 : positions, delta en dollars, CVD spot, funding pondéré, V38 : gamma par échéance et par bourse dans /api/state, V39 : /api/sizeflow, V40 : /api/gex, V40.1 : historique du flux par taille, V42 : prix sous 0,01 $ (PUMP), V43 : repères des sous-fenêtres, V44 : /api/cexflow, liquidations et gros ordres des bourses, V45 : /api/quant, moteur exact, V46 : états allégés (« v », « same », « tail »), V47 : carte des liquidations depuis 2021, V48 : comptant contre perpétuels dans /api/quant, V49 : démarrage qui réessaie, V50 : /api/profiles, profils longs et delta par prix, V51 : baleines des options et variations de l'intérêt ouvert dans /api/quant, V52 : assistant avec les outils du terminal, « focus » et « progress » dans /api/chat)
 const LAUNCHER = /Mac/.test(navigator.platform || navigator.userAgent) ? 'Lancer-Terminal-Mac.command' : 'Lancer-Terminal-Windows.bat';
 const serverOld = () => !!st.cfg && !(st.cfg.api >= NEED_API);
 function updateBanner(d) {
@@ -890,7 +895,6 @@ function showPane(name) {
   document.querySelectorAll('#side .pane').forEach(p => p.hidden = p.dataset.pane !== name);
   document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === name));
   try { localStorage.setItem('liqTab', name); } catch (err) { /* stockage indisponible */ }
-  if (name === 'chat') loadChat();
   if (name === 'liquidity') { pollLiqs(); renderLqReal(); }
   if (name === 'vp') pollVP();
   if (name === 'mine') Strategy.show();
@@ -1333,42 +1337,62 @@ async function openSettings() {
     renderUpdate(await api('/api/update'));
   } catch (e) { $('#saveRes').textContent = 'Erreur : ' + e.message; }
 }
-// ---------- discussion avec Claude ----------
-let chatTimer = null, chatPending = null;
+// ---------- assistant (V52 : onglet du Desk ; Claude lit lui-même les données du terminal avec ses outils) ----------
+let chatTimer = null, chatPending = null, chatProgress = null;
+const CHAT_SUGG = () => { const c = (st.symbol || 'BTCUSDT').replace('USDT', ''); return [
+  `Qui achète et qui vend sur ${c} en ce moment ?`, `Quels niveaux surveiller sur ${c} en ${st.tf || '1h'} ?`,
+  `Où sont les liquidations les plus proches sur ${c} ?`, 'Que font les baleines des options BTC sur 24 heures ?',
+  `Résume les profils de volume du mois et de l'année sur ${c}`, 'Qu\'est-ce qui arrive en macro cette semaine ?']; };
+function renderSugg() {
+  const el = $('#chatSugg'); if (!el) return;
+  el.innerHTML = CHAT_SUGG().map(q => `<button type="button" data-sugg="${esc(q)}">${esc(q)}</button>`).join('');
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-sugg]'); if (!b || chatPending) return;
+  $('#chatQ').value = b.dataset.sugg; $('#chatForm').requestSubmit();
+});
 function chatHtml(c) {
   const hist = c.history || [];
   const t = ms => new Date(ms).toLocaleString('fr-FR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
+  const readTxt = r => r && r.length ? `<span class="chatread">Données lues : ${r.map(esc).join(' · ')}</span>` : '';
   let h = hist.map(m => m.role === 'system' ? `<div class="sep">— ${esc(m.text)} —</div>` :
-    `<div class="msg ${m.role}${m.ok === false ? ' bad' : ''}">${esc(m.text)}<small>${t(m.t)}${m.src === 'telegram' ? ' · Telegram' : ''}${m.usd ? ' · ' + num(m.usd, 3) + ' $' : ''}</small></div>`).join('');
-  if (chatPending) h += `<div class="msg user">${esc(chatPending)}</div><div class="msg assistant"><span class="muted">Claude lit les données du terminal et réfléchit… (10 à 60 secondes)</span></div>`;
-  if (!h) h = `<div class="muted small">${c.configured && c.sdk ? 'Pose ta première question : « pourquoi le BTC a perdu 2 % cet après-midi ? », « les shorts s\'accumulent sur SOL ? », « qu\'est-ce qui arrive cette semaine en macro ? »' :
-    'Pour discuter avec Claude : <a href="#" data-open-settings>Réglages → 7. Discussion avec Claude</a> (clé API Anthropic, puis « Installer le module Claude »).'}</div>`;
+    `<div class="msg ${m.role}${m.ok === false ? ' bad' : ''}">${esc(m.text)}${m.role === 'assistant' ? readTxt(m.read) : ''}<small>${t(m.t)}${m.src === 'telegram' ? ' · Telegram' : ''}${m.usd ? ' · ' + num(m.usd, 3) + ' $' : ''}</small></div>`).join('');
+  if (chatPending) {
+    const p = c.progress || chatProgress, steps = p && p.steps && p.steps.length ? p.steps : null;
+    const secs = p && p.t0 ? Math.max(0, Math.round(Date.now() / 1000 - p.t0)) : null;
+    h += `<div class="msg user">${esc(chatPending)}</div><div class="msg assistant pending"><span class="muted">${steps ? 'Lit les données du terminal :' : 'Claude réfléchit et choisit quoi lire dans le terminal…'}` +
+      `${secs != null ? ' (' + secs + ' s)' : ''}</span>${steps ? `<span class="chatread">${steps.map(esc).join(' · ')}</span>` : ''}</div>`;
+  }
+  if (!h) h = `<div class="muted small">${c.configured && c.sdk ? 'Pose ta question, ou touche une des suggestions au-dessus. L\'assistant lit lui-même ce qu\'il faut dans le terminal (niveaux, profils, Quant, options et baleines, liquidations, idées, macro) avant de répondre.' :
+    'Pour utiliser l\'assistant : <a href="#" data-open-settings>Réglages → 7. Discussion avec Claude</a> (clé API Anthropic, puis « Installer le module Claude »).'}</div>`;
   return h;
 }
 async function loadChat() {
   clearTimeout(chatTimer);
-  if (st.tab !== 'chat' || st.page !== 'desk') return;
+  if (st.layout !== 'chat' || st.page !== 'desk') return;
   try {
     const c = await api('/api/chat');
+    if (c.progress) chatProgress = c.progress;
     const log = $('#chatLog'), atEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     log.innerHTML = chatHtml(c);
     if (atEnd || chatPending) log.scrollTop = log.scrollHeight;
-    $('#chatInfo').textContent = `${c.modelName} · ${num(c.spent, 2)} $ ce mois-ci${c.budget ? ' sur ' + num(c.budget, 0) + ' $' : ''}${c.telegramListening ? ' · Telegram actif' : c.telegramConfigured && c.configured ? ' · Telegram inactif' : ''}`;
-  } catch (e) { $('#chatLog').innerHTML = `<div class="dn small">Discussion indisponible : ${esc(e.message)}</div>`; }
-  chatTimer = setTimeout(loadChat, 15000);
+    $('#chatInfo').textContent = `${c.modelName} · ${num(c.spent, 2)} $ ce mois-ci${c.budget ? ' sur ' + num(c.budget, 0) + ' $' : ''}${c.tools ? ' · lit tout le terminal' : ''}${c.telegramListening ? ' · Telegram actif' : c.telegramConfigured && c.configured ? ' · Telegram inactif' : ''}`;
+  } catch (e) { $('#chatLog').innerHTML = `<div class="dn small">Assistant indisponible : ${esc(e.message)}</div>`; }
+  renderSugg();
+  chatTimer = setTimeout(loadChat, chatPending ? 1500 : 15000);          // pendant une réponse : ce qu'il lit, presque en direct
 }
 $('#chatForm').addEventListener('submit', async e => {
   e.preventDefault();
   const q = $('#chatQ').value.trim();
   if (!q || chatPending) return;
-  chatPending = q; $('#chatQ').value = ''; $('#chatSend').disabled = true; $('#chatRes').textContent = '';
+  chatPending = q; chatProgress = {t0: Date.now() / 1000, steps: []}; $('#chatQ').value = ''; $('#chatSend').disabled = true; $('#chatRes').textContent = '';
   await loadChat();
   try {
-    const r = await api('/api/chat', {question: q});
+    const r = await api('/api/chat', {question: q, focus: {symbol: st.symbol, tf: st.tf}});
     $('#chatRes').className = r.ok ? 'muted small' : 'dn small';
-    $('#chatRes').textContent = r.ok ? `répondu en ${num(r.seconds, 0)} s · ${num(r.usd, 3)} $` : r.answer;
+    $('#chatRes').textContent = r.ok ? `répondu en ${num(r.seconds, 0)} s · ${num(r.usd, 3)} $${r.read && r.read.length ? ' · ' + r.read.length + ' lecture' + (r.read.length > 1 ? 's' : '') + ' du terminal' : ''}` : r.answer;
   } catch (err) { $('#chatRes').className = 'dn small'; $('#chatRes').textContent = 'Erreur : ' + err.message; }
-  chatPending = null; $('#chatSend').disabled = false;
+  chatPending = null; chatProgress = null; $('#chatSend').disabled = false;
   loadChat();
 });
 $('#chatQ').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#chatForm').requestSubmit(); } });
@@ -1572,7 +1596,7 @@ function openSymbol(sym, page) {
   Analysis.init(window.LT);
   renderLqLegend(); applySidebar(); applyLayout();
   applyExpert();
-  try { const t = localStorage.getItem('liqTab'); showPane((['lecture', 'levels', 'mine', 'chat'].includes(t) || (st.expert && EXPERT_TABS.includes(t))) ? t : 'lecture'); } catch (err) { showPane('lecture'); }
+  try { const t = localStorage.getItem('liqTab'); showPane((['lecture', 'levels', 'mine'].includes(t) || (st.expert && EXPERT_TABS.includes(t))) ? t : 'lecture'); } catch (err) { showPane('lecture'); }
   $('#navSettings').onclick = e => { e.preventDefault(); openSettings(); };
   routeFromHash();
   poll(); pollAnalysis(); pollSignals(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop); setTimeout(updateNotice, 2500);

@@ -65,6 +65,7 @@
       <button data-layout="tpo" title="TPO (profil de marché) des séances du mois, de la semaine, du jour, de 4 heures et d'1 heure">TPO</button>
       <button data-layout="gex" title="Le gamma des options BTC en entier : profil par strike, murs, bascule, régime, flux de couverture, mouvement attendu, échéances">GEX</button>
       <button data-layout="quant" title="Moteur exact sur données réelles : CVD transaction par transaction contrôlé contre les bougies officielles, régime de marché, carnet (déséquilibre, murs), profil de volume exact, achats du comptant contre ceux des perpétuels sur 24 et 48 heures, options, réseau Bitcoin">Quant</button>
+      <button data-layout="chat" title="Assistant : pose une question, Claude lit lui-même les données du terminal à l'instant (niveaux, profils, Quant, options et baleines, liquidations, idées, macro) et te répond">Assistant</button>
     </span>
     <span id="pairHint" class="muted small" hidden>Les deux instruments côte à côte, avec les setups qui vont ensemble. Chaque instrument a aussi son propre onglet.</span>
     <div class="spacer"></div>
@@ -80,7 +81,6 @@
         <button data-tab="lecture" class="on">Lecture</button>
         <button data-tab="levels">Niveaux</button>
         <button data-tab="mine">Stratégie</button>
-        <button data-tab="chat" title="Pose tes questions à Claude, qui répond avec toutes les données du terminal">Discussion</button>
         <button data-tab="context" data-expert hidden>Contexte</button>
         <button data-tab="stats" data-expert hidden>Stats</button>
         <button data-tab="liquidity" data-expert hidden>Liquidité</button>
@@ -92,9 +92,10 @@
         <div id="lectureBox" class="sigbox"><section class="card"><div class="muted">Chargement…</div></section></div>
       </div>
       <div class="pane" data-pane="chat" hidden>
-        <section class="card chatcard"><h2>Discussion avec Claude <small id="chatInfo"></small></h2>
+        <section class="card chatcard"><h2>Assistant du terminal <small id="chatInfo"></small></h2>
+          <div id="chatSugg" class="chatsugg"></div>
           <div id="chatLog" class="chatlog"><div class="muted small">Chargement…</div></div>
-          <form id="chatForm" class="chatform"><textarea id="chatQ" rows="2" placeholder="Ex. : pourquoi le BTC a perdu 2 % cet après-midi ?" maxlength="4000"></textarea>
+          <form id="chatForm" class="chatform"><textarea id="chatQ" rows="2" placeholder="Ex. : qui achète sur SOL en ce moment ?" title="Entrée pour envoyer, Maj + Entrée pour aller à la ligne" maxlength="4000"></textarea>
             <button id="chatSend" class="primary" type="submit">Envoyer</button></form>
           <div class="line"><button id="chatReset" class="seg-like" type="button">Nouvelle conversation</button><span id="chatRes" class="muted small"></span></div>
         </section>
@@ -286,7 +287,7 @@
       </section>
       <section>
         <h4><span class="step">7</span> Discussion avec Claude <small id="chatState"></small></h4>
-        <p class="muted small">Pose tes questions sur Telegram (au même bot que les idées) ou dans l'onglet <b>Discussion</b> : « pourquoi le BTC a perdu 2 % ? », « les shorts s'accumulent sur SOL ? ». Claude répond avec toutes les données du terminal à cet instant (mouvements et liquidations, intérêt ouvert, flux, financement, options, macro, autres marchés) et cherche l'actualité sur le web si besoin. Seuls <b>tes</b> messages (ton chat id) reçoivent une réponse.</p>
+        <p class="muted small">Pose tes questions sur Telegram (au même bot que les idées) ou dans l'onglet <b>Assistant</b> du Desk : « pourquoi le BTC a perdu 2 % ? », « les shorts s'accumulent sur SOL ? ». Claude répond avec toutes les données du terminal à cet instant (mouvements et liquidations, intérêt ouvert, flux, financement, options, macro, autres marchés) et cherche l'actualité sur le web si besoin. Seuls <b>tes</b> messages (ton chat id) reçoivent une réponse.</p>
         <ol class="howto">
           <li>Crée une clé API sur <b>console.anthropic.com</b> → <b>API Keys</b> → <b>Create Key</b>, et ajoute du crédit (<b>Billing</b>) : c'est payant à l'usage et séparé de l'abonnement Claude (environ 5 à 15 centimes par question avec Claude Opus 5.5, moins avec Sonnet ou Haiku).</li>
           <li>Colle-la ici : <input id="chatKey" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false"></li>

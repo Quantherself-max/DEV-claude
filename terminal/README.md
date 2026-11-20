@@ -1,7 +1,8 @@
-# Liq Terminal (V51)
+# Liq Terminal (V52)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
+- **Un assistant qui lit tout le terminal, dans son propre onglet** (V52) : pose une question, Claude va lui-même chercher les données utiles dans le terminal (niveaux, profils, Quant, options et baleines, liquidations, idées, macro) avant de répondre (voir « V52 » plus bas).
 - **Les baleines des options et les positions ouvertes sur 24 heures, dans un onglet Quant rangé** (V51) : chaque gros ordre d'options BTC avec sa stratégie, sa prime et son sens ; les options où les positions s'ouvrent et se ferment ; l'onglet en rubriques fixes (voir « V51 » plus bas).
 - **Des profils de volume plus longs, et le delta à chaque prix** (V50) : trimestre, mois précédent, année, année précédente et tout l'historique, chacun avec une colonne delta en face (voir « V50 » plus bas).
 - **Un onglet Quant plus clair, et le comptant comparé aux perpétuels** (V48) : synthèse en tête, cinq rubriques, explications repliées, graphique des achats du comptant contre ceux des perpétuels sur 24 et 48 heures (voir « V48 » plus bas).
@@ -143,6 +144,37 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V52 : l'assistant lit tout le terminal, dans l'onglet Assistant
+
+**Où il est.** Un onglet « Assistant » à côté de Quant, dans la barre du Desk. La discussion quitte le panneau de droite : elle ne reste plus en permanence à côté des graphiques.
+
+**Ce qui change.** Avant, l'assistant recevait un résumé fixe (prix, tendance, mouvements, macro). Maintenant il dispose de 13 outils, un par partie du terminal. À chaque question, Claude choisit ceux qui servent, le terminal les exécute sur ses données du moment, puis Claude répond. Les outils couvrent :
+- les niveaux et zones de confluence ;
+- les bougies avec delta, CVD, intérêt ouvert et financement ;
+- les profils de volume, du jour à tout l'historique, avec les prix où acheteurs et vendeurs ont dominé ;
+- le TPO ;
+- l'onglet Quant (CVD exact, comptant contre perpétuels, régime, carnet) ;
+- les options BTC et les baleines ;
+- les liquidations réelles et la carte estimée ;
+- le flux par taille d'ordre ;
+- les idées de trade ;
+- la macro de la semaine et du mois ;
+- les divergences ;
+- la stratégie et le régime ;
+- le gamma.
+
+**À l'écran :**
+- pendant qu'il répond, l'onglet affiche ce qu'il est en train de lire (par exemple « Quant · SOL », « profils de volume · BTC Y ») ;
+- sous chaque réponse, la liste des données consultées ;
+- la paire et l'unité de temps affichées sont transmises, donc « qui achète en ce moment ? » porte sur ce que tu regardes ;
+- des questions toutes prêtes sont proposées en haut de l'onglet.
+
+Les mêmes outils servent aux questions posées sur Telegram.
+
+**Coût.** Chaque lecture ajoute des données à la question ; elles sont condensées (24 000 caractères au plus par lecture) et la partie fixe est mise en cache. Une question qui lit trois ou quatre parties du terminal coûte environ 10 à 30 centimes avec Claude Opus 5.5. Le budget mensuel de Réglages → 7 reste le plafond. L'assistant lit au plus 6 tours d'outils par question.
+
+Rien n'est inventé : une partie indisponible (par exemple le moteur Quant en données de test) renvoie une erreur, que l'assistant doit signaler.
 
 ## Ce qui est nouveau en V51 : baleines des options, positions ouvertes, onglet Quant rangé
 
