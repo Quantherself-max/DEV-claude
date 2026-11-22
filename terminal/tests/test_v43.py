@@ -21,12 +21,12 @@ class PaneGrid(unittest.TestCase):
 
     def test_values_on_each_window_scale(self):
         # V53 : repères en lignes de prix, avec leur valeur sur l'échelle de la fenêtre (avant : dessinés à la main dans la colonne de l'échelle)
-        self.assertIn("axisLabelVisible: true, title: l.txt", PANELS)
+        self.assertIn("axisLabelVisible: !l.noAxis, title: l.noAxis ? '' : l.txt", PANELS)
         self.assertIn("static subFmt(pk, v)", PANELS)
 
     def test_levels_and_readings(self):
         for s in ("'haut'", "'bas'", "'milieu'", "'stable'", "'en hausse'", "'en baisse'", "'forte hausse'", "'forte baisse'",
-                  "txt: 'élevé'", "txt: 'normal'", "txt: 'négatif fort'", "txt: 'gros achats'", "txt: 'forte entrée'"):
+                  "txt: 'élevé'", "txt: 'normal'", "txt: 'négatif fort'", "['dT4p', 'très fort'", "txt: 'forte entrée'"):
             self.assertIn(s, PANELS, s)
         self.assertIn("static get GRID_N() { return 24; }", PANELS)
         self.assertIn("this.subLevels(pk, panes.includes(pk) ? this.paneGrid(pk, I, L, ok, 'L') : null)", PANELS)

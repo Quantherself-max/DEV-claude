@@ -103,7 +103,7 @@ const Desk = (() => {
       gexZones: s.gexZones === 'on', gexBars: s.gexBars === 'split' ? 'split' : 'net',
       sizeMkt: ['spot', 'perp'].includes(s.sizeMkt) ? s.sizeMkt : 'both', sizeGroups: s.sizeGroups === '5' ? '5' : '3',
       sizeReset: ['D', 'W', 'M'].includes(s.sizeReset) ? s.sizeReset : 'all', sizeScale: s.sizeScale === 'shared' ? 'shared' : 'own',
-      vpDelta: vpDeltaOf(s)});
+      vpDelta: vpDeltaOf(s), deltaBars: s.deltaBars !== false});
     S.minGrade = s.minGrade; S.heatEx = s.heatEx;
   }
   function changed(reset) {
@@ -147,6 +147,13 @@ const Desk = (() => {
   function paneAct(k, a, val) {
     const s = curSet(), c = paneCfg();
     if (a === 'x') { setPane(k, false); return; }
+    if (a === 'bars' || a === 'line') {               // V53.2 : barres du delta et ligne du CVD, chacune s'ajoute ou se retire ; il en reste toujours une
+      const bars = s.deltaBars !== false, line = cvdOf(s) !== 'off', last = c => ['perp', 'spot', 'both'].includes(c) ? c : 'perp';
+      if (a === 'bars') { if (bars && !line) s.cvdMode = last(s.cvdPrev); s.deltaBars = !bars; }
+      else if (line) { if (!bars) s.deltaBars = true; s.cvdPrev = cvdOf(s); s.cvdMode = 'off'; }
+      else s.cvdMode = last(s.cvdPrev);
+      changed(false); return;
+    }
     if (a === 'h') { s.paneH = {...c.h, ...val}; LT.savePrefs(); return; }
     if (a === 'resetH') { delete s.paneH; delete s.paneMin; LT.savePrefs(); relayout(); return; }
     if (a === 'resetAll') { ['paneH', 'paneMin', 'paneOrder', 'paneRead'].forEach(x => delete s[x]); }
@@ -266,6 +273,7 @@ const Desk = (() => {
     if (k === 'delta') return '<span class="ddopts">' +
       sel('deltaUnit', 'Delta en coin, ou en dollars (exact : volume acheteur en dollars de Binance)', [['coin', `en ${unit}`], ['usd', 'en dollars']], s.deltaUnit === 'usd' ? 'usd' : 'coin') +
       sel('cvdMode', 'CVD (cumul du delta) : celui du perpétuel, celui du spot Binance, ou les deux pour voir qui mène le mouvement', [['perp', 'CVD perpétuel'], ['spot', 'CVD spot'], ['both', 'CVD perp + spot'], ['off', 'barres seules']], cvdOf(s)) +
+      sel('deltaBars', 'Barres du delta : leur couleur dit la force de chaque bougie (pâle = faible, vive = forte, verte ou rouge = très forte). Sans barres : la ligne du CVD seule.', [['1', 'avec les barres'], ['0', 'sans barres (CVD seul)']], s.deltaBars === false ? '0' : '1') +
       sel('cvdReset', 'Le CVD repart de zéro au début de chaque jour, semaine ou mois (UTC), ou cumule tout le graphique', [['all', 'cumul du graphique'], ['D', 'CVD du jour'], ['W', 'CVD de la semaine'], ['M', 'CVD du mois']], ['D', 'W', 'M'].includes(s.cvdReset) ? s.cvdReset : 'all') + '</span>';
     if (k === 'fund') return sel('fundMode', 'Taux par période de 8 heures, ramené à une année, ou cumulé depuis le début du graphique (ce qu\'un acheteur a réellement payé)',
       [['8h', '% par 8 h'], ['an', '% par an'], ['cum', 'cumulé']], ['an', 'cum'].includes(s.fundMode) ? s.fundMode : '8h');
@@ -341,7 +349,7 @@ const Desk = (() => {
       const t = e.target, s = curSet();
       if (t.dataset.wtog) { setPane(t.dataset.wtog, t.checked); return; }
       if (t.dataset.chel) { if (t.checked) s.els[t.dataset.chel] = true; else delete s.els[t.dataset.chel]; changed([...PROF_KEYS, 'dom'].includes(t.dataset.chel)); }
-      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset', 'gexScope', 'gexSrc', 'gexLevels', 'gexZones', 'gexBars', 'sizeMkt', 'sizeGroups', 'sizeReset', 'sizeScale', 'vpDelta'].includes(t.dataset.copt) ? t.value : t.dataset.copt === 'deltaCvd' ? t.value === '1' : +t.value; changed(t.dataset.copt === 'vpDelta'); }
+      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset', 'gexScope', 'gexSrc', 'gexLevels', 'gexZones', 'gexBars', 'sizeMkt', 'sizeGroups', 'sizeReset', 'sizeScale', 'vpDelta'].includes(t.dataset.copt) ? t.value : ['deltaCvd', 'deltaBars'].includes(t.dataset.copt) ? t.value === '1' : +t.value; changed(t.dataset.copt === 'vpDelta'); }
       else if (t.dataset.ptog != null) { LT.togglePlan(t.dataset.ptog); fillChooser(); }
     });
     chooser.addEventListener('click', e => {

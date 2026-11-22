@@ -49,7 +49,9 @@ class PaneStack {
   }
   make(k) {
     const el = document.createElement('div'); el.className = 'pwin'; el.dataset.pk = k;
-    el.innerHTML = '<div class="pchart"></div><div class="phd"><div class="phl"></div><span class="phb">' +
+    const tg = k === 'delta' ? '<button type="button" class="tg" data-pa="bars" title="Afficher ou retirer les barres du delta (la force de chaque bougie)">▮ Barres</button>' +
+      '<button type="button" class="tg" data-pa="line" title="Afficher ou retirer la ligne du CVD (le cumul du delta)">∿ CVD</button>' : '';
+    el.innerHTML = '<div class="pchart"></div><div class="phd"><div class="phl"></div><span class="phb">' + tg +
       '<button type="button" data-pa="opts" data-elbtn title="Réglages de cette fenêtre (ouvre « ＋ Éléments » à sa ligne)">⚙</button>' +
       '<button type="button" data-pa="up" title="Monter la fenêtre">▲</button><button type="button" data-pa="down" title="Descendre la fenêtre">▼</button>' +
       '<button type="button" data-pa="read" title="Lecture chiffrée : deux lignes, une ligne, ou le nom seul">≡</button>' +
@@ -67,7 +69,7 @@ class PaneStack {
     // porteuse invisible : les mêmes heures que les bougies, pour que la bougie n° i soit au même endroit dans chaque graphique
     const carrier = chart.addLineSeries({color: 'rgba(0,0,0,0)', lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
       priceFormat: {type: 'custom', minMove: 0.0001, formatter: v => Panel.subFmt(k, v)}});
-    const w = {k, el, sep, chart, carrier, head: el.querySelector('.phl'), html: '', scales: new Set(['right']), anchor: null, vals: null, h: 0, mk: ''};
+    const w = {k, el, sep, chart, carrier, head: el.querySelector('.phl'), html: '', scales: new Set(['right']), anchor: null, vals: null, h: 0, mk: '', zones: {}};
     // une fenêtre ne mène le graphique des prix que quand on la manipule (molette, glisser, pincer) : une fenêtre qui naît ou reçoit ses
     // données a sa propre vue par défaut, qui ne doit pas remplacer celle des bougies
     const mark = () => { w.act = Date.now(); };
@@ -86,6 +88,8 @@ class PaneStack {
       crosshair: {vertLine: {color: t.cross, labelBackgroundColor: t.crossLabel}, horzLine: {color: t.cross, labelBackgroundColor: t.crossLabel}}});
   }
   applyTheme() { Object.values(this.win).forEach(w => this.theme(w)); }
+  // V53.2 : zones d'une fenêtre : {échelle: 'top' | 'bottom'} ; absente = toute la hauteur (le delta : CVD en haut, barres en bas)
+  zones(k, z) { const w = this.win[k]; if (w && JSON.stringify(w.zones) !== JSON.stringify(z)) { w.zones = z; w.mk = ''; this.margins(w); } }
   scale(k, id) { const w = this.win[k]; if (w && !w.scales.has(id)) { w.scales.add(id); w.mk = ''; this.margins(w); } }
   anchor(k, series, vals) { const w = this.win[k]; if (w) { w.anchor = series; w.vals = vals; } }
   // heures des bougies du graphique des prix (et la bougie en direct si elle est plus récente)
@@ -139,10 +143,11 @@ class PaneStack {
     } catch (e) { this.err(e); } finally { this.xs = false; }
   }
   // ---- même largeur d'échelle partout : les bougies et les fenêtres restent alignées à la bougie près ----
-  resetWidth() {
+  resetWidth() {                                  // aussi à chaque changement d'instrument ou d'unité de temps : échelles des fenêtres en automatique
     this.w = 0;
     const o = {rightPriceScale: {minimumWidth: 0}};
-    this.p.chart.applyOptions(o); Object.values(this.win).forEach(w => w.chart.applyOptions(o));
+    this.p.chart.applyOptions(o);
+    Object.values(this.win).forEach(w => { w.chart.applyOptions(o); try { w.chart.priceScale('right').applyOptions({autoScale: true}); } catch (e) { /* rien */ } });
   }
   tick() {
     if (!this.keys.length) return;
@@ -185,10 +190,11 @@ class PaneStack {
     (only ? [only] : Object.values(this.win)).forEach(w => {
       const h = w.h || w.el.offsetHeight;
       if (!h) return;
-      const top = Math.min(0.7, ((w.head.offsetHeight || 16) + 6) / h), key = top.toFixed(3) + '|' + [...w.scales].join();
+      const top = Math.min(0.7, ((w.head.offsetHeight || 16) + 6) / h), key = top.toFixed(3) + '|' + [...w.scales].join() + JSON.stringify(w.zones);
       if (key === w.mk) return;
       w.mk = key;
-      w.scales.forEach(id => { try { w.chart.priceScale(id).applyOptions({scaleMargins: {top, bottom: 0.06}}); } catch (e) { /* échelle pas encore créée */ } });
+      const M = {top: {top, bottom: (1 - top) * 0.58}, bottom: {top: top + (1 - top) * 0.47, bottom: 0.03}};   // CVD : 42 % du haut ; barres : la moitié du bas
+      w.scales.forEach(id => { try { w.chart.priceScale(id).applyOptions({scaleMargins: M[w.zones[id]] || {top, bottom: 0.06}}); } catch (e) { /* échelle pas encore créée */ } });
     });
   }
   dragStart(e) {
@@ -227,7 +233,8 @@ class PaneStack {
   head(k, rows) {
     const w = this.win[k];
     if (!w) return;
-    const mode = this.cfg().read[k], n = mode == null ? 2 : mode;
+    const mode = this.cfg().read[k], h = w.h || w.el.offsetHeight || 999;
+    const n = mode === 0 ? 0 : Math.min(mode == null ? 2 : mode, h < 150 ? 1 : 2);   // V53.2 : fenêtre basse : une seule ligne, la place va au graphique
     const shown = n === 0 ? [[{txt: PaneStack.NAMES[k], strong: true}]] : rows.filter(r => r && r.length).slice(0, n);
     const esc = s => String(s).replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
     const col = c => typeof c === 'string' && /^[#a-z0-9(),.%\s]+$/i.test(c) ? c : '';
@@ -236,5 +243,9 @@ class PaneStack {
       return (j ? '<i> · </i>' : '') + `<span${cl ? ` style="color:${cl}"` : ''}${typeof p === 'object' && p.strong ? ' class="b"' : ''}>${esc(s)}</span>`;
     }).join('') + '</div>').join('');
     if (html !== w.html) { w.html = html; w.head.innerHTML = html; w.mk = ''; this.margins(w); }
+    if (k === 'delta') {                                                // boutons Barres / CVD : allumés quand affichés
+      const o = (typeof LT !== 'undefined' && LT.st.mainOpts) || {}, on = {bars: o.deltaBars !== false, line: (o.cvdMode || 'off') !== 'off'};
+      w.el.querySelectorAll('.tg').forEach(b => b.classList.toggle('on', !!on[b.dataset.pa]));
+    }
   }
 }

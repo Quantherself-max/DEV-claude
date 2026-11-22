@@ -858,3 +858,6 @@ ul.recent li{padding:3px 0;border-bottom:1px solid #1b2030}
 /* V53.1 : erreurs de la page */
 .jserr{position:fixed;left:12px;bottom:12px;z-index:10000;max-width:min(620px,calc(100vw - 24px));background:#2a1214;border:1px solid #ef5350;color:#ffcdd2;border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.45;box-shadow:0 6px 24px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:3px}
 .jserr b{color:#fff}.jserr small{color:#e0a9ad}.jserr button{position:absolute;right:6px;top:4px;border:0;background:transparent;color:#ffcdd2;cursor:pointer;font-size:13px}
+/* V53.2 : boutons Barres / CVD de la fenêtre du delta */
+.pwin .phb button.tg{width:auto;padding:0 6px;font-size:10.5px}
+.pwin .phb button.tg.on{color:#fff;border-color:#4c8dff;background:rgba(76,141,255,.22)}

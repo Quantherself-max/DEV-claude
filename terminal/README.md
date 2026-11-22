@@ -145,6 +145,37 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V53.2 : un delta qu'on lit d'un coup d'œil (fort ou faible), barres et CVD au choix
+
+**Le problème.** Les barres du delta bougeaient dans tous les sens, sans rien pour dire si une barre était forte ou faible. Elles se mélangeaient aussi avec la ligne du CVD.
+
+**La force de chaque barre.**
+- Chaque barre est comparée à la « normale » du moment : la médiane des deltas, en valeur absolue, des 100 bougies d'avant.
+- Les niveaux :
+  - moins de la moitié de la normale : **faible**, barre pâle ;
+  - jusqu'à 2 fois : **normal**, barre moyenne ;
+  - de 2 à 4 fois : **fort**, barre vive ;
+  - 4 fois et plus : **très fort**, barre verte pour un achat, rouge pour une vente.
+- La normale suit l'activité : une barre de 500 BTC peut être forte la nuit et normale à l'ouverture américaine.
+
+**La lecture en tête de fenêtre.**
+- Première ligne : la force de la bougie visée (par exemple « fort : 2,6 × la normale ») et sa part du volume (« achat net 18 % du volume »).
+- Deuxième ligne : le nombre d'achats forts et de ventes fortes sur les 24 dernières bougies, et la plus forte des deux, avec son heure.
+
+**Barres seules.** Deux lignes « fort » et « très fort » de chaque côté suivent la normale dans le temps. Une barre qui les dépasse est forte ou très forte à son moment.
+
+**Barres et CVD au choix.**
+- Deux boutons dans la barre de la fenêtre du delta : « ▮ Barres » et « ∿ CVD ». Chacun ajoute ou retire sa partie, et il en reste toujours une.
+- Le même choix existe dans « ＋ Éléments » (« avec les barres » ou « sans barres (CVD seul) »).
+- Avec les deux, le CVD occupe le haut de la fenêtre et les barres le bas : ils ne se mélangent plus.
+
+**Autres changements.**
+- Une fenêtre basse (moins de 150 pixels) n'affiche qu'une ligne de lecture : la place va au graphique.
+- Les échelles des fenêtres repassent en automatique à chaque changement d'instrument ou d'unité de temps. Une échelle tirée à la main ne reste donc plus figée. Le double-clic sur l'échelle et le bouton « A » le font aussi.
+- Le niveau du CVD (ou de l'intérêt ouvert, ou du funding) se dit plus simplement : « au plus bas des 250 bougies » au lieu de « au-dessus de 0 % des 250 bougies ».
+
+**Vérifié** dans un navigateur, en données de test : les trois affichages, les boutons, la règle qui garde toujours une partie affichée, une fenêtre haute et une fenêtre basse, sans erreur dans la page.
+
 ## Ce qui est nouveau en V53.1 : une erreur dans la page ne fige plus le terminal
 
 **Le problème.** Une erreur dans la page arrêtait toute la boucle de dessin, ou le démarrage de la page. On voyait alors « chargement » sans fin, sans aucun message.

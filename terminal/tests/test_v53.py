@@ -142,5 +142,52 @@ class LogicTest(unittest.TestCase):
         self.assertEqual(r[8], [[], True])
 
 
+@unittest.skipUnless(shutil.which("node"), "node absent")
+class DeltaPowerTest(unittest.TestCase):
+    """V53.2 : force de chaque barre du delta (comparée à la normale des 100 bougies d'avant), barres et CVD qui s'ajoutent ou se retirent."""
+    def test_power_levels(self):
+        js = ("const LT = {serverNow: () => 0, st: {mainOpts: {}}};\n" + read("panels.js") + "\n"
+              "const V = []; for (let i = 0; i < 60; i++) V.push(i % 2 ? -100 : 100);\n"
+              "V.push(30, 150, 300, -450, null, 1000);\n"
+              "const p = Panel.deltaPower(V);\n"
+              "console.log(JSON.stringify({early: p.r[10], med: p.med[60], r: p.r.slice(60), lv: p.r.slice(60).map(Panel.powerLevel), txt: Panel.POWER_TXT}));")
+        r = json.loads(node(js))
+        self.assertIsNone(r["early"])                                    # moins de 20 bougies d'avant : pas de normale
+        self.assertEqual(r["med"], 100)
+        self.assertEqual(r["r"][:4], [0.3, 1.5, 3, 4.5])
+        self.assertIsNone(r["r"][4])                                     # bougie sans delta
+        self.assertEqual(r["lv"][:4], [0, 1, 2, 3])
+        self.assertEqual(r["lv"][5], 3)
+        self.assertEqual(r["txt"], ["faible", "normal", "fort", "très fort"])
+
+    def test_page_strings(self):
+        p, panes, desk = read("panels.js"), read("panes.js"), read("desk.js")
+        for x in ("static deltaPower(V, N = 100)", "deltaBars !== false", "S.zones('delta', both ?", "['dT4p', 'très fort'", "Panel.VERY_UP", "% du volume",
+                  "la normale", "achat fort"):
+            self.assertIn(x, p, x)
+        for x in ('data-pa="bars"', 'data-pa="line"', "zones(k, z)", "h < 150 ? 1 : 2", "autoScale: true"):
+            self.assertIn(x, panes, x)
+        for x in ("a === 'bars' || a === 'line'", "sel('deltaBars'", "deltaBars: s.deltaBars !== false"):
+            self.assertIn(x, desk, x)
+
+    def test_toggles_keep_one(self):
+        js = ("globalThis.setTimeout = () => 0; globalThis.clearTimeout = () => {};\n"
+              "const set = {els: {delta: true}, cvdMode: 'both'};\n"
+              "globalThis.LTX = {st: {layout: 'u1', utabs: [{id: 'u1', name: 'Option', set}], mainOpts: {}, symbol: 'BTCUSDT', ws: {}}, savePrefs() {}, syncAllTools() {}, refreshAll() {},\n"
+              "  updatePlan() {}, pollFlow() {}, api: () => new Promise(() => {}), panels: () => []};\n"
+              + read("desk.js").replace("let LT = null,", "let LT = globalThis.LTX,") + "\n"
+              "const out = [];\n"
+              "Desk.paneAct('delta', 'line'); out.push([set.cvdMode, set.deltaBars !== false]);\n"         # CVD retiré : barres seules
+              "Desk.paneAct('delta', 'bars'); out.push([set.cvdMode, set.deltaBars]);\n"                   # dernières retirées : le CVD revient (le même qu'avant)
+              "Desk.paneAct('delta', 'bars'); out.push([set.cvdMode, set.deltaBars]);\n"
+              "Desk.paneAct('delta', 'bars'); out.push([set.cvdMode, set.deltaBars, LTX.st.mainOpts.deltaBars]);\n"
+              "console.log(JSON.stringify(out));")
+        r = json.loads(node(js))
+        self.assertEqual(r[0], ["off", True])
+        self.assertEqual(r[1], ["both", False])
+        self.assertEqual(r[2], ["both", True])
+        self.assertEqual(r[3], ["both", False, False])
+
+
 if __name__ == "__main__":
     unittest.main()
