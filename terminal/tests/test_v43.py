@@ -16,7 +16,7 @@ class PaneGrid(unittest.TestCase):
         # V53 : les sous-fenêtres ont leurs propres graphiques : l'échelle des prix n'est plus bloquée en automatique
         self.assertNotIn("lockPriceScale", PANELS)
         self.assertNotIn("price: !lock", PANELS)
-        self.assertIn("this.applySeries(); this.syncVolume(L.d); this.syncSubcharts(L.d);", PANELS)
+        self.assertIn("this.applySeries(); this.syncVolume(L.d);\n      this.safePanes(() => this.syncSubcharts(L.d));", PANELS)   # V53.1 : protégé
         self.assertIn("applyOptions({autoScale: true})", PANELS)                     # bouton « A » et retour à la vue de départ
 
     def test_values_on_each_window_scale(self):

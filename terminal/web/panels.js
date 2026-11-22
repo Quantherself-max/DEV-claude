@@ -64,7 +64,9 @@ class Panel {
       wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineColor: '',
       autoscaleInfoProvider: o => this.autoscale(o)});
     if (kind === 'main' && this.series.attachPrimitive) { this.under = new FlowUnder(); this.series.attachPrimitive(this.under); }
-    if (kind === 'main' && typeof PaneStack !== 'undefined') this.stack = new PaneStack(this);      // V53 : fenêtres sous les bougies
+    if (kind === 'main' && typeof PaneStack !== 'undefined' && !/[?&]secours\b/.test(location.search)) {   // V53 : fenêtres sous les bougies
+      try { this.stack = new PaneStack(this); } catch (e) { this.stack = null; setTimeout(() => LT.showErr && LT.showErr(e, 'fenêtres sous le graphique'), 0); }
+    }
     if (kind === 'main') this.chart.subscribeCrosshairMove(p => {          // V30 : valeurs des sous-fenêtres à l'heure pointée
       const tt = p && p.time != null ? p.time : null;
       if (tt !== this.crossT) { this.crossT = tt; if (this.panes().length) this.sig = ''; }
@@ -550,7 +552,7 @@ class Panel {
   tick() {
     const st = LT.st, d = st.data;
     if (!d || !this.visible()) return;
-    if (this.stack) this.stack.tick();
+    if (this.stack && !this.stack.off) this.safePanes(() => this.stack.tick());
     const ts = this.chart.timeScale(), r = ts.getVisibleLogicalRange();
     const s = [this.series.priceToCoordinate(d.price) | 0, this.series.priceToCoordinate(d.price * 1.03) | 0,
       ts.timeToCoordinate(d.candles[d.candles.length - 1][0]) | 0, r ? r.from.toFixed(1) + ':' + r.to.toFixed(1) : '',
@@ -588,9 +590,20 @@ class Panel {
     if (this.kind === 'liq') { this.drawHeat(L, w, h); this.drawLiq(L, w, h); }
     else if (this.kind === 'vp') { this.applySeries(); this.drawVP(L, w, h); }
     else {
-      this.applySeries(); this.syncVolume(L.d); this.syncSubcharts(L.d);   // V53 : sous-fenêtres dans leurs propres graphiques
+      this.applySeries(); this.syncVolume(L.d);
+      this.safePanes(() => this.syncSubcharts(L.d));                     // V53 : sous-fenêtres dans leurs propres graphiques
       this.drawMain(L, w, h);
-      this.headPanes(L);
+      this.safePanes(() => this.headPanes(L));
+    }
+  }
+  // V53.1 : une erreur dans les fenêtres du dessous ne bloque jamais les bougies : elle est montrée, et après trois erreurs les fenêtres
+  // s'arrêtent pour cette page (elles reviennent au prochain chargement). Adresse « ?secours » : page sans ces fenêtres.
+  safePanes(fn) {
+    if (!this.stack || this.stack.off) return;
+    try { fn(); } catch (e) {
+      this.paneErr = (this.paneErr || 0) + 1;
+      if (typeof LT.showErr === 'function') LT.showErr(e, 'fenêtres sous le graphique' + (this.paneErr >= 3 ? ' (arrêtées pour cette page)' : ''));
+      if (this.paneErr >= 3) { try { this.stack.sync([]); } catch (err) { /* rien */ } this.stack.off = true; this.stack.box.hidden = true; }
     }
   }
   // V53 : navigation du graphique des prix : zoom (ancré sur la droite), défilement, échelle des prix automatique, vue de départ

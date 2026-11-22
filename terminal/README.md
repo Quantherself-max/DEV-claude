@@ -145,6 +145,25 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V53.1 : une erreur dans la page ne fige plus le terminal
+
+**Le problème.** Une erreur dans la page arrêtait toute la boucle de dessin, ou le démarrage de la page. On voyait alors « chargement » sans fin, sans aucun message.
+
+**Ce qui change.**
+- **La boucle de dessin ne s'arrête plus.** Une erreur dans un graphique est montrée, et les autres graphiques continuent.
+- **Le démarrage est protégé étape par étape.** Une étape qui plante est signalée, et le chargement des données part quand même.
+- **Un encadré rouge en bas à gauche** dit quelle partie a planté, avec le fichier et la ligne. Une capture de cet encadré suffit pour corriger l'erreur.
+- **Les fenêtres sous le graphique ne peuvent plus bloquer les bougies.** Une erreur y est montrée. Après trois erreurs, elles s'arrêtent pour la page en cours et reviennent au prochain chargement.
+- **Une adresse de secours** ouvre la page sans les fenêtres sous le graphique : ajouter `?secours` à l'adresse, par exemple `http://127.0.0.1:8765/?secours`.
+- **Si c'est le serveur qui ne répond pas** (rien à voir avec la page), le message de la V49 s'affiche au bout de 30 secondes, et la fenêtre noire écrit « Requête lente » pour toute requête bloquée.
+
+**Vérifié.** J'ai provoqué volontairement trois pannes, dans un navigateur, en données de test :
+- une erreur dans les fenêtres sous le graphique ;
+- une erreur au démarrage ;
+- l'adresse de secours.
+
+Dans les trois cas, les bougies ont chargé, la boucle de dessin a continué et l'encadré a nommé la bonne erreur. Je n'ai pas pu reproduire le blocage signalé avec les données réelles : Binance refuse l'accès depuis la machine de test.
+
 ## Ce qui est nouveau en V53 : les fenêtres sous le graphique, chacune dans son graphique
 
 **Le problème.** L'intérêt ouvert, le delta et le CVD, le funding et le flux par taille d'ordre étaient dessinés dans le graphique des prix lui-même, chacun sur une tranche de sa hauteur. Avec cinq fenêtres, les bougies n'avaient plus que 38 % de la hauteur. L'échelle des prix restait aussi bloquée en automatique : on ne pouvait pas étirer les bougies.

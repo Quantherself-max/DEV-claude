@@ -39,7 +39,7 @@ class PageTest(unittest.TestCase):
         p = read("panels.js")
         self.assertIn("this.stack = new PaneStack(this)", p)
         self.assertIn("S.sync(panes);", p)
-        self.assertIn("this.headPanes(L);", p)
+        self.assertIn("this.headPanes(L)", p)
         self.assertNotIn("drawPanes", p)
         self.assertNotIn("paneP()", p)
         self.assertIn("candleBottom(h) { return Math.max(40, h - 26); }", p)
@@ -63,6 +63,28 @@ class PageTest(unittest.TestCase):
         self.assertEqual(int(re.search(r'VERSION = "(\d+)"', srv).group(1)), 53)
         self.assertGreaterEqual(int(re.search(r"NEED_API = (\d+)", read("app.js")).group(1)), 53)
         self.assertIn("V53", (ROOT / "README.md").read_text(encoding="utf-8"))
+
+
+class ResilienceTest(unittest.TestCase):
+    """V53.1 : une erreur dans la page ne fige plus le terminal (« chargement sans fin ») : elle est affichée et le reste continue."""
+    def test_loop_never_stops(self):
+        app = read("app.js")
+        i = app.index("function loop() {")
+        body = app[i:app.index("\n}", i)]
+        self.assertLess(body.index("requestAnimationFrame(loop);"), body.index("p.tick()"))   # la prochaine image est demandée AVANT le dessin
+        self.assertIn("try { p.tick(); } catch (e) { showErr(e, 'graphique ' + p.kind); }", body)
+        for s in ("function showErr(e, where)", "window.addEventListener('error'", "window.addEventListener('unhandledrejection'", "Erreur dans la page du terminal",
+                  "const step = (name, fn) =>", "step('graphiques', () => createPanels());", "setTf, showErr};"):
+            self.assertIn(s, app, s)
+        self.assertIn(".jserr{", read("style.css"))
+
+    def test_panes_cannot_block_the_chart(self):
+        p = read("panels.js")
+        for s in ("safePanes(fn) {", "this.safePanes(() => this.syncSubcharts(L.d));", "this.safePanes(() => this.headPanes(L));",
+                  "this.paneErr >= 3", "[?&]secours", "this.safePanes(() => this.stack.tick())"):
+            self.assertIn(s, p, s)
+        panes = read("panes.js")
+        self.assertEqual(panes.count("} catch (e) { this.err(e); } finally {"), 5)   # rappels de la bibliothèque graphique protégés
 
 
 @unittest.skipUnless(shutil.which("node"), "node absent")

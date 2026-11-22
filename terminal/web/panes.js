@@ -26,6 +26,7 @@ class PaneStack {
     if (window.ResizeObserver) new ResizeObserver(() => this.layout()).observe(panel.host);
     window.addEventListener('pointerup', () => Object.values(this.win).forEach(w => { if (w.down) { w.down = false; w.act = Date.now(); } }), true);
   }
+  err(e) { if (typeof LT !== 'undefined' && LT.showErr) LT.showErr(e, 'fenêtres sous le graphique (synchronisation)'); }   // V53.1 : jamais dans la bibliothèque graphique
   cfg() { return typeof Desk !== 'undefined' && Desk.paneCfg ? Desk.paneCfg() : {order: [], h: {}, min: {}, read: {}}; }
   chart(k) { return this.win[k] ? this.win[k].chart : null; }
   has(tm) { return !this.tset || this.tset.has(tm); }
@@ -105,15 +106,15 @@ class PaneStack {
   static same(a, b) { return a && b && Math.abs(a.from - b.from) < 1e-4 && Math.abs(a.to - b.to) < 1e-4; }
   setRange(c, r) { const ts = c.timeScale(); if (!PaneStack.same(ts.getVisibleLogicalRange(), r)) ts.setVisibleLogicalRange(r); }
   follow(r) {
-    if (!r || this.busy) return;
+    if (!r || this.busy || this.off) return;
     this.busy = true;
-    try { Object.values(this.win).forEach(w => this.setRange(w.chart, r)); } finally { this.busy = false; }
+    try { Object.values(this.win).forEach(w => this.setRange(w.chart, r)); } catch (e) { this.err(e); } finally { this.busy = false; }
   }
   static touched(w) { return w.down || Date.now() - (w.act || 0) < 700; }
   lead(w, r) {
     if (!r || this.busy || !PaneStack.touched(w)) return;
     this.busy = true;
-    try { this.setRange(this.p.chart, r); Object.values(this.win).forEach(o => { if (o !== w) this.setRange(o.chart, r); }); } finally { this.busy = false; }
+    try { this.setRange(this.p.chart, r); Object.values(this.win).forEach(o => { if (o !== w) this.setRange(o.chart, r); }); } catch (e) { this.err(e); } finally { this.busy = false; }
   }
   // ---- croix : la même heure dans les bougies et dans chaque fenêtre ----
   place(w, tm) {                                 // une fenêtre réduite n'a plus de graphique dessiné : pas de croix
@@ -121,10 +122,10 @@ class PaneStack {
     try { if (v == null || !w.anchor) w.chart.clearCrosshairPosition(); else w.chart.setCrosshairPosition(v, tm, w.anchor); } catch (e) { /* graphique pas encore dessiné */ }
   }
   crossFromMain(p) {
-    if (this.xs || !this.keys.length) return;
+    if (this.xs || this.off || !this.keys.length) return;
     const tm = p && p.time != null ? p.time : null;
     this.xs = true;
-    try { Object.values(this.win).forEach(w => this.place(w, tm)); } finally { this.xs = false; }
+    try { Object.values(this.win).forEach(w => this.place(w, tm)); } catch (e) { this.err(e); } finally { this.xs = false; }
   }
   crossFromPane(w, p) {
     if (this.xs) return;
@@ -135,7 +136,7 @@ class PaneStack {
       try { if (c == null) P.chart.clearCrosshairPosition(); else P.chart.setCrosshairPosition(c, tm, P.series); } catch (e) { /* graphique masqué */ }
       Object.values(this.win).forEach(o => { if (o !== w) this.place(o, tm); });
       if (tm !== P.crossT) { P.crossT = tm; P.sig = ''; }
-    } finally { this.xs = false; }
+    } catch (e) { this.err(e); } finally { this.xs = false; }
   }
   // ---- même largeur d'échelle partout : les bougies et les fenêtres restent alignées à la bougie près ----
   resetWidth() {
@@ -148,7 +149,7 @@ class PaneStack {
     const r = this.p.chart.timeScale().getVisibleLogicalRange();      // une fenêtre qui a décalé sa vue seule (nouvelles données) se réaligne
     if (r && !this.keys.some(k => PaneStack.touched(this.win[k]))) {
       this.busy = true;
-      try { this.keys.forEach(k => this.setRange(this.win[k].chart, r)); } finally { this.busy = false; }
+      try { this.keys.forEach(k => this.setRange(this.win[k].chart, r)); } catch (e) { this.err(e); } finally { this.busy = false; }
     }
     let m = this.p.chart.priceScale('right').width();
     for (const k of this.keys) m = Math.max(m, this.win[k].chart.priceScale('right').width());

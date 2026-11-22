@@ -1520,10 +1520,35 @@ $('#saveSettings').onclick = () => busy($('#saveSettings'), $('#saveRes'), async
 });
 
 
+// V53.1 : la boucle de dessin ne s'arrête plus jamais : une erreur dans un graphique est montrée (encadré rouge) au lieu de tout figer
 function loop() {
-  if (st.data) { panels.forEach(p => p.tick()); liveRender(); Desk.tick(); }
   requestAnimationFrame(loop);
+  if (!st.data) return;
+  panels.forEach(p => { try { p.tick(); } catch (e) { showErr(e, 'graphique ' + p.kind); } });
+  try { liveRender(); } catch (e) { showErr(e, 'prix en direct'); }
+  try { Desk.tick(); } catch (e) { showErr(e, 'bureau'); }
 }
+// V53.1 : erreurs de la page affichées en bas à gauche (une ligne par erreur différente), pour savoir ce qui bloque sans console
+const jsErrs = new Map();
+function showErr(e, where) {
+  const msg = String((e && e.message) || e || 'erreur inconnue').slice(0, 200);
+  if (/ResizeObserver loop/i.test(msg)) return;
+  const st0 = String((e && e.stack) || ''), at = (/\/([\w.-]+\.js):(\d+)/.exec(st0) || []);
+  const key = (where || '') + '|' + msg, old = jsErrs.get(key);
+  jsErrs.set(key, {msg, where: where || '', at: at[1] ? `${at[1]}:${at[2]}` : '', n: (old ? old.n : 0) + 1, t: Date.now()});
+  if (old && Date.now() - old.t < 2000) return;                        // une erreur répétée à chaque image : pas de nouvel affichage
+  try { console.error('[terminal]', where, e); } catch (err) { /* rien */ }
+  let box = document.getElementById('jsErr');
+  if (!box) {
+    box = document.createElement('div'); box.id = 'jsErr'; box.className = 'jserr';
+    box.addEventListener('click', ev => { if (ev.target.closest('[data-jsx]')) { box.remove(); jsErrs.clear(); } });
+    document.body.appendChild(box);
+  }
+  const rows = [...jsErrs.values()].slice(-4).map(x => `<div>• ${esc(x.where ? x.where + ' : ' : '')}${esc(x.msg)}${x.at ? ` <small>(${esc(x.at)})</small>` : ''}${x.n > 1 ? ` <small>× ${x.n}</small>` : ''}</div>`).join('');
+  box.innerHTML = `<b>Erreur dans la page du terminal</b> <button data-jsx title="Fermer">✕</button>${rows}<small>Le reste du terminal continue. Envoie une capture de cet encadré pour que l'erreur soit corrigée.</small>`;
+}
+window.addEventListener('error', ev => { if (ev && (ev.error || ev.message)) showErr(ev.error || ev.message, 'page'); });
+window.addEventListener('unhandledrejection', ev => { const r = ev && ev.reason; if (r && r.name !== 'AbortError' && !/fetch|NetworkError|Load failed|HTTP \d/i.test(String(r.message || r))) showErr(r, 'page'); });
 let ovTimer = null;
 async function pollOverview() {
   clearTimeout(ovTimer);
@@ -1579,26 +1604,28 @@ function openSymbol(sym, page) {
   const cfg = await bootConfig();
   window.LT = {serverNow: () => Date.now() + (st.clockOff || 0), st, api, fmtP, pxDec, pxFormat, fmtPct, num, sPct, pr, edgeOf, edgeChip, TF_SEC, TF_LABEL, TF_TITLE, barStart, barEnd, leftTxt, rgba, COL_L, COL_S, byId, ladderZones, essentialZones, shownZones,
     serverOld, LAUNCHER, OPEN_ST, shownPools, impOf, fmtQty, fmtUsdShort, pollFlow, openTf, levelColor, livePrice, placeLabels, usdFmt, biasHtml, oppOf, parisAt, select, savePrefs, syncAllTools, refreshAll, maximize, pollHeat, PER, openSymbol, setPlan, updatePlan, togglePlan, planReset, planVisible,
-    panels: () => panels, switchSymbol, applyLayout, setTf};
-  Desk.init(window.LT);
-  Overview.init(window.LT);
-  Signals.init(window.LT);
-  Backtest.init(window.LT);
-  History.init(window.LT);
-  Strategy.init(window.LT);
-  Lecture.init(window.LT);
+    panels: () => panels, switchSymbol, applyLayout, setTf, showErr};
+  // V53.1 : chaque étape du démarrage est protégée : une erreur est affichée, et le chargement des données part quand même
+  const step = (name, fn) => { try { fn(); } catch (e) { showErr(e, 'démarrage (' + name + ')'); } };
+  step('bureau', () => Desk.init(window.LT));
+  step('vue d\'ensemble', () => Overview.init(window.LT));
+  step('idées', () => Signals.init(window.LT));
+  step('rejeu', () => Backtest.init(window.LT));
+  step('historique', () => History.init(window.LT));
+  step('stratégie', () => Strategy.init(window.LT));
+  step('lecture', () => Lecture.init(window.LT));
   document.body.classList.toggle('theme-nuit', st.theme === 'nuit');
-  createPanels();
-  buildControls(cfg);
-  applyTheme();
+  step('graphiques', () => createPanels());
+  step('commandes', () => buildControls(cfg));
+  step('style', () => applyTheme());
   $('#themeBtn').onclick = () => { st.theme = st.theme === 'nuit' ? 'classique' : 'nuit'; savePrefs(); applyTheme(); };
-  pollFlow();
-  Analysis.init(window.LT);
-  renderLqLegend(); applySidebar(); applyLayout();
-  applyExpert();
+  step('carnet', () => pollFlow());
+  step('analyse', () => Analysis.init(window.LT));
+  step('mise en page', () => { renderLqLegend(); applySidebar(); applyLayout(); });
+  step('mode détaillé', () => applyExpert());
   try { const t = localStorage.getItem('liqTab'); showPane((['lecture', 'levels', 'mine'].includes(t) || (st.expert && EXPERT_TABS.includes(t))) ? t : 'lecture'); } catch (err) { showPane('lecture'); }
   $('#navSettings').onclick = e => { e.preventDefault(); openSettings(); };
-  routeFromHash();
+  step('navigation', () => routeFromHash());
   poll(); pollAnalysis(); pollSignals(); renderAlerts(); setInterval(renderAlerts, 15000); requestAnimationFrame(loop); setTimeout(updateNotice, 2500);
   setInterval(() => {
     livePoll(); liveBadge(); cbRender(); riskChip(); headStatus();
