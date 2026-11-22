@@ -137,8 +137,8 @@ class PageTests(unittest.TestCase):
         self.assertIn("oi: ['Intérêt ouvert'", self.DESK)
         self.assertIn("delta: ['Delta", self.DESK)                                       # V37 : « Delta et CVD »
         self.assertIn("/api/indicators?symbol=", self.DESK)
-        self.assertIn("this.oiS = this.chart.addCandlestickSeries(", self.PANELS)        # intérêt ouvert en bougies
-        self.assertIn("this.dS = this.chart.addHistogramSeries(", self.PANELS)           # delta en barres
+        self.assertIn("mk('oiS', sidOf('oiS'), (c, sid) => c.addCandlestickSeries(", self.PANELS)   # intérêt ouvert en bougies (V53 : dans sa fenêtre)
+        self.assertIn("mk('dS', sidOf('dS'), (c, sid) => c.addHistogramSeries(", self.PANELS)       # delta en barres
         self.assertGreaterEqual(int(__import__("re").search(r"NEED_API = (\d+)", self.APP).group(1)), 31)
 
 

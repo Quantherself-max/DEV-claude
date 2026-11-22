@@ -1,4 +1,4 @@
-# Liq Terminal (V52)
+# Liq Terminal (V53)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
@@ -144,6 +144,34 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V53 : les fenêtres sous le graphique, chacune dans son graphique
+
+**Le problème.** L'intérêt ouvert, le delta et le CVD, le funding et le flux par taille d'ordre étaient dessinés dans le graphique des prix lui-même, chacun sur une tranche de sa hauteur. Avec cinq fenêtres, les bougies n'avaient plus que 38 % de la hauteur. L'échelle des prix restait aussi bloquée en automatique : on ne pouvait pas étirer les bougies.
+
+**Ce qui change.**
+- **Une fenêtre, un graphique.** Chaque fenêtre est un vrai graphique sous les bougies, avec sa propre échelle chiffrée. Le temps, le zoom et la croix suivent le graphique des prix, à la bougie près. Zoomer ou faire glisser une fenêtre fait suivre le graphique des prix.
+- **Le graphique des prix se manie librement.**
+  - La molette zoome. Faire glisser déplace le graphique.
+  - Faire glisser l'échelle des prix étire les bougies en hauteur. Faire glisser l'échelle du temps les élargit.
+  - Un double-clic sur une échelle la remet en automatique.
+  - Les boutons − + ‹ › A ⟲ apparaissent en bas du graphique au survol. « A » remet l'échelle des prix en automatique. « ⟲ » revient à la vue de départ.
+- **Ajouter ou retirer une fenêtre.** Le bouton « ▤ Fenêtres », à côté de « ＋ Éléments », liste les cinq fenêtres : intérêt ouvert, delta et CVD, funding, flux par taille du spot et flux par taille du perpétuel. Une case cochée ajoute la fenêtre, une case décochée la retire. Les deux fenêtres du flux par taille se gèrent séparément.
+- **La barre de chaque fenêtre.** Les boutons apparaissent au survol :
+  - ⚙ ouvre ses réglages dans « ＋ Éléments », à sa ligne ;
+  - ▲ et ▼ changent son rang ;
+  - ≡ règle la lecture chiffrée : deux lignes, une ligne ou le nom seul ;
+  - − réduit la fenêtre à sa barre (sa lecture reste visible) ;
+  - ✕ la retire.
+- **La hauteur.** La poignée au-dessus d'une fenêtre se fait glisser. Un double-clic sur une poignée rétablit les hauteurs d'origine. Les bougies gardent toujours au moins le quart de la hauteur, 42 % sur téléphone. Par défaut, cinq fenêtres leur laissent la moitié.
+- **Mémorisé par onglet.** Chaque onglet garde l'ordre, les hauteurs, les lectures et les fenêtres réduites. Le bouton « Rétablir » du menu « ▤ Fenêtres » remet tout comme à l'origine.
+- **Les repères chiffrés** deviennent des lignes avec leur valeur sur l'échelle de la fenêtre : « haut » et « bas » (80 % et 20 % des valeurs), ainsi que les seuils du funding.
+- **Une échelle des prix moins écrasée.** L'échelle automatique ne s'étire plus jusqu'aux poches de liquidation quand l'élément « Poches » n'est pas affiché. Elle ne suit pas non plus les idées envoyées quand l'élément « Idées envoyées » est retiré.
+- **Sur téléphone.** La barre d'une fenêtre ne garde que ⚙ − ✕. Les boutons de navigation sont retirés : on pince pour zoomer.
+
+**Vérifié.**
+- Vérifié dans un navigateur, en données de test, avec les cinq fenêtres : alignement à la bougie près, zoom et glisser dans les deux sens, poignée, rang, réduction, lecture, retrait, menu, sans erreur dans la page.
+- Pas encore vérifié avec les données réelles de Binance.
 
 ## Ce qui est nouveau en V52 : l'assistant lit tout le terminal, dans l'onglet Assistant
 

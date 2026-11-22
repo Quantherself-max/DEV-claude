@@ -825,3 +825,33 @@ ul.recent li{padding:3px 0;border-bottom:1px solid #1b2030}
 .chatlog .msg.pending{border-style:dashed}
 @media (max-width:1000px){#desk.lchat{height:calc(100vh - 150px);overflow:hidden}.chatv .chatlog .msg{max-width:94%}}
 @media (max-width:620px){.chatsugg button:nth-child(n+4){display:none}}
+/* V53 : fenêtres sous le graphique principal (chacune son graphique), poignées de hauteur, barre de chaque fenêtre, navigation */
+.psubs{flex:none;display:flex;flex-direction:column;min-height:0;position:relative;--axw:60px}
+.psubs[hidden]{display:none}
+.psep{flex:none;height:5px;cursor:row-resize;background:var(--line);touch-action:none;position:relative}
+.psep::after{content:"";position:absolute;left:50%;top:1px;width:34px;height:3px;margin-left:-17px;border-radius:2px;background:rgba(160,170,190,.25)}
+.psep:hover,.psep.drag{background:#3d6fd1}.psep:hover::after,.psep.drag::after{background:rgba(255,255,255,.6)}
+.pwin{position:relative;flex:none;min-height:0;overflow:hidden}
+.pwin .pchart{position:absolute;inset:0}
+.pwin.min .pchart{display:none}
+.pwin.min{border-bottom:1px solid var(--line)}
+.pwin .phd{position:absolute;left:0;right:0;top:0;z-index:3;display:flex;align-items:flex-start;gap:6px;padding:2px 4px 0;pointer-events:none}
+.pwin .phl{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:1px;font:500 11px/16px ui-monospace,"SF Mono",Menlo,Consolas,"Roboto Mono",monospace;color:#cfd3dc}
+.pwin .phr{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(10,12,16,.78);padding:0 6px;border-radius:3px}
+.pwin .phr.l2{color:rgba(207,211,220,.85)}
+.pwin .phr i{font-style:normal;opacity:.55}
+.pwin .phr .b{font-weight:700}
+.pwin[data-pk="oi"] .phr:first-child{color:#8fd3f4}.pwin[data-pk="fund"] .phr:first-child{color:#f5c26b}
+.pwin.min .phr.l2{display:none}
+.pwin .phb{pointer-events:auto;display:flex;gap:2px;margin-right:calc(var(--axw) + 4px);opacity:.3;transition:opacity .15s;flex:none}
+.pwin:hover .phb{opacity:1}
+.pwin .phb button{width:20px;height:17px;padding:0;border:1px solid #2a3142;border-radius:4px;background:rgba(12,15,21,.9);color:#aab0bd;font-size:10.5px;line-height:15px;cursor:pointer}
+.pwin .phb button:hover{color:#fff;border-color:#4c8dff}
+.pwin .phb button[data-pa="x"]:hover{border-color:#ef5350;color:#ff8a80}
+.pbody .pnav{position:absolute;z-index:5;left:50%;bottom:34px;transform:translateX(-50%);display:flex;gap:3px;opacity:0;transition:opacity .2s}
+.pbody:hover .pnav{opacity:.92}
+.pbody .pnav button{width:28px;height:24px;padding:0;border:1px solid #2a3142;border-radius:5px;background:rgba(14,18,25,.9);color:#cfd3dc;font-size:14px;line-height:22px;cursor:pointer}
+.pbody .pnav button:hover{border-color:#4c8dff;color:#fff}
+.ddrow.flash{background:rgba(76,141,255,.16);border-radius:6px;transition:background .3s}
+@media (hover:none){.pbody .pnav{opacity:.8}.pwin .phb{opacity:.85}.psep{height:9px}}
+@media (max-width:620px){.pbody .pnav{display:none}.pwin .phb button[data-pa="up"],.pwin .phb button[data-pa="down"],.pwin .phb button[data-pa="read"]{display:none}}

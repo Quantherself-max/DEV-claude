@@ -132,7 +132,7 @@ class PageTests(unittest.TestCase):
         self.assertIn("sel('fundMode'", self.DESK)                                 # V37 : menus des options construits par sel()
         self.assertIn("&fund=1", self.DESK)
         self.assertIn("['oi', 'delta', 'fund'].filter", self.PAN)
-        self.assertIn("priceScaleId: 'fd'", self.PAN)
+        self.assertIn("fdS: 'fd'", self.PAN)                                          # V53 : échelle du funding dans sa fenêtre
         self.assertIn("fund: false, fundMode: '8h'", self.APP)
         self.assertGreaterEqual(int(re.search(r"NEED_API = (\d+)", self.APP).group(1)), 34)
 

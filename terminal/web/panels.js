@@ -3,6 +3,8 @@
 //   liq  : carte de chaleur des poches de liquidation, balayages, vraies liquidations, profil
 //   vp   : VWAP jour / semaine / mois / annee (+ bandes), VWAP ancrees, volume profiles (TF et plage visible)
 // Les panneaux partagent l'etat de app.js (window.LT.st) et sont synchronises (zoom, defilement, croix).
+// V53 : les sous-fenêtres du graphique principal (intérêt ouvert, delta et CVD, funding, flux par taille) ont chacune leur graphique sous
+// les bougies (panes.js) ; l'échelle des prix se manie librement ; boutons de navigation en bas du graphique.
 // V24.1 : couche SOUS les bougies (primitive de Lightweight Charts) : les bulles des gros ordres sont dessinees derriere les bougies,
 // qui restent toujours entieres et lisibles par-dessus. Ancrees en temps et en prix : elles suivent le defilement et le zoom.
 class FlowUnder {
@@ -43,7 +45,7 @@ class Panel {
     host.innerHTML = `<div class="phead"><span class="ptitle">${T}</span><span class="ptools">${Panel.tools(kind)}</span>` +
       `<button class="pmax" title="Agrandir / revenir à la mise en page">⤢</button></div>` +
       `<div class="pbody"><canvas class="heat"></canvas><div class="chart"></div><canvas class="ov"></canvas><div class="ptag" hidden></div><div class="cdwn" hidden title="Temps restant avant la clôture de la bougie en cours"></div><div class="tip" hidden></div>` +
-      (kind === 'main' ? '<div class="legend" hidden></div>' : '') + '</div>';
+      (kind === 'main' ? '<div class="legend" hidden></div>' + Panel.NAV : '') + '</div>';
     this.body = host.querySelector('.pbody');
     this.heatCv = host.querySelector('.heat'); this.hctx = this.heatCv.getContext('2d');
     this.ov = host.querySelector('.ov'); this.ctx = this.ov.getContext('2d');
@@ -62,6 +64,7 @@ class Panel {
       wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineColor: '',
       autoscaleInfoProvider: o => this.autoscale(o)});
     if (kind === 'main' && this.series.attachPrimitive) { this.under = new FlowUnder(); this.series.attachPrimitive(this.under); }
+    if (kind === 'main' && typeof PaneStack !== 'undefined') this.stack = new PaneStack(this);      // V53 : fenêtres sous les bougies
     if (kind === 'main') this.chart.subscribeCrosshairMove(p => {          // V30 : valeurs des sous-fenêtres à l'heure pointée
       const tt = p && p.time != null ? p.time : null;
       if (tt !== this.crossT) { this.crossT = tt; if (this.panes().length) this.sig = ''; }
@@ -71,6 +74,8 @@ class Panel {
     this.body.addEventListener('mousemove', ev => this.onMove(ev));
     this.body.addEventListener('mouseleave', () => { this.tipEl.hidden = true; });
     host.querySelector('.pmax').onclick = () => LT.maximize(kind);
+    const nav = host.querySelector('.pnav');
+    if (nav) nav.addEventListener('click', ev => { const b = ev.target.closest('[data-nav]'); if (b) this.nav(b.dataset.nav); });
     host.querySelector('.ptools').addEventListener('click', ev => this.onTool(ev));
     host.querySelector('.ptools').addEventListener('change', ev => this.onTool(ev));
     this.syncTools();
@@ -104,6 +109,7 @@ class Panel {
     this.body.style.background = t.bg === 'rgba(0,0,0,0)' ? '' : t.bg;          // V28 : fond sous la heatmap du carnet
     if (this.vol) this.vol.applyOptions({priceLineVisible: false});
     for (const k in this.layers) { this.chart.removeSeries(this.layers[k].s); delete this.layers[k]; }
+    if (this.stack) { this.stack.applyTheme(); this.indKey = ''; }
     this.cdKey = ''; this.stamp = ''; this.sig = '';
   }
   // largeurs (pixels) du profil de la seance et du carnet, colles a droite du graphique principal
@@ -116,7 +122,6 @@ class Panel {
   static profKinds(o) { return ['D', 'W', 'M', 'Q', 'PM', 'Y', 'PY', 'A'].filter(k => o && o[Panel.PROF_EL[k]]); }
   static longKinds(o) { return Panel.profKinds(o).filter(k => !['D', 'W', 'M'].includes(k)); }
   static deltaMode(o) { return o && ['side', 'in', 'off'].includes(o.vpDelta) ? o.vpDelta : 'side'; }
-  static get PANE() { return 0.17; }                 // hauteur d'une sous-fenêtre (part du graphique)
   static get FUND_UP() { return '#26a69a'; }         // V35 : funding positif (les acheteurs paient) / négatif (les vendeurs paient)
   static get FUND_DN() { return '#ef5350'; }
   // V35 : texte de la sous-fenêtre funding pour la bougie idx : taux, équivalent annuel, moyenne 7 jours, prochain versement
@@ -362,6 +367,7 @@ class Panel {
   // V28 : graphique à éléments : un seul bouton « ＋ Éléments » (menu de desk.js) ; les éléments choisis sont listés dans la légende du graphique
   static tools(kind) {
     if (kind === 'main') return '<span class="viewname"></span><button type="button" class="ddb elbtn" data-elbtn title="Choisir ce qui est dessiné sur ce graphique">＋ Éléments</button>' +
+      '<button type="button" class="ddb elbtn" data-winbtn title="Fenêtres sous le graphique : intérêt ouvert, delta et CVD, funding, flux par taille d\'ordre (spot, perpétuel) ; les ajouter, les retirer, les ranger">▤ Fenêtres</button>' +
       '<button class="mini" data-flowreset title="Remettre à zéro le volume échangé affiché dans le carnet">↺ volumes</button>';
     if (kind === 'liq') return `<span class="seg mini" data-hours><button data-h="24">24 h</button><button data-h="72">3 j</button><button data-h="168">7 j</button><button data-h="0">29 j</button></span>` +
       `<label><input type="checkbox" data-lq="pools"> Poches</label><label><input type="checkbox" data-lq="sweeps"> Balayages</label>` +
@@ -383,6 +389,7 @@ class Panel {
   }
   onTool(ev) {
     const t = ev.target, st = LT.st;
+    if (ev.type === 'click' && t.closest('[data-winbtn]')) { Desk.toggleWin(t.closest('[data-winbtn]')); return; }
     if (ev.type === 'click' && t.closest('[data-elbtn]')) { Desk.toggleChooser(t.closest('[data-elbtn]')); return; }
     if (ev.type === 'click' && t.closest('[data-hours] button')) {
       st.liqOpts.hours = +t.closest('button').dataset.h; LT.savePrefs(); LT.syncAllTools(); LT.pollHeat(); return;
@@ -404,9 +411,10 @@ class Panel {
     const r = orig(), d = LT.st.data;
     if (!r || !d) return r;
     let ex = [];
-    if (this.kind === 'main') {
-      ex = d.liquidity.pools.map(p => p.price).concat(LT.shownZones(d).map(z => z.mid));
-      (LT.st.plans || []).filter(pl => pl.symbol === LT.st.symbol && pl.status !== 'closed')
+    if (this.kind === 'main') {                       // V53 : seulement ce qui est affiché (une poche masquée n'écrase plus les bougies)
+      const st = LT.st;
+      ex = (st.pools ? LT.shownPools(d).map(x => x.p.price) : []).concat(LT.shownZones(d).map(z => z.mid));
+      if (st.planOn) (st.plans || []).filter(pl => pl.symbol === st.symbol && pl.status !== 'closed')
         .forEach(pl => { ex = ex.concat([pl.entry, pl.stop, pl.tp1].concat(pl.tp2 != null ? [pl.tp2] : [])); });
     }
     else if (this.kind === 'liq') ex = d.liquidity.pools.map(p => p.price);
@@ -422,6 +430,7 @@ class Panel {
       this.series.setData(bars); this.n = bars.length;
       this.chart.timeScale().setVisibleLogicalRange({from: Math.max(0, this.n - 130), to: this.n + this.rightSpace()});
       this.lastBar = this.n ? bars[this.n - 1].time : 0; this.stamp = '';
+      if (this.stack) this.stack.resetWidth();
       for (const k in this.layers) { this.chart.removeSeries(this.layers[k].s); delete this.layers[k]; }
     } else {
       bars.filter(b => b.time >= this.lastBar).forEach(b => this.updateBar(b));
@@ -541,6 +550,7 @@ class Panel {
   tick() {
     const st = LT.st, d = st.data;
     if (!d || !this.visible()) return;
+    if (this.stack) this.stack.tick();
     const ts = this.chart.timeScale(), r = ts.getVisibleLogicalRange();
     const s = [this.series.priceToCoordinate(d.price) | 0, this.series.priceToCoordinate(d.price * 1.03) | 0,
       ts.timeToCoordinate(d.candles[d.candles.length - 1][0]) | 0, r ? r.from.toFixed(1) + ':' + r.to.toFixed(1) : '',
@@ -578,26 +588,28 @@ class Panel {
     if (this.kind === 'liq') { this.drawHeat(L, w, h); this.drawLiq(L, w, h); }
     else if (this.kind === 'vp') { this.applySeries(); this.drawVP(L, w, h); }
     else {
-      this.lockPriceScale();
-      this.applySeries(); this.syncVolume(L.d); this.syncSubcharts(L.d);
-      const cb = this.candleBottom(h);                 // V30 : rien du graphique des prix ne déborde sur les sous-fenêtres
-      this.ctx.save(); this.ctx.beginPath(); this.ctx.rect(0, 0, w, cb); this.ctx.clip();
+      this.applySeries(); this.syncVolume(L.d); this.syncSubcharts(L.d);   // V53 : sous-fenêtres dans leurs propres graphiques
       this.drawMain(L, w, h);
-      this.ctx.restore();
-      this.drawPanes(L, w, h);
+      this.headPanes(L);
     }
   }
-  // V43 : avec des sous-fenêtres (intérêt ouvert, delta, funding, flux par taille), l'échelle des prix reste automatique : une échelle tirée
-  // à la main faisait passer les bougies par-dessus les sous-fenêtres (le dessin du graphique ne peut pas être coupé). Sans sous-fenêtre,
-  // l'échelle se règle à la main comme avant.
-  lockPriceScale() {
-    if (this.kind !== 'main') return;
-    const lock = this.panes().length > 0;
-    if (lock !== this._lockY) {
-      this._lockY = lock;
-      this.chart.applyOptions({handleScale: {axisPressedMouseMove: {time: true, price: !lock}}, handleScroll: {vertTouchDrag: !lock}});
-    }
-    if (lock && !this.chart.priceScale('right').options().autoScale) this.chart.priceScale('right').applyOptions({autoScale: true});
+  // V53 : navigation du graphique des prix : zoom (ancré sur la droite), défilement, échelle des prix automatique, vue de départ
+  static get NAV() {
+    return '<div class="pnav" title="Molette : zoom · glisser : déplacer · glisser l\'échelle des prix : étirer les bougies en hauteur · glisser l\'échelle du temps : les élargir · double-clic sur une échelle : retour automatique">' +
+      '<button type="button" data-nav="out" title="Dézoomer (ou molette)">−</button><button type="button" data-nav="in" title="Zoomer (ou molette)">+</button>' +
+      '<button type="button" data-nav="left" title="Reculer dans le temps">‹</button><button type="button" data-nav="right" title="Avancer dans le temps">›</button>' +
+      '<button type="button" data-nav="auto" title="Échelle des prix automatique (après l\'avoir étirée à la main)">A</button>' +
+      '<button type="button" data-nav="reset" title="Revenir à la vue de départ (dernières bougies, échelles automatiques)">⟲</button></div>';
+  }
+  nav(act) {
+    const ts = this.chart.timeScale(), r = ts.getVisibleLogicalRange();
+    const auto = () => { this.chart.priceScale('right').applyOptions({autoScale: true}); if (this.stack) Object.values(this.stack.win).forEach(w => w.chart.priceScale('right').applyOptions({autoScale: true})); };
+    if (act === 'reset') { this.resetView(); auto(); return; }
+    if (act === 'auto') { auto(); return; }
+    if (!r) return;
+    const wd = r.to - r.from;
+    if (act === 'in' || act === 'out') { const nw = Math.max(10, Math.min(4000, wd * (act === 'in' ? 0.75 : 1.33))); ts.setVisibleLogicalRange({from: r.to - nw, to: r.to}); }
+    else if (act === 'left' || act === 'right') { const dx = wd * 0.25 * (act === 'left' ? -1 : 1); ts.setVisibleLogicalRange({from: r.from + dx, to: r.to + dx}); }
   }
   // ---- V30 : sous-fenêtres sous les bougies (intérêt ouvert en bougies, delta en barres et CVD), chacune sur sa propre échelle ;
   // V35 : funding en barres (% par 8 h ou par an), la dernière barre plus pâle (estimation de la période en cours) ;
@@ -608,10 +620,11 @@ class Panel {
     const o = LT.st.mainOpts || {};
     if (this.kind !== 'main') return [];
     const sm = o.sizeMkt || 'both';                                          // V39 : flux par taille d'ordre, une fenêtre par marché
-    return ['oi', 'delta', 'fund'].filter(k => o[k]).concat(o.sizes ? ['szs', 'szp'].filter(k => sm === 'both' || sm === (k === 'szs' ? 'spot' : 'perp')) : []);
+    const ks = ['oi', 'delta', 'fund'].filter(k => o[k]).concat(o.sizes ? ['szs', 'szp'].filter(k => sm === 'both' || sm === (k === 'szs' ? 'spot' : 'perp')) : []);
+    const ord = typeof Desk !== 'undefined' && Desk.paneCfg ? Desk.paneCfg().order : [];     // V53 : l'ordre choisi avec ▲ ▼
+    const rank = k => { const i = ord.indexOf(k); return i < 0 ? 100 + ks.indexOf(k) : i; };
+    return ks.sort((a, b) => rank(a) - rank(b));
   }
-  // hauteur d'une sous-fenêtre : 17 % jusqu'à 3 fenêtres, puis partagée pour laisser au moins 38 % aux bougies
-  paneP() { const n = this.panes().length; return n <= 3 ? Panel.PANE : Math.max(0.1, 0.62 / n); }
   // V39 : couleurs comme l'indicateur d'Aggr (moins de 1 000 $ rouge … plus d'un million bleu) ; en 3 groupes : petits, moyens, gros
   static get SZ_COL5() { return ['#ef5350', '#ffa726', '#ffee58', '#66bb6a', '#42a5f5']; }
   static get SZ_COL3() { return ['#ff8a65', '#ffee58', '#42a5f5']; }
@@ -658,9 +671,32 @@ class Panel {
       return run;
     });
   }
-  candleBottom(h) { return Math.max(40, (h - 26) * (1 - this.panes().length * this.paneP())); }
+  candleBottom(h) { return Math.max(40, h - 26); }                      // V53 : les sous-fenêtres ne prennent plus de place dans ce graphique
+  // ---- V53 : chaque sous-fenêtre a son graphique (panes.js). La série principale d'une fenêtre est sur l'échelle de droite (chiffrée, elle
+  // s'étire), les autres sur des échelles superposées ; les données sont limitées aux heures des bougies (même place, bougie par bougie). ----
+  static subFmt(pk, v) {
+    const o = LT.st.mainOpts || {}, sg = (x, d) => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(d).replace('.', ',');
+    if (pk === 'oi') return Panel.big(v, o.oiMode === 'chg');
+    if (pk === 'fund') return sg(v, o.fundMode === 'an' ? 1 : o.fundMode === 'cum' ? 3 : 4) + ' %';
+    if (pk === 'delta') return Panel.big(v) + (o.deltaUnit === 'usd' ? ' $' : '');
+    return Panel.big(v) + ' $';
+  }
+  closeAt(tm) {                                                          // clôture de la bougie de cette heure (pour la croix)
+    const lb = LT.st.lastBarObj, d = LT.st.data, cs = d && d.candles;
+    if (lb && lb.time === tm) return lb.close;
+    if (!cs || !cs.length) return null;
+    let lo = 0, hi = cs.length - 1;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (cs[m][0] === tm) return cs[m][4]; if (cs[m][0] < tm) lo = m + 1; else hi = m - 1; }
+    return null;
+  }
+  dropSub(k) {
+    try { if (this[k + 'c']) this[k + 'c'].removeSeries(this[k]); } catch (e) { /* fenêtre déjà fermée */ }
+    this[k] = null; this[k + 'c'] = null; this.indKey = ''; this.sizeKey = '';
+  }
   syncSubcharts(d) {
-    const st = LT.st, I = st.ind, o = st.mainOpts || {}, panes = this.panes(), n = panes.length, P = this.paneP(), t = this.th();
+    const st = LT.st, I = st.ind, o = st.mainOpts || {}, panes = this.panes(), S = this.stack, t = this.th();
+    if (!S) return;
+    S.sync(panes);
     const ok = !!(I && I.ready && d && I.symbol === d.symbol && I.tf === d.tf);
     const Z = st.size, zok = !!(Z && Z.ready && d && Z.symbol === d.symbol && Z.tf === d.tf), shared = o.sizeScale === 'shared';
     const zsets = {s: zok && panes.includes('szs') ? Panel.sizeSets(Z, 'spot') : [], p: zok && panes.includes('szp') ? Panel.sizeSets(Z, 'perp') : []};
@@ -669,44 +705,52 @@ class Panel {
       cvdS: dOn && (cvdM === 'perp' || cvdM === 'both'), spS: dOn && (cvdM === 'spot' || cvdM === 'both') && Array.isArray(I.spotDelta),
       fdS: fOn && o.fundMode !== 'cum', fdC: fOn && o.fundMode === 'cum' && Array.isArray(I.fundCum)};
     for (const m of ['s', 'p']) for (let j = 0; j < 5; j++) want[`sz${m}${j}`] = j < zsets[m].length;
-    for (const k of Object.keys(want)) if (!want[k] && this[k]) { this.chart.removeSeries(this[k]); this[k] = null; }
+    const prim = {oi: want.oiS ? 'oiS' : want.oiH ? 'oiH' : '', delta: want.cvdS ? 'cvdS' : want.spS ? 'spS' : want.dS ? 'dS' : '', fund: want.fdS ? 'fdS' : want.fdC ? 'fdC' : ''};
+    const PK = {oiS: 'oi', oiH: 'oi', dS: 'delta', cvdS: 'delta', spS: 'delta', fdS: 'fund', fdC: 'fund'}, OWN = {oiS: 'oi', oiH: 'oi', dS: 'dl', cvdS: 'cvd', spS: 'cvds', fdS: 'fd', fdC: 'fd'};
+    const paneOf = k => PK[k] || (k[2] === 's' ? 'szs' : 'szp');
+    for (const k of Object.keys(want)) if (!want[k] && this[k]) this.dropSub(k);
+    const mk = (k, sid, make) => {                                       // crée la série dans sa fenêtre (ou la recrée si la fenêtre ou l'échelle a changé)
+      const pk = paneOf(k), c = S.chart(pk);
+      if (!c) return null;
+      if (this[k] && (this[k + 'c'] !== c || this[k + 'sid'] !== sid)) this.dropSub(k);
+      if (!this[k]) { this[k] = make(c, sid); this[k + 'c'] = c; this[k + 'sid'] = sid; S.scale(pk, sid); this.indKey = ''; this.sizeKey = ''; }
+      return this[k];
+    };
+    const sidOf = k => prim[PK[k]] === k ? 'right' : OWN[k];
+    const base = (k, sid) => ({lastValueVisible: false, priceLineVisible: false, priceScaleId: sid, priceFormat: {type: 'custom', minMove: 0.0001, formatter: v => Panel.subFmt(PK[k], v)}});
     for (const m of ['s', 'p']) zsets[m].forEach((g, j) => {
-      const k = `sz${m}${j}`, sid = shared ? `sz${m}` : k;
-      if (this[k] && this[k + 'sid'] !== sid) { this.chart.removeSeries(this[k]); this[k] = null; }
-      if (!this[k]) { this[k] = this.chart.addLineSeries({lastValueVisible: false, priceLineVisible: false, priceFormat: {type: 'volume'}, priceScaleId: sid, color: g.col, lineWidth: 1.4, crosshairMarkerVisible: false}); this[k + 'sid'] = sid; }
-      else this[k].applyOptions({color: g.col});
+      const pk = m === 's' ? 'szs' : 'szp';
+      const se = mk(`sz${m}${j}`, shared ? 'right' : `sz${m}${j}`, (c, sid) => c.addLineSeries({lastValueVisible: false, priceLineVisible: false, priceScaleId: sid, color: g.col,
+        lineWidth: 1.4, crosshairMarkerVisible: false, priceFormat: {type: 'custom', minMove: 0.01, formatter: v => Panel.subFmt(pk, v)}}));
+      if (se) se.applyOptions({color: g.col});
     });
-    const base = {lastValueVisible: false, priceLineVisible: false, priceFormat: {type: 'volume'}};
-    if (want.oiS && !this.oiS) this.oiS = this.chart.addCandlestickSeries({...base, priceScaleId: 'oi', borderVisible: false,
-      upColor: '#4fc3f7', downColor: '#ffa64d', wickUpColor: '#4fc3f7', wickDownColor: '#ffa64d'});
-    if (want.oiH && !this.oiH) this.oiH = this.chart.addHistogramSeries({...base, priceScaleId: 'oi'});
-    if (want.dS && !this.dS) this.dS = this.chart.addHistogramSeries({...base, priceScaleId: 'dl'});
-    const fpf = {type: 'price', precision: 4, minMove: 0.0001};
-    if (want.fdS && !this.fdS) this.fdS = this.chart.addHistogramSeries({lastValueVisible: false, priceLineVisible: false, priceScaleId: 'fd', priceFormat: fpf});
-    if (want.fdC && !this.fdC) this.fdC = this.chart.addLineSeries({lastValueVisible: false, priceLineVisible: false, priceScaleId: 'fd', priceFormat: fpf, color: '#f5c26b', lineWidth: 1.5, crosshairMarkerVisible: false});
-    if (want.cvdS && !this.cvdS) this.cvdS = this.chart.addLineSeries({...base, priceScaleId: 'cvd', color: '#e8eaf0', lineWidth: 1.5, crosshairMarkerVisible: false});
-    if (want.spS && !this.spS) this.spS = this.chart.addLineSeries({...base, priceScaleId: 'cvds', color: '#ffb74d', lineWidth: 1.5, crosshairMarkerVisible: false});
-    const lk = [n, !!this.vol, shared, panes.join('/'), ...Object.keys(want).map(k => !!this[k])].join();
-    if (lk !== this.paneKey) {
-      this.paneKey = lk;
-      this.chart.priceScale('right').applyOptions({scaleMargins: {top: 0.08, bottom: 0.08 + n * P}});
-      if (this.vol) this.chart.priceScale('vol').applyOptions({scaleMargins: {top: Math.max(0.3, 0.84 - n * P), bottom: n * P}});
-      const pos = k => { const i = n - 1 - panes.indexOf(k); return {top: 1 - (i + 1) * P + 0.05, bottom: i * P + 0.012}; };   // V37 : place pour deux lignes de lecture
-      if (this.oiS || this.oiH) this.chart.priceScale('oi').applyOptions({scaleMargins: pos('oi'), visible: false});
-      if (this.fdS || this.fdC) this.chart.priceScale('fd').applyOptions({scaleMargins: pos('fund'), visible: false});
-      for (const [id, k] of [['dl', 'dS'], ['cvd', 'cvdS'], ['cvds', 'spS']]) if (this[k]) this.chart.priceScale(id).applyOptions({scaleMargins: pos('delta'), visible: false});
-      for (const m of ['s', 'p']) for (let j = 0; j < 5; j++) if (this[`sz${m}${j}`]) this.chart.priceScale(this[`sz${m}${j}sid`]).applyOptions({scaleMargins: pos('sz' + m), visible: false});
-      this.indKey = ''; this.sizeKey = '';
-    }
+    if (want.oiS) mk('oiS', sidOf('oiS'), (c, sid) => c.addCandlestickSeries({...base('oiS', sid), borderVisible: false,
+      upColor: '#4fc3f7', downColor: '#ffa64d', wickUpColor: '#4fc3f7', wickDownColor: '#ffa64d'}));
+    if (want.oiH) mk('oiH', sidOf('oiH'), (c, sid) => c.addHistogramSeries(base('oiH', sid)));
+    if (want.dS) mk('dS', sidOf('dS'), (c, sid) => c.addHistogramSeries(base('dS', sid)));
+    if (want.fdS) mk('fdS', sidOf('fdS'), (c, sid) => c.addHistogramSeries(base('fdS', sid)));
+    if (want.fdC) mk('fdC', sidOf('fdC'), (c, sid) => c.addLineSeries({...base('fdC', sid), color: '#f5c26b', lineWidth: 1.5, crosshairMarkerVisible: false}));
+    if (want.cvdS) mk('cvdS', sidOf('cvdS'), (c, sid) => c.addLineSeries({...base('cvdS', sid), color: '#e8eaf0', lineWidth: 1.5, crosshairMarkerVisible: false}));
+    if (want.spS) mk('spS', sidOf('spS'), (c, sid) => c.addLineSeries({...base('spS', sid), color: '#ffb74d', lineWidth: 1.5, crosshairMarkerVisible: false}));
+    const lk = [panes.join('/'), shared, S.carKey, ...Object.keys(want).map(k => !!this[k])].join();
+    if (lk !== this.paneKey) { this.paneKey = lk; this.indKey = ''; this.sizeKey = ''; }
+    const keep = p => S.has(p.time);
+    const put = (k, rows, val = r => r.value) => {                      // données, et la série qui porte la croix de la fenêtre
+      const se = this[k]; if (!se) return;
+      se.setData(rows);
+      const pk = paneOf(k);
+      if (prim[pk] === k || k === 'szs0' || k === 'szp0') S.anchor(pk, se, new Map(rows.filter(r => val(r) != null).map(r => [r.time, val(r)])));
+    };
     const zk = zok ? [Z.symbol, Z.tf, Z.at, o.sizeGroups, o.sizeReset, lk].join('|') : '';
     if (zok && zk !== this.sizeKey) {
       this.sizeKey = zk;
       for (const m of ['s', 'p']) zsets[m].forEach((g, j) => {
         const c = Panel.sizeCum(Z, g.vals);
-        this[`sz${m}${j}`].setData(Z.times.map((tm, i) => c[i] == null ? {time: tm} : {time: tm, value: c[i]}));
+        put(`sz${m}${j}`, Z.times.map((tm, i) => c[i] == null ? {time: tm} : {time: tm, value: c[i]}).filter(keep));
       });
+      for (const pk of ['szs', 'szp']) if (panes.includes(pk)) this.subLevels(pk, this.paneGrid(pk, I, 0, zok, 'L'));
     }
-    if (!ok) return;
+    if (!ok) { ['oi', 'delta', 'fund'].forEach(pk => this.subLevels(pk, null)); return; }
     const F = I.funding || [], an = o.fundMode === 'an', usd = o.deltaUnit === 'usd', SD = I.spotDelta || [], L = I.times.length - 1;
     const dk = [I.symbol, I.tf, I.times.length, I.times[L], JSON.stringify(I.oi[L]), I.delta[L], (I.pos || [])[L], SD.length, SD[SD.length - 1], F.length, F[F.length - 1], I.fundEst,
       o.fundMode, o.oiMode, o.oiColor, o.deltaUnit, cvdM, o.cvdReset, st.theme, lk].join('|');
@@ -715,25 +759,34 @@ class Panel {
     const up = t.up, dn = t.down, a = (c, al) => /^#[0-9a-f]{6}$/i.test(c) ? `rgba(${parseInt(c.slice(1, 3), 16)},${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${al})` : c;
     const posOn = o.oiColor !== 'dir' && Array.isArray(I.pos), PC = Panel.POS_COL;
     const pcol = i => { const c = posOn ? I.pos[i] : null; return c == null ? null : PC[c]; };
-    if (this.oiS) this.oiS.setData(I.times.map((tm, i) => {
+    put('oiS', I.times.map((tm, i) => {
       const c = I.oi[i]; if (!c) return {time: tm};
       const col = pcol(i), b = {time: tm, open: c[0], high: c[1], low: c[2], close: c[3]};
       return col ? {...b, color: col, wickColor: col, borderColor: col} : b;
-    }));
-    if (this.oiH) this.oiH.setData(I.times.map((tm, i) => {
+    }).filter(keep), r => r.close);
+    put('oiH', I.times.map((tm, i) => {
       const c = I.oi[i]; if (!c || c[0] == null) return {time: tm};
       const v = c[3] - c[0]; return {time: tm, value: v, color: pcol(i) || (v >= 0 ? '#4fc3f7' : '#ffa64d')};
-    }));
+    }).filter(keep));
     const DV = usd && Array.isArray(I.deltaUsd) ? I.deltaUsd : I.delta, SV = usd && Array.isArray(I.spotDeltaUsd) ? I.spotDeltaUsd : SD;
-    if (this.dS) this.dS.setData(I.times.map((tm, i) => { const v = DV[i]; return v == null ? {time: tm} : {time: tm, value: v, color: v >= 0 ? a(up, 0.8) : a(dn, 0.8)}; }));
-    if (this.cvdS) { const c = Panel.cvdLine(I, DV); this.cvdS.setData(I.times.map((tm, i) => ({time: tm, value: c[i]}))); }
-    if (this.spS) { const c = Panel.cvdLine(I, SV); this.spS.setData(I.times.map((tm, i) => SV[i] == null && !c[i] ? {time: tm} : {time: tm, value: c[i]})); }
-    if (this.fdS) this.fdS.setData(I.times.map((tm, i) => {               // fort (≥ 0,03 % ou ≤ −0,01 % par 8 h) : couleur pleine
+    put('dS', I.times.map((tm, i) => { const v = DV[i]; return v == null ? {time: tm} : {time: tm, value: v, color: v >= 0 ? a(up, 0.8) : a(dn, 0.8)}; }).filter(keep));
+    if (this.cvdS) { const c = Panel.cvdLine(I, DV); put('cvdS', I.times.map((tm, i) => ({time: tm, value: c[i]})).filter(keep)); }
+    if (this.spS) { const c = Panel.cvdLine(I, SV); put('spS', I.times.map((tm, i) => SV[i] == null && !c[i] ? {time: tm} : {time: tm, value: c[i]}).filter(keep)); }
+    put('fdS', I.times.map((tm, i) => {                                   // fort (≥ 0,03 % ou ≤ −0,01 % par 8 h) : couleur pleine
       const v = F[i]; if (v == null) return {time: tm};
       const est = I.fundEst != null && i >= I.fundEst, strong = v >= 0.03 || v <= -0.01;
       return {time: tm, value: an ? v * 3 * 365 : v, color: a(v >= 0 ? Panel.FUND_UP : Panel.FUND_DN, est ? 0.35 : strong ? 0.95 : 0.55)};
-    }));
-    if (this.fdC) this.fdC.setData(I.times.map((tm, i) => I.fundCum[i] == null ? {time: tm} : {time: tm, value: I.fundCum[i]}));
+    }).filter(keep));
+    if (this.fdC) put('fdC', I.times.map((tm, i) => I.fundCum[i] == null ? {time: tm} : {time: tm, value: I.fundCum[i]}).filter(keep));
+    // repères chiffrés (lignes « haut » / « bas » ou seuils du funding) : des lignes de prix, avec leur valeur sur l'échelle de la fenêtre
+    for (const pk of ['oi', 'delta', 'fund']) this.subLevels(pk, panes.includes(pk) ? this.paneGrid(pk, I, L, ok, 'L') : null);
+  }
+  subLevels(pk, G) {
+    const P = this._pl || (this._pl = {}), cur = P[pk], se = (G && G.se) || null;
+    const key = se ? G.lv.map(l => l.txt + ':' + (+l.v).toPrecision(6)).join('|') : '';
+    if (cur && cur.se === se && cur.key === key) return;
+    if (cur && cur.se) cur.lines.forEach(l => { try { cur.se.removePriceLine(l); } catch (e) { /* série retirée */ } });
+    P[pk] = {se, key, lines: se ? G.lv.map(l => se.createPriceLine({price: l.v, color: l.col, lineWidth: 1, lineStyle: l.txt === 'zéro' ? 0 : 2, axisLabelVisible: true, title: l.txt})) : []};
   }
   // V37 : lectures en tête de chaque fenêtre (ligne 1 : la bougie visée ; ligne 2 : le résumé)
   // V39 : lecture d'une fenêtre « flux par taille d'ordre » (ligne 1 : le cumul de chaque taille à la bougie visée ; ligne 2 : qui achète, qui vend)
@@ -795,7 +848,7 @@ class Panel {
   // ---- V43 : repères chiffrés des sous-fenêtres : graduations, lignes « haut » et « bas » (80 % et 20 % des valeurs du graphique) ou seuils fixes
   // du funding, et en tête de fenêtre le niveau (haut, milieu, bas) et la tendance sur 24 bougies (en hausse, stable, en baisse) ----
   static get GRID_N() { return 24; }
-  paneGrid(k, I, idx, ok) {
+  paneGrid(k, I, idx, ok, slot = '') {
     const o = LT.st.mainOpts || {};
     if (k === 'szs' || k === 'szp') {                                    // flux par taille : graduations seulement sur une échelle commune
       const se = o.sizeScale === 'shared' ? this[`sz${k === 'szs' ? 's' : 'p'}0`] : null;
@@ -805,9 +858,9 @@ class Panel {
     const L = I.times.length - 1;
     const key = [k, I.symbol, I.tf, L, I.times[L], idx, JSON.stringify(I.oi[L]), I.delta[L], (I.funding || [])[L], o.oiMode, o.cvdMode, o.deltaCvd, o.deltaUnit,
       o.cvdReset, o.fundMode, !!this.oiS, !!this.oiH, !!this.cvdS, !!this.spS, !!this.dS, !!this.fdS, !!this.fdC].join('|');
-    const c = this._pg || (this._pg = {});
-    if (!c[k] || c[k].key !== key) c[k] = {key, g: this.computePaneGrid(k, I, idx, o)};
-    const g = c[k].g;
+    const c = this._pg || (this._pg = {}), ck = k + slot;              // V53 : une mémoire pour les lignes (dernière bougie), une pour la lecture (croix)
+    if (!c[ck] || c[ck].key !== key) c[ck] = {key, g: this.computePaneGrid(k, I, idx, o)};
+    const g = c[ck].g;
     if (!g) return null;
     g.se = this[g.sel];
     return g.se ? g : null;
@@ -884,111 +937,29 @@ class Panel {
     }
     return null;
   }
-  axisBg() {                                                           // couleur pleine derrière le graphique (pour masquer l'échelle des prix)
-    if (this._axBg) return this._axBg;
-    for (let el = this.body; el; el = el.parentElement) {
-      const c = getComputedStyle(el).backgroundColor;
-      if (c && c !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(c)) return (this._axBg = c);
-    }
-    return (this._axBg = '#0f1115');
-  }
-  drawPaneGrid(G, y0, ph, nrows, plotW, w) {
-    const se = G.se, ctx = this.ctx, t = this.th(), yA = y0 + nrows * 16 + 6, yB = y0 + ph - 3;
-    if (yB - yA < 18) return;
-    const pT = se.coordinateToPrice(yA), pB = se.coordinateToPrice(yB);
-    if (pT == null || pB == null || !(pT > pB)) return;
-    ctx.save();
-    ctx.font = `500 10px ${t.font}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    const axis = w - plotW > 30;                                         // les chiffres vont dans la colonne de l'échelle quand elle existe
-    const label = (txt, y, col, name) => {
-      if (axis) {
-        ctx.textAlign = 'left'; ctx.fillStyle = col; ctx.fillText(txt, plotW + 5, y);
-        if (name) { ctx.textAlign = 'right'; const w2 = ctx.measureText(name).width; ctx.fillStyle = 'rgba(10,12,16,.78)'; ctx.fillRect(plotW - w2 - 9, y - 7, w2 + 6, 14); ctx.fillStyle = col; ctx.fillText(name, plotW - 6, y); }
-        return;
-      }
-      const s2 = name ? name + ' ' + txt : txt, w2 = ctx.measureText(s2).width;
-      ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(10,12,16,.78)'; ctx.fillRect(plotW - w2 - 9, y - 7, w2 + 6, 14);
-      ctx.fillStyle = col; ctx.fillText(s2, plotW - 6, y);
-    };
-    const taken = [];
-    G.lv.forEach(l => {                                                   // lignes de repère (prioritaires pour l'étiquette)
-      const y = se.priceToCoordinate(l.v);
-      if (y == null || y < yA - 1 || y > yB + 1) return;
-      ctx.strokeStyle = l.col; ctx.lineWidth = 1; ctx.setLineDash(l.txt === 'zéro' ? [] : [5, 4]);
-      ctx.beginPath(); ctx.moveTo(0, Math.round(y) + 0.5); ctx.lineTo(plotW, Math.round(y) + 0.5); ctx.stroke();
-      if (!taken.some(z => Math.abs(z - y) < 13)) { label(G.fmt(l.v), y, l.col.replace(/,\s*\.?\d+\)$/, ',1)'), l.txt); taken.push(y); }
-    });
-    ctx.setLineDash([]);
-    const step = Panel.nice((pT - pB) / 3);                              // graduations : environ trois lignes par fenêtre
-    for (let v = Math.ceil(pB / step) * step; v <= pT + step * 1e-6; v += step) {
-      const y = se.priceToCoordinate(v);
-      if (y == null || y < yA || y > yB) continue;
-      ctx.strokeStyle = 'rgba(120,130,150,.16)'; ctx.beginPath(); ctx.moveTo(0, Math.round(y) + 0.5); ctx.lineTo(plotW, Math.round(y) + 0.5); ctx.stroke();
-      if (!taken.some(z => Math.abs(z - y) < 13)) { label(G.fmt(Math.abs(v) < step * 1e-6 ? 0 : v), y, 'rgba(178,181,190,.9)'); taken.push(y); }
-    }
-    ctx.restore();
-  }
-  drawPanes(L, w, h) {
-    const panes = this.panes();
-    if (!panes.length) return;
-    const ctx = this.ctx, st = LT.st, I = st.ind, t = this.th(), P = this.paneP(), H = h - 26, n = panes.length, plotW = L.plotW;
+  // V53 : lecture chiffrée en tête de chaque fenêtre (texte de la page, plus net que le dessin) : la bougie visée par la croix et le résumé ;
+  // grand écran : le niveau et la tendance dans la première ligne ; téléphone : à la place de la deuxième
+  headPanes(L) {
+    const S = this.stack, panes = this.panes();
+    if (!S || !panes.length) return;
+    const st = LT.st, I = st.ind, plotW = L.plotW;
     const ok = !!(I && I.ready && I.symbol === L.d.symbol && I.tf === L.d.tf);
     let idx = ok ? I.times.length - 1 : -1;
     if (ok && this.crossT != null) { const k = I.times.indexOf(this.crossT); if (k >= 0) idx = k; }
     const Z = st.size, zok = !!(Z && Z.ready && Z.symbol === L.d.symbol && Z.tf === L.d.tf);
     let zi = zok ? Z.times.length - 1 : -1;
     if (zok && this.crossT != null) { const k = Z.times.indexOf(this.crossT); if (k >= 0) zi = k; }
-    const cb = Math.round(H * (1 - n * P));                               // V43 : l'échelle des prix s'arrête au-dessus des sous-fenêtres
-    if (w - plotW > 8) { ctx.fillStyle = this.axisBg(); ctx.fillRect(plotW, cb, w - plotW, H - cb); }
-    ctx.font = `500 11px ${t.font}`; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    const fit = parts => {                                                // petit écran : on garde les premiers morceaux qui tiennent
-      const out = []; let wsum = 0;
-      for (const p of parts) { const s = typeof p === 'string' ? p : p.txt, ww = ctx.measureText((out.length ? ' · ' : '') + s).width; if (out.length && wsum + ww > plotW - 16) break; out.push(p); wsum += ww; }
-      return out;
-    };
-    panes.forEach((k, j) => {
-      const y0 = Math.round(H * (1 - (n - j) * P)) + 0.5, ph = H * P;
-      ctx.strokeStyle = 'rgba(120,130,150,.35)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(plotW, y0); ctx.stroke();
+    panes.forEach(k => {
       const sz = k === 'szs' || k === 'szp';
       const lines = sz ? (zok ? Panel.sizeLines(k, Z, zi) : [(k === 'szs' ? 'Spot' : 'Perpétuel') + ' · par taille d\'ordre · chargement…']) :
         !ok || (k === 'fund' && !Array.isArray(I.funding)) ? [({oi: 'Intérêt ouvert', delta: 'Delta', fund: 'Funding'})[k] + ' · chargement…'] : this.paneLines(k, I, idx);
-      const G = this.paneGrid(k, I, sz ? zi : idx, sz ? zok : ok);         // V43 : repères chiffrés, niveau et tendance
+      const G = this.paneGrid(k, I, sz ? zi : idx, sz ? zok : ok, 'H');   // V43 : niveau et tendance
       if (G && G.tags.length && lines.length && lines[0]) {
         if (plotW >= 760) { const f0 = typeof lines[0] === 'string' ? lines[0].split(' · ') : lines[0].slice(); f0.splice(1, 0, ...G.tags); lines[0] = f0; }
-        else lines.splice(1, lines.length, G.tags.map(g => ({txt: g.short || g.txt, col: g.col, strong: g.strong})));   // téléphone : le niveau et la tendance d'abord
+        else lines.splice(1, lines.length, G.tags.map(g => ({txt: g.short || g.txt, col: g.col, strong: g.strong})));
       }
-      const base = k === 'oi' ? '#8fd3f4' : k === 'fund' ? '#f5c26b' : '#cfd3dc';
-      // V39 : dans les fenêtres « flux par taille d'ordre », les morceaux passent à la ligne au lieu d'être coupés (téléphone)
-      let rows = lines.filter(Boolean).slice(0, ph > 46 ? 2 : 1).map((ln, li) => ({parts: typeof ln === 'string' ? ln.split(' · ') : ln, li}));
-      if (sz) {
-        const wrapped = [];
-        rows.forEach(r => {
-          let cur = [], wsum = 0;
-          r.parts.forEach(p => {
-            const ww = ctx.measureText((cur.length ? ' · ' : '') + (typeof p === 'string' ? p : p.txt)).width;
-            if (cur.length && wsum + ww > plotW - 16) { wrapped.push({parts: cur, li: r.li}); cur = []; wsum = 0; }
-            cur.push(p); wsum += ctx.measureText((cur.length > 1 ? ' · ' : '') + (typeof p === 'string' ? p : p.txt)).width;
-          });
-          if (cur.length) wrapped.push({parts: cur, li: r.li});
-        });
-        rows = wrapped.slice(0, Math.max(1, Math.min(3, Math.floor((ph - 8) / 16) - 1)));
-      }
-      if (G) this.drawPaneGrid(G, y0, ph, rows.length, plotW, w);
-      rows.forEach(({parts: raw, li}, ri) => {
-        const parts = fit(raw), y = y0 + 2 + ri * 16;
-        const tw = parts.reduce((s2, p, i) => s2 + ctx.measureText((i ? ' · ' : '') + (typeof p === 'string' ? p : p.txt)).width, 0);
-        ctx.fillStyle = 'rgba(10,12,16,.78)'; ctx.fillRect(4, y, tw + 10, 16);
-        let x = 9;
-        parts.forEach((p, i) => {
-          if (i) { ctx.fillStyle = base; ctx.font = `500 11px ${t.font}`; ctx.fillText(' · ', x, y + 2); x += ctx.measureText(' · ').width; }
-          const s2 = typeof p === 'string' ? p : p.txt;
-          ctx.font = `${p.strong ? 700 : 500} 11px ${t.font}`; ctx.fillStyle = (typeof p === 'object' && p.col) || (li ? 'rgba(207,211,220,.85)' : base);
-          ctx.fillText(s2, x, y + 2); x += ctx.measureText(s2).width;
-        });
-        ctx.font = `500 11px ${t.font}`;
-      });
+      S.head(k, lines.filter(Boolean).map(ln => typeof ln === 'string' ? ln.split(' · ') : ln));
     });
-    ctx.textBaseline = 'middle';
   }
   // V28 : barres de volume sous les bougies (élément « Volume »), sur leur propre échelle, en bas du graphique
   syncVolume(d) {
@@ -998,7 +969,7 @@ class Panel {
     if (!this.vol) {
       this.vol = this.chart.addHistogramSeries({priceScaleId: 'vol', priceFormat: {type: 'volume'}, lastValueVisible: false, priceLineVisible: false});
       this.chart.priceScale('vol').applyOptions({scaleMargins: {top: 0.84, bottom: 0}, visible: false});
-      this.volKey = ''; this.paneKey = '';
+      this.volKey = '';
     }
     const cs = d.candles, last = cs[cs.length - 1], key = [d.symbol, d.tf, cs.length, last[0], last[5], LT.st.theme].join('|');
     if (key === this.volKey) return;

@@ -220,7 +220,7 @@ class PageTests(unittest.TestCase):
         self.assertIn("/api/sizeflow?symbol=", desk)
         self.assertIn("'sizes', 'dom'", desk)
         panels = (WEB / "panels.js").read_text(encoding="utf-8")
-        for s in ("static sizeSets(Z, m)", "static sizeCum(Z, vals)", "static sizeLines(k, Z, idx)", "paneP()", "['szs', 'szp']",
+        for s in ("static sizeSets(Z, m)", "static sizeCum(Z, vals)", "static sizeLines(k, Z, idx)", "['szs', 'szp']",
                   "les gros achètent, les petits vendent : accumulation"):
             self.assertIn(s, panels)
         self.assertNotIn("Panel.PANE, H", panels)                    # la hauteur des fenêtres s'adapte à leur nombre

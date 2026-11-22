@@ -8,9 +8,11 @@
 // construis avec « ＋ Éléments » ; il garde ses éléments et son unité de temps, les mêmes sur BTC et SOL. Élément « Funding » en barres.
 // V37 : options de l'intérêt ouvert (bougies ou variation, couleur « qui ouvre / qui ferme »), du delta (coin ou dollars exacts, CVD perpétuel,
 // spot ou les deux, remis à zéro chaque jour, semaine ou mois) et du funding (par 8 h, par an ou cumulé).
+// V53 : les fenêtres sous le graphique (intérêt ouvert, delta et CVD, funding, flux par taille spot et perpétuel) s'ajoutent et se retirent
+// avec « ▤ Fenêtres » ; chacune garde, dans le jeu d'éléments de la vue, son ordre, sa hauteur, sa lecture chiffrée et son état réduit.
 const Desk = (() => {
   'use strict';
-  let LT = null, chooser = null, chooserBtn = null, heatTimer = null, legendMin = null;
+  let LT = null, chooser = null, chooserBtn = null, chooserMode = 'el', heatTimer = null, legendMin = null;
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const EX = [['binance', 'Binance'], ['okx', 'OKX'], ['bybit', 'Bybit'], ['coinbase', 'Coinbase']];
   // catalogue : clé -> [nom, explication, famille, réservé au BTC]
@@ -116,6 +118,68 @@ const Desk = (() => {
     const s = curSet();
     if (val == null) delete s.els[k]; else s.els[k] = !!val;
     changed([...PROF_KEYS, 'dom'].includes(k));
+  }
+  // ---------- V53 : fenêtres sous le graphique ----------
+  const PANE_KEYS = ['oi', 'delta', 'fund', 'szs', 'szp'];
+  const PANE_NAMES = {oi: 'Intérêt ouvert', delta: 'Delta et CVD', fund: 'Funding', szs: 'Flux par taille d\'ordre · spot', szp: 'Flux par taille d\'ordre · perpétuel'};
+  const PANE_SUB = {oi: 'en bougies ou en variation ; qui ouvre, qui ferme', delta: 'barres du delta, CVD du perpétuel et du spot', fund: '% par 8 h, par an ou cumulé',
+    szs: 'petits, moyens et gros ordres du spot Binance', szp: 'petits, moyens et gros ordres du perpétuel Binance'};
+  function paneCfg() {
+    const s = curSet(), obj = (x, ok) => Object.fromEntries(Object.entries(x && typeof x === 'object' ? x : {}).filter(([k, v]) => PANE_KEYS.includes(k) && ok(v)));
+    return {order: Array.isArray(s.paneOrder) ? s.paneOrder.filter((k, i, a) => PANE_KEYS.includes(k) && a.indexOf(k) === i) : [],
+      h: obj(s.paneH, v => typeof v === 'number' && v > 0.02 && v < 0.8), min: obj(s.paneMin, v => v === true), read: obj(s.paneRead, v => [0, 1, 2].includes(v))};
+  }
+  function paneShown() {
+    const s = curSet(), on = k => s.els[k] === true, m = ['spot', 'perp'].includes(s.sizeMkt) ? s.sizeMkt : 'both';
+    return {oi: on('oi'), delta: on('delta'), fund: on('fund'), szs: on('sizes') && m !== 'perp', szp: on('sizes') && m !== 'spot'};
+  }
+  function setPane(k, on) {                           // le flux par taille est UN élément : ses deux fenêtres passent par « sizeMkt »
+    const s = curSet();
+    if (k === 'szs' || k === 'szp') {
+      const cur = paneShown(); cur[k] = on;
+      if (!cur.szs && !cur.szp) delete s.els.sizes;
+      else { s.els.sizes = true; s.sizeMkt = cur.szs && cur.szp ? 'both' : cur.szs ? 'spot' : 'perp'; }
+    } else if (on) s.els[k] = true; else delete s.els[k];
+    changed(false);
+  }
+  const mainPanel = () => LT && LT.panels().find(p => p.kind === 'main');
+  function relayout() { const p = mainPanel(); if (p && p.stack) { p.stack.layout(); p.sig = ''; } }
+  function paneAct(k, a, val) {
+    const s = curSet(), c = paneCfg();
+    if (a === 'x') { setPane(k, false); return; }
+    if (a === 'h') { s.paneH = {...c.h, ...val}; LT.savePrefs(); return; }
+    if (a === 'resetH') { delete s.paneH; delete s.paneMin; LT.savePrefs(); relayout(); return; }
+    if (a === 'resetAll') { ['paneH', 'paneMin', 'paneOrder', 'paneRead'].forEach(x => delete s[x]); }
+    else if (a === 'min') { s.paneMin = {...c.min}; if (s.paneMin[k]) delete s.paneMin[k]; else s.paneMin[k] = true; }
+    else if (a === 'read') { const r = c.read[k] == null ? 2 : c.read[k]; s.paneRead = {...c.read, [k]: (r + 2) % 3}; }      // 2 lignes → 1 → nom seul
+    else if (a === 'up' || a === 'down') {
+      const p = mainPanel(), shown = p ? p.panes() : [], i = shown.indexOf(k), j = i + (a === 'up' ? -1 : 1);
+      if (i < 0 || j < 0 || j >= shown.length) return;
+      [shown[i], shown[j]] = [shown[j], shown[i]];
+      s.paneOrder = shown.concat(c.order.filter(x => !shown.includes(x)));
+    } else return;
+    LT.savePrefs(); relayout();
+    if (chooser && !chooser.hidden && chooserMode === 'win') fillChooser();
+  }
+  function paneOpts(k, btn) {                         // ⚙ d'une fenêtre : le menu des éléments, ouvert à sa ligne
+    if (!chooser.hidden && chooserBtn === btn) { closeChooser(); return; }
+    chooserMode = 'el'; chooserBtn = btn; chooser.hidden = false; btn.classList.add('open'); fillChooser(); placeChooser();
+    const box = chooser.querySelector(`[data-chel="${k === 'szs' || k === 'szp' ? 'sizes' : k}"]`), row = box && box.closest('.ddrow');
+    if (row) { row.scrollIntoView({block: 'center'}); row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 1400); }
+  }
+  function winHtml() {
+    const sh = paneShown(), c = paneCfg();
+    return `<div class="chhead"><b>Fenêtres sous le graphique</b><span class="spacer"></span><button class="mini" data-wreset title="Ordre, hauteurs et lectures d'origine">Rétablir</button></div>` +
+      PANE_KEYS.map(k => `<div class="ddrow"><label><input type="checkbox" data-wtog="${k}"${sh[k] ? ' checked' : ''}><span>${esc(PANE_NAMES[k])}` +
+        `${c.min[k] && sh[k] ? ' <em>(réduite)</em>' : ''}<small>${esc(PANE_SUB[k])}</small></span></label></div>`).join('') +
+      '<div class="ddnote">Dans la barre de chaque fenêtre : ⚙ ses réglages, ▲ ▼ son rang, ≡ sa lecture chiffrée (deux lignes, une ligne, le nom seul), − la réduire, ✕ la retirer. ' +
+      'La poignée au-dessus d\'une fenêtre change sa hauteur ; double-clic sur une poignée : hauteurs d\'origine.</div>' +
+      '<div class="ddnote">Graphique des prix : molette pour zoomer, glisser pour déplacer, glisser l\'échelle des prix pour étirer les bougies en hauteur, glisser l\'échelle du temps pour les élargir, double-clic sur une échelle pour revenir en automatique. Boutons − + ‹ › A ⟲ en bas du graphique.</div>';
+  }
+  function toggleWin(btn) {
+    if (!chooser.hidden && chooserBtn === btn) { closeChooser(); return; }
+    if (chooserBtn) chooserBtn.classList.remove('open');
+    chooserMode = 'win'; chooserBtn = btn; chooser.hidden = false; btn.classList.add('open'); fillChooser(); placeChooser();
   }
   function preset(name) {
     const s = curSet();
@@ -234,6 +298,7 @@ const Desk = (() => {
       (hidden ? `<button class="mini" data-pall="reset">Réafficher ${hidden > 1 ? `les ${hidden} idées masquées` : 'l\'idée masquée'}</button>` : '');
   }
   function fillChooser() {
+    if (chooserMode === 'win') { chooser.innerHTML = winHtml(); return; }
     const s = curSet(), view = viewOf(st().layout);
     chooser.innerHTML = `<div class="chhead"><b>Éléments · ${esc(viewName(view))} ${esc((st().symbol || '').replace('USDT', ''))}</b><span class="spacer"></span>` +
       `<button class="mini" data-preset="${view === 'heat' ? 'heat' : 'main'}" title="Le réglage conseillé, sans bruit">Conseillé</button><button class="mini" data-preset="blank" title="Tout retirer : graphique vierge">Tout retirer</button></div>` +
@@ -252,15 +317,21 @@ const Desk = (() => {
   }
   function placeChooser() {
     if (!chooserBtn || chooser.hidden) return;
-    const r = chooserBtn.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
-    chooser.style.maxHeight = Math.max(200, vh - r.bottom - 12) + 'px';
-    chooser.style.top = (r.bottom + 4) + 'px';
+    const r = chooserBtn.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight, below = vh - r.bottom - 12, above = r.top - 12;
+    if (below < 320 && above > below) {               // V53 : bouton en bas de l'écran (fenêtre sous le graphique) : le menu s'ouvre au-dessus
+      chooser.style.maxHeight = above + 'px';
+      chooser.style.top = Math.max(6, r.top - 4 - Math.min(chooser.scrollHeight, above)) + 'px';
+    } else {
+      chooser.style.maxHeight = Math.max(200, below) + 'px';
+      chooser.style.top = (r.bottom + 4) + 'px';
+    }
     chooser.style.left = Math.max(6, Math.min(r.left, vw - chooser.offsetWidth - 6)) + 'px';
   }
   function closeChooser() { if (chooser) chooser.hidden = true; if (chooserBtn) chooserBtn.classList.remove('open'); }
   function toggleChooser(btn) {
     if (!chooser.hidden && chooserBtn === btn) { closeChooser(); return; }
-    chooserBtn = btn; chooser.hidden = false; btn.classList.add('open'); fillChooser(); placeChooser();
+    if (chooserBtn) chooserBtn.classList.remove('open');
+    chooserMode = 'el'; chooserBtn = btn; chooser.hidden = false; btn.classList.add('open'); fillChooser(); placeChooser();
   }
   function wireChooser() {
     chooser = document.createElement('div');
@@ -268,17 +339,19 @@ const Desk = (() => {
     document.body.appendChild(chooser);
     chooser.addEventListener('change', e => {
       const t = e.target, s = curSet();
+      if (t.dataset.wtog) { setPane(t.dataset.wtog, t.checked); return; }
       if (t.dataset.chel) { if (t.checked) s.els[t.dataset.chel] = true; else delete s.els[t.dataset.chel]; changed([...PROF_KEYS, 'dom'].includes(t.dataset.chel)); }
       else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset', 'gexScope', 'gexSrc', 'gexLevels', 'gexZones', 'gexBars', 'sizeMkt', 'sizeGroups', 'sizeReset', 'sizeScale', 'vpDelta'].includes(t.dataset.copt) ? t.value : t.dataset.copt === 'deltaCvd' ? t.value === '1' : +t.value; changed(t.dataset.copt === 'vpDelta'); }
       else if (t.dataset.ptog != null) { LT.togglePlan(t.dataset.ptog); fillChooser(); }
     });
     chooser.addEventListener('click', e => {
       const pr = e.target.closest('[data-preset]'), all = e.target.closest('[data-pall]');
-      if (pr) preset(pr.dataset.preset);
+      if (e.target.closest('[data-wreset]')) paneAct(null, 'resetAll');
+      else if (pr) preset(pr.dataset.preset);
       else if (all) { LT.planReset(); fillChooser(); }
       else if (e.target.closest('.ddlink')) closeChooser();
     });
-    document.addEventListener('mousedown', e => { if (!chooser.hidden && !chooser.contains(e.target) && !e.target.closest('[data-elbtn]')) closeChooser(); });
+    document.addEventListener('mousedown', e => { if (!chooser.hidden && !chooser.contains(e.target) && !e.target.closest('[data-elbtn],[data-winbtn]')) closeChooser(); });
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeChooser(); });
     window.addEventListener('resize', closeChooser);
   }
@@ -697,5 +770,6 @@ const Desk = (() => {
       if (b) setTab(b.dataset.inst);
     });
   }
-  return {init, apply, curSet, wsOf, rememberTf, isView, userTab, viewName, addTab, renameTab, deleteTab, hideTab, restoreTab, moveTab, resetBar, renderBar, renderUserTabs, firstTab, shownTabs, renderLegend, toggleChooser, closeChooser, renderTabs, setTab, onLayout, pollHeat, tick, heatTip, viewOf, VIEWS, EL, PRESET, freshSet};
+  return {init, apply, curSet, wsOf, rememberTf, isView, userTab, viewName, addTab, renameTab, deleteTab, hideTab, restoreTab, moveTab, resetBar, renderBar, renderUserTabs, firstTab, shownTabs, renderLegend, toggleChooser, closeChooser, renderTabs, setTab, onLayout, pollHeat, tick, heatTip, viewOf, VIEWS, EL, PRESET, freshSet,
+    paneCfg, paneShown, setPane, paneAct, paneOpts, toggleWin};
 })();
