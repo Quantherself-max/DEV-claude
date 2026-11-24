@@ -1001,8 +1001,8 @@ class Panel {
       }
       const fmt = v => sg(v, an ? 1 : 4) + ' %';
       // seuils fixes (par 8 h) : 0,01 % est le taux de base de Binance ; 0,03 % et plus : acheteurs à levier nombreux ; −0,01 % et moins : vendeurs nombreux
-      lv.push({v: 0.03 * m, txt: 'élevé', col: 'rgba(38,166,154,.85)'}, {v: 0.01 * m, txt: 'normal', col: 'rgba(170,176,189,.7)'},
-        {v: 0, txt: 'zéro', col: 'rgba(170,176,189,.45)'}, {v: -0.01 * m, txt: 'négatif fort', col: 'rgba(239,83,80,.85)'});
+      lv.push({v: 0.03 * m, txt: 'élevé', col: 'rgba(38,166,154,.85)'}, {v: 0.01 * m, txt: 'normal', col: 'rgba(170,176,189,.7)', noAxis: true},   // V54 : 2 étiquettes, pas 4
+        {v: 0, txt: 'zéro', col: 'rgba(170,176,189,.45)', noAxis: true}, {v: -0.01 * m, txt: 'négatif fort', col: 'rgba(239,83,80,.85)'});
       const Lv = level(F, 'niveau'); if (Lv) tags.push(Lv.tag);
       const T = trend(i => F[i] != null && F[i - N] != null ? F[i] - F[i - N] : null, x => sg(x * m, an ? 1 : 4) + ' %'); if (T) tags.push(T);
       return {sel: 'fdS', fmt, lv, tags};
@@ -1014,7 +1014,7 @@ class Panel {
   headPanes(L) {
     const S = this.stack, panes = this.panes();
     if (!S || !panes.length) return;
-    const st = LT.st, I = st.ind, plotW = L.plotW;
+    const st = LT.st, I = st.ind;
     const ok = !!(I && I.ready && I.symbol === L.d.symbol && I.tf === L.d.tf);
     let idx = ok ? I.times.length - 1 : -1;
     if (ok && this.crossT != null) { const k = I.times.indexOf(this.crossT); if (k >= 0) idx = k; }
@@ -1026,12 +1026,64 @@ class Panel {
       const lines = sz ? (zok ? Panel.sizeLines(k, Z, zi) : [(k === 'szs' ? 'Spot' : 'Perpétuel') + ' · par taille d\'ordre · chargement…']) :
         !ok || (k === 'fund' && !Array.isArray(I.funding)) ? [({oi: 'Intérêt ouvert', delta: 'Delta', fund: 'Funding'})[k] + ' · chargement…'] : this.paneLines(k, I, idx);
       const G = this.paneGrid(k, I, sz ? zi : idx, sz ? zok : ok, 'H');   // V43 : niveau et tendance
-      if (G && G.tags.length && lines.length && lines[0]) {
-        if (plotW >= 760) { const f0 = typeof lines[0] === 'string' ? lines[0].split(' · ') : lines[0].slice(); if (k === 'delta') f0.push(...G.tags); else f0.splice(1, 0, ...G.tags); lines[0] = f0; }
-        else lines.splice(1, lines.length, G.tags.map(g => ({txt: g.short || g.txt, col: g.col, strong: g.strong})));
-      }
-      S.head(k, lines.filter(Boolean).map(ln => typeof ln === 'string' ? ln.split(' · ') : ln));
+      // V54 : tête courte (nom, valeur, verdict ; puis une phrase), la lecture complète d'avant reste au survol
+      const tx = ln => typeof ln === 'string' ? ln : (ln || []).map(p => typeof p === 'string' ? p : p.txt).join(' · ');
+      const tip = lines.filter(Boolean).map(tx).concat(G && G.tags.length ? [G.tags.map(g => g.txt).join(' · ')] : []).join('\n');
+      const hd = this.paneHead(k, I, idx, Z, zi, G, ok, zok);
+      S.head(k, [hd.r1.filter(Boolean), (hd.r2 || []).filter(Boolean)], tip);
     });
+  }
+  // V54 : en tête de chaque fenêtre, l'essentiel : r1 = nom, valeur, verdict en couleur ; r2 = une phrase sur les dernières bougies
+  static get HEAD_NAME() { return {oi: 'Intérêt ouvert', delta: 'Delta', fund: 'Funding', szs: 'Flux spot', szp: 'Flux perpétuel'}; }
+  deltaStrong(I, idx, DV) {                                                // achats et ventes forts des 24 dernières bougies
+    const pw = this.deltaInfo(I).pw, NB = Math.min(24, idx + 1);
+    let fb = 0, fs = 0;
+    for (let i = idx - NB + 1; i <= idx; i++) { const l = Panel.powerLevel(pw.r[i]); if (l == null || l < 2 || DV[i] == null) continue; if (DV[i] >= 0) fb++; else fs++; }
+    return {NB, fb, fs};
+  }
+  paneHead(k, I, idx, Z, zi, G, ok, zok) {
+    const o = LT.st.mainOpts || {}, name = {txt: Panel.HEAD_NAME[k], k: 'name'}, UP = '#26c281', DN = '#ff4d6d', NT = '#aab0bd';
+    const val = (txt, col) => ({txt, col, k: 'val'}), chip = (txt, col) => ({txt, col: col || NT, k: 'chip'});
+    const tags = (G && G.tags || []).map(g => ({txt: g.short || g.txt, col: g.col}));
+    const f = (x, d) => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(d).replace('.', ',') + ' %';
+    if (k === 'szs' || k === 'szp') {
+      const M = zok && Z[k === 'szs' ? 'spot' : 'perp'];
+      if (!M) return {r1: [name, val('chargement…')]};
+      if (!M.ok) return {r1: [name, val(M.why || 'indisponible')]};
+      const first = Z.times.findIndex((_, i) => M.delta.some(c => c[i] != null)), N = Math.min(24, zi - Math.max(0, first));
+      if (N < 3) return {r1: [name, val('pas encore assez de bougies')]};
+      const D = cl => { let a = 0; for (let i = zi - N + 1; i <= zi; i++) a += cl.reduce((x, c) => x + (M.delta[c][i] || 0), 0); return a; };
+      const big = D([3, 4]), mid = D([2]), small = D([0, 1]);
+      const v = big > 0 && small < 0 ? ['accumulation', UP, 'les gros achètent ce que vendent les petits'] : big < 0 && small > 0 ? ['distribution', DN, 'les gros vendent aux petits'] :
+        big > 0 && small > 0 ? ['tout le monde achète', UP, 'gros et petits achètent ensemble'] : big < 0 && small < 0 ? ['tout le monde vend', DN, 'gros et petits vendent ensemble'] : ['équilibré', NT, 'aucun groupe ne domine'];
+      return {r1: [name, val(`gros ${Panel.big(big)} $`, big >= 0 ? UP : DN), chip(v[0], v[1])],
+        r2: [`${N} bougies : ${v[2]}`, {txt: `moyens ${Panel.big(mid)} $`, col: Panel.SZ_COL3[1]}, {txt: `petits ${Panel.big(small)} $`, col: Panel.SZ_COL3[0]}]};
+    }
+    if (!ok) return {r1: [name, val('chargement…')]};
+    if (k === 'oi') {
+      const c = I.oi[idx], code = (I.pos || [])[idx], S = I.posSum;
+      if (!c) return {r1: [name, val('pas de relevé pour cette bougie')]};
+      return {r1: [name, val(`${Panel.big(c[3], false)} ${I.unit}`), code != null ? chip(Panel.POS_TXT[code], Panel.POS_COL[code]) : null],
+        r2: [S && S.bars && S.dominant != null ? {txt: `${S.bars} bougies : ${Panel.POS_TXT[S.dominant]} dominent`, col: Panel.POS_COL[S.dominant]} : null, ...tags]};
+    }
+    if (k === 'fund') {
+      const F = I.funding || [], v = F[idx];
+      if (!Array.isArray(I.funding)) return {r1: [name, val('chargement…')]};
+      if (v == null) return {r1: [name, val('pas de versement pour cette bougie')]};
+      const cum = o.fundMode === 'cum' && Array.isArray(I.fundCum), an = o.fundMode === 'an';
+      const main = cum ? `${f((I.fundCum[idx] || 0), 3)} cumulé` : an ? `${f(v * 1095, 1)} par an` : `${f(v, 4)} / 8 h`;
+      const ch = v >= 0.03 ? chip('acheteurs à levier nombreux', '#ffb74d') : v <= -0.01 ? chip('vendeurs à levier nombreux', '#6ec8ff') : v < 0 ? chip('les vendeurs paient', '#6ec8ff') : chip('neutre');
+      const est = I.fundEst != null && idx >= I.fundEst && I.fundNext ? (() => { const left = Math.max(0, I.fundNext - LT.serverNow()); return `versement dans ${Math.floor(left / 3.6e6)} h ${String(Math.floor(left % 3.6e6 / 6e4)).padStart(2, '0')}`; })() : '';
+      return {r1: [name, val(main, v >= 0 ? Panel.FUND_UP : Panel.FUND_DN), ch],
+        r2: [an || cum ? `${f(v, 4)} / 8 h` : `${f(v * 1095, 1)} par an`, I.fundAvg7 != null ? `moyenne 7 j ${f(I.fundAvg7, 4)}` : null, est || null]};
+    }
+    const usd = o.deltaUnit === 'usd' && Array.isArray(I.deltaUsd), DV = usd ? I.deltaUsd : I.delta, v = DV[idx], u = usd ? '$' : I.unit;
+    if (!I.realDelta) return {r1: [name, val('volume acheteur agressif inconnu')]};
+    const x = this.deltaInfo(I).pw.r[idx], lv = Panel.powerLevel(x), cnt = this.deltaStrong(I, idx, DV);
+    const cvd = (o.cvdMode || (o.deltaCvd ? 'perp' : 'off')) !== 'off' ? tags.filter(t => /hausse|baisse|stable/.test(t.txt)).map(t => ({...t, txt: 'CVD ' + t.txt})) : [];
+    return {r1: [name, val(v == null ? '—' : `${Panel.big(v)} ${u}`, v == null ? NT : v >= 0 ? UP : DN),
+      lv == null ? null : chip(`${Panel.POWER_TXT[lv]}${lv >= 1 ? ` · ${x < 10 ? x.toFixed(1).replace('.', ',') : Math.round(x)} × la normale` : ''}`, lv >= 2 ? (v >= 0 ? UP : DN) : lv === 1 ? '#cfd3dc' : '#8a90a0')],
+      r2: [`${cnt.NB} bougies : ${cnt.fb ? cnt.fb + ' achat' + (cnt.fb > 1 ? 's' : '') + ' fort' + (cnt.fb > 1 ? 's' : '') : 'aucun achat fort'}, ${cnt.fs ? cnt.fs + ' vente' + (cnt.fs > 1 ? 's' : '') + ' forte' + (cnt.fs > 1 ? 's' : '') : 'aucune vente forte'}`, ...cvd]};
   }
   // V28 : barres de volume sous les bougies (élément « Volume »), sur leur propre échelle, en bas du graphique
   syncVolume(d) {

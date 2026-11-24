@@ -14,7 +14,7 @@ from engine.atr import Candle
 H1 = 3_600_000
 M5 = 300_000
 M1 = 60_000
-M1_BARS = 1500     # V36 : bougies 1 minute gardées (25 heures) pour l'unité de temps 1m
+M1_BARS = 4500     # V36 : bougies 1 minute gardées pour les unités 1m (les 25 dernières heures) et 3m (V54 : 3 jours, 1 500 bougies de 3 minutes)
 DAY = 86_400_000
 OI_DAYS = 29       # Binance ne donne l'OI 5 min que sur ~30 jours
 M5_FINE_DAYS = 70  # bougies 5 min gardees pour les profils de volume du jour, de la semaine et du mois (courants et precedents)

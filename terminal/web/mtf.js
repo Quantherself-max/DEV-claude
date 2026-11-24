@@ -7,9 +7,9 @@
 // dessinees a leurs niveaux, et en tete les setups qui vont ensemble (une idee et sa couverture sur l'autre instrument).
 const MTF = (() => {
   'use strict';
-  const TFS = ['1m', '5m', '15m', '1h', '4h', '1d', '1w', '1M'];                      // V36 : 1 minute, semaine et mois
-  const SEC = {'1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800, '1M': 2678400};
-  const NAME = {'1m': '1 min', '5m': '5 min', '15m': '15 min', '1h': '1 heure', '4h': '4 heures', '1d': '1 jour', '1w': '1 semaine', '1M': '1 mois'};
+  const TFS = ['1m', '3m', '5m', '15m', '1h', '4h', '1d', '1w', '1M'];                      // V36 : 1 minute, semaine et mois
+  const SEC = {'1m': 60, '3m': 180, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800, '1M': 2678400};
+  const NAME = {'1m': '1 min', '3m': '3 min', '5m': '5 min', '15m': '15 min', '1h': '1 heure', '4h': '4 heures', '1d': '1 jour', '1w': '1 semaine', '1M': '1 mois'};
   const DEF = ['5m', '15m', '1h', '4h', '1d'];
   let LT = null, root = null, cells = null, charts = [], timer = null, on = false, raf = 0, alignAt = 0, pair = null;
 

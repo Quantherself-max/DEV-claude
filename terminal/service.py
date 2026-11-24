@@ -40,7 +40,7 @@ from engine.liquidity import LiqEngine
 from engine.periods import AnchoredVWAP, KINDS, NakedPocs, PeriodTracker
 from engine.stats import atr_series, reach_prob, reach_table, reaction_stats, round_step, sweep_outcomes
 
-TFS = ("1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M")       # V36 : 1 minute, semaine et mois en plus
+TFS = ("1m", "3m", "5m", "15m", "1h", "4h", "1d", "1w", "1M")       # V36 : 1 minute, semaine et mois en plus ; V54 : 3 minutes
 ALERT_TFS = ("5m", "15m", "1h", "4h", "1d")                    # unités possibles pour les alertes (inchangées)
 NAMES = {"D": "d", "W": "w", "M": "m", "Y": "y"}
 PREV_HL = {"D": ("PDH", "PDL"), "W": ("PWH", "PWL"), "M": ("PMH", "PML"), "Y": ("PYH", "PYL")}
@@ -252,8 +252,10 @@ class Market:
     # ---------- donnees pour un timeframe ----------
     def chart_candles(self, tf: str):
         s = self.store
-        if tf == "1m":                                           # V36
-            return s.m1
+        if tf == "1m":                                           # V36 : les 1 500 dernières minutes (25 heures)
+            return s.m1[-CHART_DEFAULT:]
+        if tf == "3m":                                           # V54 : bougies de 3 minutes faites avec les bougies d'une minute (3 jours)
+            return resample(s.m1, INTERVAL_MS["3m"])
         if tf in CALENDAR:                                       # V36 : semaine (lundi 00 h UTC) et mois calendaire
             return resample_cal(s.h1, tf)
         if tf == "5m":

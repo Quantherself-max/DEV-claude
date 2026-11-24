@@ -1,4 +1,4 @@
-# Liq Terminal (V53)
+# Liq Terminal (V54)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
@@ -144,6 +144,40 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V54 : Quant lisible d'un coup d'œil, fenêtres plus sobres, unité 3 minutes, plus d'onglet Assistant
+
+**Onglet Quant : l'essentiel en haut, le détail rangé dessous.** La page faisait plus de 4 000 pixels de haut, avec sept rubriques de tableaux. Elle s'ouvre maintenant sur « L'essentiel » : six grandes cases, chacune avec un chiffre en gros, un verdict en couleur et une phrase qui dit comment le lire.
+- **Qui mène · 24 h** : comptant contre perpétuels, avec le net de chacun. Par exemple « le levier achète mais le comptant vend : hausse fragile ».
+- **Régime · 1 h** : le régime, sa force, et ceux de 15 minutes et de 4 heures.
+- **CVD · 1 h** : perpétuels et comptant côte à côte. « Fragile » quand le levier achète seul, « Absorption » quand le comptant achète contre le levier.
+- **Levier · 24 h** : la variation de l'intérêt ouvert et le financement. La phrase dit qui ouvre et qui sort (acheteurs à levier, shorts qui rachètent, purge…).
+- **Carnet · ± 0,5 %** : le déséquilibre, les murs les plus proches et le dernier mur retiré.
+- **Options BTC** : gamma positif (amorti) ou négatif (amplifié), la bascule, les murs, le max pain et le delta des baleines.
+
+Une bande « Derniers signaux » montre les 4 dernières divergences et absorptions.
+
+**Le détail** est rangé dessous, dans des rubriques fermées par défaut : flux d'ordres, signaux, carnet, options, réseau Bitcoin. Une touche les ouvre.
+
+**Retirés ou raccourcis** :
+- retirés : le CVD par bourse (souvent vide), le profil de volume exact (déjà sur les graphiques) et le tableau des dérivés par bourse (résumé dans « Levier ») ;
+- la ligne 5 minutes du CVD est retirée ;
+- les baleines se limitent à 6 ordres (les autres sous « autres ordres »), les échéances à 4, les variations d'intérêt ouvert à 4 de chaque côté ;
+- le réseau Bitcoin garde 5 lignes.
+
+**Fenêtres sous le graphique (onglet Option).**
+- La tête de chaque fenêtre tient sur une ligne : le nom, la valeur en gras et un verdict en pastille de couleur (« vendeurs qui ouvrent », « fort · 2,6 × la normale », « distribution »…).
+- Quand la fenêtre est assez haute, une deuxième ligne donne une phrase courte sur les 24 dernières bougies.
+- La lecture complète d'avant s'affiche en survolant la tête.
+- La fenêtre du funding n'affiche plus que deux étiquettes : « élevé » et « négatif fort ».
+
+**Unité de temps 3 minutes.**
+- Nouveau bouton « 3m », entre « 1m » et « 5m », aussi dans la grille multi-unités.
+- Les bougies de 3 minutes sont faites avec les bougies d'une minute, gardées désormais sur 3 jours (1 500 bougies de 3 minutes). La « 1m » montre toujours les 25 dernières heures.
+
+**Onglet Assistant retiré.** Il disparaît de la barre du Desk. Les questions à Claude par Telegram marchent toujours (réglages, rubrique 7).
+
+**Vérifié dans un navigateur, en données de test** (et instantané réel des données Quant) : la nouvelle page Quant, ses rubriques ouvertes, la vue téléphone, les têtes de fenêtre, la 3 minutes (1 500 bougies espacées de 180 secondes). Aucune erreur dans la page. Pas vérifié avec les données réelles de Binance.
 
 ## Ce qui est nouveau en V53.2 : un delta qu'on lit d'un coup d'œil (fort ou faible), barres et CVD au choix
 

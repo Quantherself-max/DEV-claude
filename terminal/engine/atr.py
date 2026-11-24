@@ -63,8 +63,8 @@ def resample(candles, interval_ms: int):
     return out
 
 
-INTERVAL_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000,
-               "1w": 604_800_000, "1M": 2_678_400_000}     # V36 : 1 minute, semaine (du lundi) et mois (calendaire ; 31 jours au plus)
+INTERVAL_MS = {"1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000,
+               "1w": 604_800_000, "1M": 2_678_400_000}     # V36 : 1 minute, semaine (du lundi) et mois (calendaire ; 31 jours au plus) ; V54 : 3 minutes
 CALENDAR = ("1w", "1M")                                    # bougies de calendrier : on ne les regroupe pas par une durée fixe
 MONDAY0 = 4 * 86_400_000                                   # lundi 5 janvier 1970 : les semaines commencent le lundi 00 h UTC (comme Binance)
 

@@ -86,6 +86,8 @@ class SimulatedSource(Source):
         self._gen(symbol)
         if interval == "5m":
             data = self._m5[symbol]
+        elif interval == "3m":                                   # V54 : 3 minutes = 3 bougies d'une minute
+            return [k for k in resample(self.candles(symbol, "1m", start_ms - start_ms % 180_000, end_ms), 180_000) if start_ms <= k.t <= end_ms]
         elif interval == "1m":                                   # V36 : chaque bougie 5 min découpée en 5 bougies d'une minute (même plus haut, plus bas)
             out = []
             for k in self._m5[symbol]:

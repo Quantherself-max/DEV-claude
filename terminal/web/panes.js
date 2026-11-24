@@ -230,17 +230,22 @@ class PaneStack {
     if (b.dataset.pa === 'opts') Desk.paneOpts(k, b); else Desk.paneAct(k, b.dataset.pa);
   }
   // ---- lecture chiffrée en tête de fenêtre : rows = [[morceau, ...], ...] ; morceau = texte ou {txt, col, strong} ----
-  head(k, rows) {
+  head(k, rows, tip) {                           // V54 : morceaux {txt, col, k: 'name' | 'val' | 'chip'} ; tip = lecture complète, au survol
     const w = this.win[k];
     if (!w) return;
     const mode = this.cfg().read[k], h = w.h || w.el.offsetHeight || 999;
     const n = mode === 0 ? 0 : Math.min(mode == null ? 2 : mode, h < 150 ? 1 : 2);   // V53.2 : fenêtre basse : une seule ligne, la place va au graphique
-    const shown = n === 0 ? [[{txt: PaneStack.NAMES[k], strong: true}]] : rows.filter(r => r && r.length).slice(0, n);
+    const shown = n === 0 ? [[{txt: PaneStack.NAMES[k], k: 'name'}]] : rows.filter(r => r && r.length).slice(0, n);
     const esc = s => String(s).replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
     const col = c => typeof c === 'string' && /^[#a-z0-9(),.%\s]+$/i.test(c) ? c : '';
-    const html = shown.map((r, i) => `<div class="phr${i ? ' l2' : ''}">` + r.map((p, j) => {
-      const s = typeof p === 'string' ? p : p.txt, cl = typeof p === 'object' ? col(p.col) : '';
-      return (j ? '<i> · </i>' : '') + `<span${cl ? ` style="color:${cl}"` : ''}${typeof p === 'object' && p.strong ? ' class="b"' : ''}>${esc(s)}</span>`;
+    const tt = tip ? ` title="${esc(tip)}"` : '';
+    const html = shown.map((r, i) => `<div class="phr${i ? ' l2' : ''}"${tt}>` + r.map((p, j) => {
+      const s = typeof p === 'string' ? p : p.txt, cl = typeof p === 'object' ? col(p.col) : '', kd = typeof p === 'object' ? p.k : '';
+      const sep = j && !kd && !(typeof r[j - 1] === 'object' && r[j - 1].k) ? '<i> · </i>' : j ? ' ' : '';
+      if (kd === 'name') return sep + `<span class="pn">${esc(s)}</span>`;
+      if (kd === 'val') return sep + `<b class="pv"${cl ? ` style="color:${cl}"` : ''}>${esc(s)}</b>`;
+      if (kd === 'chip') return sep + `<span class="pc"${cl ? ` style="color:${cl};border-color:${cl}"` : ''}>${esc(s)}</span>`;
+      return sep + `<span${cl ? ` style="color:${cl}"` : ''}${typeof p === 'object' && p.strong ? ' class="b"' : ''}>${esc(s)}</span>`;
     }).join('') + '</div>').join('');
     if (html !== w.html) { w.html = html; w.head.innerHTML = html; w.mk = ''; this.margins(w); }
     if (k === 'delta') {                                                // boutons Barres / CVD : allumés quand affichés

@@ -127,9 +127,9 @@ class ServerTests(unittest.TestCase):
             return json.loads(r.read())
 
     def test_new_timeframes(self):
-        self.assertEqual(TFS, ("1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M"))
+        self.assertEqual(TFS, ("1m", "3m", "5m", "15m", "1h", "4h", "1d", "1w", "1M"))         # V54 : 3 minutes
         self.assertEqual(self.call("/api/config")["alertTfs"], list(ALERT_TFS))
-        for tf, step in (("1m", 60), ("1w", 7 * 86400)):
+        for tf, step in (("1m", 60), ("3m", 180), ("1w", 7 * 86400)):
             cs = self.call(f"/api/state?symbol=SOLUSDT&tf={tf}")["candles"]
             self.assertGreater(len(cs), 20)
             self.assertTrue(all(b[0] - a[0] == step for a, b in zip(cs, cs[1:])))

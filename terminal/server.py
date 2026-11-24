@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "53"
-API_LEVEL = 53                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "54"
+API_LEVEL = 54                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -736,7 +736,7 @@ class App:
         m = svc.markets.get(sym)
         ok = m is not None and m.ready and tf in TFS and m.store.h1
         st_ = m.store if ok else None                                # version : dernieres bougies connues (1 h, 5 min, 1 min) et minute en cours
-        ver = (f"{st_.h1[-1].t}:{len(st_.h1)}:{st_.m5[-1].t if st_.m5 else 0}:{st_.m1[-1].t if tf == '1m' and st_.m1 else 0}:"
+        ver = (f"{st_.h1[-1].t}:{len(st_.h1)}:{st_.m5[-1].t if st_.m5 else 0}:{st_.m1[-1].t if tf in ('1m', '3m') and st_.m1 else 0}:"
                f"{int(time.time() // 60)}:{getattr(self, '_epoch', 0)}") if ok else ""
         if have and ver and have == ver:
             return {"same": True, "ready": True, "v": ver}
@@ -833,7 +833,7 @@ class App:
         except Exception as e:                                       # la page ne doit jamais casser le terminal
             return {"ok": False, "why": f"{type(e).__name__}: {e}"}
 
-    POS_WINDOW = {"1m": 60, "5m": 48, "15m": 32, "1h": 24, "4h": 18, "1d": 14, "1w": 8, "1M": 6}
+    POS_WINDOW = {"1m": 60, "3m": 40, "5m": 48, "15m": 32, "1h": 24, "4h": 18, "1d": 14, "1w": 8, "1M": 6}
 
     def indicators(self, sym: str, tf: str, fund: bool = False, spot: bool = False) -> dict:
         """V30 : sous le graphique, l'interet ouvert en bougies (releves de l'adresse Binance, 29 jours, des archives de la carte des

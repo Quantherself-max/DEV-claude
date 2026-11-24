@@ -60,7 +60,7 @@ class PageTest(unittest.TestCase):
 
     def test_version(self):
         srv = (ROOT / "server.py").read_text(encoding="utf-8")
-        self.assertEqual(int(re.search(r'VERSION = "(\d+)"', srv).group(1)), 53)
+        self.assertGreaterEqual(int(re.search(r'VERSION = "(\d+)"', srv).group(1)), 53)
         self.assertGreaterEqual(int(re.search(r"NEED_API = (\d+)", read("app.js")).group(1)), 53)
         self.assertIn("V53", (ROOT / "README.md").read_text(encoding="utf-8"))
 

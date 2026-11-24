@@ -30,7 +30,7 @@ class PaneGrid(unittest.TestCase):
             self.assertIn(s, PANELS, s)
         self.assertIn("static get GRID_N() { return 24; }", PANELS)
         self.assertIn("this.subLevels(pk, panes.includes(pk) ? this.paneGrid(pk, I, L, ok, 'L') : null)", PANELS)
-        self.assertIn("plotW >= 760", PANELS)                                         # téléphone : niveau et tendance en deuxième ligne
+        self.assertIn("paneHead(k, I, idx, Z, zi, G, ok, zok)", PANELS)              # V54 : tête courte ; niveau et tendance au survol
 
     @unittest.skipUnless(shutil.which("node"), "node absent")
     def test_syntax(self):
