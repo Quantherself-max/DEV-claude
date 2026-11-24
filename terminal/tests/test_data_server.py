@@ -459,7 +459,7 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(any(l.startswith("AVWAP 2024") for l in labels))                      # + celui de la configuration
         s1d = json.loads(self.get("/api/series?symbol=BTCUSDT&tf=1d")[1])
         self.assertNotIn("D", s1d["vwap"])
-        self.assertEqual(self.get("/api/series?symbol=BTCUSDT&tf=3m")[0], 404)
+        self.assertEqual(self.get("/api/series?symbol=BTCUSDT&tf=2m")[0], 404)     # V54 : 3m existe ; 2m reste inconnue
         self.assertEqual(self.get("/api/vp?symbol=XXX&tf=1h")[0], 404)
         self.post("/api/vps", {"specs": [{"kind": "auto"}], "anchors": []})                    # remet les valeurs par defaut
 
@@ -753,7 +753,7 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(code, 200, tf)
             self.assertTrue(json.loads(body)["ready"])
         self.assertEqual(self.get("/api/state?symbol=XXX&tf=1h")[0], 404)
-        self.assertEqual(self.get("/api/state?symbol=BTCUSDT&tf=3m")[0], 404)
+        self.assertEqual(self.get("/api/state?symbol=BTCUSDT&tf=2m")[0], 404)       # V54 : 3m existe ; 2m reste inconnue
 
     def test_static_files_and_no_path_traversal(self):
         code, body, hdr = self.get("/")
