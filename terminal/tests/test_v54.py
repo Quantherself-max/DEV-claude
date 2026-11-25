@@ -51,7 +51,7 @@ class AssistantRemovedTest(unittest.TestCase):
 
 class QuantPageTest(unittest.TestCase):
     def test_dashboard(self):
-        js = read("quant.js")
+        js = read("qtab.js")
         for s in ("function whoLeads(d)", "function regimeKpi(d)", "function cvdKpi(d)", "function leverKpi(d)", "function bookKpi(d)", "function optionsKpi(d)",
                   "function lastSignals(d)", "const READ_SP = {", "const READ_REG = {", "L'essentiel", "qOpen54", "['Fragile', 'amb']", "['Absorption', 'amb']"):
             self.assertIn(s, js, s)
@@ -69,7 +69,7 @@ class QuantPageTest(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "node absent")
     def test_syntax(self):
-        for f in ("quant.js", "panels.js", "panes.js", "app.js", "desk.js", "mtf.js"):
+        for f in ("qtab.js", "panels.js", "panes.js", "app.js", "desk.js", "mtf.js"):
             self.assertEqual(subprocess.run(["node", "--check", str(WEB / f)]).returncode, 0, f)
 
 

@@ -329,7 +329,7 @@ function createPanels() {
   const g = document.createElement('section'); g.id = 'mtfGrid'; g.className = 'mtf hide'; desk.appendChild(g); MTF.init(window.LT, g);
   const tg = document.createElement('section'); tg.id = 'tpoGrid'; tg.className = 'tpo hide'; desk.appendChild(tg); TPO.init(window.LT, tg);
   const gg = document.createElement('section'); gg.id = 'gexGrid'; gg.className = 'gexv hide'; desk.appendChild(gg); if (hasMod('GEXV')) GEXV.init(window.LT, gg); else gg.innerHTML = modMissing('GEX', 'gex.js');   // V40 : onglet GEX
-  const qg = document.createElement('section'); qg.id = 'quantGrid'; qg.className = 'quantv hide'; desk.appendChild(qg); if (hasMod('QUANTV')) QUANTV.init(window.LT, qg); else qg.innerHTML = modMissing('Quant', 'quant.js');   // V45 : onglet Quant
+  const qg = document.createElement('section'); qg.id = 'quantGrid'; qg.className = 'quantv hide'; desk.appendChild(qg); if (hasMod('QUANTV')) QUANTV.init(window.LT, qg); else qg.innerHTML = modMissing('Quant', 'qtab.js');   // V45 : onglet Quant
   let sr = false, sx = false;
   panels.forEach(p => {
     p.chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
@@ -1467,17 +1467,35 @@ function loop() {
 // V54.2 : un fichier de la page qui n'est pas arrivé (redémarrage du serveur, réseau, extension du navigateur) est redemandé une fois ;
 // s'il manque toujours, son onglet le dit au lieu de rester noir, et l'encadré rouge donne la cause exacte (fichier, ligne).
 function hasMod(name) { try { return typeof window[name] !== 'undefined' || new Function('return typeof ' + name + ' !== "undefined"')(); } catch (e) { return false; } }
+// V54.3 : quand un fichier n'arrive pas, la page demande au serveur qui l'a arrêté : le serveur (il répond une erreur), le navigateur
+// (le serveur envoie le fichier mais une extension l'empêche d'arriver ou de s'exécuter) ou le serveur arrêté.
+const MOD_WHY = {}, MOD_OF = {'qtab.js': 'QUANTV', 'gex.js': 'GEXV'};
+async function probeFile(f) {
+  const t = ms => new Promise((_, no) => setTimeout(() => no(new Error('délai')), ms));
+  try {
+    const r = await Promise.race([fetch(f + '?p=' + Date.now(), {cache: 'no-store'}), t(6000)]);
+    if (!r.ok) return {who: 'serveur', txt: `le serveur répond « erreur ${r.status} » pour ce fichier : l'installation est incomplète, relance le terminal (la mise à jour le remettra en place)`};
+    return {who: 'navigateur', txt: 'le serveur envoie bien ce fichier, mais le navigateur l\'a empêché de s\'exécuter : une extension (bloqueur de publicités ou protection anti-pistage) l\'a arrêté'};
+  } catch (e) {
+    try { const h = await Promise.race([fetch('/api/health', {cache: 'no-store'}), t(6000)]); if (h.ok) return {who: 'navigateur', txt: 'le serveur répond normalement, mais ce fichier a été arrêté dans le navigateur avant de partir : une extension (bloqueur de publicités ou protection anti-pistage) l\'a bloqué'}; } catch (e2) { /* le serveur ne répond pas non plus */ }
+    return {who: 'réseau', txt: 'le serveur ne répond pas (redémarrage en cours après une mise à jour ?) : attends une minute puis recharge la page'};
+  }
+}
 function modMissing(tab, file) {
-  const e = (window.__early || []).filter(x => x.file === file).map(x => x.msg + (x.line ? ` (ligne ${x.line})` : '')).join(' ; ');
-  return `<section class="card"><h2>La page ${esc(tab)} n'a pas pu se charger</h2><p>Le fichier <b>${esc(file)}</b> n'a pas pu démarrer dans le navigateur${e ? ' : ' + esc(e) : ''}.</p>` +
-    `<p>Recharge la page sans le cache : <b>Ctrl + F5</b> (Windows) ou <b>Cmd + Maj + R</b> (Mac). Si ça revient, envoie une capture de cet encadré et de l'encadré rouge.` +
-    ` Une extension qui bloque les publicités peut aussi bloquer ce fichier : essaie de la mettre en pause pour cette page.</p></section>`;
+  const w = MOD_WHY[file], crash = (window.__early || []).filter(x => x.file === file && !x.load).map(x => x.msg + (x.line ? ` (ligne ${x.line})` : ''));
+  const why = crash.length ? 'il a planté au démarrage : ' + [...new Set(crash)].join(' ; ') : w ? w.txt : 'fichier non reçu';
+  const tip = w && w.who === 'navigateur'
+    ? `<p>Ouvre ton extension de blocage (uBlock Origin, AdBlock, AdGuard, Ghostery, ou le bouclier de Brave) et désactive-la pour cette page (adresse <b>${esc(location.host)}</b>), puis recharge. Le terminal ne contient ni publicité ni pisteur.</p>`
+    : `<p>Recharge la page sans le cache : <b>Ctrl + F5</b> (Windows) ou <b>Cmd + Maj + R</b> (Mac). Si ça revient, envoie une capture de cet encadré et de l'encadré rouge.</p>`;
+  return `<section class="card"><h2>La page ${esc(tab)} n'a pas pu se charger</h2><p>Le fichier <b>${esc(file)}</b> n'a pas pu démarrer : ${esc(why)}.</p>` + tip + '</section>';
 }
 async function loadMissing() {
-  for (const [g, f] of [['QUANTV', 'quant.js'], ['GEXV', 'gex.js']]) {
+  for (const [g, f] of [['QUANTV', 'qtab.js'], ['GEXV', 'gex.js']]) {
     if (hasMod(g)) continue;
     await new Promise(res => { const s = document.createElement('script'); s.src = f + '?r=' + Date.now(); s.onload = s.onerror = res; setTimeout(res, 8000); document.head.appendChild(s); });
   }
+  const lost = [...new Set((window.__early || []).filter(x => x.load && !hasMod(MOD_OF[x.file] || '-')).map(x => x.file))];
+  await Promise.all(lost.map(async f => { MOD_WHY[f] = await probeFile(f); }));
 }
 // V53.1 : erreurs de la page affichées en bas à gauche (une ligne par erreur différente), pour savoir ce qui bloque sans console
 const jsErrs = new Map();
@@ -1558,8 +1576,11 @@ function openSymbol(sym, page) {
     panels: () => panels, switchSymbol, applyLayout, setTf, showErr};
   // V53.1 : chaque étape du démarrage est protégée : une erreur est affichée, et le chargement des données part quand même
   const step = (name, fn) => { try { fn(); } catch (e) { showErr(e, 'démarrage (' + name + ')'); } };
-  await loadMissing();                                                  // V54.2 : quant.js ou gex.js pas arrivé : redemandé une fois
-  (window.__early || []).forEach(x => showErr({message: x.msg, stack: x.line ? `/${x.file}:${x.line}` : ''}, 'chargement de ' + x.file + (hasMod(x.file === 'quant.js' ? 'QUANTV' : x.file === 'gex.js' ? 'GEXV' : '-') ? ' (réparé : rechargé)' : '')));
+  await loadMissing();                                                  // V54.2 : qtab.js ou gex.js pas arrivé : redemandé une fois ; V54.3 : cause cherchée
+  const early = new Map();                                              // V54.3 : un seul message par fichier (le second essai ne s'ajoute plus)
+  (window.__early || []).forEach(x => { const k = x.file + '|' + x.msg + '|' + (x.line || ''); if (!early.has(k)) early.set(k, x); });
+  early.forEach(x => showErr({message: x.load && MOD_WHY[x.file] ? 'fichier non reçu : ' + MOD_WHY[x.file].txt : x.msg, stack: x.line ? `/${x.file}:${x.line}` : ''},
+    'chargement de ' + x.file + (hasMod(MOD_OF[x.file] || '-') ? ' (réparé : rechargé)' : '')));
   step('bureau', () => Desk.init(window.LT));
   step('vue d\'ensemble', () => Overview.init(window.LT));
   step('idées', () => Signals.init(window.LT));

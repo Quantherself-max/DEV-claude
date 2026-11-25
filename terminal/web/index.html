@@ -310,7 +310,7 @@
 window.__early = [];
 window.addEventListener('error', function (e) {
   var t = e.target, f = function (u) { return String(u || '').split('?')[0].split('/').pop(); };
-  if (t && t.tagName === 'SCRIPT') window.__early.push({file: f(t.src), msg: 'fichier non reçu (serveur en redémarrage, réseau, ou bloqué par une extension du navigateur)'});
+  if (t && t.tagName === 'SCRIPT') window.__early.push({file: f(t.src), load: true, msg: 'fichier non reçu'});
   else window.__early.push({file: f(e.filename), line: e.lineno, msg: String(e.message || 'erreur')});
 }, true);</script>
 <script src="vendor/lightweight-charts.standalone.production.js"></script>
@@ -328,7 +328,9 @@ window.addEventListener('error', function (e) {
 <script src="mtf.js"></script>
 <script src="tpo.js"></script>
 <script src="gex.js"></script>
-<script src="quant.js"></script>
+<!-- V54.3 : la page Quant s'appelle qtab.js : le nom « quant.js » est bloqué par la liste anti-pistage EasyPrivacy (règle « /quant.js »,
+     faite pour le script de Quantcast), active par défaut dans uBlock Origin, Brave, AdGuard, Ghostery… -->
+<script src="qtab.js"></script>
 <script src="macro.js"></script>
 <script src="app.js"></script>
 </body>

@@ -477,12 +477,12 @@ class WiringTest(unittest.TestCase):
             self.assertIn(needle, src)
         html = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
         self.assertIn('data-layout="quant"', html)
-        self.assertIn('<script src="quant.js"></script>', html)
+        self.assertIn('<script src="qtab.js"></script>', html)
         self.assertNotIn('value="simulated"', html)                                                # plus de données simulées dans les réglages
         app = (ROOT / "web" / "app.js").read_text(encoding="utf-8")
         self.assertIn(f"const NEED_API = {server.API_LEVEL};", app)
         self.assertIn("QUANTV.init(window.LT, qg)", app)
-        for f in ("quant.js", "app.js"):
+        for f in ("qtab.js", "app.js"):
             self.assertEqual(subprocess.run(["node", "--check", str(ROOT / "web" / f)], capture_output=True).returncode, 0, f)
 
 

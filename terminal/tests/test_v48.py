@@ -80,7 +80,7 @@ class SpotPerpTest(unittest.TestCase):
 
 class PageTest(unittest.TestCase):
     def test_sources_card_removed_and_new_card_present(self):
-        with open(os.path.join(ROOT, "web", "quant.js"), encoding="utf-8") as f:
+        with open(os.path.join(ROOT, "web", "qtab.js"), encoding="utf-8") as f:
             js = f.read()
         self.assertNotIn("sourcesCard", js)
         self.assertNotIn("État des sources", js)

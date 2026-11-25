@@ -162,7 +162,7 @@ class HubWiringTest(unittest.TestCase):
 
 class PageTest(unittest.TestCase):
     def test_layout_and_new_cards(self):
-        with open(os.path.join(ROOT, "web", "quant.js"), encoding="utf-8") as fh:
+        with open(os.path.join(ROOT, "web", "qtab.js"), encoding="utf-8") as fh:
             js = fh.read()
         for k in ("function whalesCard", "function oiChangeCard", "function gammaCard", "function volCard", "function section(", "data-qfold",
                   "Principales accumulations", "Principales réductions", "&whale=${wmin}"):

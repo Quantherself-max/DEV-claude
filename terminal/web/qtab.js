@@ -1,3 +1,5 @@
+// V54.3 : ce fichier s'appelait quant.js ; renommé qtab.js parce que la liste anti-pistage EasyPrivacy (uBlock Origin, Brave, AdGuard…) bloque
+// toute adresse en « /quant.js » (le script de Quantcast porte ce nom) : l'onglet Quant restait vide chez qui utilise un bloqueur.
 // V45 : onglet Quant. Tout ce qui s'affiche ici vient de /api/quant (ingest/hub.py) : des sources publiques réelles lues en direct, calculées
 // par le moteur exact (paquet quant : entiers et décimaux, aucun flottant dans les sommes). Une source qui ne répond pas affiche son erreur ;
 // rien n'est jamais remplacé par une valeur fabriquée.

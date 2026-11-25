@@ -145,6 +145,22 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V54.3 : l'onglet Quant se charge même avec un bloqueur de publicités
+
+**La cause, trouvée.** La liste anti-pistage EasyPrivacy bloque toute adresse qui se termine par « /quant.js ». Cette règle vise le script de pistage de Quantcast, qui porte ce nom. La liste est active par défaut dans uBlock Origin, le bouclier de Brave, AdGuard, Ghostery et la plupart des bloqueurs. Le fichier de la page Quant s'appelait justement `quant.js` : le bloqueur l'arrêtait à chaque chargement, et au nouvel essai aussi.
+
+**Ce qui change.**
+- **Le fichier s'appelle maintenant `qtab.js`.** Aucune liste ne le bloque. La mise à jour automatique installe le nouveau fichier et retire l'ancien.
+- **Tous les fichiers et toutes les adresses du terminal ont été vérifiés** le 25 novembre 2026 contre les listes complètes EasyPrivacy, EasyList, uBlock Origin et AdGuard : 76 adresses (les fichiers de la page et toutes les adresses `/api`). Seule `quant.js` était bloquée. Aucune règle de masquage ne touche non plus les éléments de la page.
+- **Un test empêche de recommencer.** Il refuse tout fichier de la page dont le nom fait partie des 351 noms que ces listes bloquent partout (par exemple `analyse.js`, `beacon.js` ou `pageview.js`).
+- **Si un fichier n'arrive pas, la page dit qui l'a arrêté.** Elle redemande le fichier au serveur pour savoir :
+  - si une **extension du navigateur** l'a bloqué (le serveur répond normalement) : la page dit d'ouvrir le bloqueur et de le désactiver pour l'adresse du terminal ;
+  - si le **serveur** renvoie une erreur (fichier absent) : la page dit de relancer le terminal ;
+  - si le serveur **ne répond pas** (redémarrage après une mise à jour) : la page dit d'attendre une minute.
+- **Un seul message par fichier** dans l'encadré rouge : le second essai ne double plus la ligne.
+
+**Vérifié** dans un navigateur, en reproduisant la règle `/quant.js` d'EasyPrivacy : l'onglet Quant se charge normalement. Quatre autres cas aussi : bloqueur qui arrête aussi `qtab.js`, bloqueur qui n'arrête que l'exécution, fichier absent, fichier qui plante. Chaque cas affiche la bonne cause.
+
 ## Ce qui est nouveau en V54.2 : l'onglet Quant ne peut plus rester noir
 
 **Le problème.** L'onglet Quant restait noir, et l'encadré rouge disait « QUANTV is not defined ». Le fichier de la page Quant (`quant.js`) n'avait pas pu démarrer dans le navigateur : il n'était pas arrivé, ou il avait planté. La cause exacte n'a pas pu être reproduite.

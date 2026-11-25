@@ -22,20 +22,20 @@ class LoadGuardTest(unittest.TestCase):
     def test_reload_and_guards(self):
         app = read("app.js")
         for s in ("function hasMod(name)", "function modMissing(tab, file)", "async function loadMissing()", "await loadMissing();",
-                  "if (hasMod('QUANTV')) QUANTV.init(window.LT, qg); else qg.innerHTML = modMissing('Quant', 'quant.js');",
+                  "if (hasMod('QUANTV')) QUANTV.init(window.LT, qg); else qg.innerHTML = modMissing('Quant', 'qtab.js');",
                   "if (hasMod('GEXV')) GEXV.init(window.LT, gg); else gg.innerHTML = modMissing('GEX', 'gex.js');",
                   "(window.__early || []).forEach(", "Ctrl + F5", "Cmd + Maj + R"):
             self.assertIn(s, app, s)
         for line in app.splitlines():                                               # plus aucun appel non protégé
             if "QUANTV." in line and "hasMod('QUANTV')" not in line and "QUANTV.init(window.LT, qg)" not in line:
                 self.fail("appel non protégé : " + line.strip()[:120])
-        self.assertIn("var QUANTV = (() => {", read("quant.js"))                    # rechargeable : une seconde exécution reste possible
+        self.assertIn("var QUANTV = (() => {", read("qtab.js"))                    # rechargeable : une seconde exécution reste possible
         self.assertIn("var GEXV = (() => {", read("gex.js"))
-        self.assertIn("Array.isArray(a) ? a : []", read("quant.js"))
+        self.assertIn("Array.isArray(a) ? a : []", read("qtab.js"))
 
     @unittest.skipUnless(shutil.which("node"), "node absent")
     def test_syntax(self):
-        for f in ("app.js", "quant.js", "gex.js"):
+        for f in ("app.js", "qtab.js", "gex.js"):
             self.assertEqual(subprocess.run(["node", "--check", str(WEB / f)]).returncode, 0, f)
 
 
