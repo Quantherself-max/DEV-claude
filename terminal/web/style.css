@@ -876,3 +876,23 @@ ul.recent li{padding:3px 0;border-bottom:1px solid #1b2030}
 .pwin .phr .pv{font-size:12.5px;color:#e8eaf0}
 .pwin .phr .pc{font-size:10.5px;line-height:14px;padding:0 6px;border:1px solid #5a6070;border-radius:8px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-weight:600}
 .pwin .phr.l2{font-size:10.5px}
+/* V54.1 : DEX, exposition delta des options BTC, et son historique (DEX ou GEX) */
+.qdex{margin-top:10px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.qdexhd{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.qdexv{font:700 30px/1.1 ui-monospace,"SF Mono",Menlo,Consolas,monospace;color:var(--text)}.qdexv.up{color:#3ee09a}.qdexv.dn{color:#ff7a93}
+.qdex p{margin:0}
+.qdexr{font-weight:600;font-size:14px;color:var(--text)}
+.qdexg{position:relative;height:8px;border-radius:5px;background:rgba(255,255,255,.06);overflow:hidden}
+.qdexg::after{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:rgba(255,255,255,.35)}
+.qdexg i{position:absolute;top:0;bottom:0;border-radius:5px}.qdexg i.dn{background:#ef4444}.qdexg i.up{background:#22c55e}
+.qdexm{color:#c2c8d4}
+.qdexh{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;padding-top:10px;border-top:1px solid var(--line)}
+.qdexw{position:relative}
+.qdexsvg{display:block;width:100%;height:auto}
+.qdexsvg polyline{fill:none;stroke:#3b82f6;stroke-width:2.2;vector-effect:non-scaling-stroke}.qdexsvg.gex polyline{stroke:#f59e0b}
+.qdexsvg circle{fill:#3b82f6}.qdexsvg.gex circle{fill:#f59e0b}.qdexsvg circle.qdexlast{fill:#fff;stroke:#3b82f6;stroke-width:2;vector-effect:non-scaling-stroke}.qdexsvg.gex circle.qdexlast{stroke:#f59e0b}
+.qdexgrid{stroke:rgba(148,163,184,.16);stroke-dasharray:4 4;vector-effect:non-scaling-stroke}.qdexzero{stroke:rgba(148,163,184,.45);vector-effect:non-scaling-stroke}
+.qdexcur{stroke:rgba(255,255,255,.5);stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
+.qdexax{fill:#8a90a0;font-size:11px;font-family:-apple-system,Segoe UI,Roboto,sans-serif}
+.qdextip{position:absolute;z-index:3;min-width:150px;background:#0b0e14f0;border:1px solid #39404f;border-radius:6px;padding:6px 9px;font-size:12px;display:flex;flex-direction:column;gap:2px;pointer-events:none}
+.qdextip[hidden]{display:none}

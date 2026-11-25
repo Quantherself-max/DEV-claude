@@ -145,6 +145,36 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V54.1 : DEX, l'exposition delta des options BTC, dans l'onglet Quant
+
+**Où.** Une grande carte sous « L'essentiel », dans l'onglet Quant.
+
+**Ce qu'elle montre.**
+- **Le DEX en grand.** C'est la position delta de toutes les options BTC ouvertes chez Deribit, en dollars : intérêt ouvert × delta × prix à terme. Les calls comptent en positif, les puts en négatif.
+- **Une pastille de rang**, par exemple « P1 · extrême bas 90 j » : la place du dernier relevé parmi ceux de la période (P0 = le plus bas, P100 = le plus haut).
+- **La lecture.** DEX négatif : « Flux mécanique vendeur », car les teneurs de marché, en face, couvrent le delta inverse en vendant. DEX positif : « Flux mécanique acheteur ».
+- **Une jauge centrée** (négatif à gauche, positif à droite) et une phrase avec le delta des calls et celui des puts.
+- C'est une exposition structurelle, pas un signal de prix.
+
+**L'historique DEX et GEX.**
+- Deux boutons choisissent le graphique : DEX ou GEX (dollars à couvrir pour 1 % de mouvement).
+- Trois boutons choisissent la période : 7 jours (un point par heure), 30 ou 90 jours (un point par jour).
+- Le survol d'un point donne sa date et sa valeur.
+
+**D'où vient l'historique.** Deribit ne publie pas l'historique de l'intérêt ouvert par option, et les sources qui le vendent sont payantes. Le terminal relève donc lui-même le DEX et le GEX chaque heure, même onglet fermé, et garde 120 jours (fichier `options/expo_BTC.json` du dossier de données).
+- L'historique commence au premier relevé de ton terminal et se remplit jour après jour.
+- Tant que la période n'est pas couverte, la pastille le dit (par exemple « sur 3 j d'historique »).
+- Rien n'est inventé.
+
+**En direct.** Onglet ouvert, la valeur en grand est recalculée à chaque lecture de la chaîne d'options. Onglet fermé, c'est le dernier relevé horaire.
+
+**Vérifié.**
+- Le calcul : delta d'un call plus delta d'un put au même strike = 2 N(d1) − 1 ; le même GEX que la carte du gamma.
+- Le relevé : enregistré, relu depuis le disque, retiré après 120 jours.
+- Le DEX en direct, avec une réponse de Deribit au vrai format.
+- La carte, les boutons et l'infobulle, dans un navigateur, avec un historique de test.
+- Pas vérifié avec les vraies réponses de Deribit (inaccessibles depuis la machine de test).
+
 ## Ce qui est nouveau en V54 : Quant lisible d'un coup d'œil, fenêtres plus sobres, unité 3 minutes, plus d'onglet Assistant
 
 **Onglet Quant : l'essentiel en haut, le détail rangé dessous.** La page faisait plus de 4 000 pixels de haut, avec sept rubriques de tableaux. Elle s'ouvre maintenant sur « L'essentiel » : six grandes cases, chacune avec un chiffre en gros, un verdict en couleur et une phrase qui dit comment le lire.

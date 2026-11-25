@@ -15,12 +15,15 @@
 //   chacun avec un verdict et une phrase qui dit comment le lire, puis les derniers signaux. Le détail est rangé dessous, dans des
 //   rubriques fermées par défaut. Retirés : CVD par bourse, profil de volume exact (déjà sur les graphiques), tableau des dérivés par
 //   bourse (résumé dans « Levier »), listes trop longues (baleines, échéances, réseau Bitcoin raccourcis).
+// V54.1 : DEX (exposition delta des options BTC) sous « L'essentiel » : valeur, rang sur 7, 30 ou 90 jours, lecture, jauge, et
+//   l'historique DEX ou GEX (relevé chaque heure par le terminal lui-même, ingest/optflow.py) avec l'infobulle de chaque point.
 const QUANTV = (() => {
   'use strict';
   let LT = null, root = null, on = false, timer = null, data = null, err = null, busy = false, wsort = 'big';
   const ls = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* rien */ } };
   let wmin = [1e6, 5e6, 1e7].includes(ls('qWhaleMin', 5e6)) ? ls('qWhaleMin', 5e6) : 5e6;
+  let xwin = [7, 30, 90].includes(ls('qDexWin', 90)) ? ls('qDexWin', 90) : 90, xwhat = ls('qDexWhat', 'dex') === 'gex' ? 'gex' : 'dex', dexPts = [], dexW = 1000;
   const opened = new Set(ls('qOpen54', []));                            // V54 : rubriques de détail ouvertes (fermées par défaut)
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const sgn = v => v > 0 ? '+' : v < 0 ? '−' : '';
@@ -46,12 +49,29 @@ const QUANTV = (() => {
     LT = lt; root = host;
     root.innerHTML = `<div class="qbar"><b class="qttl"></b><span class="qmeta muted small"></span><span class="spacer"></span>` +
       `<span class="muted small">Données réelles uniquement · calculs exacts</span></div><div class="qgrid"></div>`;
+    root.addEventListener('mousemove', dexTip);
+    root.addEventListener('mouseleave', () => { const t = root.querySelector('.qdextip'); if (t) t.hidden = true; });
     root.addEventListener('click', e => {
       const ws = e.target.closest('[data-qws]'); if (ws) { wsort = ws.dataset.qws; render(); return; }
       const wm = e.target.closest('[data-qwm]'); if (wm) { wmin = +wm.dataset.qwm; lsSet('qWhaleMin', wmin); load(); return; }
+      const xw = e.target.closest('[data-qxw]'); if (xw) { xwin = +xw.dataset.qxw; lsSet('qDexWin', xwin); render(); return; }
+      const xk = e.target.closest('[data-qxk]'); if (xk) { xwhat = xk.dataset.qxk; lsSet('qDexWhat', xwhat); render(); return; }
       const f = e.target.closest('[data-qfold]');
       if (f) { const k = f.dataset.qfold; if (opened.has(k)) opened.delete(k); else opened.add(k); lsSet('qOpen54', [...opened]); render(); }
     });
+  }
+
+  // V54.1 : infobulle de l'historique DEX / GEX : le point le plus proche du pointeur
+  function dexTip(e) {
+    const sv = e.target.closest && e.target.closest('.qdexsvg'), w = sv && sv.closest('.qdexw'), tip = w && w.querySelector('.qdextip'), ln = sv && sv.querySelector('.qdexcur');
+    if (!sv || !tip || !dexPts.length) return;
+    const r = sv.getBoundingClientRect(), vx = (e.clientX - r.left) / r.width * dexW;
+    const p = dexPts.reduce((a, b) => Math.abs(b.x - vx) < Math.abs(a.x - vx) ? b : a);
+    tip.innerHTML = `<b>${xwhat === 'dex' ? 'DEX · exposition delta' : 'GEX · exposition gamma'}</b><span>${(xwin === 7 ? DM : DAYF).format(p.t)}</span><b class="${cls(p.v)}">${short$(p.v)}</b>`;
+    tip.hidden = false;
+    const px0 = p.x / dexW * r.width, left = px0 + 14 + 170 > r.width ? px0 - 184 : px0 + 14;
+    tip.style.left = left + 'px'; tip.style.top = Math.max(0, p.y / 240 * r.height - 30) + 'px';
+    if (ln) { ln.setAttribute('x1', p.x); ln.setAttribute('x2', p.x); ln.style.display = ''; }
   }
 
   async function load() {
@@ -187,8 +207,58 @@ const QUANTV = (() => {
       ` <span class="muted">${HM.format(x.t)} · ${esc(x.where)}</span></span>`).join('')}` +
       `<span class="qsih muted">▲ = favorable à la hausse, ▼ = à la baisse · divergence : le CVD contredit le prix ; absorption : gros volume sans mouvement</span></div>`;
   }
+  // ---------- V54.1 : DEX, exposition delta des options BTC ----------
+  const pctWord = p => p == null ? null : p <= 5 ? 'extrême bas' : p <= 20 ? 'bas' : p >= 95 ? 'extrême haut' : p >= 80 ? 'haut' : 'milieu';
+  const short$ = v => { const a = Math.abs(v), f = (x, dd) => x.toFixed(dd).replace('.', ',');
+    return (v < 0 ? '−' : '') + (a >= 1e9 ? f(a / 1e9, a >= 1e10 ? 0 : 1) + ' Md $' : a >= 1e6 ? f(a / 1e6, a >= 1e8 ? 0 : 1) + ' M $' : a >= 1e3 ? f(a / 1e3, 0) + ' k $' : f(a, 0) + ' $'); };
+  function dexChart(E) {
+    dexPts = [];
+    const k = xwhat === 'dex' ? 1 : 2, src = xwin === 7 ? (E.hourly || []) : (E.daily || []), t1 = E.last.t;
+    const pts = src.filter(r => r[0] >= t1 - xwin * 86400000 && r[k] != null).map(r => ({t: r[0], v: r[k]}));
+    if (pts.length < 2) return `<p class="muted small">Le graphique apparaît dès le deuxième relevé (un par heure).</p>`;
+    const W = dexW = Math.max(320, Math.round(((root.querySelector('.qgrid') || root).clientWidth || 1034) - 34)), H = 240, L = 78, B = 26, T = 10, vs = pts.map(p => p.v);   // une unité = un pixel : textes et points non déformés
+    let lo = Math.min(...vs), hi = Math.max(...vs); const pad = (hi - lo || Math.abs(hi) || 1) * 0.08; lo -= pad; hi += pad;
+    const t0 = pts[0].t, tx = t => L + (t - t0) / ((t1 - t0) || 1) * (W - L - 10), ty = v => T + (hi - v) / (hi - lo) * (H - T - B);
+    dexPts = pts.map(p => ({x: tx(p.t), y: ty(p.v), t: p.t, v: p.v}));
+    let g = '';
+    for (let i = 0; i <= 3; i++) { const v = hi - (hi - lo) * (i / 3) - (i === 0 ? pad * 0 : 0), y = ty(v);
+      g += `<line x1="${L}" x2="${W}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" class="qdexgrid"/><text x="${L - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" class="qdexax">${short$(v)}</text>`; }
+    if (lo < 0 && hi > 0) g += `<line x1="${L}" x2="${W}" y1="${ty(0).toFixed(1)}" y2="${ty(0).toFixed(1)}" class="qdexzero"/>`;
+    const nx = 6;
+    for (let i = 0; i < nx; i++) { const t = t0 + (t1 - t0) * i / (nx - 1);
+      g += `<text x="${tx(t).toFixed(1)}" y="${H - 6}" text-anchor="${i === 0 ? 'start' : i === nx - 1 ? 'end' : 'middle'}" class="qdexax">${(xwin === 7 ? DM : DAYF).format(t)}</text>`; }
+    const line = dexPts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+    const dots = dexPts.length <= 200 ? dexPts.map((p, i) => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${i === dexPts.length - 1 ? 4.5 : 2.6}" class="${i === dexPts.length - 1 ? 'qdexlast' : ''}"/>`).join('') : '';
+    return `<div class="qdexw"><svg class="qdexsvg ${xwhat}" viewBox="0 0 ${W} ${H}">${g}` +
+      `<line class="qdexcur" x1="0" x2="0" y1="${T}" y2="${H - B}" style="display:none"/><polyline points="${line}"/>${dots}</svg><div class="qdextip" hidden></div></div>`;
+  }
+  function dexCard(d) {
+    const E = d.optFlow && d.optFlow.expo, live = d.options && !d.options.error && d.options.dex, coinNote = d.symbol === 'BTCUSDT' ? '' : ' <span class="muted small">· options BTC, référence du marché</span>';
+    if (!E && !live) return `<section class="qdex"><div class="qkl">DEX · Exposition delta${coinNote}</div><p class="muted small">${d.optFlow ? 'Premier relevé dans moins d\'une heure (un relevé par heure, même onglet fermé).' : 'Lecteur des options coupé dans les réglages (TERMINAL_OPTION_WHALES=0).'}</p></section>`;
+    const v = live ? live.total : E.last.dex, calls = live ? live.calls : E.last.dexCalls, puts = live ? live.puts : E.last.dexPuts;
+    const R = E && E.ranks && E.ranks[String(xwin)], p = R && R.dex, span = R ? R.span : 0, full = span >= xwin - 0.5;
+    const badge = p == null ? '' : `<span class="qkc ${p <= 5 || p >= 95 ? 'amb' : ''}" title="Rang du dernier relevé parmi les relevés horaires de la période (P0 = le plus bas, P100 = le plus haut)">P${p} · ${pctWord(p)} ${full ? xwin + ' j' : `sur ${nf(span, span < 2 ? 1 : 0)} j d'historique`}</span>`;
+    const src = E && E.hourly ? E.hourly.filter(r => r[0] >= E.last.t - xwin * 86400000).map(r => r[1]) : [];
+    const mx = Math.max(Math.abs(v), ...src.map(Math.abs)) || 1, wd = Math.min(50, Math.abs(v) / mx * 50);
+    const read = v < 0 ? 'Flux mécanique vendeur : couverture en vendant comptant et perpétuels' : 'Flux mécanique acheteur : couverture en achetant comptant et perpétuels';
+    const more = v < 0 ? `Les options ouvertes penchent à la baisse : ${short$(puts)} de delta en puts contre ${short$(calls)} en calls. En face, les teneurs de marché portent le delta inverse et le couvrent en vendant.`
+      : `Les options ouvertes penchent à la hausse : ${short$(calls)} de delta en calls contre ${short$(puts)} en puts. En face, les teneurs de marché portent le delta inverse et le couvrent en achetant.`;
+    const ext = p != null && (p <= 5 || p >= 95) ? ' Niveau rarement atteint sur la période : une telle couverture se défait souvent aux échéances (vendredi 9 h, heure de Paris).' : '';
+    const age = live ? 'en direct' : `relevé ${ago(d.now - E.last.t)}`;
+    const tabs = `<div class="qseg">${[['dex', 'DEX'], ['gex', 'GEX']].map(([k, n]) => `<button data-qxk="${k}" class="${k === xwhat ? 'on' : ''}">${n}</button>`).join('')}</div>` +
+      `<div class="qseg">${[7, 30, 90].map(k => `<button data-qxw="${k}" class="${k === xwin ? 'on' : ''}">${k} j</button>`).join('')}</div>`;
+    const hist = E ? `<div class="qdexh"><span class="qkl">Historique DEX &amp; GEX · BTC</span><span class="spacer"></span>${tabs}</div>` +
+      `<div class="qdexsub muted small">${xwhat === 'dex' ? 'DEX · exposition delta ($)' : 'GEX · exposition gamma ($ à couvrir pour 1 % de mouvement ; positif = mouvements amortis, négatif = amplifiés)'}</div>` + dexChart(E) +
+      `<p class="muted small">Relevé par ton terminal chaque heure, même onglet fermé, depuis le ${DAYF.format(E.first)} (${nf(E.n)} relevé${E.n > 1 ? 's' : ''}) ; ${xwin === 7 ? 'un point par heure' : 'un point par jour (le dernier relevé du jour)'}.` +
+      `${full ? '' : ` Deribit ne publie pas l'historique de l'intérêt ouvert par option : la période de ${xwin} jours se remplit au fil des jours.`}</p>` : '';
+    return `<section class="qdex"><div class="qdexhd"><span class="qkl">DEX · Exposition delta${coinNote}</span><b class="qdexv ${cls(v)}">${short$(v)}</b>${badge}<span class="spacer"></span><span class="muted small">${age}</span></div>` +
+      `<p class="small muted">Position delta agrégée du portefeuille d'options. Une exposition structurelle, pas un signal de prix.</p>` +
+      `<div class="qdexr">${read}</div><div class="qdexg" title="Le plus grand DEX de la période (en valeur absolue) remplit la moitié ; à gauche négatif, à droite positif"><i class="${v >= 0 ? 'up' : 'dn'}" style="width:${wd.toFixed(1)}%;left:${(v >= 0 ? 50 : 50 - wd).toFixed(1)}%"></i></div>` +
+      `<p class="small qdexm">${more}${ext}</p>${hist}</section>`;
+  }
+
   function summary(d) {
-    return `<div class="qdash">${whoLeads(d)}${regimeKpi(d)}${cvdKpi(d)}${leverKpi(d)}${bookKpi(d)}${optionsKpi(d)}</div>${lastSignals(d)}`;
+    return `<div class="qdash">${whoLeads(d)}${regimeKpi(d)}${cvdKpi(d)}${leverKpi(d)}${bookKpi(d)}${optionsKpi(d)}</div>${dexCard(d)}${lastSignals(d)}`;
   }
 
   // ---------- flux d'ordres ----------

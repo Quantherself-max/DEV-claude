@@ -18,6 +18,8 @@ d'évaluation est de l'ordre de 10^-15 en relatif. La loi normale utilise erfc (
 - max_pain : strike qui minimise la somme payée aux détenteurs à l'échéance ; calcul EXACT en décimal.
 - gex_by_strike : gamma × intérêt ouvert × F² × 1 %, en dollars à couvrir pour un mouvement de 1 %, calls +, puts - (convention
   habituelle : les teneurs de marché sont acheteurs des calls et vendeurs des puts du public ; ce n'est pas observable).
+- exposures (V54.1) : DEX = Σ intérêt ouvert × delta × F, en dollars : la position delta agrégée de toutes les options ouvertes (calls
+  delta positif, puts delta négatif), vue des détenteurs ; et le GEX total (même convention que gex_by_strike), sans recherche de bascule.
 Module PUR."""
 from __future__ import annotations
 import math
@@ -207,6 +209,28 @@ def gex_by_strike(rows: list, now_ms: int, spot: float | None = None) -> dict:
         flip = ref * (s0 + (s1 - s0) * (0.0 - v0) / (v1 - v0))
     return {"byStrike": rows_out, "total": tot, "callWall": call_wall[0] if call_wall[1] > 0 else None,
             "putWall": put_wall[0] if put_wall[1] < 0 else None, "flip": flip, "n": len(good)}
+
+
+def exposures(rows: list, now_ms: int) -> dict:
+    """V54.1 : {dex, dexCalls, dexPuts, gex, n} pour les options ouvertes encore vivantes (plus d'une minute avant l'échéance).
+    dex : Σ intérêt ouvert × delta × F (dollars ; négatif = les détenteurs d'options sont orientés à la baisse, surtout des puts) ;
+    gex : Σ gamma × intérêt ouvert × F² × 1 % (calls +, puts -)."""
+    dc = dp = gex = 0.0
+    n = 0
+    for r in rows:
+        t = years(r["expiry"], now_ms)
+        if not (t > MIN_T and r.get("oi") and r["oi"] > 0 and r.get("iv") and r["iv"] > 0 and r.get("f") and r["f"] > 0 and r.get("strike")):
+            continue
+        d1 = d1d2(r["f"], r["strike"], r["iv"], t)[0]
+        g = norm_pdf(d1) / (r["f"] * r["iv"] * math.sqrt(t)) * r["oi"] * r["f"] * r["f"] * 0.01
+        if r["kind"] == "C":
+            dc += norm_cdf(d1) * r["oi"] * r["f"]
+            gex += g
+        else:
+            dp += (norm_cdf(d1) - 1.0) * r["oi"] * r["f"]
+            gex -= g
+        n += 1
+    return {"dex": dc + dp, "dexCalls": dc, "dexPuts": dp, "gex": gex, "n": n}
 
 
 def put_call(rows: list) -> dict:

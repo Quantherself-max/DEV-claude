@@ -5,8 +5,13 @@ il y a 24 heures. Il est léger : toutes les 5 minutes, les transactions d'optio
 toutes les heures, une photo de l'intérêt ouvert de chaque option (une requête). Au premier lancement, il lit les 24 dernières heures de
 transactions (environ 13 pages, 4 Mo), page par page avec une pause.
 
+V54.1 : à chaque photo horaire, l'exposition delta (DEX) et l'exposition gamma (GEX) de toutes les options ouvertes sont calculées
+(quant.options.exposures) et gardées 120 jours : c'est l'historique DEX et GEX de l'onglet Quant. Deribit ne publie pas l'historique de
+l'intérêt ouvert par option : cet historique commence au premier relevé de ton terminal et ne contient que des relevés réels.
+
 Fichiers (dossier de données, sous-dossier « options ») :
   oi_BTC.json       photos horaires {instrument: contrats ouverts}, 3 jours au plus ;
+  expo_BTC.json     relevés horaires [heure, indice, DEX, GEX, DEX des calls, DEX des puts] (dollars), 120 jours au plus ;
   whales_BTC.json   baleines (ordres d'au moins 1 million de dollars), 3 jours au plus, et l'heure de la dernière transaction lue.
 
 Rien n'est inventé : sans photo assez ancienne, la page dit l'écart réel entre les deux photos comparées."""
@@ -17,12 +22,14 @@ import threading
 import time
 from pathlib import Path
 
+from quant import options as qopt
 from quant import whales as qw
 from .core import IngestError
 from .venues import Deribit
 
 HOUR, DAY = 3_600_000, 86_400_000
 KEEP_MS = 3 * DAY
+EXPO_KEEP = 120 * DAY                                                    # V54.1 : historique DEX / GEX
 ERRS = (IngestError, KeyError, IndexError, TypeError, ValueError, ArithmeticError, AttributeError, OSError)
 
 
@@ -38,6 +45,7 @@ class OptionsFlow:
         self.thread = None
         self.snaps: list = []                 # [[heure ms, indice, {instrument: contrats}]]
         self.orders: list = []                # baleines, de la plus ancienne à la plus récente
+        self.expo: list = []                  # V54.1 : [[heure ms, indice, DEX, GEX, DEX calls, DEX puts]]
         self.last_t = None                    # heure de la dernière transaction lue
         self.grouper = qw.Grouper(self.min_usd)
         self.error = None
@@ -60,6 +68,11 @@ class OptionsFlow:
         except (OSError, ValueError):
             self.snaps = []
         try:
+            d = json.loads(self._path("expo").read_text(encoding="utf-8"))
+            self.expo = [e for e in d.get("expo", []) if isinstance(e, list) and len(e) == 6 and all(isinstance(x, (int, float)) or x is None for x in e)]
+        except (OSError, ValueError):
+            self.expo = []
+        try:
             d = json.loads(self._path("whales").read_text(encoding="utf-8"))
             self.orders = [o for o in d.get("orders", []) if isinstance(o, dict) and "t" in o]
             self.last_t = d.get("last")
@@ -81,14 +94,18 @@ class OptionsFlow:
         """Photo de l'intérêt ouvert de chaque option (1 contrat = 1 BTC chez Deribit)."""
         rows, t = self.deribit.book_summary(self.cur, "option")
         t = t or self.now_ms()
-        oi, index = {}, None
+        oi, index, chain = {}, None, []
         for r in rows:
             n = r.get("instrument_name")
-            if qw.parse_name(n) is None:
+            m = qw.parse_name(n)
+            if m is None:
                 continue
             oi[n] = float(r.get("open_interest") or 0.0)
             if r.get("estimated_delivery_price"):
                 index = float(r["estimated_delivery_price"])
+            iv, f = r.get("mark_iv"), r.get("underlying_price")             # V54.1 : de quoi calculer le DEX et le GEX
+            if oi[n] > 0 and iv and f and iv > 0 and f > 0:
+                chain.append({"strike": m["strike"], "kind": m["kind"], "expiry": m["expiry"], "oi": oi[n], "iv": float(iv) / 100.0, "f": float(f)})
         if not oi:
             raise IngestError("Deribit : aucune option dans le résumé du carnet", "format")
         with self.lock:
@@ -96,6 +113,15 @@ class OptionsFlow:
             self.snaps = [s for s in self.snaps if s[0] >= t - KEEP_MS]
             doc = {"snaps": self.snaps}
         self._save("oi", doc)
+        if chain:
+            x = qopt.exposures(chain, t)
+            if x["n"]:
+                with self.lock:
+                    if not self.expo or t > self.expo[-1][0]:
+                        self.expo.append([t, index, round(x["dex"], 2), round(x["gex"], 2), round(x["dexCalls"], 2), round(x["dexPuts"], 2)])
+                    self.expo = [e for e in self.expo if e[0] >= t - EXPO_KEEP]
+                    edoc = {"expo": self.expo}
+                self._save("expo", edoc)
 
     def poll_trades(self) -> int:
         """Transactions depuis la dernière lecture (24 heures au plus) ; renvoie le nombre de nouvelles baleines."""
@@ -181,6 +207,31 @@ class OptionsFlow:
             return cur, None
         return cur, old
 
+    def expo_summary(self, now_ms: int) -> dict | None:
+        """V54.1 : pour la page : le dernier relevé, les relevés horaires des 7 derniers jours, un relevé par jour (le dernier de chaque jour
+        UTC) sur 120 jours, et le rang du dernier DEX et du dernier GEX parmi les relevés horaires de 7, 30 et 90 jours (percentile, 0 à 100)."""
+        with self.lock:
+            ex = list(self.expo)
+        if not ex:
+            return None
+        last = ex[-1]
+        daily, seen = [], {}
+        for e in ex:
+            seen[e[0] // DAY] = e
+        daily = [[e[0], e[2], e[3]] for _, e in sorted(seen.items())]
+        hourly = [[e[0], e[2], e[3]] for e in ex if e[0] >= last[0] - 7 * DAY]
+        ranks = {}
+        for days in (7, 30, 90):
+            win = [e for e in ex if e[0] >= last[0] - days * DAY]
+            span = (last[0] - win[0][0]) / DAY
+            r = {"span": span, "n": len(win)}
+            for i, key in ((2, "dex"), (3, "gex")):
+                vals = [e[i] for e in win if e[i] is not None]
+                r[key] = round(100.0 * sum(1 for v in vals if v < last[i]) / len(vals)) if len(vals) >= 2 else None
+            ranks[str(days)] = r
+        return {"last": {"t": last[0], "index": last[1], "dex": last[2], "gex": last[3], "dexCalls": last[4], "dexPuts": last[5]},
+                "first": ex[0][0], "n": len(ex), "hourly": hourly, "daily": daily, "ranks": ranks}
+
     def summary(self, now_ms: int | None = None, hours: int = 24, top: int = 12, min_usd: float | None = None) -> dict:
         """`min_usd` : seuil d'affichage (au moins celui de l'enregistrement)."""
         now = now_ms or self.now_ms()
@@ -196,5 +247,5 @@ class OptionsFlow:
         latest = sorted(sel, key=lambda o: -o["t"])[:top]
         return {"whales": {"sum": qw.summarize(sel, now, hours), "biggest": biggest, "latest": latest, "minUsd": floor, "recordUsd": self.min_usd,
                            "since": max(now - hours * HOUR, min((o["t"] for o in self.orders), default=now)), "last": self.last_t},
-                "oi": oi, "snaps": len(self.snaps), "firstSnap": self.snaps[0][0] if self.snaps else None,
+                "oi": oi, "snaps": len(self.snaps), "firstSnap": self.snaps[0][0] if self.snaps else None, "expo": self.expo_summary(now),
                 "error": self.error, "state": self.state, "hours": hours}

@@ -404,6 +404,7 @@ class QuantHub:
             rows = ch["rows"]
             live = [r for r in rows if r["oi"] > 0]
             g = qopt.gex_by_strike(live, now, ch["index"])
+            x = qopt.exposures(live, now)                                  # V54.1 : exposition delta (DEX) en direct
             exps = sorted({r["expiry"] for r in live if r["expiry"] - now > 2 * HOUR})
             pains = []
             for e in exps[:6]:
@@ -421,6 +422,7 @@ class QuantHub:
             near = sorted(g["byStrike"], key=lambda r: abs(r[0] - spot))[:40]
             self.opt = {"t": now, "index": ch["index"], "n": len(rows), "withOi": len(live), "skipped": ch["skipped"],
                         "smile": qopt.smile(rows, now)[:8], "maxPain": pains,
+                        "dex": {"total": x["dex"], "calls": x["dexCalls"], "puts": x["dexPuts"]},
                         "gex": {"total": g["total"], "flip": g["flip"], "callWall": g["callWall"], "putWall": g["putWall"],
                                 "byStrike": sorted(near)}}
         self._run("options Deribit", go)
