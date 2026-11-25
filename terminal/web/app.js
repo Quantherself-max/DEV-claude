@@ -308,9 +308,9 @@ function applyLayout() {
   const tg = $('#tpoGrid');                                             // V17 : vue TPO
   if (tg) { tg.classList.toggle('hide', st.layout !== 'tpo'); if (st.layout === 'tpo' && st.page === 'desk') TPO.show(); else TPO.hide(); }
   const gg = $('#gexGrid');                                             // V40 : onglet GEX
-  if (gg) { gg.classList.toggle('hide', st.layout !== 'gex'); if (st.layout === 'gex' && st.page === 'desk') GEXV.show(); else GEXV.hide(); }
+  if (gg && hasMod('GEXV')) { gg.classList.toggle('hide', st.layout !== 'gex'); if (st.layout === 'gex' && st.page === 'desk') GEXV.show(); else GEXV.hide(); } else if (gg) gg.classList.toggle('hide', st.layout !== 'gex');
   const qg = $('#quantGrid');                                           // V45 : onglet Quant (moteur exact)
-  if (qg) { qg.classList.toggle('hide', st.layout !== 'quant'); if (st.layout === 'quant' && st.page === 'desk') QUANTV.show(); else QUANTV.hide(); }
+  if (qg && hasMod('QUANTV')) { qg.classList.toggle('hide', st.layout !== 'quant'); if (st.layout === 'quant' && st.page === 'desk') QUANTV.show(); else QUANTV.hide(); } else if (qg) qg.classList.toggle('hide', st.layout !== 'quant');
   document.querySelectorAll('#layouts button').forEach(b => b.classList.toggle('on', b.dataset.layout === st.layout || (b.dataset.layout === 'main' && st.layout === '1')));
   $('#deskwrap').classList.toggle('noside', !st.sideOpen);
   $('#sideToggle').textContent = st.sideOpen ? 'Panneau ▸' : '◂ Panneau';
@@ -328,8 +328,8 @@ function createPanels() {
   ['main', 'liq', 'vp'].forEach(k => { const el = document.createElement('section'); desk.appendChild(el); panels.push(new Panel(el, k)); });
   const g = document.createElement('section'); g.id = 'mtfGrid'; g.className = 'mtf hide'; desk.appendChild(g); MTF.init(window.LT, g);
   const tg = document.createElement('section'); tg.id = 'tpoGrid'; tg.className = 'tpo hide'; desk.appendChild(tg); TPO.init(window.LT, tg);
-  const gg = document.createElement('section'); gg.id = 'gexGrid'; gg.className = 'gexv hide'; desk.appendChild(gg); GEXV.init(window.LT, gg);   // V40 : onglet GEX
-  const qg = document.createElement('section'); qg.id = 'quantGrid'; qg.className = 'quantv hide'; desk.appendChild(qg); QUANTV.init(window.LT, qg);   // V45 : onglet Quant
+  const gg = document.createElement('section'); gg.id = 'gexGrid'; gg.className = 'gexv hide'; desk.appendChild(gg); if (hasMod('GEXV')) GEXV.init(window.LT, gg); else gg.innerHTML = modMissing('GEX', 'gex.js');   // V40 : onglet GEX
+  const qg = document.createElement('section'); qg.id = 'quantGrid'; qg.className = 'quantv hide'; desk.appendChild(qg); if (hasMod('QUANTV')) QUANTV.init(window.LT, qg); else qg.innerHTML = modMissing('Quant', 'quant.js');   // V45 : onglet Quant
   let sr = false, sx = false;
   panels.forEach(p => {
     p.chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
@@ -359,7 +359,7 @@ function onTick(price, tms, src) {
   if (!(price > 0)) return;
   live.price = price; live.t = Date.now(); live.src = src; live.dirty = true;
   if (live.sym === st.symbol) { MTF.onTick(price, tms); TPO.onTick(price); }
-  GEXV.onTick(price, live.sym);
+  if (hasMod('GEXV')) GEXV.onTick(price, live.sym);
   const d = st.data;
   if (!d || d.symbol !== live.sym || !st.lastBarObj) return;
   const bt = barStart(Math.floor(tms / 1000), st.tf);           // V36 : semaine et mois de calendrier
@@ -929,8 +929,8 @@ function navigate(page, sub) {
   if (page === 'desk') setTimeout(() => { syncRange(); refreshAll(); }, 60);
   if (page === 'desk' && st.layout === 'mtf') MTF.show(); else MTF.hide();
   if (page === 'desk' && st.layout === 'tpo') TPO.show(); else TPO.hide();
-  if (page === 'desk' && st.layout === 'gex') GEXV.show(); else GEXV.hide();
-  if (page === 'desk' && st.layout === 'quant') QUANTV.show(); else QUANTV.hide();
+  if (hasMod('GEXV')) { if (page === 'desk' && st.layout === 'gex') GEXV.show(); else GEXV.hide(); }
+  if (hasMod('QUANTV')) { if (page === 'desk' && st.layout === 'quant') QUANTV.show(); else QUANTV.hide(); }
   if (page === 'overview') pollOverview();
   if (page === 'backtest') Backtest.show();
   if (page === 'history') History.show();
@@ -1464,6 +1464,21 @@ function loop() {
   try { liveRender(); } catch (e) { showErr(e, 'prix en direct'); }
   try { Desk.tick(); } catch (e) { showErr(e, 'bureau'); }
 }
+// V54.2 : un fichier de la page qui n'est pas arrivé (redémarrage du serveur, réseau, extension du navigateur) est redemandé une fois ;
+// s'il manque toujours, son onglet le dit au lieu de rester noir, et l'encadré rouge donne la cause exacte (fichier, ligne).
+function hasMod(name) { try { return typeof window[name] !== 'undefined' || new Function('return typeof ' + name + ' !== "undefined"')(); } catch (e) { return false; } }
+function modMissing(tab, file) {
+  const e = (window.__early || []).filter(x => x.file === file).map(x => x.msg + (x.line ? ` (ligne ${x.line})` : '')).join(' ; ');
+  return `<section class="card"><h2>La page ${esc(tab)} n'a pas pu se charger</h2><p>Le fichier <b>${esc(file)}</b> n'a pas pu démarrer dans le navigateur${e ? ' : ' + esc(e) : ''}.</p>` +
+    `<p>Recharge la page sans le cache : <b>Ctrl + F5</b> (Windows) ou <b>Cmd + Maj + R</b> (Mac). Si ça revient, envoie une capture de cet encadré et de l'encadré rouge.` +
+    ` Une extension qui bloque les publicités peut aussi bloquer ce fichier : essaie de la mettre en pause pour cette page.</p></section>`;
+}
+async function loadMissing() {
+  for (const [g, f] of [['QUANTV', 'quant.js'], ['GEXV', 'gex.js']]) {
+    if (hasMod(g)) continue;
+    await new Promise(res => { const s = document.createElement('script'); s.src = f + '?r=' + Date.now(); s.onload = s.onerror = res; setTimeout(res, 8000); document.head.appendChild(s); });
+  }
+}
 // V53.1 : erreurs de la page affichées en bas à gauche (une ligne par erreur différente), pour savoir ce qui bloque sans console
 const jsErrs = new Map();
 function showErr(e, where) {
@@ -1543,6 +1558,8 @@ function openSymbol(sym, page) {
     panels: () => panels, switchSymbol, applyLayout, setTf, showErr};
   // V53.1 : chaque étape du démarrage est protégée : une erreur est affichée, et le chargement des données part quand même
   const step = (name, fn) => { try { fn(); } catch (e) { showErr(e, 'démarrage (' + name + ')'); } };
+  await loadMissing();                                                  // V54.2 : quant.js ou gex.js pas arrivé : redemandé une fois
+  (window.__early || []).forEach(x => showErr({message: x.msg, stack: x.line ? `/${x.file}:${x.line}` : ''}, 'chargement de ' + x.file + (hasMod(x.file === 'quant.js' ? 'QUANTV' : x.file === 'gex.js' ? 'GEXV' : '-') ? ' (réparé : rechargé)' : '')));
   step('bureau', () => Desk.init(window.LT));
   step('vue d\'ensemble', () => Overview.init(window.LT));
   step('idées', () => Signals.init(window.LT));

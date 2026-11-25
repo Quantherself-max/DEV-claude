@@ -306,6 +306,13 @@
   </div>
 </div>
 <div id="toast" hidden></div>
+<script>/* V54.2 : erreurs des fichiers de la page AVANT app.js (fichier absent, bloqué ou qui plante), affichées ensuite par app.js */
+window.__early = [];
+window.addEventListener('error', function (e) {
+  var t = e.target, f = function (u) { return String(u || '').split('?')[0].split('/').pop(); };
+  if (t && t.tagName === 'SCRIPT') window.__early.push({file: f(t.src), msg: 'fichier non reçu (serveur en redémarrage, réseau, ou bloqué par une extension du navigateur)'});
+  else window.__early.push({file: f(e.filename), line: e.lineno, msg: String(e.message || 'erreur')});
+}, true);</script>
 <script src="vendor/lightweight-charts.standalone.production.js"></script>
 <script src="charts.js"></script>
 <script src="analysis.js"></script>

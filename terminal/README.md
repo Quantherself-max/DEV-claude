@@ -145,6 +145,18 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V54.2 : l'onglet Quant ne peut plus rester noir
+
+**Le problème.** L'onglet Quant restait noir, et l'encadré rouge disait « QUANTV is not defined ». Le fichier de la page Quant (`quant.js`) n'avait pas pu démarrer dans le navigateur : il n'était pas arrivé, ou il avait planté. La cause exacte n'a pas pu être reproduite.
+
+**Ce qui change.**
+- **Un capteur d'erreurs avant tous les fichiers de la page.** Il note quel fichier n'est pas arrivé (serveur en redémarrage, réseau, extension qui bloque) ou lequel a planté, avec sa ligne. L'encadré rouge l'affiche ensuite.
+- **Un nouvel essai automatique.** Un fichier `quant.js` ou `gex.js` qui manque au démarrage est redemandé une fois. S'il arrive, l'encadré l'indique (« réparé : rechargé »).
+- **S'il manque toujours**, l'onglet Quant (ou GEX) l'écrit au lieu de rester noir. Il propose aussi le rechargement sans cache : Ctrl + F5 sur Windows, Cmd + Maj + R sur Mac.
+- **Le reste du terminal** (graphiques, idées, autres onglets) continue dans tous les cas.
+
+**Vérifié** dans un navigateur, en provoquant quatre cas : fichier normal, fichier absent une fois (réparé tout seul), fichier toujours absent (message dans l'onglet), fichier qui plante (fichier et ligne donnés dans l'encadré).
+
 ## Ce qui est nouveau en V54.1 : DEX, l'exposition delta des options BTC, dans l'onglet Quant
 
 **Où.** Une grande carte sous « L'essentiel », dans l'onglet Quant.

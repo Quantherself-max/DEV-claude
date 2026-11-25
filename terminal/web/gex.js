@@ -8,7 +8,7 @@
 // V44, en haut de la colonne de droite : les liquidations BTC (Binance, Bybit, OKX) sur 6, 12, 24 et 48 heures avec le mouvement du BTC
 // sur chaque fenêtre, puis les gros ordres exécutés par bourse (Binance, Coinbase, Bitstamp, OKX, Bybit ; comptant et perpétuel) :
 // acheteurs ou vendeurs, et de combien (data/cexflow.py, adresse /api/cexflow, relue toutes les 10 secondes).
-const GEXV = (() => {
+var GEXV = (() => {                                                    // V54.2 : rechargeable (voir app.js, loadMissing)
   'use strict';
   let LT = null, root = null, on = false, timer = null, data = null, err = null, busy = false, hover = null, livePx = null;
   let cex = null, cexErr = null, cexBusy = false, cexTimer = null;

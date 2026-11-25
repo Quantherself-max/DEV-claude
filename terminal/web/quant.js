@@ -17,14 +17,14 @@
 //   bourse (résumé dans « Levier »), listes trop longues (baleines, échéances, réseau Bitcoin raccourcis).
 // V54.1 : DEX (exposition delta des options BTC) sous « L'essentiel » : valeur, rang sur 7, 30 ou 90 jours, lecture, jauge, et
 //   l'historique DEX ou GEX (relevé chaque heure par le terminal lui-même, ingest/optflow.py) avec l'infobulle de chaque point.
-const QUANTV = (() => {
+var QUANTV = (() => {                                                  // V54.2 : « var » : le fichier peut être rechargé s'il n'est pas arrivé
   'use strict';
   let LT = null, root = null, on = false, timer = null, data = null, err = null, busy = false, wsort = 'big';
   const ls = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* rien */ } };
   let wmin = [1e6, 5e6, 1e7].includes(ls('qWhaleMin', 5e6)) ? ls('qWhaleMin', 5e6) : 5e6;
   let xwin = [7, 30, 90].includes(ls('qDexWin', 90)) ? ls('qDexWin', 90) : 90, xwhat = ls('qDexWhat', 'dex') === 'gex' ? 'gex' : 'dex', dexPts = [], dexW = 1000;
-  const opened = new Set(ls('qOpen54', []));                            // V54 : rubriques de détail ouvertes (fermées par défaut)
+  const opened = new Set((a => Array.isArray(a) ? a : [])(ls('qOpen54', [])));                            // V54 : rubriques de détail ouvertes (fermées par défaut)
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const sgn = v => v > 0 ? '+' : v < 0 ? '−' : '';
   const nf = (v, d = 0) => v == null || !isFinite(v) ? '—' : Math.abs(v).toLocaleString('fr-FR', {minimumFractionDigits: d, maximumFractionDigits: d}).replace(/ | /g, ' ');
