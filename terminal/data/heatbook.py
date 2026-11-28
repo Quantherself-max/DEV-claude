@@ -234,6 +234,7 @@ class HeatBook:
         m = max(1, math.ceil(hi / rowsz) - r0)
         dt = (t1 - t0) / cols
         mat = [0.0] * (cols * m)
+        cov = bytearray(cols)                             # V57 : colonnes qui ont des données (sinon : pas de photo, terminal éteint)
         k_lo, k_hi = math.floor(lo / step), math.floor(hi / step)
         with self.lock:
             snaps = {k: list(v) for k, v in self.series.items()}
@@ -262,6 +263,7 @@ class HeatBook:
                 tc = t0 + (ci + 1) * dt
                 vals = self._exchange_at(snaps, ex, ptr, tc, k_lo, k_hi)
                 if vals:
+                    cov[ci] = 1
                     for k, v in vals.items():
                         j = int(math.floor(k * step / rowsz + 1e-9)) - r0
                         if 0 <= j < m:
@@ -277,6 +279,7 @@ class HeatBook:
                             break
                 if not got:
                     continue
+                cov[ci] = 1
                 used.add(src)
                 if len(got) > 4:                                  # colonne large (graphique 4 heures) : 4 quarts d'heure répartis suffisent
                     got = got[::math.ceil(len(got) / 4)]
@@ -288,7 +291,8 @@ class HeatBook:
                             for j, f in rows_of(b0 + i):
                                 mat[j * cols + ci] += v * f * inv
         nz = sorted(v for v in mat if v > 0)
-        base = {"ready": True, "t0": t0, "t1": t1, "cols": cols, "rows": m, "lo": r0 * rowsz, "rowsz": rowsz, "longUsed": sorted(used)}
+        base = {"ready": True, "t0": t0, "t1": t1, "cols": cols, "rows": m, "lo": r0 * rowsz, "rowsz": rowsz, "longUsed": sorted(used),
+                "cover": "".join("1" if c else "0" for c in cov)}
         if not nz:
             return {**base, "empty": True, "ref": 0.0, "data": ""}
         ref = nz[min(len(nz) - 1, int(len(nz) * 0.99))] or nz[-1]

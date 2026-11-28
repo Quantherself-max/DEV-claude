@@ -1,4 +1,4 @@
-# Liq Terminal (V56)
+# Liq Terminal (V57)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
@@ -144,6 +144,25 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V57 : la heatmap du carnet se lit enfin
+
+**Le problème.** Presque toute la bande se colorait en bleu, cyan et jaune, et les vrais murs ne ressortaient plus. La cause : l'intensité était codée en racine carrée et la palette coloriait déjà nettement une case qui ne faisait que 6 % d'un gros mur.
+
+**Ce qui change :**
+- **Une nouvelle palette.** Le fond du carnet est caché. Les montants moyens passent du bleu au cyan, les gros au jaune puis à l'orange, et **les plus gros murs sont blancs**.
+- **Un réglage de contraste**, dans les réglages ⚙ de « Heatmap du carnet » :
+  - **fort** (par défaut) : seuls les murs ressortent ; une case sous 10 % du plus gros mur affiché est transparente ;
+  - **normal** ;
+  - **doux** : tout le carnet est visible, comme avant.
+- **Un réglage d'échelle :**
+  - **toute l'image** (par défaut) : chaque mur se compare au plus gros mur affiché ;
+  - **chaque instant** : chaque colonne se compare à son propre carnet, si bien qu'un mur ressort même quand le carnet entier est mince (la nuit, par exemple).
+- **Une image deux fois plus fine** : jusqu'à 600 colonnes et 400 lignes.
+- **La carte des liquidations est atténuée** quand la heatmap du carnet est affichée en même temps, pour ne plus la recouvrir.
+- **Les moments sans photo du carnet sont signalés.** Une bande grisée porte la mention « carnet non photographié (terminal éteint) », au lieu d'un vide inexpliqué. Le terminal photographie le carnet seulement quand il tourne. Les archives publiques de Binance, plus grossières (tranches de 1 %), comblent les jours passés, mais elles ne sont publiées que le lendemain.
+
+**Vérifié** dans un navigateur, en données simulées, avec les trois contrastes et les deux échelles. Les vrais carnets de Binance n'ont pas pu être testés depuis la machine de développement (Binance y est bloqué).
 
 ## Ce qui est nouveau en V56.1 : les lignes gamma reviennent sur le graphique
 

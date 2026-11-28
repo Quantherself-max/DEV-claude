@@ -123,7 +123,8 @@ const Desk = (() => {
       gexZones: s.gexZones === 'on', gexBars: s.gexBars === 'split' ? 'split' : 'net',
       sizeMkt: ['spot', 'perp'].includes(s.sizeMkt) ? s.sizeMkt : 'both', sizeGroups: s.sizeGroups === '5' ? '5' : '3',
       sizeReset: ['D', 'W', 'M'].includes(s.sizeReset) ? s.sizeReset : 'all', sizeScale: s.sizeScale === 'shared' ? 'shared' : 'own',
-      vpDelta: vpDeltaOf(s), deltaBars: true, deltaThr: s.deltaThr === true});
+      vpDelta: vpDeltaOf(s), deltaBars: true, deltaThr: s.deltaThr === true,
+      heatContrast: ['fort', 'normal', 'doux'].includes(s.heatContrast) ? s.heatContrast : 'fort', heatScale: s.heatScale === 'col' ? 'col' : 'img'});   // V57
     S.minGrade = s.minGrade; S.heatEx = s.heatEx;
   }
   function changed(reset) {
@@ -290,6 +291,9 @@ const Desk = (() => {
     if (k === 'delta') return '<span class="ddopts">' + uSel() +
       sel('deltaThr', 'Lignes « fort » (2 fois la normale) et « très fort » (4 fois) qui suivent la normale des 100 dernières bougies', [['0', 'sans seuils'], ['1', 'seuils fort / très fort']], s.deltaThr === true ? '1' : '0') + '</span>';
     if (k === 'dspot') return '<span class="ddopts">' + uSel() + '</span>';
+    if (k === 'heat') return '<span class="ddopts">' +                   // V57 : lisibilité de la heatmap du carnet
+      sel('heatContrast', 'Contraste fort : seuls les gros murs ressortent (le fond du carnet est caché) ; normal ; doux : tout le carnet est visible, comme avant', [['fort', 'contraste fort'], ['normal', 'contraste normal'], ['doux', 'contraste doux']], ['normal', 'doux'].includes(s.heatContrast) ? s.heatContrast : 'fort') +
+      sel('heatScale', 'Toute l\'image : chaque mur se compare au plus gros mur affiché ; chaque instant : chaque colonne se compare à son propre carnet, un mur ressort même quand le carnet entier est mince', [['img', 'échelle de toute l\'image'], ['col', 'échelle de chaque instant']], s.heatScale === 'col' ? 'col' : 'img') + '</span>';
     if (k === 'cvd') return '<span class="ddopts">' + uSel() +
       sel('cvdMode', 'CVD (cumul du delta) : celui du perpétuel, celui du comptant Binance, ou les deux pour voir qui mène le mouvement', [['both', 'perpétuel + comptant'], ['perp', 'perpétuel'], ['spot', 'comptant']], cvdOf(s) === 'off' ? 'both' : cvdOf(s)) +
       sel('cvdReset', 'Le CVD repart de zéro au début de chaque jour, semaine ou mois (UTC), ou cumule tout le graphique', [['all', 'cumul du graphique'], ['D', 'CVD du jour'], ['W', 'CVD de la semaine'], ['M', 'CVD du mois']], ['D', 'W', 'M'].includes(s.cvdReset) ? s.cvdReset : 'all') + '</span>';
@@ -367,7 +371,7 @@ const Desk = (() => {
       const t = e.target, s = curSet();
       if (t.dataset.wtog) { setPane(t.dataset.wtog, t.checked); return; }
       if (t.dataset.chel) { if (t.checked) s.els[t.dataset.chel] = true; else delete s.els[t.dataset.chel]; changed([...PROF_KEYS, 'dom'].includes(t.dataset.chel)); }
-      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset', 'gexScope', 'gexSrc', 'gexLevels', 'gexZones', 'gexBars', 'sizeMkt', 'sizeGroups', 'sizeReset', 'sizeScale', 'vpDelta'].includes(t.dataset.copt) ? t.value : ['deltaCvd', 'deltaBars', 'deltaThr'].includes(t.dataset.copt) ? t.value === '1' : +t.value; changed(t.dataset.copt === 'vpDelta'); }
+      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset', 'gexScope', 'gexSrc', 'gexLevels', 'gexZones', 'gexBars', 'sizeMkt', 'sizeGroups', 'sizeReset', 'sizeScale', 'vpDelta', 'heatContrast', 'heatScale'].includes(t.dataset.copt) ? t.value : ['deltaCvd', 'deltaBars', 'deltaThr'].includes(t.dataset.copt) ? t.value === '1' : +t.value; changed(t.dataset.copt === 'vpDelta'); }
       else if (t.dataset.ptog != null) { LT.togglePlan(t.dataset.ptog); fillChooser(); }
     });
     chooser.addEventListener('click', e => {
@@ -649,14 +653,48 @@ const Desk = (() => {
     }
     return out;
   };
-  const CMAP = cmapOf([[0, [8, 18, 48, 0]], [18, [16, 40, 110, 0.35]], [70, [25, 90, 190, 0.6]], [130, [40, 170, 220, 0.75]], [180, [240, 205, 80, 0.88]], [225, [245, 140, 45, 0.95]], [255, [235, 70, 60, 1]]]);
+  // V57 : heatmap du carnet plus lisible. L'octet reçu vaut 255 × racine(montant ÷ 99e centile de l'image) : on revient au montant relatif
+  // f = (octet ÷ 255)², on cache le fond (sous un seuil), puis une palette sombre → bleu → cyan → jaune → orange → BLANC pour les plus gros
+  // murs (avant : une racine carrée et une palette où une case à 6 % d'un mur était déjà bien bleue : tout le carnet se colorait).
+  // Contraste : fort (seuls les murs ressortent), normal, doux (tout le carnet visible). Échelle : toute l'image, ou chaque instant (chaque
+  // colonne comparée à son propre carnet : un mur ressort même quand le carnet entier est mince, par exemple la nuit).
+  const HEAT_PAL = [[0, [28, 40, 110], 0.28], [0.18, [30, 80, 200], 0.55], [0.38, [20, 160, 235], 0.74], [0.55, [0, 225, 215], 0.85],
+    [0.7, [250, 230, 60], 0.93], [0.85, [255, 135, 0], 0.98], [1, [255, 255, 255], 1]];
+  const HEAT_CT = {fort: [0.1, 0.8], normal: [0.035, 0.65], doux: [0, 0.5]};       // [seuil sous lequel la case est transparente, courbe]
+  function heatLut(contrast) {
+    const [t0, gm] = HEAT_CT[contrast] || HEAT_CT.fort, out = new Uint8ClampedArray(256 * 4);
+    for (let q = 1; q < 256; q++) {
+      const f = (q / 255) ** 2;
+      if (f < t0) continue;                                                       // fond : transparent
+      const x = Math.pow(t0 >= 1 ? 1 : (f - t0) / (1 - t0), gm);
+      let a = HEAT_PAL[0], b = HEAT_PAL[HEAT_PAL.length - 1];
+      for (let i = 0; i < HEAT_PAL.length - 1; i++) if (x >= HEAT_PAL[i][0] && x <= HEAT_PAL[i + 1][0]) { a = HEAT_PAL[i]; b = HEAT_PAL[i + 1]; break; }
+      const k = b[0] === a[0] ? 0 : (x - a[0]) / (b[0] - a[0]);
+      for (let c = 0; c < 3; c++) out[q * 4 + c] = Math.round(a[1][c] + (b[1][c] - a[1][c]) * k);
+      out[q * 4 + 3] = Math.round(255 * (a[2] + (b[2] - a[2]) * k));
+    }
+    return out;
+  }
+  const CMAP = heatLut('fort');
   const CMAP_LIQ = cmapOf([[0, [68, 1, 84, 0]], [13, [72, 20, 110, 0.4]], [70, [59, 82, 139, 0.6]], [130, [33, 145, 140, 0.75]], [190, [94, 201, 98, 0.88]], [255, [253, 231, 37, 0.97]]]);
-  function heatImage(h, cmap) {
+  function heatImage(h, cmap, scale) {
     const bytes = Uint8Array.from(atob(h.data), c => c.charCodeAt(0)), n = h.cols, m = h.rows;
     const cv = document.createElement('canvas'); cv.width = n; cv.height = m;
     const cx = cv.getContext('2d'), img = cx.createImageData(n, m);
+    let show = bytes;
+    if (scale === 'col') {                            // V57 : chaque colonne comparée à son propre carnet (99e centile de ses cases)
+      show = new Uint8Array(bytes.length);
+      for (let i = 0; i < n; i++) {
+        const col = [];
+        for (let j = 0; j < m; j++) { const q = bytes[j * n + i]; if (q) col.push(q); }
+        if (!col.length) continue;
+        col.sort((a, b) => a - b);
+        const ref = (col[Math.min(col.length - 1, Math.floor(col.length * 0.99))] / 255) ** 2 || 1;
+        for (let j = 0; j < m; j++) { const q = bytes[j * n + i]; if (q) show[j * n + i] = Math.max(1, Math.min(255, Math.round(255 * Math.sqrt(Math.min(1, (q / 255) ** 2 / ref))))); }
+      }
+    }
     for (let j = 0; j < m; j++) for (let i = 0; i < n; i++) {
-      const q = bytes[j * n + i], o = ((m - 1 - j) * n + i) * 4;
+      const q = show[j * n + i], o = ((m - 1 - j) * n + i) * 4;
       img.data[o] = cmap[q * 4]; img.data[o + 1] = cmap[q * 4 + 1]; img.data[o + 2] = cmap[q * 4 + 2]; img.data[o + 3] = cmap[q * 4 + 3];
     }
     cx.putImageData(img, 0, 0);
@@ -665,8 +703,9 @@ const Desk = (() => {
   }
   // une couche : sa clé d'élément, où elle est rangée, son adresse, sa palette, son rythme de rafraîchissement (selon l'unité de temps)
   const LAYERS = [
-    {el: 'heat', slot: 'bookHeat', cmap: CMAP, url: (sym, q) => `/api/heatmap?symbol=${sym}&${q}&ex=${encodeURIComponent((st().heatEx || []).join(','))}`,
-      every: tf => ({'5m': 8000, '15m': 15000, '1h': 30000}[tf] || 60000), extra: () => (st().heatEx || []).join(',')},
+    {el: 'heat', slot: 'bookHeat', cmap: () => heatLut(st().mainOpts.heatContrast), scale: () => st().mainOpts.heatScale,
+      url: (sym, q) => `/api/heatmap?symbol=${sym}&${q}&ex=${encodeURIComponent((st().heatEx || []).join(','))}`,
+      every: tf => ({'5m': 8000, '15m': 15000, '1h': 30000}[tf] || 60000), extra: () => [(st().heatEx || []).join(','), st().mainOpts.heatContrast, st().mainOpts.heatScale].join('|')},
     {el: 'liqmap', slot: 'liqMap', cmap: CMAP_LIQ, url: (sym, q) => `/api/liqmap?symbol=${sym}&${q}`, every: () => 60000, extra: () => ''},
   ];
   const layerState = {heat: {key: '', busy: false}, liqmap: {key: '', busy: false}};
@@ -689,7 +728,7 @@ const Desk = (() => {
     const h = p.body.clientHeight, w = (p.plotWidth ? p.plotWidth() : ts.width()) || p.body.clientWidth;   // V56.1 : échelle du temps masquée possible
     const hi = p.series.coordinateToPrice(0), lo = p.series.coordinateToPrice(Math.max(20, p.candleBottom ? p.candleBottom(h) : h - 28));
     if (hi == null || lo == null || !(t1 > t0)) return null;
-    return {t0: Math.round(t0), t1: Math.round(t1), lo, hi, cols: Math.max(60, Math.min(400, Math.round(w / 3))), rows: Math.max(60, Math.min(300, Math.round(h / 3)))};
+    return {t0: Math.round(t0), t1: Math.round(t1), lo, hi, cols: Math.max(60, Math.min(600, Math.round(w / 2))), rows: Math.max(60, Math.min(400, Math.round(h / 2)))};   // V57 : image deux fois plus fine
   }
   async function pollLayer(L, q, force) {
     const S = st(), ls = layerState[L.el], sym = S.symbol;
@@ -703,7 +742,7 @@ const Desk = (() => {
       if (sym !== S.symbol) return;
       ls.key = key;
       h.at = Date.now();
-      S[L.slot] = h.ready && !h.empty && h.data ? heatImage(h, L.cmap) : h;
+      S[L.slot] = h.ready && !h.empty && h.data ? heatImage(h, typeof L.cmap === 'function' ? L.cmap() : L.cmap, L.scale ? L.scale() : 'img') : h;
       S.version++;
       renderLegend();
     } catch (e) { /* le prochain passage reessaiera */ } finally { ls.busy = false; }

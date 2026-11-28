@@ -1832,11 +1832,11 @@ class Panel {
 
   // ---- V28 : heatmap du carnet d'ordres (couche SOUS les bougies) : une colonne par tranche de temps, une ligne par tranche de prix ----
   drawBookHeat(L, h) {                                // V29 : carte des liquidations (dessous), puis heatmap du carnet
-    const st = LT.st;
-    if (st.mainOpts.liqmap) this.drawHeatImage(L, h, st.liqMap);
-    if (st.mainOpts.heat) this.drawHeatImage(L, h, st.bookHeat);
+    const st = LT.st, both = st.mainOpts.liqmap && st.mainOpts.heat;
+    if (st.mainOpts.liqmap) this.drawHeatImage(L, h, st.liqMap, both ? 0.45 : 1);   // V57 : atténuée sous la heatmap du carnet
+    if (st.mainOpts.heat) { this.drawHeatImage(L, h, st.bookHeat); this.drawHeatGaps(L, h, st.bookHeat); }
   }
-  drawHeatImage(L, h, H) {
+  drawHeatImage(L, h, H, alpha = 1) {
     const hctx = this.hctx;
     if (!H || !H.img || H.symbol !== L.d.symbol) return;
     const x0 = this.timeX(H.t0 / 1000, L), x1 = this.timeX(H.t1 / 1000, L);
@@ -1845,7 +1845,28 @@ class Panel {
     hctx.save();
     hctx.beginPath(); hctx.rect(0, 0, L.plotW, this.candleBottom(h)); hctx.clip();
     hctx.imageSmoothingEnabled = false;
+    hctx.globalAlpha = alpha;
     hctx.drawImage(H.img, x0, yt, x1 - x0, yb - yt);
+    hctx.restore();
+  }
+  // V57 : moments sans photo du carnet (terminal éteint ou en redémarrage) : une bande grisée et un mot, au lieu d'un vide inexpliqué
+  drawHeatGaps(L, h, H) {
+    if (!H || !H.ready || !H.cover || H.symbol !== L.d.symbol) return;
+    const x0 = this.timeX(H.t0 / 1000, L), x1 = this.timeX(H.t1 / 1000, L);
+    if (x0 == null || x1 == null || x1 <= x0) return;
+    const n = H.cover.length, cw = (x1 - x0) / n, hctx = this.hctx, bot = this.candleBottom(h), xr = Math.min(L.plotW, (L.xr || L.plotW) + 2);
+    hctx.save();
+    hctx.beginPath(); hctx.rect(0, 0, xr, bot); hctx.clip();
+    let i = 0;
+    while (i < n) {
+      if (H.cover[i] === '1') { i++; continue; }
+      let j = i; while (j < n && H.cover[j] !== '1') j++;
+      const a = x0 + i * cw, b = x0 + j * cw;
+      hctx.fillStyle = 'rgba(148,163,184,.045)'; hctx.fillRect(a, 0, b - a, bot);
+      if (b - a > 120) { hctx.font = '500 10.5px sans-serif'; hctx.fillStyle = 'rgba(160,170,190,.55)'; hctx.textAlign = 'center'; hctx.textBaseline = 'bottom';
+        hctx.fillText('carnet non photographié (terminal éteint)', (a + Math.min(b, xr)) / 2, bot - 6); }
+      i = j;
+    }
     hctx.restore();
   }
   // ---- carte de chaleur (couche SOUS le graphique) ----

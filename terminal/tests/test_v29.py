@@ -389,7 +389,7 @@ class PageTests(unittest.TestCase):
         self.assertIn("heat: {heat: true, liqmap: false, big: true, vol: true, plan: true}", self.DESK)
         self.assertIn("if (!('liqmap' in w.sets.heat.els)) w.sets.heat.els.liqmap = false;", self.DESK)   # anciens réglages : ajoutée, masquée
         self.assertIn("/api/liqmap?symbol=", self.DESK)
-        self.assertIn("if (st.mainOpts.liqmap) this.drawHeatImage(L, h, st.liqMap);", self.PANELS)
+        self.assertIn("if (st.mainOpts.liqmap) this.drawHeatImage(L, h, st.liqMap, both ? 0.45 : 1);", self.PANELS)   # V57 : atténuée sous la heatmap du carnet
         self.assertGreaterEqual(int(__import__("re").search(r"NEED_API = (\d+)", self.APP).group(1)), 30)
         self.assertIn("liqmap: false,", self.APP)
 
