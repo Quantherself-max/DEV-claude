@@ -407,7 +407,7 @@ class QuantHub:
             x = qopt.exposures(live, now)                                  # V54.1 : exposition delta (DEX) en direct
             exps = sorted({r["expiry"] for r in live if r["expiry"] - now > 2 * HOUR})
             pains = []
-            for e in exps[:6]:
+            for e in exps[:16]:                                            # V56 : toutes les échéances (avant : les 6 plus proches)
                 by = {}
                 for r in live:
                     if r["expiry"] == e:
@@ -420,9 +420,10 @@ class QuantHub:
                               "putCall": CTX.divide(puts, calls) if calls > 0 else None})
             spot = ch["index"] or rows[0]["f"]
             near = sorted(g["byStrike"], key=lambda r: abs(r[0] - spot))[:40]
+            xd = qopt.exposures_detail(live, now, spot, strikes=24)        # V56 : DEX par échéance et par strike (les 24 plus proches)
             self.opt = {"t": now, "index": ch["index"], "n": len(rows), "withOi": len(live), "skipped": ch["skipped"],
                         "smile": qopt.smile(rows, now)[:8], "maxPain": pains,
-                        "dex": {"total": x["dex"], "calls": x["dexCalls"], "puts": x["dexPuts"]},
+                        "dex": {"total": x["dex"], "calls": x["dexCalls"], "puts": x["dexPuts"], "byExpiry": xd["byExpiry"][:16], "byStrike": xd["byStrike"]},
                         "gex": {"total": g["total"], "flip": g["flip"], "callWall": g["callWall"], "putWall": g["putWall"],
                                 "byStrike": sorted(near)}}
         self._run("options Deribit", go)

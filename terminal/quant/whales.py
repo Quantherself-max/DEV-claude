@@ -249,3 +249,53 @@ def summarize(orders: list, now_ms: int, hours: int = 24) -> dict:
     return {"n": len(sel), "blocks": sum(1 for o in sel if o["block"]), "notional": sum(o["notional"] for o in sel),
             "delta": sum(o["delta"] for o in sel), "vega": sum(o["vega"] for o in sel), "premiumCalls": paid_c, "premiumPuts": paid_p,
             "bull": sum(1 for o in sel if o["delta"] > 0), "bear": sum(1 for o in sel if o["delta"] < 0)}
+
+
+def breakdown(orders: list, now_ms: int, hours: int = 24) -> dict:
+    """V56 : ce que les baleines ont fait, jambe par jambe, sur les dernières `hours` heures. Le sens est celui de l'initiateur (le preneur).
+      calls / puts → buy / sell : {n (ordres qui en contiennent), contracts (BTC), notional ($ : contrats × indice), premium ($ payés à
+      l'achat, reçus à la vente)} ;
+      byExpiry : une ligne par échéance (de la plus proche à la plus lointaine) : contrats de calls et de puts achetés et vendus, prime nette
+      payée (positive) ou reçue (négative), delta net en BTC (modèle de Black, volatilité de l'exécution : une estimation), notionnel ;
+      verdict : {code, label} : qui domine (achats de puts, ventes de calls…) et ce que ça dit du sens."""
+    sel = [o for o in orders if o["t"] >= now_ms - hours * 3_600_000]
+    zero = lambda: {"n": 0, "contracts": 0.0, "notional": 0.0, "premium": 0.0}
+    tot = {"calls": {"buy": zero(), "sell": zero()}, "puts": {"buy": zero(), "sell": zero()}}
+    exp: dict = {}
+    for o in sel:
+        idx = o.get("index") or 0.0
+        seen = set()
+        for g in o["legs"]:
+            kind, side = ("calls" if g["kind"] == "C" else "puts"), ("buy" if g["dir"] > 0 else "sell")
+            c = tot[kind][side]
+            if (kind, side) not in seen:
+                c["n"] += 1
+                seen.add((kind, side))
+            c["contracts"] += g["amount"]
+            c["notional"] += g["amount"] * idx
+            c["premium"] += g["price"] * g["amount"] * idx
+            e = exp.setdefault(g["expiry"], {"expiry": g["expiry"], "callsBuy": 0.0, "callsSell": 0.0, "putsBuy": 0.0, "putsSell": 0.0,
+                                             "premium": 0.0, "delta": 0.0, "notional": 0.0, "legs": 0})
+            e[kind + ("Buy" if side == "buy" else "Sell")] += g["amount"]
+            e["premium"] += g["dir"] * g["price"] * g["amount"] * idx
+            e["notional"] += g["amount"] * idx
+            e["legs"] += 1
+            d, _ = greeks_of({**g, "index": idx}, o["t"])
+            if d is not None:
+                e["delta"] += g["dir"] * g["amount"] * d
+    rows = [exp[k] for k in sorted(exp)]
+    for r in rows:
+        r["days"] = (r["expiry"] - now_ms) / DAY
+    # verdict : la plus grosse des quatre familles en contrats, et le sens du delta net
+    fam = {("calls", "buy"): ("Achats de calls", 1), ("calls", "sell"): ("Ventes de calls", -1),
+           ("puts", "buy"): ("Achats de puts", -1), ("puts", "sell"): ("Ventes de puts", 1)}
+    size = {k: tot[k[0]][k[1]]["contracts"] for k in fam}
+    total = sum(size.values())
+    verdict = {"code": "none", "label": "aucune baleine sur la période", "bias": 0, "share": None}
+    if total > 0:
+        top = max(size, key=size.get)
+        delta = sum(o["delta"] for o in sel)
+        bias = 1 if delta > 0 else -1 if delta < 0 else 0
+        verdict = {"code": f"{top[0]}_{top[1]}", "label": fam[top][0], "bias": bias, "share": size[top] / total,
+                   "delta": delta, "lean": fam[top][1]}
+    return {"calls": tot["calls"], "puts": tot["puts"], "byExpiry": rows, "verdict": verdict, "hours": hours, "orders": len(sel)}

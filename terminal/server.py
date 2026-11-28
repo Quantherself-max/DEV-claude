@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "55"
-API_LEVEL = 55                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "56"
+API_LEVEL = 56                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -831,11 +831,101 @@ class App:
         hub = getattr(self, "quant", None)
         if hub is None:
             return {"ok": False, "why": "coupé dans les réglages (TERMINAL_QUANT=0)" if not getattr(self.cfg, "quant_on", True)
-                    else "le moteur exact ne tourne que sur les données réelles"}
+                    else "le moteur exact ne tourne que sur les données réelles", "lever": self._lever_safe(sym, None)}
         try:
-            return hub.snapshot(sym, whale_min=whale_min)
+            out = hub.snapshot(sym, whale_min=whale_min)
         except Exception as e:                                       # la page ne doit jamais casser le terminal
             return {"ok": False, "why": f"{type(e).__name__}: {e}"}
+        if out.get("ok", True) is not False:
+            out = {**out, "lever": self._lever_safe(sym, out)}         # V56 : copie (la photo du moteur est gardée en mémoire)
+        return out
+
+    def _lever_safe(self, sym: str, snap: dict | None) -> dict:
+        try:
+            return self.lever_view(sym, snap)
+        except Exception as e:                                       # une erreur ici ne prive pas la page du reste
+            return {"error": f"{type(e).__name__}: {e}"}
+
+    LEVER_BANDS = (0.0, 0.01, 0.02, 0.03, 0.05, 0.08, 0.12)
+
+    def lever_view(self, sym: str, snap: dict | None = None) -> dict:
+        """V56 : les STOPS des perpétuels et leur LEVIER.
+        Stops : prix de liquidation ESTIMÉS par le moteur des poches (engine/liquidity.py : chaque hausse de l'intérêt ouvert = nouvelles
+        positions au prix du moment, réparties longs / shorts par le volume acheteur agressif, puis par levier 10x, 25x, 50x, 100x ; un
+        niveau s'éteint quand le prix le touche). Rangés par distance au prix (bandes de 0-1 %, 1-2 %, 2-3 %, 3-5 %, 5-8 %, 8-12 %) et
+        les plus gros paquets de chaque côté. Une estimation : ni les leviers réels ni les prix d'entrée ne sont publics.
+        Levier, mesuré : intérêt ouvert (et son rang sur 30 jours), financement, part des comptes longs (Binance), liquidations réelles
+        des dernières 24 heures (notées par le terminal), intérêt ouvert rapporté au volume du comptant."""
+        m = self.service.markets.get(sym)
+        if m is None or not getattr(m, "ready", False):
+            return {"error": "marché pas encore prêt"}
+        now = self.source.now_ms()
+        with self.service.lock:
+            price = m.price()
+            eng = m.liq
+            res = eng.pools(price, price * self.LEVER_BANDS[-1], 0.4, 0.0, 10 ** 6, 101.0)   # paquets de 0,4 %
+            oi_pts = sorted(m.store.oi.items())
+            oi_now = m.store.oi_now
+            prem = dict(m.store.ctx.get("premium") or {})
+            levs, wts, mmr = tuple(eng.levs), tuple(eng.wts), eng.mmr
+        pools = res.get("pools") or []
+        unit = sym.replace("USDT", "")
+
+        def bands(side):
+            out = []
+            for a, b in zip(self.LEVER_BANDS, self.LEVER_BANDS[1:]):
+                sel = [p for p in pools if p["side"] == side and a <= abs(p["price"] / price - 1) < b]
+                out.append({"from": a, "to": b, "usd": sum(p["size"] * p["price"] for p in sel), "coins": sum(p["size"] for p in sel)})
+            return out
+
+        def top(side):                                               # les plus gros paquets, à plus de 1 % l'un de l'autre (des zones distinctes)
+            sel = []
+            for p in sorted((p for p in pools if p["side"] == side), key=lambda p: -p["size"] * p["price"]):
+                if all(abs(p["price"] / q["price"] - 1) > 0.01 for q in sel):
+                    sel.append(p)
+                if len(sel) == 4:
+                    break
+            return [{"price": p["price"], "lo": p["lo"], "hi": p["hi"], "dist": p["price"] / price - 1, "usd": p["size"] * p["price"],
+                     "coins": p["size"], "born": p.get("born")} for p in sel]
+        wsum = sum(wts) or 1
+        stops = {"price": price, "longs": {"bands": bands("long"), "top": top("long"), "usd": sum(p["size"] * p["price"] for p in pools if p["side"] == "long")},
+                 "shorts": {"bands": bands("short"), "top": top("short"), "usd": sum(p["size"] * p["price"] for p in pools if p["side"] == "short")},
+                 "tiers": [{"lev": lv, "dist": max(0.0, 1.0 / lv - mmr), "weight": w / wsum} for lv, w in zip(levs, wts)],
+                 "span": self.LEVER_BANDS[-1], "steps": eng.steps}
+        # intérêt ouvert : maintenant, variations, rang parmi les relevés des 30 derniers jours
+        cur = (int(oi_now[0]), float(oi_now[1])) if oi_now else (oi_pts[-1] if oi_pts else None)
+        oi = None
+        if cur:
+            def at(t):
+                best = None
+                for tt, v in oi_pts:
+                    if tt <= t:
+                        best = v
+                    else:
+                        break
+                return best
+            hist = [v for t, v in oi_pts if t >= now - 30 * 86_400_000]
+            o24, o7 = at(now - 86_400_000), at(now - 7 * 86_400_000)
+            oi = {"coins": cur[1], "usd": cur[1] * price, "t": cur[0], "unit": unit,
+                  "chg24h": cur[1] / o24 - 1 if o24 else None, "chg7d": cur[1] / o7 - 1 if o7 else None,
+                  "rank30": round(100.0 * sum(1 for v in hist if v < cur[1]) / len(hist)) if len(hist) >= 50 else None,
+                  "days": (now - oi_pts[0][0]) / 86_400_000 if oi_pts else 0}
+        fu = prem.get("funding")
+        drv = (snap or {}).get("derivs") or {}
+        others = drv.get("others") or {}
+        lb = getattr(self, "liqbars", None)
+        liq24 = lb.totals(sym, now - 86_400_000) if lb is not None else None
+        liq1 = lb.totals(sym, now - 3_600_000) if lb is not None else None
+        sp = (((snap or {}).get("spotPerp") or {}).get("windows") or {}).get("24h") or {}
+        spot_vol = (sp.get("spot") or {}).get("volUsd")
+        perp_vol = (sp.get("perp") or {}).get("volUsd")
+        return {"stops": stops, "oi": oi,
+                "funding": {"binance": fu, "annual": fu * 3 * 365 if fu is not None else None, "next": prem.get("next_funding"),
+                            "okx": (others.get("okx") or {}).get("funding"), "bybit": (others.get("bybit") or {}).get("funding")},
+                "longShare": drv.get("longShare"), "longShort": drv.get("longShort"),
+                "liq24": liq24, "liq1": liq1,
+                "oiToSpot": (oi["usd"] / spot_vol) if (oi and spot_vol) else None,
+                "perpToSpot": (perp_vol / spot_vol) if (perp_vol and spot_vol) else None}
 
     def cex_page(self) -> dict:
         """V44 : liquidations BTC sur 6, 12, 24 et 48 heures et gros ordres executes par bourse (data/cexflow.py), avec le mouvement du

@@ -125,7 +125,7 @@ class ServerTest(unittest.TestCase):
             return json.loads(r.read())
 
     def test_version(self):
-        self.assertEqual((VERSION, API_LEVEL), ("55", 55))
+        self.assertGreaterEqual((int(VERSION), API_LEVEL), (55, 55))
 
     def test_liquidations_only_when_asked(self):
         self.assertNotIn("liqLong", self.get("/api/indicators?symbol=SOLUSDT&tf=1h"))
@@ -179,7 +179,7 @@ class PageTest(unittest.TestCase):
         self.assertIn("localization: Panel.LOCAL", panels)
         self.assertIn(".pwin .phb{opacity:0}", css)
         self.assertIn("!PANE_EL.includes(k)", read("desk.js"))
-        self.assertIn("const NEED_API = 55;", read("app.js"))
+        self.assertRegex(read("app.js"), r"const NEED_API = 5[5-9];")
 
     def test_syntax(self):
         if not shutil.which("node"):

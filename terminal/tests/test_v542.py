@@ -31,7 +31,7 @@ class LoadGuardTest(unittest.TestCase):
                 self.fail("appel non protégé : " + line.strip()[:120])
         self.assertIn("var QUANTV = (() => {", read("qtab.js"))                    # rechargeable : une seconde exécution reste possible
         self.assertIn("var GEXV = (() => {", read("gex.js"))
-        self.assertIn("Array.isArray(a) ? a : []", read("qtab.js"))
+        self.assertIn("['sp', 'lev', 'dex', 'wh', 'flux', 'net'].includes(ls('qTab56', 'sp'))", read("qtab.js"))   # V56 : réglage gardé lu sans risque
 
     @unittest.skipUnless(shutil.which("node"), "node absent")
     def test_syntax(self):

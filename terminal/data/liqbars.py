@@ -127,6 +127,24 @@ class LiqBars:
                 sh[i] += v[1]
         return out
 
+    def totals(self, sym: str, since_ms: int) -> dict:
+        """V56 : liquidations depuis since_ms : {long, short (dollars), byEx {bourse: [longs, shorts]}, since (première minute enregistrée)}."""
+        sym = sym.upper()
+        with self.lock:
+            m = self.m.get(sym) or {}
+            first = dict(self.first.get(sym) or {})
+            rows = [r for mn, r in m.items() if mn >= since_ms - since_ms % MIN]
+        lo = sh = 0.0
+        by: dict = {}
+        for r in rows:
+            for e, v in r.items():
+                lo += v[0]
+                sh += v[1]
+                b = by.setdefault(NAMES.get(e, e), [0.0, 0.0])
+                b[0] += v[0]
+                b[1] += v[1]
+        return {"long": lo, "short": sh, "byEx": by, "since": min(first.values()) if first else None}
+
     def revision(self, sym: str) -> int:
         with self.lock:
             return self.rev.get(sym.upper(), 0)

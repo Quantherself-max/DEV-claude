@@ -245,7 +245,8 @@ class OptionsFlow:
             sel = [o for o in self.orders if o["t"] >= now - hours * HOUR and o["notional"] >= floor]
         biggest = sorted(sel, key=lambda o: -o["notional"])[:top]
         latest = sorted(sel, key=lambda o: -o["t"])[:top]
-        return {"whales": {"sum": qw.summarize(sel, now, hours), "biggest": biggest, "latest": latest, "minUsd": floor, "recordUsd": self.min_usd,
+        return {"whales": {"sum": qw.summarize(sel, now, hours), "flows": qw.breakdown(sel, now, hours),       # V56 : calls / puts achetés et vendus, par échéance
+                           "biggest": biggest, "latest": latest, "minUsd": floor, "recordUsd": self.min_usd,
                            "since": max(now - hours * HOUR, min((o["t"] for o in self.orders), default=now)), "last": self.last_t},
                 "oi": oi, "snaps": len(self.snaps), "firstSnap": self.snaps[0][0] if self.snaps else None, "expo": self.expo_summary(now),
                 "error": self.error, "state": self.state, "hours": hours}

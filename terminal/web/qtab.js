@@ -19,6 +19,8 @@
 //   bourse (résumé dans « Levier »), listes trop longues (baleines, échéances, réseau Bitcoin raccourcis).
 // V54.1 : DEX (exposition delta des options BTC) sous « L'essentiel » : valeur, rang sur 7, 30 ou 90 jours, lecture, jauge, et
 //   l'historique DEX ou GEX (relevé chaque heure par le terminal lui-même, ingest/optflow.py) avec l'infobulle de chaque point.
+// V56 : page refaite : en haut, quatre verdicts cliquables (qui domine entre comptant et perpétuels, levier, stops des perpétuels, options) ;
+//   dessous, six sous-onglets : comptant ou perpétuels, levier et stops, DEX et teneurs de marché, baleines et échéances, flux et carnet, réseau.
 var QUANTV = (() => {                                                  // V54.2 : « var » : le fichier peut être rechargé s'il n'est pas arrivé
   'use strict';
   let LT = null, root = null, on = false, timer = null, data = null, err = null, busy = false, wsort = 'big';
@@ -26,7 +28,7 @@ var QUANTV = (() => {                                                  // V54.2 
   const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* rien */ } };
   let wmin = [1e6, 5e6, 1e7].includes(ls('qWhaleMin', 5e6)) ? ls('qWhaleMin', 5e6) : 5e6;
   let xwin = [7, 30, 90].includes(ls('qDexWin', 90)) ? ls('qDexWin', 90) : 90, xwhat = ls('qDexWhat', 'dex') === 'gex' ? 'gex' : 'dex', dexPts = [], dexW = 1000;
-  const opened = new Set((a => Array.isArray(a) ? a : [])(ls('qOpen54', [])));                            // V54 : rubriques de détail ouvertes (fermées par défaut)
+  let tab = ['sp', 'lev', 'dex', 'wh', 'flux', 'net'].includes(ls('qTab56', 'sp')) ? ls('qTab56', 'sp') : 'sp';      // V56 : sous-onglet choisi
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const sgn = v => v > 0 ? '+' : v < 0 ? '−' : '';
   const nf = (v, d = 0) => v == null || !isFinite(v) ? '—' : Math.abs(v).toLocaleString('fr-FR', {minimumFractionDigits: d, maximumFractionDigits: d}).replace(/ | /g, ' ');
@@ -58,8 +60,7 @@ var QUANTV = (() => {                                                  // V54.2 
       const wm = e.target.closest('[data-qwm]'); if (wm) { wmin = +wm.dataset.qwm; lsSet('qWhaleMin', wmin); load(); return; }
       const xw = e.target.closest('[data-qxw]'); if (xw) { xwin = +xw.dataset.qxw; lsSet('qDexWin', xwin); render(); return; }
       const xk = e.target.closest('[data-qxk]'); if (xk) { xwhat = xk.dataset.qxk; lsSet('qDexWhat', xwhat); render(); return; }
-      const f = e.target.closest('[data-qfold]');
-      if (f) { const k = f.dataset.qfold; if (opened.has(k)) opened.delete(k); else opened.add(k); lsSet('qOpen54', [...opened]); render(); }
+      const tb = e.target.closest('[data-qtab]'); if (tb) { tab = tb.dataset.qtab; lsSet('qTab56', tab); render(); }
     });
   }
 
@@ -126,79 +127,6 @@ var QUANTV = (() => {                                                  // V54.2 
     compression: 'Des positions se construisent sans mouvement : un déplacement fort se prépare.',
     neutre: 'Rien de marqué sur l\'heure : pas de signal de régime.'};
 
-  function whoLeads(d) {
-    const S = d.spotPerp, sp = S && S.windows && S.windows['24h'], w48 = S && S.windows && S.windows['48h'];
-    if (!sp) return kpi({lab: 'Qui mène · 24 h', val: '—', txt: true, read: esc(S && S.error ? S.error : 'chargement'), bias: 0});
-    const b = sp.read.bias, scale = Math.max(0.05, Math.abs((sp.spot || {}).imb || 0), Math.abs((sp.perp || {}).imb || 0));
-    const ln = (n, x) => !x || x.error ? `<div class="qkb"><span>${n}</span><span class="muted">—</span></div>` :
-      `<div class="qkb"><span>${n}</span>${bar(x.imb, scale)}<b class="${cls(x.deltaUsd)}">${susd(x.deltaUsd)}</b><span class="${cls(x.imb)}">${pct(x.imb)}</span></div>`;
-    const v = sp.read.code === 'lev_buy_spot_sell' ? ['Fragile', 'amb'] : VERD(b);
-    return kpi({lab: 'Qui mène · 24 h', val: esc(CONV[sp.read.code] || '—'), txt: true, cl: bcls(b), chip: v[0], chipCl: v[1], bias: b,
-      sub: ln('Comptant', sp.spot) + ln('Perpétuels', sp.perp) + (w48 && w48.read ? `<div class="muted">48 h : <span class="${bcls(w48.read.bias)}">${esc(CONV[w48.read.code] || '—')}</span></div>` : ''),
-      read: READ_SP[sp.read.code] || esc(sp.read.label)});
-  }
-  function regimeKpi(d) {
-    const R = d.regime || {}, r = R['1h'];
-    if (!r || r.error) return kpi({lab: 'Régime · 1 h', val: '—', txt: true, read: esc(r ? r.error : 'pas encore mesuré'), bias: 0});
-    const v = VERD(r.bias), other = ['15m', '4h'].map(k => { const x = R[k]; return x && !x.error ? `${WLAB[k]} : <span class="${bcls(x.bias)}">${esc(x.label)}</span>` : ''; }).filter(Boolean).join(' · ');
-    return kpi({lab: 'Régime · 1 h', val: esc(r.label), txt: true, cl: bcls(r.bias), chip: v[0], chipCl: v[1], bias: r.bias,
-      sub: `<div class="qmeter" title="force ${nf(r.score * 100)} %"><i class="${bcls(r.bias)}" style="width:${Math.min(100, r.score * 100).toFixed(0)}%"></i></div>` +
-        `${(r.notes || []).length ? `<div class="muted">${esc(r.notes.slice(0, 2).join(' · '))}</div>` : ''}${other ? `<div>${other}</div>` : ''}`,
-      read: READ_REG[r.code] || ''});
-  }
-  function cvdKpi(d) {
-    const c = d.cvd && d.cvd.windows && d.cvd.windows['1h'], P = c && c.perp, S = c && c.spot;
-    if (!P || !P.n) return kpi({lab: 'CVD · 1 h', val: '—', read: 'pas encore de transactions', bias: 0});
-    const sg = x => !x || !x.n ? 0 : x.imb >= 0.01 ? 1 : x.imb <= -0.01 ? -1 : 0, p = sg(P), q = sg(S);
-    const read = p > 0 && q > 0 ? 'Perpétuels et comptant achètent : pression acheteuse saine.' : p < 0 && q < 0 ? 'Perpétuels et comptant vendent : pression vendeuse nette.' :
-      p > 0 && q < 0 ? 'Le levier achète, le comptant vend : hausse fragile.' : p < 0 && q > 0 ? 'Le comptant achète, le levier vend : absorption, les shorts s\'exposent.' :
-      p || q ? `${p ? 'Seuls les perpétuels' : 'Seul le comptant'} ${(p || q) > 0 ? 'achète' + (p ? 'nt' : '') : 'vend' + (p ? 'ent' : '')} : signal faible tant que l'autre ne suit pas.` : 'Flux équilibré sur l\'heure : personne ne force.';
-    const b = p + q, cell = (n, x) => `<div><span class="muted">${n}</span><b class="${cls(x && x.deltaUsd)}">${x && x.n ? susd(x.deltaUsd) : '—'}</b><small class="${cls(x && x.imb)}">${x && x.n ? pct(x.imb) + ' du volume' : ''}</small></div>`;
-    const v = p > 0 && q < 0 ? ['Fragile', 'amb'] : p < 0 && q > 0 ? ['Absorption', 'amb'] : VERD(b);
-    return kpi({lab: 'CVD · 1 h', val: `<div class="qk2">${cell('Perpétuels', P)}${cell('Comptant', S)}</div>`, chip: v[0], chipCl: v[1], bias: b, read});
-  }
-  function bookKpi(d) {
-    const b = d.book;
-    if (!b || b.error) return kpi({lab: 'Carnet · ± 0,5 %', val: '—', read: esc(b ? b.error : 'indisponible') + ' (il se remplit en quelques secondes une fois l\'onglet ouvert)', bias: 0});
-    const v = b.obi['0.005'], near = side => (b.walls[side] || []).slice().sort((a, c) => a.dist - c.dist)[0];
-    const wa = near('ask'), wb = near('bid'), pulled = (b.events || []).find(e => /retir/.test(e.kind));
-    const bias = v >= 0.2 ? 1 : v <= -0.2 ? -1 : 0, ch = VERD(bias);
-    return kpi({lab: 'Carnet · ± 0,5 %', val: pct(v, 0), cl: cls(v), chip: ch[0], chipCl: ch[1], bias,
-      sub: `<div class="muted">en attente : achat ${usd(b.depth['0.005'].bid)} · vente ${usd(b.depth['0.005'].ask)}</div>` +
-        [wa ? `<span class="dn">mur vendeur ${px(wa.price)}</span> <span class="muted">(${usd(wa.usd)}, à ${nf(wa.dist * 100, 2)} %)</span>` : '',
-         wb ? `<span class="up">mur acheteur ${px(wb.price)}</span> <span class="muted">(${usd(wb.usd)}, à ${nf(wb.dist * 100, 2)} %)</span>` : ''].filter(Boolean).map(x => `<div>${x}</div>`).join('') +
-        (pulled ? `<div class="muted">dernier mur retiré : ${pulled.side === 'bid' ? 'acheteur' : 'vendeur'} ${px(pulled.price)}, ${ago(d.now - pulled.t)}</div>` : ''),
-      read: v >= 0.2 ? 'Plus d\'acheteurs en attente près du prix : soutien juste en dessous.' : v <= -0.2 ? 'Plus de vendeurs en attente près du prix : résistance juste au-dessus.' :
-        'Carnet équilibré près du prix : pas de mur décisif. Un mur retiré juste avant d\'être touché est souvent de l\'affichage.'});
-  }
-  function leverKpi(d) {
-    const x = d.derivs || {}, o = x.others || {}, sp = d.spotPerp && d.spotPerp.windows && d.spotPerp.windows['24h'];
-    const mv = sp && sp.perp ? sp.perp.move : null, oi = x.oi24h, fu = x.funding != null ? x.funding : (o.okx || o.bybit || {}).funding;
-    const fsrc = x.funding != null ? 'Binance' : o.okx ? 'OKX' : o.bybit ? 'Bybit' : '';
-    let read = oi == null || mv == null ? 'Variation de l\'intérêt ouvert pas encore connue (relevé toutes les 5 minutes).' :
-      oi > 0.01 && mv > 0.003 ? 'Des acheteurs à levier ouvrent : hausse alimentée par le levier.' : oi > 0.01 && mv < -0.003 ? 'Des vendeurs à levier ouvrent : baisse alimentée par les shorts.' :
-      oi < -0.01 && mv > 0.003 ? 'Des shorts rachètent : hausse par fermeture de positions, souvent courte.' : oi < -0.01 && mv < -0.003 ? 'Des longs sortent ou sont liquidés : purge du levier.' :
-      oi > 0.01 ? 'Le levier s\'accumule sans que le prix bouge : un mouvement fort se prépare.' : 'Levier stable : pas de signal.';
-    if (fu != null && fu >= 0.0003) read += ' Financement élevé : acheteurs à levier nombreux, risque de purge.';
-    else if (fu != null && fu <= -0.0001) read += ' Financement négatif : vendeurs nombreux, risque de rachat.';
-    const bias = oi == null || mv == null ? 0 : (oi > 0.01 ? Math.sign(mv) : 0);
-    return kpi({lab: 'Levier · 24 h', val: oi == null ? '—' : pct(oi, 2), cl: cls(oi), chip: oi == null ? '' : oi > 0.01 ? 'Levier qui monte' : oi < -0.01 ? 'Levier qui sort' : 'Stable', chipCl: oi > 0.01 ? 'amb' : '', bias,
-      sub: `<div class="muted">intérêt ouvert sur 24 h${x.oi1h != null ? ` · 1 h <span class="${cls(x.oi1h)}">${pct(x.oi1h, 2)}</span>` : ''}</div>` +
-        `<div>financement ${fu == null ? '—' : `<b class="${cls(fu)}">${pct(fu, 4)}</b> / 8 h`}${fsrc ? ` <span class="muted">(${fsrc})</span>` : ''}${x.longShare != null ? ` · <span class="muted">${nf(x.longShare * 100)} % des comptes longs</span>` : ''}</div>`,
-      read});
-  }
-  function optionsKpi(d) {
-    const o = d.options, f = d.optFlow, ws = f && f.whales && f.whales.sum, lab = 'Options BTC' + (d.symbol === 'BTCUSDT' ? '' : ' · référence');
-    if (!o || o.error) return kpi({lab, val: '—', read: esc(o ? o.error : 'indisponible'), bias: 0});
-    const g = o.gex || {}, pos = g.total > 0, above = o.index != null && g.flip != null ? o.index >= g.flip : null, mp = (o.maxPain || [])[0];
-    const read = pos ? `Gamma positif : les teneurs de marché freinent les mouvements${g.flip ? ` tant que le prix reste au-dessus de ${px(g.flip)}` : ''}.` :
-      `Gamma négatif : les teneurs de marché amplifient les mouvements (accélérations)${g.flip ? ` ; au-dessus de ${px(g.flip)}, ça se calme` : ''}.`;
-    const wd = ws && ws.n ? `baleines 24 h : delta net <b class="${cls(ws.delta)}">${sn(ws.delta)} BTC</b> <span class="muted">(${nf(ws.n)} ordres)</span>` : '';
-    return kpi({lab, val: susd(g.total), cl: cls(g.total), chip: pos ? 'Amorti' : 'Amplifié', chipCl: pos ? 'up' : 'dn', bias: 0,
-      sub: `<div class="muted">gamma pour 1 % de mouvement${above != null ? ` · prix ${above ? 'au-dessus' : 'en dessous'} de la bascule` : ''}</div>` +
-        `<div>bascule <b>${px(g.flip)}</b> · calls <b>${px(g.callWall)}</b> · puts <b>${px(g.putWall)}</b>${mp ? ` · max pain <b>${px(mp.maxPain)}</b>` : ''}</div>${wd ? `<div>${wd}</div>` : ''}`,
-      read});
-  }
   function lastSignals(d) {
     const c = d.cvd || {}, short = t => String(t || '').split(' : ')[0];
     const items = [...(c.divergences || []).map(x => ({t: x.known || x.t2, side: x.side, txt: short(x.text), where: `${x.market === 'perp' ? 'perpétuels' : 'comptant'} · ${px(x.p2)}`})),
@@ -259,14 +187,10 @@ var QUANTV = (() => {                                                  // V54.2 
       `<p class="small qdexm">${more}${ext}</p>${hist}</section>`;
   }
 
-  function summary(d) {
-    return `<div class="qdash">${whoLeads(d)}${regimeKpi(d)}${cvdKpi(d)}${leverKpi(d)}${bookKpi(d)}${optionsKpi(d)}</div>${dexCard(d)}${lastSignals(d)}`;
-  }
-
   // ---------- flux d'ordres ----------
   function spotPerpCard(d) {
     const s = d.spotPerp;
-    const title = 'Comptant contre perpétuels · conviction sur 24 et 48 heures';
+    const title = 'Comptant contre perpétuels · heure par heure sur 48 heures';
     if (!s || s.error) return card(title, bad(s ? s.error : 'indisponible'));
     const W = s.windows || {};
     const imbs = [];
@@ -400,7 +324,7 @@ var QUANTV = (() => {                                                  // V54.2 
 
   function whalesCard(d) {
     const f = d.optFlow;
-    const title = 'Baleines des options BTC · 24 heures';
+    const title = 'Les plus gros ordres des baleines · 24 heures';
     if (!f) return card(title, bad('lecteur des baleines coupé dans les réglages (TERMINAL_OPTION_WHALES=0)'));
     const W = f.whales || {}, S = W.sum || {};
     const meta = `Deribit${W.last ? ' · lu ' + ago(d.now - W.last) : ''}`;
@@ -426,7 +350,7 @@ var QUANTV = (() => {                                                  // V54.2 
     };
     const rows = all.slice(0, 6).map(one).join('') + (all.length > 6 ? `<details class="qmore"><summary>${all.length - 6} autres ordres</summary>${all.slice(6).map(one).join('')}</details>` : '');   // V54 : 6 affichés
     const head = `<div class="qwr qwh muted"><div>Heure</div><div>Position</div><div>Taille</div><div>Prime</div><div>Delta net</div></div>`;
-    return card(title, seg + stats + (rows ? `<div class="qwlist">${head}${rows}</div>` : bad(`aucun ordre d'au moins ${usd(W.minUsd || wmin)} sur les dernières 24 heures`)) + help(
+    return card(title, seg + (rows ? `<div class="qwlist">${head}${rows}</div>` : bad(`aucun ordre d'au moins ${usd(W.minUsd || wmin)} sur les dernières 24 heures`)) + help(
       `<p class="small">Une baleine est un ordre d'options dont le notionnel (contrats × prix du BTC, 1 contrat = 1 BTC) atteint le seuil choisi. Les jambes d'un même bloc négocié (ou d'un combo) sont regroupées : c'est la position complète. Le sens est celui de l'initiateur : celui qui traverse le carnet ou demande le bloc. On ne sait pas s'il ouvre ou ferme une position : la carte « Positions ouvertes » le dit pour la journée.</p>` +
       `<p class="small">Delta net : l'exposition de la position en BTC équivalents. +100 BTC se comporte comme 100 BTC achetés (gagne à la hausse), −100 BTC comme 100 BTC vendus à découvert (gagne à la baisse) ; proche de zéro (moins de 10 % de la taille) : un pari sur la volatilité plutôt que sur le sens. Il est calculé avec le modèle de Black, la volatilité de chaque exécution et le prix de l'indice : une estimation. Volatilité achetée (vega positif) : il gagne si les mouvements s'amplifient ; vendue : il parie sur le calme.</p>` +
       `<p class="muted small">Lu toutes les 5 minutes, même onglet fermé, et gardé 3 jours sur le disque${f.whales && f.whales.since ? ` ; données depuis le ${DM.format(f.whales.since)}` : ''}.</p>`), '', meta);
@@ -454,21 +378,6 @@ var QUANTV = (() => {                                                  // V54.2 
       `<div class="qoic"><div><div class="qoih up">Principales accumulations</div>${o.up.slice(0, 4).map(r => row(r, true)).join('') || '<p class="muted small">aucune</p>'}</div>` +
       `<div><div class="qoih dn">Principales réductions</div>${o.down.slice(0, 4).map(r => row(r, false)).join('') || '<p class="muted small">aucune</p>'}</div></div>` +
       help(`<p class="small">Différence, option par option, entre la photo la plus récente de l'intérêt ouvert et celle d'il y a environ 24 heures. Une accumulation = des positions s'ouvrent sur cette option (acheteurs et vendeurs ensemble : le sens se lit avec les baleines) ; une réduction = des positions se ferment. Les options arrivées à échéance entre les deux photos sont écartées. En dollars : contrats × prix du BTC.</p>`), '', `Deribit · photo ${ago(d.now - o.t)}`);
-  }
-
-  function gammaCard(d) {
-    const o = d.options;
-    if (!o) return '';
-    if (o.error) return card('Gamma et max pain', bad(o.error), '', 'Deribit');
-    const g = o.gex || {};
-    const mp = (o.maxPain || []).slice(0, 4).map(m => `<tr><td>${DAYF.format(m.expiry)}</td><td>${nf(m.days, m.days < 3 ? 1 : 0)} j</td><td><b>${px(m.maxPain)}</b></td><td>${nf(m.calls)} / ${nf(m.puts)}</td><td>${m.putCall == null ? '—' : nf(m.putCall, 2)}</td></tr>`).join('');
-    return card('Gamma et max pain', `<div class="qkvg">` +
-      `<div><span class="muted">Exposition gamma</span><b class="${cls(g.total)}">${susd(g.total)}</b><small class="muted">pour 1 % de mouvement</small></div>` +
-      `<div><span class="muted">Bascule du gamma</span><b>${px(g.flip)}</b><small class="muted">indice ${px(o.index)}</small></div>` +
-      `<div><span class="muted">Mur de calls</span><b>${px(g.callWall)}</b><small class="muted">résistance des options</small></div>` +
-      `<div><span class="muted">Mur de puts</span><b>${px(g.putWall)}</b><small class="muted">support des options</small></div></div>` +
-      `<div class="qsub">Max pain et intérêt ouvert par échéance</div><table class="qtab"><tr><th>Échéance</th><th>Dans</th><th>Max pain</th><th>Calls / puts (BTC)</th><th>Put / call</th></tr>${mp}</table>` +
-      help(`<p class="muted small">Gamma : calls +, puts − (hypothèse habituelle sur les teneurs de marché, non observable). Sous la bascule du gamma, les teneurs de marché amplifient les mouvements ; au-dessus, ils les freinent. Max pain : prix où les détenteurs d'options perdraient le plus à l'échéance. ${nf(o.n)} options lues, ${nf(o.withOi)} avec de l'intérêt ouvert.</p>`), '', `Deribit · ${ago(d.now - o.t)}`);
   }
 
   function volCard(d) {
@@ -502,12 +411,245 @@ var QUANTV = (() => {                                                  // V54.2 
       `${c.crossCheck && c.crossCheck.difficultyGapPct != null ? ` Difficulté recoupée avec blockchain.info : écart ${nf(c.crossCheck.difficultyGapPct, 4)} %.` : ''}</p>`));
   }
 
-  // ---------- V54 : mise en page : « L'essentiel » en haut, le détail dessous dans des rubriques fermées par défaut ----------
   const row = (...cards) => { const c = cards.filter(Boolean); return c.length ? `<div class="qrow${c.length === 1 ? ' q1' : ''}">${c.join('')}</div>` : ''; };
-  function section(id, title, lede, body) {
-    const o = opened.has(id);
-    return `<section class="qsect${o ? '' : ' folded'}" id="qs-${id}"><header class="qsh" data-qfold="${id}" title="${o ? 'Fermer' : 'Ouvrir'} le détail">` +
-      `<span class="qfold">${o ? '▾' : '▸'}</span><h3>${title}</h3>${lede ? `<span class="qlede">${lede}</span>` : ''}</header>${o ? `<div class="qbody">${body}</div>` : ''}</section>`;
+  // ---------- V56 : page refaite : quatre verdicts en haut (cliquables), puis six sous-onglets ----------
+  const TABS = [['sp', 'Comptant / perpétuels'], ['lev', 'Levier et stops'], ['dex', 'DEX et teneurs'], ['wh', 'Baleines et échéances'],
+    ['flux', 'Flux et carnet'], ['net', 'Réseau']];
+  const PERP_C = '#a78bfa', SPOT_C = '#f59e0b';                         // violet : perpétuels (levier) ; ambre : comptant (argent réel)
+  const banner = (txt, sub, c = '') => `<div class="qbanner ${c}">${txt}${sub ? `<small>${sub}</small>` : ''}</div>`;
+  const sumTile = (k, lab, val, sub, chip, chipCl, bias) => `<button type="button" class="qsumc ${bias > 0 ? 'b-up' : bias < 0 ? 'b-dn' : bias === 'amb' ? 'b-amb' : 'b-nt'}${tab === k ? ' on' : ''}" data-qtab="${k}">` +
+    `<span class="qkh"><span class="qkl">${lab}</span>${chip ? `<span class="qkc ${chipCl || ''}">${chip}</span>` : ''}</span><span class="qsv">${val}</span>${sub ? `<span class="qss">${sub}</span>` : ''}</button>`;
+  const split = (a, b, ca, cb) => { const t = (a || 0) + (b || 0), pa = t ? a / t * 100 : 50;
+    return `<span class="qsplit"><i style="width:${pa.toFixed(1)}%;background:${ca}"></i><i style="width:${(100 - pa).toFixed(1)}%;background:${cb}"></i></span>`; };
+  const hbar = (v, mx, c) => `<span class="qhb"><i style="width:${Math.min(100, mx ? Math.abs(v) / mx * 100 : 0).toFixed(1)}%;background:${c}"></i></span>`;
+  const dbar = (v, mx, cu = '#22c55e', cd = '#ef4444') => { const w = Math.min(50, mx ? Math.abs(v || 0) / mx * 50 : 0);   // barre centrée : négatif à gauche, positif à droite
+    return `<span class="qdb"><i style="width:${w.toFixed(1)}%;left:${(v >= 0 ? 50 : 50 - w).toFixed(1)}%;background:${v >= 0 ? cu : cd}"></i></span>`; };
+  const when = t => `${EXP.format(t)} <span class="muted">· ${inDays(t, data.now)}</span>`;
+
+  // ----- comptant ou perpétuels : qui pèse le plus dans le volume, et qui achète -----
+  function domData(d) {
+    const w = (d.spotPerp && d.spotPerp.windows) || {}, a = w['24h'], b = w['48h'];
+    if (!a || !a.spot || !a.perp || a.spot.error || a.perp.error || !(a.spot.volUsd > 0) || !(a.perp.volUsd > 0)) return null;
+    const sv = a.spot.volUsd, pv = a.perp.volUsd;
+    let prev = null;                                                       // part du comptant sur les 24 heures d'avant (48 h moins 24 h)
+    if (b && b.spot && b.perp && !b.spot.error && !b.perp.error) { const s2 = b.spot.volUsd - sv, p2 = b.perp.volUsd - pv; if (s2 > 0 && p2 > 0) prev = s2 / (s2 + p2); }
+    return {sv, pv, share: sv / (sv + pv), ratio: pv / sv, prev, read: a.read, a};
+  }
+  function venueSplit(d, k) {
+    const V = d.venues && d.venues[k];
+    if (!V || !(V.venues || []).length) return null;
+    let s = 0, p = 0;
+    V.venues.forEach(v => { const x = (v.buyUsd || 0) + (v.sellUsd || 0); if (/_perp$/.test(v.id)) p += x; else s += x; });
+    return s + p > 0 ? {s, p, share: s / (s + p), rows: V.venues} : null;
+  }
+  const sideRead = (p, q) => p > 0 && q > 0 ? ['Les deux achètent', 'up'] : p < 0 && q < 0 ? ['Les deux vendent', 'dn'] : p > 0 && q < 0 ? ['Le levier achète, le comptant vend', 'amb'] :
+    p < 0 && q > 0 ? ['Le comptant achète, le levier vend', 'amb'] : p ? [p > 0 ? 'Seuls les perpétuels achètent' : 'Seuls les perpétuels vendent', p > 0 ? 'up' : 'dn'] :
+    q ? [q > 0 ? 'Seul le comptant achète' : 'Seul le comptant vend', q > 0 ? 'up' : 'dn'] : ['Équilibré', ''];
+  function domCard(d) {
+    const D = domData(d), title = 'Qui pèse le plus : comptant ou perpétuels';
+    if (!D) return card(title, bad((d.spotPerp && d.spotPerp.error) || 'bougies d\'une heure pas encore lues'));
+    const trend = D.prev == null ? '' : Math.abs(D.share - D.prev) < 0.003 ? 'stable par rapport aux 24 heures d\'avant' :
+      `${D.share > D.prev ? 'en hausse' : 'en baisse'} : ${nf(D.prev * 100, 1)} % les 24 heures d'avant`;
+    const big = `<div class="qdom"><div class="qdoml"><span style="color:${PERP_C}">■</span> Perpétuels <b>${nf((1 - D.share) * 100, 1)} %</b><small>${usd(D.pv)} échangés</small></div>` +
+      `<div class="qdomr"><span style="color:${SPOT_C}">■</span> Comptant <b>${nf(D.share * 100, 1)} %</b><small>${usd(D.sv)} échangés</small></div></div>` + split(D.pv, D.sv, PERP_C, SPOT_C);
+    const read = D.ratio >= 8 ? 'Le marché est piloté par le levier : un mouvement porté par les perpétuels seuls se retourne plus facilement.' :
+      D.ratio <= 3 ? 'Le comptant pèse lourd : les mouvements reposent sur de l\'argent réel, ils tiennent mieux.' : 'Poids habituel du levier par rapport au comptant.';
+    let ven = '';
+    for (const k of ['1h', '4h']) {
+      const V = venueSplit(d, k); if (!V) continue;
+      const mx = Math.max(...V.rows.map(v => (v.buyUsd || 0) + (v.sellUsd || 0))) || 1;
+      ven += `<div class="qsub">Toutes les bourses suivies · ${WLAB[k]} · comptant ${nf(V.share * 100, 1)} % du volume</div>${split(V.p, V.s, PERP_C, SPOT_C)}<table class="qtab qven">` +
+        V.rows.map(v => { const vol = (v.buyUsd || 0) + (v.sellUsd || 0), perp = /_perp$/.test(v.id);
+          return `<tr><td><span style="color:${perp ? PERP_C : SPOT_C}">■</span> ${esc(v.name)}</td><td>${hbar(vol, mx, perp ? PERP_C : SPOT_C)}</td><td>${usd(vol)}</td>` +
+            `<td class="${cls(v.deltaUsd)}">${susd(v.deltaUsd)}</td><td class="${cls(v.imb)} small">${pct(v.imb)}</td></tr>`; }).join('') + '</table>';
+      break;
+    }
+    return card(title, big + `<p class="small"><b>Les perpétuels échangent ${nf(D.ratio, 1)} fois plus que le comptant</b> (Binance, 24 heures${trend ? ' ; part du comptant ' + trend : ''}).</p>` +
+      `<p class="small muted">${read}</p>${ven}` + help(`<p class="small">Volume au marché des bougies officielles d'une heure de Binance, comptant et perpétuel de la même paire, sur 24 heures (l'heure en cours comprise). Pour le BTC, le tableau reprend toutes les bourses lues en direct par le terminal (Binance, Coinbase, OKX, Bybit, Bitstamp) : net = achats au marché moins ventes au marché.</p>`), '', 'Binance');
+  }
+  function whoBuysCard(d) {
+    const c = d.cvd && d.cvd.windows, w = (d.spotPerp && d.spotPerp.windows) || {}, rows = [];
+    ['15m', '1h', '4h'].forEach(k => { const x = c && c[k]; if (x && x.perp && x.perp.n) rows.push([WLAB[k], x.spot, x.perp, 'CVD exact']); });
+    ['24h', '48h'].forEach(k => { const x = w[k]; if (x && x.spot && x.perp && !x.spot.error && !x.perp.error) rows.push([k === '24h' ? '24 h' : '48 h', x.spot, x.perp, 'bougies officielles']); });
+    if (!rows.length) return card('Qui achète, qui vend', bad('pas encore de transactions'));
+    const sg = x => !x || x.imb == null ? 0 : x.imb >= 0.01 ? 1 : x.imb <= -0.01 ? -1 : 0;
+    const mx = Math.max(0.05, ...rows.flatMap(r => [Math.abs((r[1] || {}).imb || 0), Math.abs((r[2] || {}).imb || 0)]));
+    const cell = x => !x || x.imb == null ? '<td class="muted" colspan="2">—</td>' : `<td>${dbar(x.imb, mx)}</td><td><b class="${cls(x.deltaUsd)}">${susd(x.deltaUsd)}</b> <small class="${cls(x.imb)}">${pct(x.imb)}</small></td>`;
+    const body = rows.map(([lab, s, p, src]) => { const r = sideRead(sg(p), sg(s));
+      return `<tr title="${src}"><td><b>${lab}</b></td>${cell(s)}${cell(p)}<td><span class="qkc ${r[1]}">${r[0]}</span></td></tr>`; }).join('');
+    return card('Qui achète, qui vend', `<table class="qtab qwho"><tr><th></th><th colspan="2" style="color:${SPOT_C}">Comptant</th><th colspan="2" style="color:${PERP_C}">Perpétuels</th><th>Lecture</th></tr>${body}</table>` +
+      help(`<p class="small">Net = achats agressifs moins ventes agressives, en dollars ; le pourcentage est sa part dans le volume de ce marché (c'est lui qui compare les deux marchés, car les perpétuels échangent bien plus). Un marché achète au-dessus de + 1 %, vend sous − 1 %. 15 min, 1 h et 4 h : CVD exact, transaction par transaction ; 24 et 48 h : bougies officielles d'une heure.</p>` +
+        `<p class="small">Les deux achètent : conviction forte. Le levier achète et le comptant vend : hausse fragile (risque de liquidation des longs). Le comptant achète et le levier vend : accumulation face à des vendeurs à découvert, qui peut finir en rachat forcé des shorts.</p>`));
+  }
+  function regimeCard(d) {
+    const R = d.regime || {}, ks = ['15m', '1h', '4h'].filter(k => R[k] && !R[k].error);
+    if (!ks.length) return '';
+    return card('Régime du marché', `<div class="qreg">${ks.map(k => { const r = R[k], v = VERD(r.bias);
+      return `<div class="qregc ${bcls(r.bias)}"><span class="qkl">${WLAB[k]}</span><b class="${bcls(r.bias)}">${esc(r.label)}</b><span class="qkc ${v[1]}">${v[0]}</span>` +
+        `<div class="qmeter"><i class="${bcls(r.bias)}" style="width:${Math.min(100, r.score * 100).toFixed(0)}%"></i></div><small class="muted">${READ_REG[r.code] || ''}</small></div>`; }).join('')}</div>`);
+  }
+
+  // ----- levier et stops des perpétuels -----
+  function leverRead(L) {
+    const r = L.oi && L.oi.rank30, f = L.funding && L.funding.binance, s = L.longShare;
+    if (r == null && f == null) return null;
+    let sc = 0;
+    if (r != null) sc += r >= 80 ? 1 : r <= 20 ? -1 : 0;
+    if (f != null) sc += f >= 0.0003 ? 1 : f < 0 ? -0.5 : 0;
+    const lvl = sc >= 1 ? 'élevé' : sc <= -1 ? 'bas' : 'normal';
+    const crowd = f != null && f > 0.0001 && (s == null || s > 0.55) ? 'longs' : (f != null && f < 0) || (s != null && s < 0.42) ? 'shorts' : null;
+    return {lvl, crowd, cl: lvl === 'élevé' ? 'amb' : lvl === 'bas' ? 'up' : ''};
+  }
+  const bigStop = (L, side) => ((L.stops && L.stops[side] && L.stops[side].top) || [])[0];
+  function leverBanner(L) {
+    const R = leverRead(L);
+    if (!R) return banner('Levier : pas encore mesuré', 'l\'intérêt ouvert et le financement arrivent avec les premiers relevés (toutes les 5 minutes)');
+    const up = bigStop(L, 'shorts'), dn = bigStop(L, 'longs');
+    const crowd = R.crowd === 'longs' ? ' · les acheteurs à levier sont nombreux' : R.crowd === 'shorts' ? ' · les vendeurs à levier sont nombreux' : '';
+    const risk = R.crowd === 'longs' && dn ? `Risque principal : une purge des longs vers ${px(dn.price)} (${pct(dn.dist)}), où se trouve le plus gros paquet de stops de longs.` :
+      R.crowd === 'shorts' && up ? `Risque principal : un rachat forcé des shorts vers ${px(up.price)} (${pct(up.dist)}), où se trouve le plus gros paquet de stops de shorts.` :
+      up && dn ? `Plus gros paquets de stops : shorts à ${px(up.price)} (${pct(up.dist)}), longs à ${px(dn.price)} (${pct(dn.dist)}). Le prix est souvent attiré vers le plus gros.` : '';
+    return banner(`Levier ${R.lvl}${crowd}`, risk, R.cl);
+  }
+  function leverTiles(L) {
+    const o = L.oi, f = L.funding || {}, s = L.longShare, q = L.liq24, q1 = L.liq1;
+    const t1 = o ? tile('Intérêt ouvert', `${nf(o.coins)} ${esc(o.unit)}`, `${usd(o.usd)} · 24 h <span class="${cls(o.chg24h)}">${pct(o.chg24h, 1)}</span> · 7 j <span class="${cls(o.chg7d)}">${pct(o.chg7d, 1)}</span>` +
+      (o.rank30 != null ? `<div class="qrank" title="Rang parmi les relevés des 30 derniers jours"><i style="left:${o.rank30}%"></i></div>plus haut que ${o.rank30} % des 30 derniers jours` : `<br>${nf(o.days, 0)} jours d'historique`)) :
+      tile('Intérêt ouvert', '—', 'pas encore de relevé');
+    const t2 = tile('Financement (Binance)', f.binance == null ? '—' : `${pct(f.binance, 4)}`, f.binance == null ? '' : `par 8 h · ${pct(f.annual, 1)} par an${f.okx != null ? ` · OKX ${pct(f.okx, 4)}` : ''}<br>` +
+      (f.binance >= 0.0003 ? 'élevé : les acheteurs à levier paient cher' : f.binance > 0.0001 ? 'positif : les acheteurs paient' : f.binance < 0 ? 'négatif : les vendeurs paient' : 'proche du taux de base'), cls(f.binance));
+    const t3 = tile('Comptes longs (Binance)', s == null ? '—' : `${nf(s * 100)} %`, s == null ? 'pas encore lu' : `${split(s, 1 - s, '#22c55e', '#ef4444')}${nf(s * 100)} % des comptes sont acheteurs, ${nf((1 - s) * 100)} % vendeurs`);
+    const t4 = q && q.since ? tile('Liquidations · 24 h', usd(q.long + q.short), `${split(q.long, q.short, '#ef4444', '#22c55e')}<span class="dn">longs ${usd(q.long)}</span> · <span class="up">shorts ${usd(q.short)}</span>` +
+      (q1 ? `<br>dernière heure : longs ${usd(q1.long)} · shorts ${usd(q1.short)}` : '')) : tile('Liquidations · 24 h', '—', 'notées par le terminal à partir de maintenant');
+    const t5 = tile('Intérêt ouvert / volume comptant', L.oiToSpot == null ? '—' : `${nf(L.oiToSpot, 1)} ×`, L.oiToSpot == null ? '' : `pour 1 $ échangé au comptant en 24 h, ${nf(L.oiToSpot, 1)} $ de positions à levier ouvertes`);
+    return `<div class="qtiles q5">${t1}${t2}${t3}${t4}${t5}</div>`;
+  }
+  function stopsCard(L) {
+    const S = L.stops, title = 'Stops des perpétuels · où sont les liquidations estimées';
+    if (!S) return card(title, bad(L.error || 'indisponible'));
+    const lb = S.longs.bands, sb = S.shorts.bands, mx = Math.max(...lb.map(b => b.usd), ...sb.map(b => b.usd)) || 1;
+    const rng = b => `${nf(b.from * 100)} à ${nf(b.to * 100)} %`;
+    const row = (b, up) => `<span class="ql">${up ? '+' : '−'}${rng(b)}</span><span class="qlb">${hbar(b.usd, mx, up ? '#22c55e' : '#ef4444')}</span><span class="qlv ${b.usd ? (up ? 'up' : 'dn') : 'muted'}">${b.usd ? usd(b.usd) : '—'}</span>`;
+    const lad = `<div class="qlad"><span class="qlh up">Stops de shorts au-dessus · achats forcés si le prix monte</span>${sb.slice().reverse().map(b => row(b, true)).join('')}` +
+      `<span class="qlp">prix ${px(S.price)}</span>${lb.map(b => row(b, false)).join('')}<span class="qlh dn">Stops de longs en dessous · ventes forcées si le prix baisse</span></div>`;
+    const tops = (side, up) => (S[side].top || []).map(p => `<li><b class="${up ? 'up' : 'dn'}">${px(p.price)}</b> <span class="muted">(${pct(p.dist)})</span> · ${usd(p.usd)}${p.born ? ` <span class="muted small">· formé ${ago(data.now - p.born)}</span>` : ''}</li>`).join('') || '<li class="muted">aucun</li>';
+    const tot = `${split(S.shorts.usd, S.longs.usd, '#22c55e', '#ef4444')}<p class="small"><span class="up">Stops de shorts : ${usd(S.shorts.usd)}</span> · <span class="dn">stops de longs : ${usd(S.longs.usd)}</span> (à ± ${nf(S.span * 100)} % du prix)</p>`;
+    const tiers = `<div class="qtiers">${S.tiers.map(t => `<span><b>${t.lev}x</b> ± ${nf(t.dist * 100, 1)} %</span>`).join('')}</div>`;
+    return card(title, tot + `<div class="qstops">${lad}<div><div class="qsub up">Plus gros paquets de stops de shorts</div><ul class="qlist">${tops('shorts', true)}</ul>` +
+      `<div class="qsub dn">Plus gros paquets de stops de longs</div><ul class="qlist">${tops('longs', false)}</ul>` +
+      `<div class="qsub">Distance de liquidation selon le levier</div>${tiers}<p class="small muted">Une position ouverte à 100x est liquidée après 0,6 % contre elle, à 10x après 9,6 %.</p></div></div>` +
+      help(`<p class="small">Estimation, comme les cartes de liquidation des sites spécialisés : chaque hausse de l'intérêt ouvert est comptée comme de nouvelles positions au prix du moment, réparties entre acheteurs et vendeurs selon le volume agressif réel, puis entre les leviers 100x, 50x, 25x et 10x (${S.tiers.map(t => `${t.lev}x ${nf(t.weight * 100)} %`).join(', ')}) ; un niveau disparaît quand le prix le touche, et tout se réduit quand l'intérêt ouvert baisse. Ni les leviers réels ni les prix d'entrée ne sont publics : ce sont des zones probables, pas des ordres visibles.</p>`), '', 'estimation · Binance');
+  }
+
+  // ----- DEX et teneurs de marché -----
+  function hedgeCard(d) {
+    const o = d.options;
+    if (!o || o.error) return '';
+    const g = o.gex || {}, neg = g.total < 0, a = Math.abs(g.total || 0);
+    const txt = neg ? `<p class="qbig">Si le BTC <b class="dn">baisse de 1 %</b>, les teneurs de marché doivent <b class="dn">vendre ≈ ${usd(a)}</b> ; s'il <b class="up">monte de 1 %</b>, <b class="up">acheter ≈ ${usd(a)}</b>.</p><p class="small">Ils suivent le mouvement : <b>les mouvements sont amplifiés</b> (gamma négatif).</p>` :
+      `<p class="qbig">Si le BTC <b class="dn">baisse de 1 %</b>, les teneurs de marché doivent <b class="up">acheter ≈ ${usd(a)}</b> ; s'il <b class="up">monte de 1 %</b>, <b class="dn">vendre ≈ ${usd(a)}</b>.</p><p class="small">Ils vont contre le mouvement : <b>les mouvements sont freinés</b> (gamma positif).</p>`;
+    const above = o.index != null && g.flip != null ? o.index >= g.flip : null;
+    return card('Ce que les teneurs de marché doivent faire', txt +
+      `<div class="qkvg"><div><span class="muted">Bascule du gamma</span><b>${px(g.flip)}</b><small class="muted">${above == null ? '' : `prix ${above ? 'au-dessus : calme' : 'en dessous : agité'}`}</small></div>` +
+      `<div><span class="muted">Mur de calls</span><b>${px(g.callWall)}</b><small class="muted">résistance des options</small></div>` +
+      `<div><span class="muted">Mur de puts</span><b>${px(g.putWall)}</b><small class="muted">support des options</small></div>` +
+      `<div><span class="muted">Exposition gamma</span><b class="${cls(g.total)}">${susd(g.total)}</b><small class="muted">à couvrir pour 1 %</small></div></div>` +
+      help(`<p class="small">Hypothèse habituelle, non observable : les teneurs de marché ont acheté les calls et vendu les puts du public. Ils se couvrent en achetant ou en vendant du BTC (comptant et perpétuels) quand le prix bouge. Sous la bascule du gamma, leur couverture suit le mouvement et l'amplifie ; au-dessus, elle le freine.</p>`), '', `Deribit · ${ago(d.now - o.t)}`);
+  }
+  function dexMoves(d) {
+    const E = d.optFlow && d.optFlow.expo, h = (E && E.hourly) || [];
+    if (!E || h.length < 2) return null;
+    const last = h[h.length - 1], at = t => { let best = null; for (const r of h) { if (r[0] <= t) best = r; else break; } return best; };
+    const a = at(last[0] - 86400000), b = h[0][0] <= last[0] - 6.5 * 86400000 ? h[0] : null;
+    return {d24: a && a !== last ? last[1] - a[1] : null, d7: b ? last[1] - b[1] : null};
+  }
+  function dexExpiryCard(d) {
+    const X = d.options && d.options.dex, rows = (X && X.byExpiry) || [];
+    if (!rows.length) return '';
+    const show = rows.slice(0, 10), mx = Math.max(...show.map(r => Math.abs(r.dex))) || 1, M = dexMoves(d);
+    const mv = M ? `<p class="small">DEX : 24 h <b class="${cls(M.d24)}">${M.d24 == null ? '—' : (M.d24 >= 0 ? '+' : '') + short$(M.d24)}</b> · 7 j <b class="${cls(M.d7)}">${M.d7 == null ? '— (moins de 7 jours d\'historique)' : (M.d7 >= 0 ? '+' : '') + short$(M.d7)}</b></p>` : '';
+    return card('DEX par échéance', mv + `<table class="qtab qdexe"><tr><th>Échéance</th><th></th><th>DEX</th><th>calls</th><th>puts</th><th>GEX (1 %)</th><th>Ouvert (BTC)</th></tr>` +
+      show.map(r => `<tr><td>${when(r.expiry)}</td><td>${dbar(r.dex, mx)}</td><td class="${cls(r.dex)}"><b>${short$(r.dex)}</b></td><td class="up small">${short$(r.dexCalls)}</td><td class="dn small">${short$(r.dexPuts)}</td>` +
+        `<td class="${cls(r.gex)} small">${short$(r.gex)}</td><td class="small">${nf(r.oiCalls)} c / ${nf(r.oiPuts)} p</td></tr>`).join('') + '</table>' +
+      help(`<p class="small">DEX de chaque échéance : la position delta de toutes ses options ouvertes (calls positifs, puts négatifs), en dollars. Une échéance au DEX très négatif est un poids vendeur : quand elle expire (vendredi 9 h, heure de Paris), la couverture correspondante se défait, ce qui peut libérer le prix.</p>`), '', 'Deribit');
+  }
+  function dexStrikeCard(d) {
+    const X = d.options && d.options.dex, ks = (X && X.byStrike) || [], idx = d.options && d.options.index;
+    if (ks.length < 3) return '';
+    const mx = Math.max(...ks.map(k => Math.max(Math.abs(k[1]), Math.abs(k[2])))) || 1;
+    let placed = false;
+    const rows = ks.slice().reverse().map(k => {
+      let mark = '';
+      if (!placed && idx != null && k[0] < idx) { placed = true; mark = `<div class="qstk qstkp"><span>prix ${px(idx)}</span></div>`; }
+      return mark + `<div class="qstk"><span class="qstkb l">${k[2] ? hbar(k[2], mx, '#ef4444') : ''}</span><b>${nf(k[0])}</b><span class="qstkb">${k[1] ? hbar(k[1], mx, '#22c55e') : ''}</span>` +
+        `<small class="muted">${k[2] ? short$(k[2]) : ''}${k[1] && k[2] ? ' / ' : ''}${k[1] ? short$(k[1]) : ''}</small></div>`;
+    }).join('');
+    return card('DEX par strike autour du prix', `<div class="qstkh small"><span class="dn">◀ puts (delta négatif)</span><span>strike</span><span class="up">calls (delta positif) ▶</span></div><div class="qstks">${rows}</div>` +
+      help(`<p class="small">Pour chaque strike proche du prix, le delta en dollars des calls (à droite) et des puts (à gauche) encore ouverts, toutes échéances. Les gros paquets montrent où les teneurs de marché ont le plus à couvrir : le prix est souvent attiré ou freiné près d'eux.</p>`), '', 'Deribit');
+  }
+
+  // ----- baleines : qui achète, qui vend, quoi, pour quelle échéance -----
+  const FAM = {calls_buy: 'achètent surtout des calls : pari sur la hausse', calls_sell: 'vendent surtout des calls : ne croient pas à une forte hausse, encaissent la prime',
+    puts_buy: 'achètent surtout des puts : protection ou pari sur la baisse', puts_sell: 'vendent surtout des puts : prêtes à acheter plus bas, encaissent la prime'};
+  function whaleBanner(d) {
+    const F = d.optFlow && d.optFlow.whales && d.optFlow.whales.flows, W = d.optFlow && d.optFlow.whales, idx = d.options && d.options.index;
+    if (!F || !F.orders) return banner('Baleines : aucun ordre sur 24 heures au-dessus du seuil choisi', W && W.minUsd ? `seuil ${usd(W.minUsd)}` : '');
+    const v = F.verdict, dl = v.delta, dir = dl > 0 ? 'orientées à la hausse' : dl < 0 ? 'orientées à la baisse' : 'neutres';
+    const S = (W && W.sum) || {}, prem = (S.premiumCalls || 0) + (S.premiumPuts || 0);
+    return banner(`Les baleines ${FAM[v.code] || esc(v.label)}`, `Au total ${dir} : delta net ${sn(dl)} BTC${idx ? ` (${susd(dl * idx)})` : ''} · prime nette ${prem >= 0 ? 'payée' : 'reçue'} ${usd(Math.abs(prem))}` +
+      ` · volatilité ${S.vega > 0 ? 'achetée' : S.vega < 0 ? 'vendue' : '—'} · ${nf(F.orders)} ordres sur 24 h`, dl > 0 ? 'up' : dl < 0 ? 'dn' : '');
+  }
+  function flowsCard(d) {
+    const F = d.optFlow && d.optFlow.whales && d.optFlow.whales.flows;
+    if (!F || !F.orders) return '';
+    const q = [['calls', 'buy', 'Calls achetés', 'up', 'pari haussier'], ['calls', 'sell', 'Calls vendus', 'dn', 'plafond, prime encaissée'],
+      ['puts', 'buy', 'Puts achetés', 'dn', 'protection, pari baissier'], ['puts', 'sell', 'Puts vendus', 'up', 'soutien, prime encaissée']];
+    const mx = Math.max(...q.map(([k, s]) => F[k][s].contracts)) || 1;
+    return card('Ce que les baleines ont fait · 24 heures', `<div class="qquad">${q.map(([k, s, lab, c, sub]) => { const x = F[k][s];
+      return `<div class="qq qq-${c}"><span class="qkl">${lab}</span><b class="qqn">${nf(x.contracts)} <small>BTC</small></b>${hbar(x.contracts, mx, c === 'up' ? '#22c55e' : '#ef4444')}` +
+        `<span class="small">${usd(x.notional)} de notionnel</span><span class="small muted">prime ${s === 'buy' ? 'payée' : 'reçue'} ${usd(x.premium)} · ${nf(x.n)} ordre${x.n > 1 ? 's' : ''}</span><span class="small muted">${sub}</span></div>`; }).join('')}</div>` +
+      help(`<p class="small">Toutes les jambes des ordres de baleines des dernières 24 heures, rangées en quatre familles. Le sens est celui de l'initiateur (celui qui traverse le carnet ou demande le bloc négocié). 1 contrat = 1 BTC ; notionnel = contrats × prix du BTC. On ne sait pas si l'ordre ouvre ou ferme une position : la carte « Positions ouvertes » le dit pour la journée.</p>`), '', 'Deribit');
+  }
+  function expiryCard(d) {
+    const o = d.options, F = d.optFlow && d.optFlow.whales && d.optFlow.whales.flows, idx = o && o.index;
+    const mp = new Map(((o && !o.error && o.maxPain) || []).map(m => [m.expiry, m])), wh = new Map(((F && F.byExpiry) || []).map(r => [r.expiry, r]));
+    const keys = [...new Set([...mp.keys(), ...wh.keys()])].filter(t => t > d.now).sort((a, b) => a - b).slice(0, 12);
+    if (!keys.length) return card('Échéances et max pain', bad((o && o.error) || 'chaîne d\'options pas encore lue'));
+    const c = (v, cl) => v ? `<td class="${cl}">${nf(v)}</td>` : '<td class="muted">·</td>';
+    const body = keys.map(t => { const m = mp.get(t), w = wh.get(t), gap = m && idx ? m.maxPain / idx - 1 : null;
+      return `<tr><td>${when(t)}</td>${w ? c(w.callsBuy, 'up') + c(w.callsSell, 'dn') + c(w.putsBuy, 'dn') + c(w.putsSell, 'up') + `<td class="${cls(w.delta)}"><b>${sn(w.delta)}</b></td>` : '<td class="muted" colspan="5">aucune baleine</td>'}` +
+        `<td><b>${m ? px(m.maxPain) : '—'}</b></td><td class="${gap == null ? '' : cls(gap)} small">${gap == null ? '' : pct(gap)}</td><td class="small">${m && m.putCall != null ? nf(m.putCall, 2) : '—'}</td></tr>`; }).join('');
+    return card('Échéances : baleines et max pain', `<table class="qtab qexp"><tr><th>Échéance</th><th class="up">Calls achetés</th><th class="dn">Calls vendus</th><th class="dn">Puts achetés</th><th class="up">Puts vendus</th><th>Delta net (BTC)</th><th>Max pain</th><th>vs prix</th><th>Put / call</th></tr>${body}</table>` +
+      help(`<p class="small">Une ligne par échéance. À gauche, ce que les baleines y ont fait sur 24 heures (contrats, 1 contrat = 1 BTC) et leur delta net : positif = elles gagnent à la hausse. À droite, le max pain de l'échéance (prix où les détenteurs d'options perdraient le plus à l'expiration ; le prix s'en rapproche souvent dans les derniers jours), son écart au prix actuel, et le rapport put / call de l'intérêt ouvert (au-dessus de 1 : plus de puts que de calls ouverts).</p>`), '', 'Deribit');
+  }
+
+  // ----- les quatre verdicts du haut -----
+  function summary(d) {
+    const D = domData(d), L = d.lever || {}, R = leverRead(L), up = bigStop(L, 'shorts'), dn = bigStop(L, 'longs');
+    const t1 = D ? sumTile('sp', 'Qui domine · 24 h', `<span class="qsvt"><span style="color:${PERP_C}">Perpétuels ${nf((1 - D.share) * 100)} %</span> · <span style="color:${SPOT_C}">comptant ${nf(D.share * 100)} %</span></span>${split(D.pv, D.sv, PERP_C, SPOT_C)}`,
+      `les perpétuels échangent ${nf(D.ratio, 1)} × plus${D.read ? ` · ${esc(CONV[D.read.code] || D.read.label)}` : ''}`, D.read ? VERD(D.read.bias)[0] : '', D.read ? VERD(D.read.bias)[1] : '', D.read ? D.read.bias : 0) :
+      sumTile('sp', 'Qui domine · 24 h', '—', 'bougies d\'une heure pas encore lues');
+    const f = L.funding && L.funding.binance, o = L.oi;
+    const t2 = R ? sumTile('lev', 'Levier', `Levier ${R.lvl}`, [o && o.rank30 != null ? `intérêt ouvert plus haut que ${o.rank30} % des 30 j` : '', f != null ? `financement ${pct(f, 4)}` : '',
+      L.longShare != null ? `${nf(L.longShare * 100)} % des comptes longs` : ''].filter(Boolean).join(' · '), R.crowd ? (R.crowd === 'longs' ? 'longs nombreux' : 'shorts nombreux') : '', 'amb', R.lvl === 'élevé' ? 'amb' : 0) :
+      sumTile('lev', 'Levier', '—', 'premiers relevés en cours');
+    const t3 = up || dn ? sumTile('lev', 'Stops des perpétuels', `${up ? `<span class="up">▲ ${px(up.price)} <small>${pct(up.dist)}</small></span>` : ''}${up && dn ? '<br>' : ''}${dn ? `<span class="dn">▼ ${px(dn.price)} <small>${pct(dn.dist)}</small></span>` : ''}`,
+      `plus gros paquets : shorts ${up ? usd(up.usd) : '—'} au-dessus, longs ${dn ? usd(dn.usd) : '—'} en dessous (estimation)`) : sumTile('lev', 'Stops des perpétuels', '—', esc(L.error || 'estimation pas encore prête'));
+    const X = d.options && !d.options.error && d.options.dex, F = d.optFlow && d.optFlow.whales && d.optFlow.whales.flows;
+    const t4 = sumTile('wh', 'Options BTC', X ? `<span class="${cls(X.total)}">DEX ${short$(X.total)}</span>` : '—',
+      (X ? (X.total < 0 ? 'teneurs de marché couverts en vendant' : 'teneurs de marché couverts en achetant') : '') + (F && F.orders ? ` · baleines : ${esc((F.verdict.label || '').toLowerCase())}, delta ${sn(F.verdict.delta)} BTC` : ''),
+      F && F.orders ? (F.verdict.delta < 0 ? 'baleines baissières' : F.verdict.delta > 0 ? 'baleines haussières' : '') : '', F && F.orders ? (F.verdict.delta < 0 ? 'dn' : 'up') : '', F && F.orders ? Math.sign(F.verdict.delta) : 0);
+    return `<div class="qsum">${t1}${t2}${t3}${t4}</div>`;
+  }
+  function tabBody(d) {
+    const L = d.lever || {}, btc = d.symbol === 'BTCUSDT', ref = btc ? '' : banner('Options BTC : la référence du marché', 'les options de cette paire ne sont pas assez liquides ; le BTC donne le ton', '');
+    if (tab === 'sp') return row(domCard(d), whoBuysCard(d)) + row(spotPerpCard(d)) + row(regimeCard(d));
+    if (tab === 'lev') return leverBanner(L) + leverTiles(L) + row(stopsCard(L));
+    if (tab === 'dex') return ref + dexCard(d) + row(hedgeCard(d), volCard(d)) + row(dexExpiryCard(d)) + row(dexStrikeCard(d));
+    if (tab === 'wh') return ref + whaleBanner(d) + row(flowsCard(d)) + row(expiryCard(d)) + row(whalesCard(d)) + row(oiChangeCard(d));
+    if (tab === 'flux') return lastSignals(d) + row(cvdCard(d)) + row(signalsCard(d), d.book && !d.book.error ? bookCard(d) : '');
+    if (tab === 'net') return d.onchain ? row(chainCard(d)) : banner('Réseau Bitcoin', 'affiché sur la paire BTC');
+    return '';
   }
 
   function render() {
@@ -521,16 +663,9 @@ var QUANTV = (() => {                                                  // V54.2 
       (data.warming ? ' · démarrage du moteur : l\'historique de 24 heures arrive en moins d\'une minute' : '');
     const keyOf = e => ((e.closest('.qcard') || {}).querySelector ? (e.closest('.qcard').querySelector('.qht') || {}).textContent : '') + e.className;
     const open = new Set([...root.querySelectorAll('details.qhelp[open], details.qmore[open]')].map(keyOf));
-    const btc = data.symbol === 'BTCUSDT', b = data.book, ws = data.optFlow && data.optFlow.whales && data.optFlow.whales.sum;
-    const nSig = ((data.cvd && data.cvd.divergences) || []).length + ((data.cvd && data.cvd.absorptions) || []).length;
-    g.innerHTML = `<div class="qhead"><h3>L'essentiel</h3><span class="muted small">un chiffre, un verdict, une phrase pour le lire · le détail est plus bas</span></div>` + summary(data) +
-      `<div class="qhead"><h3>Détail</h3><span class="muted small">touche une rubrique pour l'ouvrir</span></div>` +
-      section('flux', 'Flux d\'ordres', 'comptant contre perpétuels heure par heure, CVD exact', row(spotPerpCard(data)) + row(cvdCard(data))) +
-      section('sig', 'Signaux', nSig ? `${nSig} sur 24 h` : 'aucun sur 24 h', row(signalsCard(data))) +
-      (b && !b.error ? section('liq', 'Carnet d\'ordres', 'déséquilibre à 3 distances, murs, murs retirés', row(bookCard(data))) : '') +
-      section('opt', 'Options BTC' + (btc ? '' : ' <small class="muted">· référence du marché</small>'), ws && ws.n ? `baleines, positions ouvertes, gamma, volatilité` : 'positions ouvertes, gamma, volatilité',
-        row(whalesCard(data)) + row(oiChangeCard(data)) + row(gammaCard(data), volCard(data))) +
-      (data.onchain ? section('net', 'Réseau Bitcoin', 'MVRV, flux des bourses, adresses, puissance de calcul', row(chainCard(data))) : '');
+    if (tab === 'net' && !data.onchain) tab = 'sp';
+    const tabs = `<nav class="qtabs">${TABS.filter(([k]) => k !== 'net' || data.onchain).map(([k, n]) => `<button type="button" data-qtab="${k}" class="${k === tab ? 'on' : ''}">${n}</button>`).join('')}</nav>`;
+    g.innerHTML = summary(data) + tabs + `<div class="qpane">${tabBody(data)}</div>`;
     root.querySelectorAll('details.qhelp, details.qmore').forEach(e => { if (open.has(keyOf(e))) e.open = true; });
   }
 

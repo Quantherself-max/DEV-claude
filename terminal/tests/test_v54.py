@@ -52,14 +52,14 @@ class AssistantRemovedTest(unittest.TestCase):
 class QuantPageTest(unittest.TestCase):
     def test_dashboard(self):
         js = read("qtab.js")
-        for s in ("function whoLeads(d)", "function regimeKpi(d)", "function cvdKpi(d)", "function leverKpi(d)", "function bookKpi(d)", "function optionsKpi(d)",
-                  "function lastSignals(d)", "const READ_SP = {", "const READ_REG = {", "L'essentiel", "qOpen54", "['Fragile', 'amb']", "['Absorption', 'amb']"):
+        for s in ("function summary(d)", "function tabBody(d)", "function regimeCard(d)", "function whoBuysCard(d)", "function leverBanner(L)", "function stopsCard(L)",   # V56 : page refaite
+                  "function lastSignals(d)", "const READ_SP = {", "const READ_REG = {", "qTab56", "['Le levier achète, le comptant vend', 'amb']", "['Le comptant achète, le levier vend', 'amb']"):
             self.assertIn(s, js, s)
         for code in ("both_buy", "spot_vs_shorts", "spot_buy", "lev_buy_spot_sell", "lev_buy", "both_sell", "spot_sell", "lev_sell", "flat"):
             self.assertIn(code + ":", js)                                  # une phrase pour chaque lecture comptant / perpétuels
         for code in ("cascade_longs", "short_squeeze", "shorts_agressifs", "longs_agressifs", "accumulation_spot", "distribution_spot", "compression", "neutre"):
             self.assertIn(code + ":", js)                                  # et pour chaque régime
-        for gone in ("function venuesCard", "function profileCard", "function derivsCard", "function regimeCard", "data-qgo"):
+        for gone in ("function venuesCard", "function profileCard", "function derivsCard", "data-qgo"):   # V56 : regimeCard revient (carte du régime, onglet comptant / perpétuels)
             self.assertNotIn(gone, js, gone)
         self.assertIn("all.slice(0, 6)", js)                               # 6 baleines affichées
         css = read("style.css")

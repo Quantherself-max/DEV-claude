@@ -233,6 +233,34 @@ def exposures(rows: list, now_ms: int) -> dict:
     return {"dex": dc + dp, "dexCalls": dc, "dexPuts": dp, "gex": gex, "n": n}
 
 
+def exposures_detail(rows: list, now_ms: int, spot: float | None = None, strikes: int = 36) -> dict:
+    """V56 : le détail du DEX et du GEX : par échéance (DEX, part des calls et des puts, GEX, contrats ouverts) et, autour du prix, le DEX
+    de chaque strike (calls, puts). Mêmes conventions que exposures : DEX vu des détenteurs d'options, GEX calls +, puts -."""
+    by_e, by_k = {}, {}
+    for r in rows:
+        t = years(r["expiry"], now_ms)
+        if not (t > MIN_T and r.get("oi") and r["oi"] > 0 and r.get("iv") and r["iv"] > 0 and r.get("f") and r["f"] > 0 and r.get("strike")):
+            continue
+        d1 = d1d2(r["f"], r["strike"], r["iv"], t)[0]
+        g = norm_pdf(d1) / (r["f"] * r["iv"] * math.sqrt(t)) * r["oi"] * r["f"] * r["f"] * 0.01
+        call = r["kind"] == "C"
+        dex = (norm_cdf(d1) - (0.0 if call else 1.0)) * r["oi"] * r["f"]
+        e = by_e.setdefault(r["expiry"], {"expiry": r["expiry"], "dex": 0.0, "dexCalls": 0.0, "dexPuts": 0.0, "gex": 0.0, "oiCalls": 0.0, "oiPuts": 0.0})
+        e["dex"] += dex
+        e["dexCalls" if call else "dexPuts"] += dex
+        e["gex"] += g if call else -g
+        e["oiCalls" if call else "oiPuts"] += r["oi"]
+        k = by_k.setdefault(r["strike"], [r["strike"], 0.0, 0.0])
+        k[1 if call else 2] += dex
+    ex = [by_e[k] for k in sorted(by_e)]
+    for e in ex:
+        e["days"] = (e["expiry"] - now_ms) / 86_400_000
+    ks = list(by_k.values())
+    if spot:
+        ks = sorted(ks, key=lambda x: abs(x[0] - spot))[:strikes]
+    return {"byExpiry": ex, "byStrike": sorted(ks)}
+
+
 def put_call(rows: list) -> dict:
     """Intérêt ouvert des calls et des puts (pièces, Decimal exact si les quantités sont des textes) et leur rapport."""
     c = p = ZERO

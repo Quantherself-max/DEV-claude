@@ -112,7 +112,7 @@ class HubDexTest(unittest.TestCase):
 class PageTest(unittest.TestCase):
     def test_quant_page(self):
         js = (ROOT / "web" / "qtab.js").read_text(encoding="utf-8")
-        for s in ("function dexCard(d)", "function dexChart(E)", "function dexTip(e)", "${dexCard(d)}${lastSignals(d)}", "data-qxw", "data-qxk", "qDexWin", "qDexWhat",
+        for s in ("function dexCard(d)", "function dexChart(E)", "function dexTip(e)", "ref + dexCard(d)", "data-qxw", "data-qxk", "qDexWin", "qDexWhat",
                   "Position delta agrégée du portefeuille d'options. Une exposition structurelle, pas un signal de prix.", "Flux mécanique vendeur", "Flux mécanique acheteur",
                   "Historique DEX &amp; GEX", "extrême bas", "extrême haut", "Deribit ne publie pas l'historique"):
             self.assertIn(s, js, s)

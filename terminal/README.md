@@ -1,4 +1,4 @@
-# Liq Terminal (V55)
+# Liq Terminal (V56)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
@@ -144,6 +144,62 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V56 : l'onglet Quant refait de fond en comble
+
+**En haut, quatre verdicts.** Un clic ouvre le sous-onglet qui donne le détail :
+- **Qui domine** : la part des perpétuels et du comptant dans le volume sur 24 heures, et combien de fois les perpétuels échangent plus que le comptant ;
+- **Levier** : élevé, normal ou bas, avec le côté qui est nombreux (longs ou shorts) ;
+- **Stops des perpétuels** : le plus gros paquet de stops au-dessus du prix et en dessous, avec sa distance ;
+- **Options BTC** : le DEX, et ce que font les baleines.
+
+**Dessous, six sous-onglets.** Le dernier ouvert est gardé.
+
+**1. Comptant / perpétuels :**
+- La part de chacun dans le volume sur 24 heures (Binance), et son évolution par rapport aux 24 heures d'avant.
+- Pour le BTC, le détail par bourse lue en direct : Binance, Bybit et OKX (perpétuel et comptant), Coinbase, Bitstamp.
+- Un tableau « qui achète, qui vend » sur 15 minutes, 1 h, 4 h, 24 h et 48 h, avec une lecture par ligne (« le levier achète, le comptant vend »…).
+- L'heure par heure sur 48 heures, et le régime du marché sur 15 minutes, 1 h et 4 h.
+
+**2. Levier et stops :**
+- **Le verdict et le risque principal.** Par exemple : « Levier élevé · les acheteurs à levier sont nombreux · risque de purge des longs vers 55 815 (−6 %) ».
+- **Les mesures du levier :**
+  - intérêt ouvert, avec ses variations sur 24 heures et 7 jours et son rang sur 30 jours ;
+  - financement (Binance, par 8 h et par an, plus OKX) ;
+  - part des comptes longs (Binance) ;
+  - liquidations réelles des dernières 24 heures et de la dernière heure, longs contre shorts ;
+  - intérêt ouvert rapporté au volume du comptant.
+- **Les stops des perpétuels, en échelle autour du prix :**
+  - au-dessus, les stops de shorts (achats forcés si le prix monte), par tranches de distance (0-1 %, 1-2 %, 2-3 %, 3-5 %, 5-8 %, 8-12 %) ;
+  - en dessous, les stops de longs (ventes forcées si le prix baisse), par les mêmes tranches ;
+  - les quatre plus gros paquets de chaque côté, à plus de 1 % les uns des autres ;
+  - la distance de liquidation selon le levier : 100x ± 0,6 %, 50x ± 1,6 %, 25x ± 3,6 %, 10x ± 9,6 %.
+
+  **C'est une estimation**, faite par le même moteur que les poches de liquidation : ni les leviers réels ni les prix d'entrée ne sont publics.
+
+**3. DEX et teneurs de marché :**
+- **Le DEX et son historique**, comme avant.
+- **Ce que les teneurs de marché doivent faire**, en clair. Par exemple : « si le BTC baisse de 1 %, ils doivent vendre ≈ 93 M$ ; s'il monte de 1 %, acheter ≈ 93 M$ : les mouvements sont amplifiés ». S'y ajoutent la bascule du gamma, le mur de calls et le mur de puts.
+- **Nouveau : le DEX par échéance.** Pour chaque échéance : le DEX, sa part en calls et en puts, le GEX et les contrats ouverts. S'y ajoute la variation du DEX sur 24 heures et 7 jours.
+- **Nouveau : le DEX par strike autour du prix.** Les puts sont à gauche, les calls à droite, et le prix est marqué.
+- La volatilité implicite et le skew.
+
+**4. Baleines et échéances :**
+- **En une phrase, ce qu'elles font.** Par exemple : « Les baleines vendent surtout des calls : ne croient pas à une forte hausse ». La phrase donne aussi leur orientation d'ensemble (delta net en BTC et en dollars), la prime nette payée ou reçue, et si elles achètent ou vendent de la volatilité.
+- **Quatre cases** : calls achetés, calls vendus, puts achetés, puts vendus. Chacune donne les contrats (en BTC), le notionnel, la prime et le nombre d'ordres.
+- **Un tableau par échéance.** À gauche, ce que les baleines y ont fait : calls et puts achetés et vendus, et leur delta net. À droite, le **max pain** de l'échéance, son écart au prix et le rapport put / call. Le max pain est maintenant calculé pour **toutes** les échéances, pas seulement les six plus proches.
+- Les plus gros ordres, et les variations des positions ouvertes.
+
+**5. Flux et carnet** : derniers signaux, CVD exact, divergences, absorptions, carnet d'ordres.
+
+**6. Réseau** (BTC) : MVRV, flux des bourses, adresses, puissance de calcul.
+
+**Vérifié dans un navigateur** :
+- **Options et baleines avec les vraies données de Deribit** : 107 ordres de baleines, 13 échéances.
+- **Levier et stops** avec le moteur en données simulées.
+- **Le reste** avec des données de test.
+
+Binance est bloqué depuis la machine de développement : les mesures en direct de Binance n'ont pas pu être vérifiées avec de vraies données.
 
 ## Ce qui est nouveau en V55 : les fenêtres sous le graphique, refaites comme TradingView
 

@@ -164,7 +164,7 @@ class PageTest(unittest.TestCase):
     def test_layout_and_new_cards(self):
         with open(os.path.join(ROOT, "web", "qtab.js"), encoding="utf-8") as fh:
             js = fh.read()
-        for k in ("function whalesCard", "function oiChangeCard", "function gammaCard", "function volCard", "function section(", "data-qfold",
+        for k in ("function whalesCard", "function oiChangeCard", "function hedgeCard", "function volCard", "function expiryCard", "data-qtab",   # V56 : sous-onglets
                   "Principales accumulations", "Principales réductions", "&whale=${wmin}"):
             self.assertIn(k, js)
         self.assertNotIn("function optionsCard", js)
