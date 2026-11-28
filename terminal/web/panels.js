@@ -352,7 +352,7 @@ class Panel {
   // place vide a droite des bougies (en bougies) pour que le profil et le carnet ne cachent pas les dernieres bougies
   rightSpace() {
     if (this.kind !== 'main') return 16;
-    const plotW = this.chart.timeScale().width() || Math.max(300, this.body.clientWidth - 70), ow = this.overlayW(plotW);
+    const plotW = this.plotWidth() || Math.max(300, this.body.clientWidth - 70), ow = this.overlayW(plotW);
     const f = Math.min(0.72, (ow.sess + ow.dom + 24) / plotW);
     return Math.max(16, Math.ceil(130 * f / (1 - f)) + 4);
   }
@@ -458,10 +458,19 @@ class Panel {
     const d = LT.st.data; if (!d) return null;
     const ts = this.chart.timeScale(), cs = d.candles;
     let xr = ts.timeToCoordinate(cs[cs.length - 1][0]);
-    const plotW = ts.width();
+    const plotW = this.plotWidth();
     if (xr == null) xr = plotW - 80;
     const prev = cs.length > 1 ? ts.timeToCoordinate(cs[cs.length - 2][0]) : null;
     return {d, xr, plotW, barW: prev != null ? Math.max(1, xr - prev) : 6};
+  }
+  // V56.1 : largeur de la zone des bougies. Depuis la V55, l'échelle du temps des bougies est masquée quand des fenêtres sont dessous (elle
+  // passe sous la dernière) : la bibliothèque rend alors une largeur nulle, et tout ce qui est dessiné par-dessus (niveaux gamma, zones,
+  // profils, étiquettes) se retrouvait écrasé à gauche. On mesure la zone du graphique, moins l'échelle des prix.
+  plotWidth() {
+    const w = this.chart.timeScale().width();
+    if (w > 0) return w;
+    try { const ps = this.chart.paneSize && this.chart.paneSize(); if (ps && ps.width > 0) return ps.width; } catch (e) { /* ancienne bibliothèque */ }
+    return Math.max(0, this.body.clientWidth - (this.chart.priceScale('right').width() || 0));
   }
   timeX(tsec, L) {
     const cs = L.d.candles, n = cs.length, ts = this.chart.timeScale(), per = LT.TF_SEC[LT.st.tf] || 3600;

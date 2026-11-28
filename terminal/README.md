@@ -145,6 +145,19 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
 
+## Ce qui est nouveau en V56.1 : les lignes gamma reviennent sur le graphique
+
+**Le problème.** Dans l'onglet Option, les niveaux gamma n'avaient plus de lignes : leurs étiquettes restaient empilées en haut à gauche. Il s'agit du mur de calls, du mur de puts, de la bascule, du plus fort gamma et du mouvement attendu.
+
+**La cause.** Depuis la V55, l'échelle du temps passe sous la dernière fenêtre et le graphique des prix n'a plus la sienne. La bibliothèque graphique donne alors une largeur nulle pour cette échelle, et le terminal s'en servait comme largeur de la zone des bougies :
+- les lignes gamma s'arrêtaient à 200 pixels, cachées sous leurs étiquettes ;
+- les barres de gamma, au bord gauche, étaient écrasées ;
+- les autres dessins par-dessus les bougies (zones, profils, étiquettes) étaient eux aussi mal placés dès qu'il y avait des fenêtres dessous.
+
+**La correction.** La largeur est maintenant mesurée sur la zone du graphique, sans passer par l'échelle du temps. Un test empêche de recommencer.
+
+**Vérifié** dans un navigateur, en données simulées, avec le gamma et les cinq fenêtres affichés : les lignes traversent de nouveau tout le graphique.
+
 ## Ce qui est nouveau en V56 : l'onglet Quant refait de fond en comble
 
 **En haut, quatre verdicts.** Un clic ouvre le sous-onglet qui donne le détail :

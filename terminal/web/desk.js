@@ -686,7 +686,7 @@ const Desk = (() => {
     const i0 = Math.max(0, Math.min(n - 1, Math.floor(r.from)));
     const t0 = (cs[i0][0] + (r.from < 0 ? r.from * per : 0)) * 1000;
     const t1 = Math.min(LT.serverNow(), (r.to >= n - 1 ? cs[n - 1][0] + (r.to - (n - 1) + 1) * per : cs[Math.max(0, Math.ceil(r.to))][0]) * 1000);
-    const h = p.body.clientHeight, w = ts.width() || p.body.clientWidth;
+    const h = p.body.clientHeight, w = (p.plotWidth ? p.plotWidth() : ts.width()) || p.body.clientWidth;   // V56.1 : échelle du temps masquée possible
     const hi = p.series.coordinateToPrice(0), lo = p.series.coordinateToPrice(Math.max(20, p.candleBottom ? p.candleBottom(h) : h - 28));
     if (hi == null || lo == null || !(t1 > t0)) return null;
     return {t0: Math.round(t0), t1: Math.round(t1), lo, hi, cols: Math.max(60, Math.min(400, Math.round(w / 3))), rows: Math.max(60, Math.min(300, Math.round(h / 3)))};
