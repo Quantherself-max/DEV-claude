@@ -977,3 +977,129 @@ if barstate.islast and showTbl
         ft := ft + vpt + lack
     table.cell(cf, 0, 7, ft, text_color = color.gray, text_halign = text.align_left,
          text_size = size.tiny, bgcolor = cfBg)
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Volatilite par bougie sur 30 / 60 / 90 bougies : pour placer le stop-loss
+//  selon le comportement ACTUEL du marche.
+//  Mesure par bougie : true range (high-low, gaps inclus) en prix et en % du close.
+//  Sur chaque fenetre : ATR (moyenne simple des true range), mediane, P90 (90 % des bougies
+//  font moins que ca) et max. Le SL propose = N x ATR de la fenetre, de part et d'autre du close.
+//  Regime = ATR fenetre courte / ATR fenetre longue : > 1.15 expansion, < 0.85 contraction.
+//  Levier max ~ = 100 / (SL % + marge de maintenance) : au-dela, le SL est plus loin que la
+//  liquidation (isole, approximation). Un SL est une distance de bruit, pas un niveau :
+//  pose-le au-dela d'un niveau (POC / VAH / VAL / VWAP), jamais pile dessus.
+// ════════════════════════════════════════════════════════════════════════════
+G10 = "Volatilite des bougies (aide au SL)"
+showVol   = input.bool(true, "Afficher le tableau de volatilite", group = G10)
+volPosIn  = input.string("Bas droite", "Position", group = G10,
+     options = ["Haut droite", "Haut gauche", "Bas droite", "Bas gauche"])
+volN1     = input.int(30, "Fenetre 1 (bougies)", minval = 5, group = G10)
+volN2     = input.int(60, "Fenetre 2 (bougies)", minval = 5, group = G10)
+volN3     = input.int(90, "Fenetre 3 (bougies)", minval = 5, group = G10)
+slMult    = input.float(1.5, "SL = N x ATR", minval = 0.1, step = 0.1, group = G10)
+mmrPct    = input.float(0.5, "Marge de maintenance (% , pour le levier max)", minval = 0.0, step = 0.1,
+     group = G10)
+showSl    = input.bool(true, "Tracer le SL long / short sur le graphique", group = G10)
+slWinIn   = input.string("Fenetre 2", "Fenetre utilisee pour le trace", group = G10,
+     options = ["Fenetre 1", "Fenetre 2", "Fenetre 3"])
+cSlLong   = input.color(#26A69A, "SL long", inline = "slc", group = G10)
+cSlShort  = input.color(#EF5350, "SL short", inline = "slc", group = G10)
+
+float vTr    = ta.tr(true)
+float vTrPct = vTr / close * 100.0
+
+// ATR (prix), ATR (%), mediane (%), P90 (%), max (%) sur n bougies
+volStats(int n) =>
+    [ta.sma(vTr, n), ta.sma(vTrPct, n), ta.median(vTrPct, n),
+         ta.percentile_nearest_rank(vTrPct, n, 90), ta.highest(vTrPct, n)]
+
+[vAtr1, vAtrP1, vMed1, vP901, vMx1] = volStats(volN1)
+[vAtr2, vAtrP2, vMed2, vP902, vMx2] = volStats(volN2)
+[vAtr3, vAtrP3, vMed3, vP903, vMx3] = volStats(volN3)
+
+string volPos = switch volPosIn
+    "Haut droite" => position.top_right
+    "Haut gauche" => position.top_left
+    "Bas gauche"  => position.bottom_left
+    => position.bottom_right
+
+var table vt = table.new(volPos, 4, 11, border_width = 1, border_color = color.new(color.gray, 75),
+     frame_width = 1, frame_color = color.new(color.gray, 75))
+color vBg = color.new(color.black, 15)
+
+vCell(int c, int r, string t, color tc, bool left) =>
+    table.cell(vt, c, r, t, text_color = tc, text_halign = left ? text.align_left : text.align_right,
+         text_size = size.small, bgcolor = vBg)
+    true
+
+fmtPct(float x) => na(x) ? "-" : str.tostring(x, "#.##") + "%"
+fmtPx(float x) => na(x) ? "-" : str.tostring(x, format.mintick)
+fmtLev(float slP) => na(slP) ? "-" : str.tostring(math.floor(100.0 / (slP + mmrPct))) + "x"
+
+// une colonne du tableau (c = 1..3) pour la fenetre n
+volCol(int c, int n, float atr, float atrP, float med, float p90, float mx) =>
+    float slP = slMult * atrP
+    float slD = slMult * atr
+    vCell(c, 0, str.tostring(n), color.silver, false)
+    vCell(c, 1, fmtPx(atr), color.white, false)
+    vCell(c, 2, fmtPct(atrP), color.white, false)
+    vCell(c, 3, fmtPct(med), color.gray, false)
+    vCell(c, 4, fmtPct(p90), color.orange, false)
+    vCell(c, 5, fmtPct(mx), color.gray, false)
+    vCell(c, 6, fmtPct(slP), color.white, false)
+    vCell(c, 7, fmtPx(close - slD), cSlLong, false)
+    vCell(c, 8, fmtPx(close + slD), cSlShort, false)
+    vCell(c, 9, fmtLev(slP), color.silver, false)
+    true
+
+int slWin = slWinIn == "Fenetre 1" ? 1 : slWinIn == "Fenetre 3" ? 3 : 2
+float slAtr = slWin == 1 ? vAtr1 : slWin == 3 ? vAtr3 : vAtr2
+int slN = slWin == 1 ? volN1 : slWin == 3 ? volN3 : volN2
+
+var line slLongLn = na
+var line slShortLn = na
+var label slLongLb = na
+var label slShortLb = na
+
+if barstate.islast
+    if showVol
+        vCell(0, 0, "Bougies", color.gray, true)
+        vCell(0, 1, "ATR (prix)", color.gray, true)
+        vCell(0, 2, "ATR (%)", color.gray, true)
+        vCell(0, 3, "Mediane (%)", color.gray, true)
+        vCell(0, 4, "P90 (%)", color.orange, true)
+        vCell(0, 5, "Max (%)", color.gray, true)
+        vCell(0, 6, "SL " + str.tostring(slMult, "#.##") + " x ATR", color.gray, true)
+        vCell(0, 7, "SL long", cSlLong, true)
+        vCell(0, 8, "SL short", cSlShort, true)
+        vCell(0, 9, "Levier max ~", color.gray, true)
+        volCol(1, volN1, vAtr1, vAtrP1, vMed1, vP901, vMx1)
+        volCol(2, volN2, vAtr2, vAtrP2, vMed2, vP902, vMx2)
+        volCol(3, volN3, vAtr3, vAtrP3, vMed3, vP903, vMx3)
+        float ratio = vAtr1 / vAtr3
+        string reg = na(ratio) ? "n/a" : ratio >= 1.15 ? "Expansion" : ratio <= 0.85 ? "Contraction" : "Stable"
+        color regCol = na(ratio) ? color.gray : ratio >= 1.15 ? color.orange : ratio <= 0.85 ? color.aqua : color.silver
+        string ft = "ATR " + str.tostring(volN1) + " / ATR " + str.tostring(volN3) + " = "
+             + (na(ratio) ? "-" : str.tostring(ratio, "#.##")) + " : " + reg
+        table.cell(vt, 0, 10, ft, text_color = regCol, text_halign = text.align_left,
+             text_size = size.small, bgcolor = vBg)
+        table.merge_cells(vt, 0, 10, 3, 10)
+    else
+        table.clear(vt, 0, 0, 3, 10)
+
+    line.delete(slLongLn)
+    line.delete(slShortLn)
+    label.delete(slLongLb)
+    label.delete(slShortLb)
+    if showSl and not na(slAtr)
+        float slL = close - slMult * slAtr
+        float slS = close + slMult * slAtr
+        string sfx = " (" + str.tostring(slMult, "#.##") + "xATR" + str.tostring(slN) + ")"
+        slLongLn := line.new(bar_index, slL, bar_index + 1, slL, extend = extend.right,
+             color = color.new(cSlLong, 25), style = line.style_dashed)
+        slShortLn := line.new(bar_index, slS, bar_index + 1, slS, extend = extend.right,
+             color = color.new(cSlShort, 25), style = line.style_dashed)
+        slLongLb := label.new(bar_index, slL, "SL long" + sfx, style = label.style_label_upper_right,
+             size = size.tiny, color = color.new(color.black, 100), textcolor = color.new(cSlLong, 10))
+        slShortLb := label.new(bar_index, slS, "SL short" + sfx, style = label.style_label_lower_right,
+             size = size.tiny, color = color.new(color.black, 100), textcolor = color.new(cSlShort, 10))
