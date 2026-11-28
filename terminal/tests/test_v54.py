@@ -76,7 +76,7 @@ class QuantPageTest(unittest.TestCase):
 class PaneHeadTest(unittest.TestCase):
     def test_short_heads(self):
         p, panes, css = read("panels.js"), read("panes.js"), read("style.css")
-        for s in ("paneHead(k, I, idx, Z, zi, G, ok, zok)", "static get HEAD_NAME()", "deltaStrong(I, idx, DV)", "S.head(k, [hd.r1.filter(Boolean)",
+        for s in ("paneHead(k, I, idx, Z, zi, G, ok, zok)", "static get HEAD_NAME()", "deltaStrong(I, idx, DV, spot = false)", "S.head(k, [hd.r1.filter(Boolean)",
                   "'accumulation'", "'distribution'", "chip('neutre')", "noAxis: true}, {v: -0.01 * m"):
             self.assertIn(s, p, s)
         self.assertIn("head(k, rows, tip)", panes)

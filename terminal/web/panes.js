@@ -8,11 +8,11 @@
 //   - le temps, le zoom et la croix suivent le graphique des prix (et le graphique des prix suit une fenêtre qu'on déplace).
 // Les séries et les lectures restent calculées par panels.js (syncSubcharts, headPanes) ; ce module ne gère que les fenêtres.
 class PaneStack {
-  static get NAMES() { return {oi: 'Intérêt ouvert', delta: 'Delta et CVD', fund: 'Funding', szs: 'Flux par taille · spot', szp: 'Flux par taille · perpétuel'}; }
+  static get NAMES() { return {delta: 'Delta perp', dspot: 'Delta comptant', cvd: 'CVD', oi: 'Intérêt ouvert', liq: 'Liquidations', fund: 'Funding', szs: 'Flux par taille · spot', szp: 'Flux par taille · perpétuel'}; }
   static get HEAD() { return 22; }               // hauteur d'une fenêtre réduite (sa barre seule)
   static get SEP() { return 5; }                 // poignée au-dessus de chaque fenêtre
   static get MIN() { return 46; }                // hauteur minimale d'une fenêtre ouverte
-  static defH(n) { return Math.min(0.17, 0.5 / Math.max(1, n)); }   // part de la hauteur par fenêtre : les bougies gardent au moins la moitié
+  static defH(n) { return Math.min(0.2, 0.66 / Math.max(1, n)); }   // V55 : fenêtres de même hauteur, comme TradingView (les bougies gardent au moins un tiers)
   constructor(panel) {
     this.p = panel; this.win = {}; this.keys = []; this.w = 0; this.busy = false; this.xs = false; this.carKey = ''; this.tmp = null;
     this.times = null; this.tset = null;
@@ -41,6 +41,7 @@ class PaneStack {
     if (keys.join() !== this.keys.join()) {
       keys.forEach(k => { this.box.appendChild(this.win[k].sep); this.box.appendChild(this.win[k].el); });
       this.keys = keys.slice(); this.box.hidden = !keys.length;
+      if (!keys.length) this.axis();
       this.resetWidth();
       this.layout();
       this.follow(this.p.chart.timeScale().getVisibleLogicalRange());
@@ -49,9 +50,7 @@ class PaneStack {
   }
   make(k) {
     const el = document.createElement('div'); el.className = 'pwin'; el.dataset.pk = k;
-    const tg = k === 'delta' ? '<button type="button" class="tg" data-pa="bars" title="Afficher ou retirer les barres du delta (la force de chaque bougie)">▮ Barres</button>' +
-      '<button type="button" class="tg" data-pa="line" title="Afficher ou retirer la ligne du CVD (le cumul du delta)">∿ CVD</button>' : '';
-    el.innerHTML = '<div class="pchart"></div><div class="phd"><div class="phl"></div><span class="phb">' + tg +
+    el.innerHTML = '<div class="pchart"></div><div class="phd"><div class="phl"></div><span class="phb">' +
       '<button type="button" data-pa="opts" data-elbtn title="Réglages de cette fenêtre (ouvre « ＋ Éléments » à sa ligne)">⚙</button>' +
       '<button type="button" data-pa="up" title="Monter la fenêtre">▲</button><button type="button" data-pa="down" title="Descendre la fenêtre">▼</button>' +
       '<button type="button" data-pa="read" title="Lecture chiffrée : deux lignes, une ligne, ou le nom seul">≡</button>' +
@@ -62,9 +61,10 @@ class PaneStack {
     const chart = LightweightCharts.createChart(el.querySelector('.pchart'), {
       autoSize: true,
       layout: {background: {type: 'solid', color: 'rgba(0,0,0,0)'}, textColor: '#b2b5be', fontSize: 11, attributionLogo: false},   // le logo reste sur les bougies (et le lien en bas de page)
-      rightPriceScale: {borderColor: '#2a2e39', scaleMargins: {top: 0.2, bottom: 0.06}, minimumWidth: this.w || 0},
+      rightPriceScale: {borderColor: '#2a2e39', scaleMargins: {top: 0.2, bottom: 0.06}, minimumWidth: this.w || 0, entireTextOnly: true},
       timeScale: {visible: false, rightOffset: 16},
       crosshair: {mode: LightweightCharts.CrosshairMode.Normal},
+      localization: typeof Panel !== 'undefined' && Panel.LOCAL ? Panel.LOCAL : undefined,
     });
     // porteuse invisible : les mêmes heures que les bougies, pour que la bougie n° i soit au même endroit dans chaque graphique
     const carrier = chart.addLineSeries({color: 'rgba(0,0,0,0)', lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
@@ -123,7 +123,9 @@ class PaneStack {
   // ---- croix : la même heure dans les bougies et dans chaque fenêtre ----
   place(w, tm) {                                 // une fenêtre réduite n'a plus de graphique dessiné : pas de croix
     const v = tm == null || !w.vals || w.el.classList.contains('min') ? null : w.vals.get(tm);
-    try { if (v == null || !w.anchor) w.chart.clearCrosshairPosition(); else w.chart.setCrosshairPosition(v, tm, w.anchor); } catch (e) { /* graphique pas encore dessiné */ }
+    // V55 : la fenêtre du bas porte l'échelle du temps : elle montre l'heure visée même sans valeur à cette heure
+    const axis = v == null && tm != null && w.k === this.axisK && !w.el.classList.contains('min');
+    try { if (axis) w.chart.setCrosshairPosition(0, tm, w.anchor || w.carrier); else if (v == null || !w.anchor) w.chart.clearCrosshairPosition(); else w.chart.setCrosshairPosition(v, tm, w.anchor); } catch (e) { /* graphique pas encore dessiné */ }
   }
   crossFromMain(p) {
     if (this.xs || this.off || !this.keys.length) return;
@@ -184,6 +186,18 @@ class PaneStack {
     this.keys.forEach((k, i) => { const w = this.win[k]; w.h = hs[i]; w.el.style.height = hs[i] + 'px'; w.el.classList.toggle('min', !!c.min[k]); });
     this.box.style.height = (sum + n * PaneStack.SEP) + 'px';
     this.margins();
+    this.axis();
+  }
+  // V55 : l'échelle du temps tout en bas, sous la dernière fenêtre ouverte (comme TradingView) ; le graphique des prix n'a plus la sienne
+  axis() {
+    const c = this.cfg(), open = this.off ? [] : this.keys.filter(k => !c.min[k]), last = open.length ? open[open.length - 1] : null;
+    if (last === this.axisK && this.keys.join() === this.axisKeys) return;
+    this.axisK = last; this.axisKeys = this.keys.join();
+    try {
+      this.p.chart.applyOptions({timeScale: {visible: !last}});
+      this.keys.forEach(k => this.win[k].chart.applyOptions({timeScale: {visible: k === last, timeVisible: true, secondsVisible: false, rightOffset: 16}}));
+    } catch (e) { this.err(e); }
+    this.p.axisOff = !!last;
   }
   // marge haute de chaque échelle : les barres et les courbes passent sous la lecture chiffrée, pas derrière
   margins(only) {
@@ -234,7 +248,7 @@ class PaneStack {
     const w = this.win[k];
     if (!w) return;
     const mode = this.cfg().read[k], h = w.h || w.el.offsetHeight || 999;
-    const n = mode === 0 ? 0 : Math.min(mode == null ? 2 : mode, h < 150 ? 1 : 2);   // V53.2 : fenêtre basse : une seule ligne, la place va au graphique
+    const n = mode === 0 ? 0 : Math.min(mode == null ? 1 : mode, h < 150 ? 1 : 2);   // V55 : une ligne par défaut (nom, valeur, verdict), comme TradingView
     const shown = n === 0 ? [[{txt: PaneStack.NAMES[k], k: 'name'}]] : rows.filter(r => r && r.length).slice(0, n);
     const esc = s => String(s).replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
     const col = c => typeof c === 'string' && /^[#a-z0-9(),.%\s]+$/i.test(c) ? c : '';
@@ -248,9 +262,5 @@ class PaneStack {
       return sep + `<span${cl ? ` style="color:${cl}"` : ''}${typeof p === 'object' && p.strong ? ' class="b"' : ''}>${esc(s)}</span>`;
     }).join('') + '</div>').join('');
     if (html !== w.html) { w.html = html; w.head.innerHTML = html; w.mk = ''; this.margins(w); }
-    if (k === 'delta') {                                                // boutons Barres / CVD : allumés quand affichés
-      const o = (typeof LT !== 'undefined' && LT.st.mainOpts) || {}, on = {bars: o.deltaBars !== false, line: (o.cvdMode || 'off') !== 'off'};
-      w.el.querySelectorAll('.tg').forEach(b => b.classList.toggle('on', !!on[b.dataset.pa]));
-    }
   }
 }

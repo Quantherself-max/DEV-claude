@@ -122,6 +122,7 @@ class CexFlow:
         self.msgs: dict = {}         # source -> messages reconnus depuis le démarrage
         self.dirty = False
         self.loaded = 0
+        self.tap_liq = None          # V55 : chaque liquidation est aussi passée au registre par minute (data/liqbars.py)
 
     def now_ms(self) -> int:
         return int(self.now() * 1000)
@@ -199,6 +200,11 @@ class CexFlow:
             self.seen[src] = self.now()
             self.msgs[src] = self.msgs.get(src, 0) + 1
             self.dirty = True
+        if self.tap_liq is not None:
+            try:
+                self.tap_liq(ex, int(t_ms), side, float(usd))
+            except Exception:                                  # le registre par minute ne doit jamais casser ce flux
+                pass
 
     # --- couverture ---
     def mark(self, src: str, t_ms: int | None = None) -> None:
@@ -729,6 +735,11 @@ class SimCex:
         f.big = deque(sorted(f.big, key=lambda x: x[0]), maxlen=f.big.maxlen)
         for src in VENUE_IDS + tuple("liq:" + e for e in LIQ_IDS):
             f.add_cover(src, start, now)
+        if f.tap_liq is not None:                     # V55 : le registre des liquidations par minute reçoit aussi cet historique fabriqué
+            for b0, d in sorted(f.liq.items()):
+                for e, row in d.items():
+                    f.tap_liq(e, b0, "long", row[0])
+                    f.tap_liq(e, b0, "short", row[1])
         self.filled, self._last = True, now
         return True
 

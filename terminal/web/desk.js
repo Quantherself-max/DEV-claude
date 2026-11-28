@@ -45,7 +45,10 @@ const Desk = (() => {
     vol: ['Volume', 'barres de volume sous les bougies', 'Flux d\'ordres'],
     oi: ['Intérêt ouvert', 'en bougies ou en variation, sous le graphique (Binance, relevé toutes les 5 minutes et à l\'instant pour la bougie en cours) ; en option, la couleur dit qui ouvre et qui ferme ses positions', 'Flux d\'ordres'],
     fund: ['Funding', 'en barres sous le graphique : le financement payé entre acheteurs et vendeurs à levier (Binance, % par 8 heures, pondéré par la durée ; la dernière barre est l\'estimation en cours) ; au-dessus de 0, les acheteurs paient ; en option, par an ou cumulé', 'Flux d\'ordres'],
-    delta: ['Delta et CVD', 'en barres sous le graphique : acheteurs moins vendeurs agressifs de chaque bougie, en coin ou en dollars exacts ; CVD (le cumul) du perpétuel et du spot, remis à zéro chaque jour, semaine ou mois au choix', 'Flux d\'ordres'],
+    delta: ['Delta perpétuel', 'en barres sous le graphique : acheteurs moins vendeurs agressifs de chaque bougie sur le perpétuel Binance, en coin ou en dollars exacts ; la couleur dit la force (pâle = faible, vive = forte, verte ou rouge = très forte)', 'Flux d\'ordres'],
+    dspot: ['Delta comptant', 'la même chose sur le marché comptant (spot) Binance : l\'argent réel, sans levier', 'Flux d\'ordres'],
+    cvd: ['CVD', 'dans sa propre fenêtre : le cumul du delta du perpétuel, du comptant, ou les deux (qui mène le mouvement), remis à zéro chaque jour, semaine ou mois au choix', 'Flux d\'ordres'],
+    liq: ['Liquidations', 'en barres sous le graphique : shorts liquidés vers le haut (achats forcés), longs liquidés vers le bas (ventes forcées) ; Binance pour chaque paire, plus Bybit et OKX pour le BTC ; enregistrées par le terminal, 30 jours', 'Flux d\'ordres'],
     heat: ['Heatmap du carnet', 'ordres en attente dans le temps (Binance, OKX, Bybit, Coinbase) ; avant tes propres photos : archives Binance, par tranches de 1 %', 'Flux d\'ordres', true],
     dom: ['Carnet d\'ordres', 'taille en attente et nombre d\'ordres à chaque prix, à droite', 'Flux d\'ordres'],
     big: ['Gros ordres agressifs', 'bulles : vert = acheteurs, rouge = vendeurs', 'Flux d\'ordres'],
@@ -59,7 +62,7 @@ const Desk = (() => {
   const PRESET = {main: {zones: true, sess: true, vwap: true, vol: true, plan: true}, blank: {}, heat: {heat: true, liqmap: false, big: true, vol: true, plan: true}};
   const VIEW_TF = {heat: '5m'};                                   // unité de temps de départ d'une vue (ensuite : la dernière choisie dans cette vue)
   const MO_KEYS = ['sess', 'sessW', 'sessM', 'sessQ', 'sessPM', 'sessY', 'sessPY', 'sessA', 'nodes', 'dpoc', 'npoc', 'tpoM', 'tpoW', 'tpoD', 'tpo4', 'tpo1', 'vwap', 'vwapW', 'vwapM', 'vwapY', 'avwap',
-    'vol', 'heat', 'liqmap', 'oi', 'fund', 'delta', 'sizes', 'dom', 'big', 'absorb', 'gex', 'zones'];
+    'vol', 'heat', 'liqmap', 'oi', 'fund', 'delta', 'dspot', 'cvd', 'liq', 'sizes', 'dom', 'big', 'absorb', 'gex', 'zones'];
   const freshSet = view => ({els: {...PRESET[view]}, minGrade: 9, bigMin: 2, absorbMode: 'fortes', bigLabels: 'top', heatEx: EX.map(e => e[0]), tf: VIEW_TF[view] || null});
 
   // ---------- espaces par instrument ----------
@@ -85,7 +88,24 @@ const Desk = (() => {
   const heatSyms = () => (st().cfg && st().cfg.heatmapSymbols) || ['BTCUSDT'];
   const isBtc = sym => /^BTC/.test(sym || '');
   const viewOf = layout => isView(layout) ? layout : 'main';
-  function curSet() { const S = st(), u = userTab(S.layout); if (u) return u.set; return wsOf(S.symbol || (S.cfg && S.cfg.symbols[0]) || 'BTCUSDT').sets[viewOf(S.layout)]; }
+  function curSet() { const S = st(), u = userTab(S.layout); if (u) return migrate55(u.set); return migrate55(wsOf(S.symbol || (S.cfg && S.cfg.symbols[0]) || 'BTCUSDT').sets[viewOf(S.layout)]); }
+  // V55 : un onglet qui avait des fenêtres sous le graphique passe une fois à la disposition « comme TradingView » : delta perpétuel, delta
+  // comptant, CVD dans sa propre fenêtre, intérêt ouvert, liquidations, hauteurs égales. Le funding et le flux par taille restent dans la
+  // légende, masqués (un clic sur l'œil les remet). Les autres onglets ne changent pas.
+  function migrate55(s) {
+    if (!s || s.v55) return s;
+    s.v55 = 1;
+    const e = s.els || (s.els = {});
+    if (!['oi', 'delta', 'fund', 'sizes'].some(k => e[k] === true)) return s;
+    const cvd = cvdOf(s);
+    Object.assign(e, {delta: true, dspot: true, cvd: true, oi: true, liq: true});
+    if (e.fund === true) e.fund = false;
+    if (e.sizes === true) e.sizes = false;
+    s.cvdMode = cvd === 'off' ? 'both' : cvd;
+    s.paneOrder = ['delta', 'dspot', 'cvd', 'oi', 'liq'];
+    ['paneH', 'paneMin', 'paneRead', 'deltaBars'].forEach(k => delete s[k]);
+    return s;
+  }
   const allowed = k => !(EL[k] && EL[k][3]) || (k === 'heat' ? heatSyms().includes(st().symbol) : isBtc(st().symbol));
   // éléments du jeu courant -> anciens réglages lus par le dessin (panels.js)
   const cvdOf = s => ['off', 'perp', 'spot', 'both'].includes(s.cvdMode) ? s.cvdMode : s.deltaCvd === false ? 'off' : 'perp';   // V37 (avant : deltaCvd oui / non)
@@ -96,14 +116,14 @@ const Desk = (() => {
     S.pools = on('pools'); S.ppools = on('ppools'); S.planOn = on('plan'); S.mode = 'ess';
     MO_KEYS.forEach(k => { S.mainOpts[k] = on(k); });
     const cvd = cvdOf(s);
-    Object.assign(S.mainOpts, {bigMin: s.bigMin, absorbMode: s.absorbMode, bigLabels: s.bigLabels, deltaCvd: cvd !== 'off', cvdMode: cvd,
+    Object.assign(S.mainOpts, {bigMin: s.bigMin, absorbMode: s.absorbMode, bigLabels: s.bigLabels, deltaCvd: cvd !== 'off', cvdMode: cvd === 'off' ? 'both' : cvd,   // V55 : le CVD a sa fenêtre
       cvdReset: ['D', 'W', 'M'].includes(s.cvdReset) ? s.cvdReset : 'all', deltaUnit: s.deltaUnit === 'usd' ? 'usd' : 'coin',
-      oiMode: s.oiMode === 'chg' ? 'chg' : 'candles', oiColor: s.oiColor === 'dir' ? 'dir' : 'pos', fundMode: ['an', 'cum'].includes(s.fundMode) ? s.fundMode : '8h',
+      oiMode: s.oiMode === 'chg' ? 'chg' : 'candles', oiColor: s.oiColor === 'pos' ? 'pos' : 'dir', fundMode: ['an', 'cum'].includes(s.fundMode) ? s.fundMode : '8h',   // V55 : vert / rouge par défaut
       gexScope: ['week', 'front'].includes(s.gexScope) ? s.gexScope : 'all', gexSrc: s.gexSrc === 'deribit' ? 'deribit' : 'all', gexLevels: s.gexLevels === 'all' ? 'all' : 'ess',
       gexZones: s.gexZones === 'on', gexBars: s.gexBars === 'split' ? 'split' : 'net',
       sizeMkt: ['spot', 'perp'].includes(s.sizeMkt) ? s.sizeMkt : 'both', sizeGroups: s.sizeGroups === '5' ? '5' : '3',
       sizeReset: ['D', 'W', 'M'].includes(s.sizeReset) ? s.sizeReset : 'all', sizeScale: s.sizeScale === 'shared' ? 'shared' : 'own',
-      vpDelta: vpDeltaOf(s), deltaBars: s.deltaBars !== false});
+      vpDelta: vpDeltaOf(s), deltaBars: true, deltaThr: s.deltaThr === true});
     S.minGrade = s.minGrade; S.heatEx = s.heatEx;
   }
   function changed(reset) {
@@ -120,9 +140,12 @@ const Desk = (() => {
     changed([...PROF_KEYS, 'dom'].includes(k));
   }
   // ---------- V53 : fenêtres sous le graphique ----------
-  const PANE_KEYS = ['oi', 'delta', 'fund', 'szs', 'szp'];
-  const PANE_NAMES = {oi: 'Intérêt ouvert', delta: 'Delta et CVD', fund: 'Funding', szs: 'Flux par taille d\'ordre · spot', szp: 'Flux par taille d\'ordre · perpétuel'};
-  const PANE_SUB = {oi: 'en bougies ou en variation ; qui ouvre, qui ferme', delta: 'barres du delta, CVD du perpétuel et du spot', fund: '% par 8 h, par an ou cumulé',
+  const PANE_KEYS = ['delta', 'dspot', 'cvd', 'oi', 'liq', 'fund', 'szs', 'szp'];          // V55 : l'ordre d'origine, comme TradingView
+  const PANE_EL = ['delta', 'dspot', 'cvd', 'oi', 'liq', 'fund', 'sizes'];                // éléments qui sont des fenêtres sous le graphique
+  const PANE_NAMES = {delta: 'Delta perpétuel', dspot: 'Delta comptant', cvd: 'CVD', oi: 'Intérêt ouvert', liq: 'Liquidations', fund: 'Funding',
+    szs: 'Flux par taille d\'ordre · spot', szp: 'Flux par taille d\'ordre · perpétuel'};
+  const PANE_SUB = {delta: 'barres du perpétuel Binance, couleur selon la force', dspot: 'barres du comptant Binance', cvd: 'cumul du delta : perpétuel, comptant ou les deux',
+    oi: 'en bougies ou en variation', liq: 'shorts liquidés en haut, longs liquidés en bas', fund: '% par 8 h, par an ou cumulé',
     szs: 'petits, moyens et gros ordres du spot Binance', szp: 'petits, moyens et gros ordres du perpétuel Binance'};
   function paneCfg() {
     const s = curSet(), obj = (x, ok) => Object.fromEntries(Object.entries(x && typeof x === 'object' ? x : {}).filter(([k, v]) => PANE_KEYS.includes(k) && ok(v)));
@@ -131,7 +154,7 @@ const Desk = (() => {
   }
   function paneShown() {
     const s = curSet(), on = k => s.els[k] === true, m = ['spot', 'perp'].includes(s.sizeMkt) ? s.sizeMkt : 'both';
-    return {oi: on('oi'), delta: on('delta'), fund: on('fund'), szs: on('sizes') && m !== 'perp', szp: on('sizes') && m !== 'spot'};
+    return {delta: on('delta'), dspot: on('dspot'), cvd: on('cvd'), oi: on('oi'), liq: on('liq'), fund: on('fund'), szs: on('sizes') && m !== 'perp', szp: on('sizes') && m !== 'spot'};
   }
   function setPane(k, on) {                           // le flux par taille est UN élément : ses deux fenêtres passent par « sizeMkt »
     const s = curSet();
@@ -147,18 +170,11 @@ const Desk = (() => {
   function paneAct(k, a, val) {
     const s = curSet(), c = paneCfg();
     if (a === 'x') { setPane(k, false); return; }
-    if (a === 'bars' || a === 'line') {               // V53.2 : barres du delta et ligne du CVD, chacune s'ajoute ou se retire ; il en reste toujours une
-      const bars = s.deltaBars !== false, line = cvdOf(s) !== 'off', last = c => ['perp', 'spot', 'both'].includes(c) ? c : 'perp';
-      if (a === 'bars') { if (bars && !line) s.cvdMode = last(s.cvdPrev); s.deltaBars = !bars; }
-      else if (line) { if (!bars) s.deltaBars = true; s.cvdPrev = cvdOf(s); s.cvdMode = 'off'; }
-      else s.cvdMode = last(s.cvdPrev);
-      changed(false); return;
-    }
     if (a === 'h') { s.paneH = {...c.h, ...val}; LT.savePrefs(); return; }
     if (a === 'resetH') { delete s.paneH; delete s.paneMin; LT.savePrefs(); relayout(); return; }
     if (a === 'resetAll') { ['paneH', 'paneMin', 'paneOrder', 'paneRead'].forEach(x => delete s[x]); }
     else if (a === 'min') { s.paneMin = {...c.min}; if (s.paneMin[k]) delete s.paneMin[k]; else s.paneMin[k] = true; }
-    else if (a === 'read') { const r = c.read[k] == null ? 2 : c.read[k]; s.paneRead = {...c.read, [k]: (r + 2) % 3}; }      // 2 lignes → 1 → nom seul
+    else if (a === 'read') { const r = c.read[k] == null ? 1 : c.read[k]; s.paneRead = {...c.read, [k]: (r + 2) % 3}; }      // V55 : 1 ligne (d'origine) → nom seul → 2 lignes
     else if (a === 'up' || a === 'down') {
       const p = mainPanel(), shown = p ? p.panes() : [], i = shown.indexOf(k), j = i + (a === 'up' ? -1 : 1);
       if (i < 0 || j < 0 || j >= shown.length) return;
@@ -179,7 +195,7 @@ const Desk = (() => {
     return `<div class="chhead"><b>Fenêtres sous le graphique</b><span class="spacer"></span><button class="mini" data-wreset title="Ordre, hauteurs et lectures d'origine">Rétablir</button></div>` +
       PANE_KEYS.map(k => `<div class="ddrow"><label><input type="checkbox" data-wtog="${k}"${sh[k] ? ' checked' : ''}><span>${esc(PANE_NAMES[k])}` +
         `${c.min[k] && sh[k] ? ' <em>(réduite)</em>' : ''}<small>${esc(PANE_SUB[k])}</small></span></label></div>`).join('') +
-      '<div class="ddnote">Dans la barre de chaque fenêtre : ⚙ ses réglages, ▲ ▼ son rang, ≡ sa lecture chiffrée (deux lignes, une ligne, le nom seul), − la réduire, ✕ la retirer. ' +
+      '<div class="ddnote">Dans la barre de chaque fenêtre : ⚙ ses réglages, ▲ ▼ son rang, ≡ sa lecture chiffrée (une ligne, le nom seul, deux lignes), − la réduire, ✕ la retirer. ' +
       'La poignée au-dessus d\'une fenêtre change sa hauteur ; double-clic sur une poignée : hauteurs d\'origine.</div>' +
       '<div class="ddnote">Graphique des prix : molette pour zoomer, glisser pour déplacer, glisser l\'échelle des prix pour étirer les bougies en hauteur, glisser l\'échelle du temps pour les élargir, double-clic sur une échelle pour revenir en automatique. Boutons − + ‹ › A ⟲ en bas du graphique.</div>';
   }
@@ -240,7 +256,7 @@ const Desk = (() => {
     if (!LT) return;
     const p = LT.panels().find(x => x.kind === 'main'); if (!p) return;
     const el = p.host.querySelector('.legend'); if (!el) return;
-    const s = curSet(), keys = Object.keys(EL).filter(k => k in s.els), view = viewOf(st().layout);
+    const s = curSet(), keys = Object.keys(EL).filter(k => k in s.els && !PANE_EL.includes(k)), view = viewOf(st().layout);   // V55 : les fenêtres ont leur propre tête (« ▤ Fenêtres » pour les remettre)
     if (legendMin === null) legendMin = window.innerWidth < 700;           // replié d'office sur un petit écran
     const head = `<div class="lg-head"><button class="lg-fold" data-lfold title="${legendMin ? 'Déplier la légende' : 'Replier la légende'}">${legendMin ? '▸' : '▾'}</button>` +
       `<b>${esc((st().symbol || '').replace('USDT', ''))}</b> <span>${esc(st().tf)}</span> <span class="lg-view">${esc(viewName(view))}</span>${legendMin ? ` <span class="lg-st">${keys.length} élément${keys.length > 1 ? 's' : ''}</span>` : ''}</div>`;
@@ -270,10 +286,12 @@ const Desk = (() => {
     if (k === 'oi') return '<span class="ddopts">' +
       sel('oiMode', 'Bougies de l\'intérêt ouvert, ou sa variation pendant chaque bougie (en barres)', [['candles', 'bougies'], ['chg', 'variation']], s.oiMode === 'chg' ? 'chg' : 'candles') +
       sel('oiColor', 'Couleur selon qui ouvre et qui ferme (prix et intérêt ouvert ensemble), ou simplement hausse / baisse', [['pos', 'qui ouvre / ferme'], ['dir', 'hausse / baisse']], s.oiColor === 'dir' ? 'dir' : 'pos') + '</span>';
-    if (k === 'delta') return '<span class="ddopts">' +
-      sel('deltaUnit', 'Delta en coin, ou en dollars (exact : volume acheteur en dollars de Binance)', [['coin', `en ${unit}`], ['usd', 'en dollars']], s.deltaUnit === 'usd' ? 'usd' : 'coin') +
-      sel('cvdMode', 'CVD (cumul du delta) : celui du perpétuel, celui du spot Binance, ou les deux pour voir qui mène le mouvement', [['perp', 'CVD perpétuel'], ['spot', 'CVD spot'], ['both', 'CVD perp + spot'], ['off', 'barres seules']], cvdOf(s)) +
-      sel('deltaBars', 'Barres du delta : leur couleur dit la force de chaque bougie (pâle = faible, vive = forte, verte ou rouge = très forte). Sans barres : la ligne du CVD seule.', [['1', 'avec les barres'], ['0', 'sans barres (CVD seul)']], s.deltaBars === false ? '0' : '1') +
+    const uSel = () => sel('deltaUnit', 'Delta en coin, ou en dollars (exact : volume acheteur en dollars de Binance). Vaut pour le delta perpétuel, le delta comptant et le CVD.', [['coin', `en ${unit}`], ['usd', 'en dollars']], s.deltaUnit === 'usd' ? 'usd' : 'coin');
+    if (k === 'delta') return '<span class="ddopts">' + uSel() +
+      sel('deltaThr', 'Lignes « fort » (2 fois la normale) et « très fort » (4 fois) qui suivent la normale des 100 dernières bougies', [['0', 'sans seuils'], ['1', 'seuils fort / très fort']], s.deltaThr === true ? '1' : '0') + '</span>';
+    if (k === 'dspot') return '<span class="ddopts">' + uSel() + '</span>';
+    if (k === 'cvd') return '<span class="ddopts">' + uSel() +
+      sel('cvdMode', 'CVD (cumul du delta) : celui du perpétuel, celui du comptant Binance, ou les deux pour voir qui mène le mouvement', [['both', 'perpétuel + comptant'], ['perp', 'perpétuel'], ['spot', 'comptant']], cvdOf(s) === 'off' ? 'both' : cvdOf(s)) +
       sel('cvdReset', 'Le CVD repart de zéro au début de chaque jour, semaine ou mois (UTC), ou cumule tout le graphique', [['all', 'cumul du graphique'], ['D', 'CVD du jour'], ['W', 'CVD de la semaine'], ['M', 'CVD du mois']], ['D', 'W', 'M'].includes(s.cvdReset) ? s.cvdReset : 'all') + '</span>';
     if (k === 'fund') return sel('fundMode', 'Taux par période de 8 heures, ramené à une année, ou cumulé depuis le début du graphique (ce qu\'un acheteur a réellement payé)',
       [['8h', '% par 8 h'], ['an', '% par an'], ['cum', 'cumulé']], ['an', 'cum'].includes(s.fundMode) ? s.fundMode : '8h');
@@ -349,7 +367,7 @@ const Desk = (() => {
       const t = e.target, s = curSet();
       if (t.dataset.wtog) { setPane(t.dataset.wtog, t.checked); return; }
       if (t.dataset.chel) { if (t.checked) s.els[t.dataset.chel] = true; else delete s.els[t.dataset.chel]; changed([...PROF_KEYS, 'dom'].includes(t.dataset.chel)); }
-      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset', 'gexScope', 'gexSrc', 'gexLevels', 'gexZones', 'gexBars', 'sizeMkt', 'sizeGroups', 'sizeReset', 'sizeScale', 'vpDelta'].includes(t.dataset.copt) ? t.value : ['deltaCvd', 'deltaBars'].includes(t.dataset.copt) ? t.value === '1' : +t.value; changed(t.dataset.copt === 'vpDelta'); }
+      else if (t.dataset.copt) { s[t.dataset.copt] = ['absorbMode', 'fundMode', 'oiMode', 'oiColor', 'deltaUnit', 'cvdMode', 'cvdReset', 'gexScope', 'gexSrc', 'gexLevels', 'gexZones', 'gexBars', 'sizeMkt', 'sizeGroups', 'sizeReset', 'sizeScale', 'vpDelta'].includes(t.dataset.copt) ? t.value : ['deltaCvd', 'deltaBars', 'deltaThr'].includes(t.dataset.copt) ? t.value === '1' : +t.value; changed(t.dataset.copt === 'vpDelta'); }
       else if (t.dataset.ptog != null) { LT.togglePlan(t.dataset.ptog); fillChooser(); }
     });
     chooser.addEventListener('click', e => {
@@ -694,14 +712,17 @@ const Desk = (() => {
   const indState = {key: '', busy: false};
   async function pollInd(force) {
     const S = st(), d = S.data;
-    if (!mainVisible() || !(S.mainOpts.oi || S.mainOpts.delta || S.mainOpts.fund) || !d || !d.candles || !d.candles.length || indState.busy) return;
-    const fund = !!S.mainOpts.fund, spot = !!S.mainOpts.delta && ['spot', 'both'].includes(S.mainOpts.cvdMode);
-    const key = [S.symbol, S.tf, d.candles[d.candles.length - 1][0], fund, spot].join('|');
-    if (!force && key === indState.key && S.ind && Date.now() - (S.ind.at || 0) < 30000) return;
+    const O = S.mainOpts;
+    if (!mainVisible() || !(O.oi || O.delta || O.fund || O.dspot || O.cvd || O.liq) || !d || !d.candles || !d.candles.length || indState.busy) return;
+    // V55 : comptant pour la fenêtre « Delta comptant » ou le CVD du comptant ; liquidations pour leur fenêtre (relues toutes les 15 secondes)
+    const wSpot = () => !!O.dspot || (!!O.cvd && ['spot', 'both'].includes(O.cvdMode));
+    const fund = !!O.fund, spot = wSpot(), liq = !!O.liq;
+    const key = [S.symbol, S.tf, d.candles[d.candles.length - 1][0], fund, spot, liq].join('|');
+    if (!force && key === indState.key && S.ind && Date.now() - (S.ind.at || 0) < (liq ? 15000 : 30000)) return;
     indState.busy = true;
     try {
-      const r = await LT.api(`/api/indicators?symbol=${S.symbol}&tf=${S.tf}${fund ? '&fund=1' : ''}${spot ? '&spot=1' : ''}`);   // V35 : funding ; V37 : CVD spot
-      if (r.symbol !== S.symbol || r.tf !== S.tf || fund !== !!S.mainOpts.fund || spot !== (!!S.mainOpts.delta && ['spot', 'both'].includes(S.mainOpts.cvdMode))) return;
+      const r = await LT.api(`/api/indicators?symbol=${S.symbol}&tf=${S.tf}${fund ? '&fund=1' : ''}${spot ? '&spot=1' : ''}${liq ? '&liq=1' : ''}`);   // V35 : funding ; V37 : spot ; V55 : liquidations
+      if (r.symbol !== S.symbol || r.tf !== S.tf || fund !== !!O.fund || spot !== wSpot() || liq !== !!O.liq) return;
       r.at = Date.now(); indState.key = key; S.ind = r; S.version++;
     } catch (e) { /* le prochain passage reessaiera */ } finally { indState.busy = false; }
   }

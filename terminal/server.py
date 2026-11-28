@@ -35,8 +35,8 @@ from prefsync import PrefSync, env_shareable
 from updater import Updater, UpdateError
 
 WEB = Path(__file__).resolve().parent / "web"
-VERSION = "54"
-API_LEVEL = 54                                                   # adresses /api que les pages web de cette version attendent (la page compare)
+VERSION = "55"
+API_LEVEL = 55                                                   # adresses /api que les pages web de cette version attendent (la page compare)
 CODE_SKIP = {"data_local", "__pycache__", "tests", "serveur", ".update", ".git", "node_modules"}
 
 
@@ -323,6 +323,7 @@ class App:
         source, service, alerts, notifier, feed, flow = build_parts(cfg, self.make_source, self.make_feed, self.make_hub)
         self.flow = flow
         self.cex = default_cex(cfg, source, service, feed)
+        self.liqbars = self._liqbars(cfg, source, feed)           # V55 : liquidations par minute (fenêtre « Liquidations »)
         self.quant = default_quant(cfg, source, service, feed, flow, self.cex)
         self.heat = default_heat(cfg, source, service, flow)
         self.liqmaps = default_liqmaps(cfg, source, service)
@@ -374,6 +375,38 @@ class App:
             if self.quant:
                 self.quant.start()
         self._chat_restart()
+
+    def _liqbars(self, cfg, source, feed):
+        """V55 : registre des liquidations par minute (data/liqbars.py), créé une fois par dossier de données (gardé quand les réglages
+        changent) ; au premier démarrage, amorcé avec les liquidations déjà notées. Données simulées : en mémoire seulement."""
+        from data.liqbars import LiqBars, read_jsonl
+        live = cfg.source == "binance"
+        key = (cfg.data_dir, cfg.source) if live else (None, id(source))   # simulé : neuf à chaque installation (l'historique simulé est refait)
+        lb = getattr(self, "liqbars", None)
+        if lb is None or getattr(lb, "key", None) != key:
+            lb = LiqBars(cfg.data_dir if live else None, now=lambda: source.now_ms() / 1000)
+            lb.key = key
+            if live:
+                lb.load(cfg.symbols)
+                cut = time.time() * 1000 - lb.keep
+                for s in cfg.symbols:                                   # Binance : chaque liquidation déjà notée, à la seconde
+                    lb.seed_events(s, "binance", read_jsonl(Path(cfg.data_dir) / f"liqs_{s.upper()}.jsonl", cut))
+                f = getattr(self.cex, "flow", None)
+                if f is not None and f.path is not None:                # Bybit et OKX (BTC) : tranches de 5 minutes du registre des bourses
+                    if not f.loaded:
+                        f.load()
+                    with f.lock:
+                        rows = {b: dict(r) for b, r in f.liq.items()}
+                    for ex in ("bybit", "okx"):
+                        lb.seed_buckets("BTCUSDT", ex, {b: (r[ex][0], r[ex][1]) for b, r in rows.items() if ex in r})
+                lb.maybe_save(force=True)
+        lb.now = lambda: source.now_ms() / 1000
+        if feed is not None:
+            feed.liqbars = lb
+        f = getattr(self.cex, "flow", None)
+        if f is not None:
+            f.tap_liq = lambda ex, t, side, usd: lb.add("BTCUSDT", ex, t, side, usd)
+        return lb
 
     def _chat_restart(self):
         """(Re)lance l'ecoute des messages Telegram pour la discussion avec Claude, si elle est activee et configuree."""
@@ -835,7 +868,7 @@ class App:
 
     POS_WINDOW = {"1m": 60, "3m": 40, "5m": 48, "15m": 32, "1h": 24, "4h": 18, "1d": 14, "1w": 8, "1M": 6}
 
-    def indicators(self, sym: str, tf: str, fund: bool = False, spot: bool = False) -> dict:
+    def indicators(self, sym: str, tf: str, fund: bool = False, spot: bool = False, liq: bool = False) -> dict:
         """V30 : sous le graphique, l'interet ouvert en bougies (releves de l'adresse Binance, 29 jours, des archives de la carte des
         liquidations, plusieurs mois, et V33 : des archives depuis decembre 2021, une valeur par heure) et le delta de chaque bougie avec son cumul (CVD), pour les memes bougies que le graphique."""
         from engine import subcharts
@@ -860,8 +893,9 @@ class App:
         if deep:                                                     # V33 : années précédentes, une valeur par heure (les relevés 5 minutes passent devant)
             arch = {**deep, **arch}
         key = (sym, tf, len(cs), cs[-1].t if cs else 0, cs[-1].c if cs else 0, cs[-1].v if cs else 0, len(live), len(arch), fund, len(fr),
-               prem.get("funding"), ferr, tuple(oi_now) if oi_now else None, spot, len(sp), sp[-1].v if sp else 0, serr)
-        hit = self._ind_cache.get((sym, tf, fund, spot))
+               prem.get("funding"), ferr, tuple(oi_now) if oi_now else None, spot, len(sp), sp[-1].v if sp else 0, serr,
+               liq, self.liqbars.revision(sym) if (liq and getattr(self, "liqbars", None) is not None) else 0)
+        hit = self._ind_cache.get((sym, tf, fund, spot, liq))
         if hit and hit[0] == key:
             return hit[1]
         now = self.source.now_ms()
@@ -885,7 +919,14 @@ class App:
                        fundAgg=self.agg_funding(sym, prem, oi_now, out.get("fundHours")))
             last_f = next((v for v in reversed(out["funding"]) if v is not None), None)
             out["posNote"] = subcharts.crowding(pos["posSum"], last_f)
-        self._ind_cache[(sym, tf, fund, spot)] = (key, out)
+        if liq:                                                      # V55 : liquidations de chaque bougie (longs, shorts), enregistrées par le terminal
+            lb = getattr(self, "liqbars", None)
+            if lb is not None:
+                out.update(lb.bars(sym, times, now))
+                out["liqOk"] = out["liqSince"] is not None
+            else:
+                out.update(liqOk=False, liqLong=[], liqShort=[], liqEx=[], liqSince=None)
+        self._ind_cache[(sym, tf, fund, spot, liq)] = (key, out)
         return out
 
     def size_flow(self, sym: str, tf: str) -> dict:
@@ -1601,7 +1642,7 @@ def make_handler(app: App):
                 if u.path == "/api/indicators":                      # V30 : interet ouvert en bougies, delta et CVD sous le graphique
                     sym = (q.get("symbol") or [app.cfg.symbols[0]])[0].upper()
                     return self._json(app.indicators(sym, (q.get("tf") or ["1h"])[0], (q.get("fund") or ["0"])[0] == "1",
-                                                     (q.get("spot") or ["0"])[0] == "1"))
+                                                     (q.get("spot") or ["0"])[0] == "1", (q.get("liq") or ["0"])[0] == "1"))
                 if u.path == "/api/cexflow":                         # V44 : liquidations BTC et gros ordres des bourses (onglet GEX)
                     return self._json(app.cex_page())
                 if u.path == "/api/quant":                           # V45 : moteur exact (onglet Quant)

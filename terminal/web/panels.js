@@ -59,6 +59,7 @@ class Panel {
       rightPriceScale: {borderColor: '#2a2e39', scaleMargins: {top: 0.08, bottom: 0.08}},
       timeScale: {borderColor: '#2a2e39', timeVisible: true, secondsVisible: false, rightOffset: 16},
       crosshair: {mode: LightweightCharts.CrosshairMode.Normal},
+      localization: Panel.LOCAL,
     });
     this.series = this.chart.addCandlestickSeries({upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
       wickUpColor: '#26a69a', wickDownColor: '#ef5350', priceLineColor: '',
@@ -84,6 +85,10 @@ class Panel {
   }
 
   // ---------- styles (V15) : « nuit » (fond noir, bougies bleues / blanches, chiffres a chasse fixe) ou « classique » ----------
+  // V55 : dates de la croix en français (heure UTC, comme les graduations du temps)
+  static get LOCAL() {
+    return {locale: 'fr-FR', timeFormatter: t => typeof t === 'number' ? new Date(t * 1000).toLocaleString('fr-FR', {timeZone: 'UTC', weekday: 'short', day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit'}) + ' UTC' : String(t)};
+  }
   static TH = {
     nuit: {bg: '#0f0f0f', text: '#8a8a8a', fontSize: 11, font: 'ui-monospace, "SF Mono", Menlo, Consolas, "Roboto Mono", monospace', grid: 'rgba(255,255,255,0.028)',
       border: '#1d1d1d', up: '#6f9fe0', down: '#d9d9d9', ownTag: true, price: '#78adf7', priceText: '#0b0b0b', cd: '#141414', cdText: '#a0a0a0',
@@ -633,7 +638,7 @@ class Panel {
     const o = LT.st.mainOpts || {};
     if (this.kind !== 'main') return [];
     const sm = o.sizeMkt || 'both';                                          // V39 : flux par taille d'ordre, une fenêtre par marché
-    const ks = ['oi', 'delta', 'fund'].filter(k => o[k]).concat(o.sizes ? ['szs', 'szp'].filter(k => sm === 'both' || sm === (k === 'szs' ? 'spot' : 'perp')) : []);
+    const ks = ['delta', 'dspot', 'cvd', 'oi', 'liq', 'fund'].filter(k => o[k]).concat(o.sizes ? ['szs', 'szp'].filter(k => sm === 'both' || sm === (k === 'szs' ? 'spot' : 'perp')) : []);   // V55 : ordre d'origine comme TradingView
     const ord = typeof Desk !== 'undefined' && Desk.paneCfg ? Desk.paneCfg().order : [];     // V53 : l'ordre choisi avec ▲ ▼
     const rank = k => { const i = ord.indexOf(k); return i < 0 ? 100 + ks.indexOf(k) : i; };
     return ks.sort((a, b) => rank(a) - rank(b));
@@ -691,7 +696,12 @@ class Panel {
   }
   static powerLevel(x) { return x == null ? null : x < 0.5 ? 0 : x < 2 ? 1 : x < 4 ? 2 : 3; }
   static get POWER_TXT() { return ['faible', 'normal', 'fort', 'très fort']; }
-  static get POWER_A() { return [0.22, 0.5, 0.88, 1]; }                   // pâle, moyen, vif ; très fort : vert ou rouge
+  static get POWER_A() { return [0.38, 0.62, 0.9, 1]; }                   // pâle, moyen, vif ; très fort : vert ou rouge (V55 : barres plus lisibles)
+  static get SUB_UP() { return '#26a69a'; }                                // V55 : vert et rouge des fenêtres, comme TradingView (dans les deux thèmes)
+  static get SUB_DN() { return '#ef5350'; }
+  static get CVD_PERP() { return '#e8eaf0'; }
+  static get CVD_SPOT() { return '#ffb74d'; }
+  static get IND_PANES() { return ['oi', 'delta', 'dspot', 'cvd', 'liq', 'fund']; }
   static get VERY_UP() { return '#00e676'; }
   static get VERY_DN() { return '#ff1744'; }
   deltaInfo(I) {                                                           // mémoire : force de chaque bougie et volume par heure
@@ -700,6 +710,12 @@ class Panel {
     if (this._di && this._di.key === key) return this._di;
     const vol = new Map(d && d.symbol === I.symbol && d.tf === I.tf ? d.candles.map(c => [c[0], c[5]]) : []);
     return (this._di = {key, DV, pw: Panel.deltaPower(DV), vol});
+  }
+  spotInfo(I) {                                                            // V55 : la même force pour le delta du comptant
+    const o = LT.st.mainOpts || {}, usd = o.deltaUnit === 'usd' && Array.isArray(I.spotDeltaUsd), SV = (usd ? I.spotDeltaUsd : I.spotDelta) || [], L = SV.length - 1;
+    const key = [I.symbol, I.tf, SV.length, I.times[I.times.length - 1], SV[L], usd].join('|');
+    if (this._si && this._si.key === key) return this._si;
+    return (this._si = {key, SV, pw: Panel.deltaPower(SV)});
   }
   static cvdLine(I, vals) {
     const rs = Panel.cvdReset(I);
@@ -710,14 +726,15 @@ class Panel {
       return run;
     });
   }
-  candleBottom(h) { return Math.max(40, h - 26); }                      // V53 : les sous-fenêtres ne prennent plus de place dans ce graphique
+  candleBottom(h) { return Math.max(40, h - (this.axisOff ? 2 : 26)); }   // V53 : les sous-fenêtres ne prennent plus de place ; V55 : l'échelle du temps est sous la dernière
   // ---- V53 : chaque sous-fenêtre a son graphique (panes.js). La série principale d'une fenêtre est sur l'échelle de droite (chiffrée, elle
   // s'étire), les autres sur des échelles superposées ; les données sont limitées aux heures des bougies (même place, bougie par bougie). ----
   static subFmt(pk, v) {
     const o = LT.st.mainOpts || {}, sg = (x, d) => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(d).replace('.', ',');
     if (pk === 'oi') return Panel.big(v, o.oiMode === 'chg');
     if (pk === 'fund') return sg(v, o.fundMode === 'an' ? 1 : o.fundMode === 'cum' ? 3 : 4) + ' %';
-    if (pk === 'delta') return Panel.big(v) + (o.deltaUnit === 'usd' ? ' $' : '');
+    if (pk === 'delta' || pk === 'dspot' || pk === 'cvd') return Panel.big(v) + (o.deltaUnit === 'usd' ? ' $' : '');
+    if (pk === 'liq') return Panel.big(Math.abs(v), false) + ' $';                // V55 : longs (vers le bas) affichés sans signe
     return Panel.big(v) + ' $';
   }
   closeAt(tm) {                                                          // clôture de la bougie de cette heure (pour la croix)
@@ -739,14 +756,19 @@ class Panel {
     const ok = !!(I && I.ready && d && I.symbol === d.symbol && I.tf === d.tf);
     const Z = st.size, zok = !!(Z && Z.ready && d && Z.symbol === d.symbol && Z.tf === d.tf), shared = o.sizeScale === 'shared';
     const zsets = {s: zok && panes.includes('szs') ? Panel.sizeSets(Z, 'spot') : [], p: zok && panes.includes('szp') ? Panel.sizeSets(Z, 'perp') : []};
-    const cvdM = o.cvdMode || (o.deltaCvd ? 'perp' : 'off'), dOn = ok && panes.includes('delta'), fOn = ok && panes.includes('fund') && Array.isArray(I.funding);
-    const want = {oiS: ok && panes.includes('oi') && o.oiMode !== 'chg', oiH: ok && panes.includes('oi') && o.oiMode === 'chg', dS: dOn && o.deltaBars !== false,
-      cvdS: dOn && (cvdM === 'perp' || cvdM === 'both'), spS: dOn && (cvdM === 'spot' || cvdM === 'both') && Array.isArray(I.spotDelta),
+    // V55 : une fenêtre par donnée, comme TradingView : delta perpétuel, delta comptant, CVD (perpétuel et / ou comptant), intérêt ouvert,
+    // liquidations (shorts en haut, longs en bas), funding ; chacune sur sa propre échelle, avec son nom sur l'étiquette de l'échelle
+    const cvdM = ['perp', 'spot', 'both'].includes(o.cvdMode) ? o.cvdMode : 'both', has = k => ok && panes.includes(k), spotIn = ok && Array.isArray(I.spotDelta);
+    const fOn = has('fund') && Array.isArray(I.funding), lOn = has('liq') && Array.isArray(I.liqLong) && Array.isArray(I.liqShort);
+    const want = {oiS: has('oi') && o.oiMode !== 'chg', oiH: has('oi') && o.oiMode === 'chg', dS: has('delta'), sdS: has('dspot') && spotIn,
+      cvdS: has('cvd') && cvdM !== 'spot', spS: has('cvd') && cvdM !== 'perp' && spotIn, lqS: lOn, lqL: lOn,
       fdS: fOn && o.fundMode !== 'cum', fdC: fOn && o.fundMode === 'cum' && Array.isArray(I.fundCum)};
     for (const m of ['s', 'p']) for (let j = 0; j < 5; j++) want[`sz${m}${j}`] = j < zsets[m].length;
-    for (const k of ['dT2p', 'dT2n', 'dT4p', 'dT4n']) want[k] = want.dS;      // V53.2 : seuils « fort » et « très fort » qui suivent la normale
-    const prim = {oi: want.oiS ? 'oiS' : want.oiH ? 'oiH' : '', delta: want.cvdS ? 'cvdS' : want.spS ? 'spS' : want.dS ? 'dS' : '', fund: want.fdS ? 'fdS' : want.fdC ? 'fdC' : ''};
-    const PK = {oiS: 'oi', oiH: 'oi', dS: 'delta', cvdS: 'delta', spS: 'delta', fdS: 'fund', fdC: 'fund', dT2p: 'delta', dT2n: 'delta', dT4p: 'delta', dT4n: 'delta'}, OWN = {oiS: 'oi', oiH: 'oi', dS: 'dl', cvdS: 'cvd', spS: 'cvds', fdS: 'fd', fdC: 'fd'};
+    for (const k of ['dT2p', 'dT2n', 'dT4p', 'dT4n']) want[k] = want.dS && o.deltaThr === true;      // V53.2 : seuils qui suivent la normale (V55 : au choix)
+    const prim = {oi: want.oiS ? 'oiS' : want.oiH ? 'oiH' : '', delta: want.dS ? 'dS' : '', dspot: want.sdS ? 'sdS' : '', cvd: want.cvdS ? 'cvdS' : want.spS ? 'spS' : '',
+      liq: want.lqS ? 'lqS' : '', fund: want.fdS ? 'fdS' : want.fdC ? 'fdC' : ''};
+    const PK = {oiS: 'oi', oiH: 'oi', dS: 'delta', sdS: 'dspot', cvdS: 'cvd', spS: 'cvd', lqS: 'liq', lqL: 'liq', fdS: 'fund', fdC: 'fund', dT2p: 'delta', dT2n: 'delta', dT4p: 'delta', dT4n: 'delta'};
+    const OWN = {oiS: 'oi', oiH: 'oi', dS: 'dl', sdS: 'sdl', cvdS: 'cvd', spS: 'cvds', lqS: 'lq', lqL: 'lq', fdS: 'fd', fdC: 'fd'};
     const paneOf = k => PK[k] || (k[2] === 's' ? 'szs' : 'szp');
     for (const k of Object.keys(want)) if (!want[k] && this[k]) this.dropSub(k);
     const mk = (k, sid, make) => {                                       // crée la série dans sa fenêtre (ou la recrée si la fenêtre ou l'échelle a changé)
@@ -756,29 +778,30 @@ class Panel {
       if (!this[k]) { this[k] = make(c, sid); this[k + 'c'] = c; this[k + 'sid'] = sid; S.scale(pk, sid); this.indKey = ''; this.sizeKey = ''; }
       return this[k];
     };
-    const sidOf = k => k[1] === 'T' ? sidOf('dS') : prim[PK[k]] === k ? 'right' : OWN[k];
+    const sidOf = k => k[1] === 'T' ? sidOf('dS') : k === 'lqL' ? sidOf('lqS') : prim[PK[k]] === k ? 'right' : OWN[k];
     const base = (k, sid) => ({lastValueVisible: false, priceLineVisible: false, priceScaleId: sid, priceFormat: {type: 'custom', minMove: 0.0001, formatter: v => Panel.subFmt(PK[k], v)}});
+    const tag = (k, title) => ({...base(k, sidOf(k)), lastValueVisible: true, title});   // V55 : le nom de la série sur son étiquette, à droite
+    const UP = Panel.SUB_UP, DN = Panel.SUB_DN;
     for (const m of ['s', 'p']) zsets[m].forEach((g, j) => {
       const pk = m === 's' ? 'szs' : 'szp';
       const se = mk(`sz${m}${j}`, shared ? 'right' : `sz${m}${j}`, (c, sid) => c.addLineSeries({lastValueVisible: false, priceLineVisible: false, priceScaleId: sid, color: g.col,
         lineWidth: 1.4, crosshairMarkerVisible: false, priceFormat: {type: 'custom', minMove: 0.01, formatter: v => Panel.subFmt(pk, v)}}));
       if (se) se.applyOptions({color: g.col});
     });
-    if (want.oiS) mk('oiS', sidOf('oiS'), (c, sid) => c.addCandlestickSeries({...base('oiS', sid), borderVisible: false,
-      upColor: '#4fc3f7', downColor: '#ffa64d', wickUpColor: '#4fc3f7', wickDownColor: '#ffa64d'}));
-    if (want.oiH) mk('oiH', sidOf('oiH'), (c, sid) => c.addHistogramSeries(base('oiH', sid)));
-    if (want.dS) mk('dS', sidOf('dS'), (c, sid) => c.addHistogramSeries(base('dS', sid)));
-    [['dT4p', 'très fort', 'rgba(38,194,129,.95)', 1], ['dT2p', 'fort', 'rgba(38,194,129,.6)', 2], ['dT2n', 'fort', 'rgba(255,77,109,.6)', 2], ['dT4n', 'très fort', 'rgba(255,77,109,.95)', 1]]
+    if (want.oiS) mk('oiS', sidOf('oiS'), (c, sid) => c.addCandlestickSeries({...tag('oiS', 'OI'), borderVisible: false, upColor: UP, downColor: DN, wickUpColor: UP, wickDownColor: DN}));
+    if (want.oiH) mk('oiH', sidOf('oiH'), (c, sid) => c.addHistogramSeries(tag('oiH', 'OI')));
+    if (want.dS) mk('dS', sidOf('dS'), (c, sid) => c.addHistogramSeries(tag('dS', 'Perp')));
+    if (want.sdS) mk('sdS', sidOf('sdS'), (c, sid) => c.addHistogramSeries(tag('sdS', 'Comptant')));
+    [['dT4p', 'très fort', 'rgba(38,166,154,.9)', 1], ['dT2p', 'fort', 'rgba(38,166,154,.55)', 2], ['dT2n', 'fort', 'rgba(239,83,80,.55)', 2], ['dT4n', 'très fort', 'rgba(239,83,80,.9)', 1]]
       .forEach(([k, title, color, ls]) => { if (want[k]) mk(k, sidOf(k), (c, sid) => c.addLineSeries({...base('dS', sid), color, lineWidth: 1, lineStyle: ls, lineType: 1, title,
-        lastValueVisible: true, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null})); });
-    if (want.fdS) mk('fdS', sidOf('fdS'), (c, sid) => c.addHistogramSeries(base('fdS', sid)));
-    if (want.fdC) mk('fdC', sidOf('fdC'), (c, sid) => c.addLineSeries({...base('fdC', sid), color: '#f5c26b', lineWidth: 1.5, crosshairMarkerVisible: false}));
-    if (want.cvdS) mk('cvdS', sidOf('cvdS'), (c, sid) => c.addLineSeries({...base('cvdS', sid), color: '#e8eaf0', lineWidth: 1.5, crosshairMarkerVisible: false}));
-    if (want.spS) mk('spS', sidOf('spS'), (c, sid) => c.addLineSeries({...base('spS', sid), color: '#ffb74d', lineWidth: 1.5, crosshairMarkerVisible: false}));
-    // V53.2 : barres et CVD ensemble : le CVD dans le haut de la fenêtre, les barres dans le bas (plus de mélange) ; seul, chacun prend tout
-    const both = !!(this.dS && (this.cvdS || this.spS));
-    S.zones('delta', both ? {right: 'top', cvd: 'top', cvds: 'top', dl: 'bottom'} : {});
-    for (const k of ['dT2p', 'dT2n', 'dT4p', 'dT4n']) if (this[k]) this[k].applyOptions({lastValueVisible: !both, title: both ? '' : k[2] === '4' ? 'très fort' : 'fort'});   // étiquettes : seulement sur l'échelle des barres
+        lastValueVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null})); });
+    if (want.cvdS) mk('cvdS', sidOf('cvdS'), (c, sid) => c.addLineSeries({...tag('cvdS', 'CVD perp'), color: Panel.CVD_PERP, lineWidth: 1.6, crosshairMarkerVisible: false}));
+    if (want.spS) mk('spS', sidOf('spS'), (c, sid) => c.addLineSeries({...tag('spS', 'CVD comptant'), color: Panel.CVD_SPOT, lineWidth: 1.6, crosshairMarkerVisible: false}));
+    if (want.lqS) mk('lqS', sidOf('lqS'), (c, sid) => c.addHistogramSeries({...tag('lqS', 'Shorts'), color: UP}));
+    if (want.lqL) mk('lqL', sidOf('lqL'), (c, sid) => c.addHistogramSeries({...tag('lqL', 'Longs'), color: DN}));
+    if (want.fdS) mk('fdS', sidOf('fdS'), (c, sid) => c.addHistogramSeries(tag('fdS', 'Funding')));
+    if (want.fdC) mk('fdC', sidOf('fdC'), (c, sid) => c.addLineSeries({...tag('fdC', 'Funding'), color: '#f5c26b', lineWidth: 1.5, crosshairMarkerVisible: false}));
+    S.zones('delta', {});
     const lk = [panes.join('/'), shared, S.carKey, ...Object.keys(want).map(k => !!this[k])].join();
     if (lk !== this.paneKey) { this.paneKey = lk; this.indKey = ''; this.sizeKey = ''; }
     const keep = p => S.has(p.time);
@@ -797,14 +820,14 @@ class Panel {
       });
       for (const pk of ['szs', 'szp']) if (panes.includes(pk)) this.subLevels(pk, this.paneGrid(pk, I, 0, zok, 'L'));
     }
-    if (!ok) { ['oi', 'delta', 'fund'].forEach(pk => this.subLevels(pk, null)); return; }
-    const F = I.funding || [], an = o.fundMode === 'an', usd = o.deltaUnit === 'usd', SD = I.spotDelta || [], L = I.times.length - 1;
+    if (!ok) { Panel.IND_PANES.forEach(pk => this.subLevels(pk, null)); return; }
+    const F = I.funding || [], an = o.fundMode === 'an', usd = o.deltaUnit === 'usd', SD = I.spotDelta || [], L = I.times.length - 1, LL = I.liqLong || [], LS = I.liqShort || [];
     const dk = [I.symbol, I.tf, I.times.length, I.times[L], JSON.stringify(I.oi[L]), I.delta[L], (I.pos || [])[L], SD.length, SD[SD.length - 1], F.length, F[F.length - 1], I.fundEst,
-      o.fundMode, o.oiMode, o.oiColor, o.deltaUnit, cvdM, o.cvdReset, o.deltaBars, st.theme, lk].join('|');
+      I.liqRev, LL[L], LS[L], o.fundMode, o.oiMode, o.oiColor, o.deltaUnit, o.deltaThr, cvdM, o.cvdReset, st.theme, lk].join('|');
     if (dk === this.indKey) return;
     this.indKey = dk;
-    const up = t.up, dn = t.down, a = (c, al) => /^#[0-9a-f]{6}$/i.test(c) ? `rgba(${parseInt(c.slice(1, 3), 16)},${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${al})` : c;
-    const posOn = o.oiColor !== 'dir' && Array.isArray(I.pos), PC = Panel.POS_COL;
+    const a = (c, al) => /^#[0-9a-f]{6}$/i.test(c) ? `rgba(${parseInt(c.slice(1, 3), 16)},${parseInt(c.slice(3, 5), 16)},${parseInt(c.slice(5, 7), 16)},${al})` : c;
+    const posOn = o.oiColor === 'pos' && Array.isArray(I.pos), PC = Panel.POS_COL;
     const pcol = i => { const c = posOn ? I.pos[i] : null; return c == null ? null : PC[c]; };
     put('oiS', I.times.map((tm, i) => {
       const c = I.oi[i]; if (!c) return {time: tm};
@@ -813,20 +836,24 @@ class Panel {
     }).filter(keep), r => r.close);
     put('oiH', I.times.map((tm, i) => {
       const c = I.oi[i]; if (!c || c[0] == null) return {time: tm};
-      const v = c[3] - c[0]; return {time: tm, value: v, color: pcol(i) || (v >= 0 ? '#4fc3f7' : '#ffa64d')};
+      const v = c[3] - c[0]; return {time: tm, value: v, color: pcol(i) || (v >= 0 ? UP : DN)};
     }).filter(keep));
     const DV = usd && Array.isArray(I.deltaUsd) ? I.deltaUsd : I.delta, SV = usd && Array.isArray(I.spotDeltaUsd) ? I.spotDeltaUsd : SD;
-    if (this.dS) {                                                       // V53.2 : couleur selon la force (pâle = faible … plein = très fort)
-      const pw = this.deltaInfo(I).pw, A = Panel.POWER_A;
-      // très fort : vert (achat) ou rouge (vente), bien distinct des autres barres ; pas de point au-dessus (il écrasait les barres d'une fenêtre basse)
-      const rows = I.times.map((tm, i) => { const v = DV[i], lv = Panel.powerLevel(pw.r[i]); return v == null ? {time: tm} :
-        {time: tm, value: v, color: lv === 3 ? (v >= 0 ? Panel.VERY_UP : Panel.VERY_DN) : a(v >= 0 ? up : dn, A[lv == null ? 1 : lv])}; }).filter(keep);
-      put('dS', rows);
+    // V53.2 : couleur selon la force (pâle = faible … plein = très fort) ; très fort : vert ou rouge vif, bien distinct
+    const bars = (V, pw) => I.times.map((tm, i) => { const v = V[i], lv = Panel.powerLevel(pw.r[i]); return v == null ? {time: tm} :
+      {time: tm, value: v, color: lv === 3 ? (v >= 0 ? Panel.VERY_UP : Panel.VERY_DN) : a(v >= 0 ? UP : DN, Panel.POWER_A[lv == null ? 1 : lv])}; }).filter(keep);
+    if (this.dS) {
+      const pw = this.deltaInfo(I).pw;
+      put('dS', bars(DV, pw));
       for (const [k, f] of [['dT2p', 2], ['dT2n', -2], ['dT4p', 4], ['dT4n', -4]])
         put(k, I.times.map((tm, i) => pw.med[i] == null ? {time: tm} : {time: tm, value: f * pw.med[i]}).filter(keep));
     }
+    if (this.sdS) put('sdS', bars(SV, this.spotInfo(I).pw));
     if (this.cvdS) { const c = Panel.cvdLine(I, DV); put('cvdS', I.times.map((tm, i) => ({time: tm, value: c[i]})).filter(keep)); }
     if (this.spS) { const c = Panel.cvdLine(I, SV); put('spS', I.times.map((tm, i) => SV[i] == null && !c[i] ? {time: tm} : {time: tm, value: c[i]}).filter(keep)); }
+    // V55 : liquidations : shorts liquidés (achats forcés) vers le haut, longs liquidés (ventes forcées) vers le bas ; rien avant le premier relevé
+    put('lqS', I.times.map((tm, i) => LS[i] == null ? {time: tm} : {time: tm, value: LS[i]}).filter(keep));
+    put('lqL', I.times.map((tm, i) => LL[i] == null ? {time: tm} : {time: tm, value: -LL[i]}).filter(keep));
     put('fdS', I.times.map((tm, i) => {                                   // fort (≥ 0,03 % ou ≤ −0,01 % par 8 h) : couleur pleine
       const v = F[i]; if (v == null) return {time: tm};
       const est = I.fundEst != null && i >= I.fundEst, strong = v >= 0.03 || v <= -0.01;
@@ -834,7 +861,7 @@ class Panel {
     }).filter(keep));
     if (this.fdC) put('fdC', I.times.map((tm, i) => I.fundCum[i] == null ? {time: tm} : {time: tm, value: I.fundCum[i]}).filter(keep));
     // repères chiffrés (lignes « haut » / « bas » ou seuils du funding) : des lignes de prix, avec leur valeur sur l'échelle de la fenêtre
-    for (const pk of ['oi', 'delta', 'fund']) this.subLevels(pk, panes.includes(pk) ? this.paneGrid(pk, I, L, ok, 'L') : null);
+    for (const pk of Panel.IND_PANES) this.subLevels(pk, panes.includes(pk) ? this.paneGrid(pk, I, L, ok, 'L') : null);
   }
   subLevels(pk, G) {
     const P = this._pl || (this._pl = {}), cur = P[pk], se = (G && G.se) || null;
@@ -883,38 +910,60 @@ class Panel {
       [[1, S.longsOpen], [2, S.shortsOpen], [3, S.shortsClose], [4, S.longsClose]].forEach(([cd, v]) => { if (v) l2.push({txt: `${Panel.POS_TXT[cd]} ${Panel.big(v)}`, col: Panel.POS_COL[cd], strong: cd === S.dominant}); });
       return [l1, l2];
     }
-    const usd = o.deltaUnit === 'usd' && Array.isArray(I.deltaUsd), u = usd ? '$' : unit, cvdM = o.cvdMode || (o.deltaCvd ? 'perp' : 'off');
-    if (!I.realDelta) return ['Delta · volume acheteur agressif inconnu'];
-    const DV = usd ? I.deltaUsd : I.delta, v = DV[idx], rs = Panel.cvdReset(I), lab = rs ? {['1d']: ' du jour', ['1w']: ' de la semaine', ['1M']: ' du mois'}[rs] : '';
-    const l1 = [`Delta ${v == null ? '-' : Panel.big(v) + ' ' + u}` + (usd ? (I.deltaExact >= 0.99 ? ' (exact)' : ` (${Math.round(I.deltaExact * 100)} % exact)`) : '')];
+    const usd = o.deltaUnit === 'usd' && Array.isArray(I.deltaUsd), su = o.deltaUnit === 'usd' && Array.isArray(I.spotDeltaUsd), u = usd ? '$' : unit, UP = '#26c281', DN = '#ff4d6d';
+    const when = i => new Date(I.times[i] * 1000).toLocaleString('fr-FR', {timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
+    if (k === 'liq') {                                                    // V55
+      if (!I.liqOk) return ['Liquidations · pas encore de relevé : le terminal les note à partir de maintenant'];
+      const LL = I.liqLong, LS = I.liqShort, lo = LL[idx], sh = LS[idx];
+      const l1 = [lo == null ? 'Liquidations · bougie avant le premier relevé' : `Liquidations · longs liquidés ${Panel.big(lo, false)} $ (ventes forcées) · shorts liquidés ${Panel.big(sh, false)} $ (achats forcés)`];
+      const NB = Math.min(24, idx + 1);
+      let sl = 0, ss = 0, bi = null;
+      for (let i = idx - NB + 1; i <= idx; i++) { const a = LL[i] || 0, b = LS[i] || 0; sl += a; ss += b; if (a + b > 0 && (bi == null || a + b > (LL[bi] || 0) + (LS[bi] || 0))) bi = i; }
+      const l2 = [`${NB} bougies : longs ${Panel.big(sl, false)} $, shorts ${Panel.big(ss, false)} $`];
+      if (bi != null) l2.push(`la plus forte à ${when(bi)}`);
+      l2.push(`${(I.liqEx || []).join(' + ')} · notées par le terminal depuis le ${new Date(I.liqSince).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit', year: '2-digit'})} (pas de barre : aucune liquidation, ou terminal éteint)`);
+      if ((I.liqEx || []).includes('Binance')) l2.push('Binance n\'envoie qu\'une liquidation par seconde : pendant une cascade, son total est un minimum');
+      return [l1, l2];
+    }
+    const rs = Panel.cvdReset(I), lab = rs ? {['1d']: ' du jour', ['1w']: ' de la semaine', ['1M']: ' du mois'}[rs] : '';
+    if (k === 'cvd') {                                                    // V55 : le CVD dans sa propre fenêtre
+      const cvdM = ['perp', 'spot', 'both'].includes(o.cvdMode) ? o.cvdMode : 'both', DV = usd ? I.deltaUsd : I.delta;
+      const l1 = [`CVD${lab}`];
+      let pc = null, sc = null;
+      if (cvdM !== 'spot') { pc = Panel.cvdLine(I, DV); l1.push({txt: `perpétuel ${Panel.big(pc[idx])} ${u}`, col: Panel.CVD_PERP}); }
+      if (cvdM !== 'perp') {
+        if (!Array.isArray(I.spotDelta)) l1.push('comptant · chargement…');
+        else if (!I.spotOk) l1.push(I.spotErr ? 'comptant · Binance comptant injoignable' : 'comptant · pas de bougie au comptant');
+        else { sc = Panel.cvdLine(I, su ? I.spotDeltaUsd : I.spotDelta); l1.push({txt: `comptant ${Panel.big(sc[idx])} ${su ? '$' : unit}`, col: Panel.CVD_SPOT}); }
+      }
+      if (!(pc && sc) || idx < 3) return [l1];
+      const N = Math.min(idx, (I.posSum && I.posSum.bars) || 24), dp = pc[idx] - pc[idx - N], ds = sc[idx] - sc[idx - N];
+      const lead = dp > 0 && ds > 0 ? 'comptant et perpétuel achètent ensemble : mouvement sain' : dp < 0 && ds < 0 ? 'comptant et perpétuel vendent ensemble' :
+        dp > 0 ? 'le levier achète, le comptant vend : hausse fragile' : 'le comptant achète, le levier vend : les vendeurs à levier s\'exposent';
+      return [l1, [`${N} dernières bougies : ${lead}`, 'chaque courbe a sa propre échelle : on compare leurs formes']];
+    }
+    const spot = k === 'dspot', name = spot ? 'Delta comptant' : 'Delta perpétuel';
+    if (spot && !Array.isArray(I.spotDelta)) return [name + ' · chargement…'];
+    if (spot && !I.spotOk) return [name + (I.spotErr ? ' · Binance comptant injoignable' : ' · pas de bougie au comptant')];
+    if (!spot && !I.realDelta) return ['Delta · volume acheteur agressif inconnu'];
+    const DV = spot ? (su ? I.spotDeltaUsd : I.spotDelta) : (usd ? I.deltaUsd : I.delta), v = DV[idx], uu = (spot ? su : usd) ? '$' : unit;
+    const l1 = [`${name} ${v == null ? '-' : Panel.big(v) + ' ' + uu}` + (!spot && usd ? (I.deltaExact >= 0.99 ? ' (exact)' : ` (${Math.round(I.deltaExact * 100)} % exact)`) : '')];
     // V53.2 : force de la bougie visée et part du volume, puis le compte des bougies fortes des 24 dernières
-    const di = this.deltaInfo(I), x = di.pw.r[idx], lv = Panel.powerLevel(x), UP = '#26c281', DN = '#ff4d6d';
+    const pw = (spot ? this.spotInfo(I) : this.deltaInfo(I)).pw, x = pw.r[idx], lv = Panel.powerLevel(x);
     if (lv != null) l1.push({txt: `${Panel.POWER_TXT[lv]} : ${x < 10 ? x.toFixed(1).replace('.', ',') : Math.round(x)} × la normale`,
       col: lv >= 2 ? (v >= 0 ? UP : DN) : lv === 1 ? '#cfd3dc' : '#8a90a0', strong: lv >= 2});
-    const vo = di.vol.get(I.times[idx]), dc = I.delta[idx];
-    if (vo > 0 && dc != null) l1.push(`${dc >= 0 ? 'achat net' : 'vente nette'} ${Math.round(Math.abs(dc) / vo * 100)} % du volume`);
+    if (!spot) { const di = this.deltaInfo(I), vo = di.vol.get(I.times[idx]), dc = I.delta[idx]; if (vo > 0 && dc != null) l1.push(`${dc >= 0 ? 'achat net' : 'vente nette'} ${Math.round(Math.abs(dc) / vo * 100)} % du volume`); }
     const NB = Math.min(24, idx + 1);
     let fb = 0, fs = 0, bb = null;
     for (let i = idx - NB + 1; i <= idx; i++) {
-      const l = Panel.powerLevel(di.pw.r[i]); if (l == null || l < 2 || DV[i] == null) continue;
+      const l = Panel.powerLevel(pw.r[i]); if (l == null || l < 2 || DV[i] == null) continue;
       if (DV[i] >= 0) fb++; else fs++;
-      if (!bb || Math.abs(DV[i]) > Math.abs(DV[bb])) bb = i;
+      if (bb == null || Math.abs(DV[i]) > Math.abs(DV[bb])) bb = i;
     }
     const l2 = [`${NB} bougies : ${fb ? fb + ' achat' + (fb > 1 ? 's' : '') + ' fort' + (fb > 1 ? 's' : '') : 'aucun achat fort'}`, fs ? `${fs} vente${fs > 1 ? 's' : ''} forte${fs > 1 ? 's' : ''}` : 'aucune vente forte'];
-    if (bb != null) l2.push({txt: `la plus forte : ${DV[bb] >= 0 ? 'achat' : 'vente'} ${Panel.big(DV[bb])} ${u} à ${new Date(I.times[bb] * 1000).toLocaleString('fr-FR', {timeZone: 'Europe/Paris', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}`, col: DV[bb] >= 0 ? UP : DN});
-    l2.push({txt: 'barre pâle = faible, vive = forte, verte ou rouge = très forte', col: '#8a90a0'});
-    let pc = null, sc = null;
-    if (cvdM === 'perp' || cvdM === 'both') { pc = Panel.cvdLine(I, DV); l1.push({txt: `CVD perp${lab} ${Panel.big(pc[idx])} ${u}`, col: '#e8eaf0'}); }
-    if (cvdM === 'spot' || cvdM === 'both') {
-      if (!Array.isArray(I.spotDelta)) l1.push('CVD spot · chargement…');
-      else if (!I.spotOk) l1.push(I.spotErr ? 'CVD spot · Binance spot injoignable' : 'CVD spot · pas de bougie spot');
-      else { const SV = usd && I.spotDeltaUsd ? I.spotDeltaUsd : I.spotDelta; sc = Panel.cvdLine(I, SV); l1.push({txt: `CVD spot${lab} ${Panel.big(sc[idx])} ${u}`, col: '#ffb74d'}); }
-    }
-    if (!(pc && sc)) return [l1, l2];
-    const N = Math.min(idx, (I.posSum && I.posSum.bars) || 24), dp = pc[idx] - pc[idx - N], ds = sc[idx] - sc[idx - N];
-    const lead = dp > 0 && ds > 0 ? 'spot et perpétuel achètent ensemble : mouvement sain' : dp < 0 && ds < 0 ? 'spot et perpétuel vendent ensemble' :
-      dp > 0 ? 'le levier achète, le spot vend : hausse fragile' : 'le spot achète, le levier vend : les vendeurs à levier s\'exposent';
-    return [l1, [`${N} dernières bougies : ${lead}`, ...l2.slice(0, 2)]];
+    if (bb != null) l2.push({txt: `la plus forte : ${DV[bb] >= 0 ? 'achat' : 'vente'} ${Panel.big(DV[bb])} ${uu} à ${when(bb)}`, col: DV[bb] >= 0 ? UP : DN});
+    l2.push({txt: 'barre pâle = faible, vive = forte, verte ou rouge vif = très forte', col: '#8a90a0'});
+    return [l1, l2];
   }
   // ---- V43 : repères chiffrés des sous-fenêtres : graduations, lignes « haut » et « bas » (80 % et 20 % des valeurs du graphique) ou seuils fixes
   // du funding, et en tête de fenêtre le niveau (haut, milieu, bas) et la tendance sur 24 bougies (en hausse, stable, en baisse) ----
@@ -928,7 +977,8 @@ class Panel {
     if (!ok || idx < 1) return null;
     const L = I.times.length - 1;
     const key = [k, I.symbol, I.tf, L, I.times[L], idx, JSON.stringify(I.oi[L]), I.delta[L], (I.funding || [])[L], o.oiMode, o.cvdMode, o.deltaCvd, o.deltaUnit,
-      o.cvdReset, o.fundMode, !!this.oiS, !!this.oiH, !!this.cvdS, !!this.spS, !!this.dS, !!this.fdS, !!this.fdC].join('|');
+      o.cvdReset, o.fundMode, !!this.oiS, !!this.oiH, !!this.cvdS, !!this.spS, !!this.dS, !!this.fdS, !!this.fdC, !!this.sdS, !!this.lqS,
+      (I.spotDelta || []).length, (I.spotDelta || [])[L], I.liqRev].join('|');
     const c = this._pg || (this._pg = {}), ck = k + slot;              // V53 : une mémoire pour les lignes (dernière bougie), une pour la lecture (croix)
     if (!c[ck] || c[ck].key !== key) c[ck] = {key, g: this.computePaneGrid(k, I, idx, o)};
     const g = c[ck].g;
@@ -963,7 +1013,7 @@ class Panel {
       return {txt: `${w} sur ${N} bougies (${fmt(now)})`, short: `${w} (${fmt(now)})`, col: w === 'stable' ? '#aab0bd' : now > 0 ? '#26c281' : '#ff4d6d'};
     };
     const tags = [], lv = [];
-    const pushLevel = (Lv, fmt) => { if (!Lv) return; tags.push(Lv.tag); lv.push({v: Lv.p80, txt: 'haut', col: 'rgba(255,183,77,.8)'}, {v: Lv.p20, txt: 'bas', col: 'rgba(110,200,255,.8)'}); };
+    const pushLevel = (Lv, lines = true) => { if (!Lv) return; tags.push(Lv.tag); if (lines) lv.push({v: Lv.p80, txt: 'haut', col: 'rgba(255,183,77,.8)'}, {v: Lv.p20, txt: 'bas', col: 'rgba(110,200,255,.8)'}); };   // V55 : sans lignes pour l'intérêt ouvert et le CVD
     if (k === 'oi') {
       const C = I.oi.map(c => c ? c[3] : null);
       const T = trend(i => C[i] && C[i - N] ? C[i] / C[i - N] - 1 : null, x => sg(x * 100, 2) + ' %');
@@ -974,25 +1024,29 @@ class Panel {
         return {sel: 'oiH', fmt: v => Panel.big(v), lv, tags};
       }
       const Lv = level(C, 'niveau');
-      pushLevel(Lv); if (T) tags.push(T);
+      pushLevel(Lv, false); if (T) tags.push(T);
       return {sel: 'oiS', fmt: v => Panel.big(v, false), lv, tags};
     }
-    if (k === 'delta') {
+    if (k === 'delta' || k === 'dspot' || k === 'cvd') {
       const usd = o.deltaUnit === 'usd' && Array.isArray(I.deltaUsd), DV = usd ? I.deltaUsd : I.delta, u = usd ? ' $' : '';
-      const SV = usd && Array.isArray(I.spotDeltaUsd) ? I.spotDeltaUsd : I.spotDelta;
+      const SV = o.deltaUnit === 'usd' && Array.isArray(I.spotDeltaUsd) ? I.spotDeltaUsd : I.spotDelta;
       const sums = V => { const ps = [0]; for (let i = 0; i < I.times.length; i++) ps.push(ps[i] + (V[i] || 0)); return i => i >= N ? ps[i + 1] - ps[i + 1 - N] : null; };
       const fmt = v => Panel.big(v) + u;
-      if (this.cvdS || this.spS) {                                       // le CVD perpétuel en priorité, sinon le spot
+      if (k === 'cvd') {                                                 // V55 : le CVD perpétuel en priorité, sinon le comptant
+        if (!this.cvdS && !this.spS) return null;
         const perp = !!this.cvdS, V = perp ? DV : SV, line = Panel.cvdLine(I, V);
-        pushLevel(level(line, perp ? 'CVD perp' : 'CVD spot'));
-        const T = trend(sums(V), fmt); if (T) tags.push(T);
-        if (this.cvdS && this.spS && Array.isArray(SV)) { const T2 = trend(sums(SV), fmt); if (T2) tags.push({...T2, txt: 'spot ' + T2.txt, short: 'spot ' + T2.short}); }
+        pushLevel(level(line, perp ? 'CVD perp' : 'CVD comptant'), false);
+        const T = trend(sums(V), fmt); if (T) tags.push(this.cvdS && this.spS ? {...T, txt: 'perp ' + T.txt, short: 'perp ' + T.short} : T);
+        if (this.cvdS && this.spS && Array.isArray(SV)) { const T2 = trend(sums(SV), fmt); if (T2) tags.push({...T2, txt: 'comptant ' + T2.txt, short: 'comptant ' + T2.short}); }
         return {sel: perp ? 'cvdS' : 'spS', fmt, lv, tags};
       }
+      const V = k === 'dspot' ? SV : DV;
+      if (!Array.isArray(V)) return null;
       lv.push({v: 0, txt: 'zéro', col: 'rgba(180,186,200,.45)', noAxis: true});   // V53.2 : « fort » et « très fort » sont des lignes qui suivent la normale
-      const T = trend(sums(DV), fmt); if (T) tags.push(T);
-      return {sel: 'dS', fmt, lv, tags};
+      const T = trend(sums(V), fmt); if (T) tags.push(T);
+      return {sel: k === 'dspot' ? 'sdS' : 'dS', fmt, lv, tags};
     }
+    if (k === 'liq') return {sel: 'lqS', fmt: v => Panel.big(Math.abs(v), false) + ' $', lv: [{v: 0, txt: 'zéro', col: 'rgba(180,186,200,.45)', noAxis: true}], tags: []};
     if (k === 'fund') {
       const F = I.funding || [], an = o.fundMode === 'an', cum = o.fundMode === 'cum' && this.fdC, m = an ? 1095 : 1;
       if (cum) {
@@ -1024,7 +1078,7 @@ class Panel {
     panes.forEach(k => {
       const sz = k === 'szs' || k === 'szp';
       const lines = sz ? (zok ? Panel.sizeLines(k, Z, zi) : [(k === 'szs' ? 'Spot' : 'Perpétuel') + ' · par taille d\'ordre · chargement…']) :
-        !ok || (k === 'fund' && !Array.isArray(I.funding)) ? [({oi: 'Intérêt ouvert', delta: 'Delta', fund: 'Funding'})[k] + ' · chargement…'] : this.paneLines(k, I, idx);
+        !ok || (k === 'fund' && !Array.isArray(I.funding)) || (k === 'liq' && !Array.isArray(I.liqLong)) ? [Panel.HEAD_NAME[k] + ' · chargement…'] : this.paneLines(k, I, idx);
       const G = this.paneGrid(k, I, sz ? zi : idx, sz ? zok : ok, 'H');   // V43 : niveau et tendance
       // V54 : tête courte (nom, valeur, verdict ; puis une phrase), la lecture complète d'avant reste au survol
       const tx = ln => typeof ln === 'string' ? ln : (ln || []).map(p => typeof p === 'string' ? p : p.txt).join(' · ');
@@ -1034,9 +1088,9 @@ class Panel {
     });
   }
   // V54 : en tête de chaque fenêtre, l'essentiel : r1 = nom, valeur, verdict en couleur ; r2 = une phrase sur les dernières bougies
-  static get HEAD_NAME() { return {oi: 'Intérêt ouvert', delta: 'Delta', fund: 'Funding', szs: 'Flux spot', szp: 'Flux perpétuel'}; }
-  deltaStrong(I, idx, DV) {                                                // achats et ventes forts des 24 dernières bougies
-    const pw = this.deltaInfo(I).pw, NB = Math.min(24, idx + 1);
+  static get HEAD_NAME() { return {delta: 'Delta perp', dspot: 'Delta comptant', cvd: 'CVD', oi: 'Intérêt ouvert', liq: 'Liquidations', fund: 'Funding', szs: 'Flux spot', szp: 'Flux perpétuel'}; }
+  deltaStrong(I, idx, DV, spot = false) {                                  // achats et ventes forts des 24 dernières bougies
+    const pw = (spot ? this.spotInfo(I) : this.deltaInfo(I)).pw, NB = Math.min(24, idx + 1);
     let fb = 0, fs = 0;
     for (let i = idx - NB + 1; i <= idx; i++) { const l = Panel.powerLevel(pw.r[i]); if (l == null || l < 2 || DV[i] == null) continue; if (DV[i] >= 0) fb++; else fs++; }
     return {NB, fb, fs};
@@ -1077,15 +1131,45 @@ class Panel {
       return {r1: [name, val(main, v >= 0 ? Panel.FUND_UP : Panel.FUND_DN), ch],
         r2: [an || cum ? `${f(v, 4)} / 8 h` : `${f(v * 1095, 1)} par an`, I.fundAvg7 != null ? `moyenne 7 j ${f(I.fundAvg7, 4)}` : null, est || null]};
     }
-    const usd = o.deltaUnit === 'usd' && Array.isArray(I.deltaUsd), DV = usd ? I.deltaUsd : I.delta, v = DV[idx], u = usd ? '$' : I.unit;
-    if (!I.realDelta) return {r1: [name, val('volume acheteur agressif inconnu')]};
-    const x = this.deltaInfo(I).pw.r[idx], lv = Panel.powerLevel(x), cnt = this.deltaStrong(I, idx, DV);
-    const cvd = (o.cvdMode || (o.deltaCvd ? 'perp' : 'off')) !== 'off' ? tags.filter(t => /hausse|baisse|stable/.test(t.txt)).map(t => ({...t, txt: 'CVD ' + t.txt})) : [];
-    return {r1: [name, val(v == null ? '—' : `${Panel.big(v)} ${u}`, v == null ? NT : v >= 0 ? UP : DN),
+    const usd = o.deltaUnit === 'usd' && Array.isArray(I.deltaUsd), u = usd ? '$' : I.unit;
+    const sumN = (V, n) => { let x = 0; for (let i = idx - n + 1; i <= idx; i++) x += (V[i] || 0); return x; };
+    if (k === 'liq') {                                                    // V55 : longs liquidés (ventes forcées) et shorts liquidés (achats forcés)
+      if (!Array.isArray(I.liqLong)) return {r1: [name, val('chargement…')]};
+      if (!I.liqOk) return {r1: [name, val('pas encore de relevé')], r2: ['le terminal note chaque liquidation à partir de maintenant']};
+      const LL = I.liqLong, LS = I.liqShort, lo = LL[idx], sh = LS[idx];
+      if (lo == null) return {r1: [name, val('avant le premier relevé')], r2: [`relevés depuis le ${new Date(I.liqSince).toLocaleDateString('fr-FR', {day: '2-digit', month: '2-digit'})}`]};
+      const tot = [];                                                     // cascade : au moins 5 fois la médiane des bougies qui ont des liquidations
+      for (let i = 0; i <= idx; i++) { const x = (LL[i] || 0) + (LS[i] || 0); if (x > 0) tot.push(x); }
+      tot.sort((a, b) => a - b);
+      const med = tot.length >= 20 ? tot[tot.length >> 1] : null, here = (lo || 0) + (sh || 0);
+      const ch = med && here >= 5 * med ? chip(lo >= sh ? 'cascade de longs' : 'cascade de shorts', lo >= sh ? DN : UP) : null;
+      const NB = Math.min(24, idx + 1);
+      return {r1: [name, val(`longs ${Panel.big(lo, false)} $`, lo ? DN : NT), val(`shorts ${Panel.big(sh, false)} $`, sh ? UP : NT), ch],
+        r2: [`${NB} bougies : longs ${Panel.big(sumN(LL, NB), false)} $, shorts ${Panel.big(sumN(LS, NB), false)} $`, {txt: (I.liqEx || []).join(' + '), col: NT}]};
+    }
+    if (k === 'cvd') {                                                    // V55 : le CVD a sa fenêtre ; les deux courbes, chacune sur son échelle
+      const su = o.deltaUnit === 'usd' && Array.isArray(I.spotDeltaUsd), DV = usd ? I.deltaUsd : I.delta, SV = su ? I.spotDeltaUsd : I.spotDelta;
+      const pc = this.cvdS ? Panel.cvdLine(I, DV) : null, sc = this.spS && I.spotOk ? Panel.cvdLine(I, SV) : null;
+      if (!pc && !sc) return {r1: [name, val(this.spS || !Array.isArray(I.spotDelta) ? 'chargement…' : 'indisponible')]};
+      const r1 = [name];
+      if (pc) r1.push(val(`perp ${Panel.big(pc[idx])} ${u}`, Panel.CVD_PERP));
+      if (sc) r1.push(val(`comptant ${Panel.big(sc[idx])} ${su ? '$' : I.unit}`, Panel.CVD_SPOT));
+      if (pc && sc && idx >= 3) {
+        const N = Math.min(idx, 24), dp = pc[idx] - pc[idx - N], ds = sc[idx] - sc[idx - N];
+        r1.push(dp > 0 && ds > 0 ? chip('achat commun', UP) : dp < 0 && ds < 0 ? chip('vente commune', DN) : dp > 0 ? chip('le levier achète, le comptant vend', '#ffb74d') : chip('le comptant achète, le levier vend', '#6ec8ff'));
+      }
+      return {r1, r2: tags};
+    }
+    const spot = k === 'dspot', su = o.deltaUnit === 'usd' && Array.isArray(I.spotDeltaUsd);
+    if (spot && !Array.isArray(I.spotDelta)) return {r1: [name, val('chargement…')]};
+    if (spot && !I.spotOk) return {r1: [name, val(I.spotErr ? 'Binance comptant injoignable' : 'pas de bougie au comptant')]};
+    if (!spot && !I.realDelta) return {r1: [name, val('volume acheteur agressif inconnu')]};
+    const DV = spot ? (su ? I.spotDeltaUsd : I.spotDelta) : (usd ? I.deltaUsd : I.delta), v = DV[idx], uu = (spot ? su : usd) ? '$' : I.unit;
+    const x = (spot ? this.spotInfo(I) : this.deltaInfo(I)).pw.r[idx], lv = Panel.powerLevel(x), cnt = this.deltaStrong(I, idx, DV, spot);
+    return {r1: [name, val(v == null ? '—' : `${Panel.big(v)} ${uu}`, v == null ? NT : v >= 0 ? UP : DN),
       lv == null ? null : chip(`${Panel.POWER_TXT[lv]}${lv >= 1 ? ` · ${x < 10 ? x.toFixed(1).replace('.', ',') : Math.round(x)} × la normale` : ''}`, lv >= 2 ? (v >= 0 ? UP : DN) : lv === 1 ? '#cfd3dc' : '#8a90a0')],
-      r2: [`${cnt.NB} bougies : ${cnt.fb ? cnt.fb + ' achat' + (cnt.fb > 1 ? 's' : '') + ' fort' + (cnt.fb > 1 ? 's' : '') : 'aucun achat fort'}, ${cnt.fs ? cnt.fs + ' vente' + (cnt.fs > 1 ? 's' : '') + ' forte' + (cnt.fs > 1 ? 's' : '') : 'aucune vente forte'}`, ...cvd]};
+      r2: [`${cnt.NB} bougies : ${cnt.fb ? cnt.fb + ' achat' + (cnt.fb > 1 ? 's' : '') + ' fort' + (cnt.fb > 1 ? 's' : '') : 'aucun achat fort'}, ${cnt.fs ? cnt.fs + ' vente' + (cnt.fs > 1 ? 's' : '') + ' forte' + (cnt.fs > 1 ? 's' : '') : 'aucune vente forte'}`, ...tags]};
   }
-  // V28 : barres de volume sous les bougies (élément « Volume »), sur leur propre échelle, en bas du graphique
   syncVolume(d) {
     const on = LT.st.mainOpts.vol && d && d.candles && d.candles.length;
     if (!on) { if (this.vol) { this.chart.removeSeries(this.vol); this.vol = null; this.volKey = ''; } return; }

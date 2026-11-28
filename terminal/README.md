@@ -1,4 +1,4 @@
-# Liq Terminal (V54)
+# Liq Terminal (V55)
 
 Un terminal **local**, qui tourne uniquement sur ton PC. Il rassemble :
 
@@ -144,6 +144,55 @@ En bas de l'onglet, le **journal des poches balayées** indique, pour chaque poc
 - **Contenu du message.** Chaque message contient les probabilités : chance d'atteinte en 24 h et rebond comparé au hasard.
 - **Démarrage.** Au démarrage, le terminal envoie un seul résumé, sans rafale. Il envoie au maximum 6 alertes par heure.
 - **Condition.** Le terminal doit tourner, donc le PC doit être allumé.
+
+## Ce qui est nouveau en V55 : les fenêtres sous le graphique, refaites comme TradingView
+
+**Le problème.** Les fenêtres sous le graphique étaient mal proportionnées : très fines, avec de longues phrases en tête. Le CVD était dessiné par-dessus les barres du delta, ce qui rendait les deux illisibles.
+
+**La nouvelle disposition, de haut en bas :**
+- **Prix.** Les bougies gardent au moins un tiers de la hauteur.
+- **Delta perpétuel (Binance).** Une barre par bougie, verte (achats agressifs) ou rouge (ventes agressives). La couleur est pâle quand le delta est faible, vive quand il est fort, et vert ou rouge vif quand il est très fort.
+- **Delta comptant (Binance).** La même lecture sur le marché comptant, c'est-à-dire l'argent réel, sans levier.
+- **CVD.** Il a maintenant **sa propre fenêtre**. Elle montre le CVD du perpétuel, celui du comptant, ou les deux, chaque courbe sur sa propre échelle. Sa pastille dit qui mène : « achat commun », « vente commune », « le levier achète, le comptant vend »…
+- **Intérêt ouvert.** En bougies vertes (hausse) et rouges (baisse). La couleur « qui ouvre, qui ferme » reste disponible dans ses réglages.
+- **Liquidations.** Une nouvelle fenêtre. Les shorts liquidés (achats forcés) montent en vert, les longs liquidés (ventes forcées) descendent en rouge. La pastille « cascade de longs » ou « cascade de shorts » s'allume quand une bougie dépasse 5 fois la normale.
+
+**L'aspect, comme sur TradingView :**
+- **Même hauteur pour toutes les fenêtres**, séparées par un simple trait. La poignée permet toujours de changer la hauteur.
+- **Une légende en haut à gauche** : le nom, la valeur en couleur et un verdict court. La lecture complète s'affiche au survol, et le bouton ≡ passe de une ligne au nom seul, puis à deux lignes.
+- **Le nom de chaque série sur son étiquette**, à droite (« Perp », « Comptant », « CVD perp », « OI », « Shorts », « Longs »).
+- **L'échelle du temps tout en bas**, sous la dernière fenêtre. La croix de visée est la même dans toutes les fenêtres, et sa date est en français (heure UTC).
+- **Les boutons d'une fenêtre** (⚙ ▲ ▼ ≡ − ✕) n'apparaissent qu'au survol.
+- **La liste des éléments** en haut à gauche du prix ne montre plus les fenêtres : elles ont leur propre tête, et le menu « ▤ Fenêtres » les ajoute ou les retire.
+
+**Ton onglet Option passe une fois à cette disposition.** Ça vaut pour chaque onglet qui avait des fenêtres sous le graphique :
+- les fenêtres deviennent : delta perpétuel, delta comptant, CVD, intérêt ouvert, liquidations ;
+- le CVD garde son réglage (perpétuel, comptant ou les deux) ;
+- **le funding et le flux par taille d'ordre sont masqués, pas supprimés** : coche-les dans « ▤ Fenêtres » pour les remettre ;
+- les lignes de seuil « fort » et « très fort » du delta ne sont plus affichées par défaut : on les remet dans les réglages ⚙ du delta.
+
+Les autres onglets ne changent pas.
+
+**D'où viennent les liquidations.** Toutes sont réelles et notées par le terminal lui-même :
+- **Binance** pour chaque paire. Binance n'envoie qu'une liquidation par seconde : pendant une cascade, son total est un minimum.
+- **Bybit et OKX** en plus pour le BTC.
+
+Chaque minute est gardée par bourse, pendant 30 jours (`data_local/liqbars/`). Au premier démarrage, l'historique est repris :
+- celles que le terminal avait déjà notées une par une pour Binance ;
+- les tranches de 5 minutes des 48 dernières heures pour Bybit et OKX.
+
+Avant le premier relevé, la fenêtre n'a pas de barre et le dit. Si une période n'a aucune barre, c'est qu'il n'y a eu aucune liquidation ou que le terminal était éteint.
+
+**Ce qui n'est pas comme sur ta photo, faute de données :**
+- **le delta comptant vient de Binance, pas de Coinbase** : Coinbase ne publie pas d'historique acheteur / vendeur par bougie ;
+- **l'intérêt ouvert vient de Binance seule**, pas de 9 bourses ;
+- **les liquidations viennent de 3 bourses** pour le BTC et de Binance seule pour SOL et PUMP.
+
+**Vérifié** dans un navigateur, en données simulées :
+- l'ancien onglet passe à la nouvelle disposition, et les cinq fenêtres ont la même hauteur ;
+- la croix de visée est synchronisée, et l'heure s'affiche en bas ;
+- les unités de temps 1 minute, 15 minutes et 1 heure fonctionnent ;
+- SOL fonctionne aussi, sans liquidations simulées (la fenêtre le dit).
 
 ## Ce qui est nouveau en V54.3 : l'onglet Quant se charge même avec un bloqueur de publicités
 

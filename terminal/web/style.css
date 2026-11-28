@@ -896,3 +896,23 @@ ul.recent li{padding:3px 0;border-bottom:1px solid #1b2030}
 .qdexax{fill:#8a90a0;font-size:11px;font-family:-apple-system,Segoe UI,Roboto,sans-serif}
 .qdextip{position:absolute;z-index:3;min-width:150px;background:#0b0e14f0;border:1px solid #39404f;border-radius:6px;padding:6px 9px;font-size:12px;display:flex;flex-direction:column;gap:2px;pointer-events:none}
 .qdextip[hidden]{display:none}
+/* V55 : fenêtres sous le graphique comme TradingView : séparation d'un trait, légende en haut à gauche (nom en clair, valeur en couleur),
+   sans fond, boutons qui n'apparaissent qu'au survol ; le nom de chaque série est sur son étiquette, à droite */
+.psep{height:5px;background:transparent}
+.psep::before{content:"";position:absolute;left:0;right:0;top:2px;height:1px;background:#2a2e39}
+.psep::after{opacity:0;transition:opacity .15s}
+.psep:hover::after,.psep.drag::after{opacity:1}
+.psep:hover,.psep.drag{background:rgba(61,111,209,.35)}
+.pwin .phd{padding:4px 8px 0}
+.pwin .phl{font:400 12px/18px -apple-system,BlinkMacSystemFont,"Trebuchet MS",Roboto,Ubuntu,sans-serif;color:#d1d4dc}
+.pwin .phr{background:transparent;padding:0;border-radius:0;text-shadow:0 0 3px #0b0e14,0 0 2px #0b0e14}
+.pwin[data-pk="oi"] .phr:first-child,.pwin[data-pk="fund"] .phr:first-child{color:#d1d4dc}
+.pwin .phr .pn{color:#d1d4dc;font-size:12.5px;letter-spacing:0;text-transform:none;font-weight:400;margin-right:3px}
+.pwin .phr .pv{font-size:12.5px;font-weight:500;font-family:ui-monospace,"SF Mono",Menlo,Consolas,"Roboto Mono",monospace;margin-right:2px}
+.pwin .phr .pc{font-size:10.5px;line-height:15px;padding:0 6px;margin-left:4px;border-radius:3px;border:0;background:rgba(255,255,255,.06);font-weight:600}
+.pwin .phr.l2{font-size:11px;color:#9598a1}
+.pwin .phb{opacity:0}
+.pwin:hover .phb{opacity:1}
+@media (hover:none){.pwin .phb{opacity:.85}}
+.pbody .legend{max-height:calc(100% - 30px);overflow-y:auto;scrollbar-width:none}
+.pbody .legend::-webkit-scrollbar{display:none}

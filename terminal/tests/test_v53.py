@@ -42,7 +42,7 @@ class PageTest(unittest.TestCase):
         self.assertIn("this.headPanes(L)", p)
         self.assertNotIn("drawPanes", p)
         self.assertNotIn("paneP()", p)
-        self.assertIn("candleBottom(h) { return Math.max(40, h - 26); }", p)
+        self.assertIn("candleBottom(h) { return Math.max(40, h - (this.axisOff ? 2 : 26)); }", p)   # V55 : l'échelle du temps peut être sous la dernière fenêtre
         for s in ("data-nav=\"out\"", "data-nav=\"in\"", "data-nav=\"left\"", "data-nav=\"right\"", "data-nav=\"auto\"", "data-nav=\"reset\"", "data-winbtn"):
             self.assertIn(s, p, s)
         # échelle automatique : une poche masquée ou une idée masquée n'écrase plus les bougies
@@ -102,13 +102,14 @@ class LogicTest(unittest.TestCase):
         r = json.loads(node(js))
         self.assertEqual(r[:4], ["94 k", "+0,0021 %", "−1,5 k", "+2,5 M $"])
         self.assertEqual(r[4:7], ["+2,3 %", "+1,2 M $", "−450"])
-        self.assertEqual(r[7], [0.17, 0.17, 0.5 / 3, 0.1])               # cinq fenêtres : les bougies gardent la moitié de la hauteur
+        for a, b in zip(r[7], [0.2, 0.2, 0.2, 0.132]):                   # V55 : même hauteur pour toutes ; cinq fenêtres : les bougies gardent un tiers
+            self.assertAlmostEqual(a, b)
         self.assertEqual(r[8:10], [True, False])
         self.assertEqual(r[10:13], [True, True, False])                  # une fenêtre ne mène le zoom que si on vient de la toucher
 
     def test_add_remove_order_and_saved_settings(self):
         js = ("globalThis.setTimeout = () => 0; globalThis.clearTimeout = () => {}; let saved = 0;\n"
-              "const set = {els: {oi: true}, sizeMkt: 'both', paneH: {oi: 0.3, bad: 0.2, fund: 5}, paneOrder: ['fund', 'x', 'oi', 'fund'], paneRead: {oi: 1, delta: 7}};\n"
+              "const set = {v55: 1, els: {oi: true}, sizeMkt: 'both', paneH: {oi: 0.3, bad: 0.2, fund: 5}, paneOrder: ['fund', 'x', 'oi', 'fund'], paneRead: {oi: 1, delta: 7}};\n"
               "const LT = {st: {layout: 'u1', utabs: [{id: 'u1', name: 'Option', set}], mainOpts: {}, symbol: 'BTCUSDT', ws: {}}, savePrefs: () => { saved++; },\n"
               "  syncAllTools() {}, refreshAll() {}, updatePlan() {}, pollFlow() {}, api: () => new Promise(() => {}), panels: () => [main]};\n"
               "const main = {kind: 'main', host: {querySelector: () => null}, panes: () => Desk.paneCfg().order.length ? ['oi', 'delta', 'fund'].sort((a, b) => Desk.paneCfg().order.indexOf(a) - Desk.paneCfg().order.indexOf(b)) : ['oi', 'delta', 'fund'],\n"
@@ -136,7 +137,7 @@ class LogicTest(unittest.TestCase):
         self.assertEqual(r[2], "both")
         self.assertEqual(r[3], "perp")
         self.assertFalse(r[4])                                           # les deux fenêtres retirées : l'élément quitte la légende
-        self.assertEqual(r[5], [{"oi": True}, {"oi": 1, "delta": 2}])   # 2 → 1 → 0 → 2
+        self.assertEqual(r[5], [{"oi": True}, {"oi": 1, "delta": 1}])   # V55 : 1 (d'origine) → 0 → 2 → 1
         self.assertEqual(r[6], {"oi": 0.3, "delta": 0.25})
         self.assertFalse(r[7])
         self.assertEqual(r[8], [[], True])
@@ -162,31 +163,32 @@ class DeltaPowerTest(unittest.TestCase):
 
     def test_page_strings(self):
         p, panes, desk = read("panels.js"), read("panes.js"), read("desk.js")
-        for x in ("static deltaPower(V, N = 100)", "deltaBars !== false", "S.zones('delta', both ?", "['dT4p', 'très fort'", "Panel.VERY_UP", "% du volume",
-                  "la normale", "achat fort"):
+        for x in ("static deltaPower(V, N = 100)", "S.zones('delta', {});", "['dT4p', 'très fort'", "Panel.VERY_UP", "% du volume",
+                  "la normale", "achat fort", "want.dS && o.deltaThr === true"):
             self.assertIn(x, p, x)
-        for x in ('data-pa="bars"', 'data-pa="line"', "zones(k, z)", "h < 150 ? 1 : 2", "autoScale: true"):
+        for x in ("zones(k, z)", "h < 150 ? 1 : 2", "autoScale: true"):
             self.assertIn(x, panes, x)
-        for x in ("a === 'bars' || a === 'line'", "sel('deltaBars'", "deltaBars: s.deltaBars !== false"):
+        for x in ('data-pa="bars"', 'data-pa="line"'):                    # V55 : le CVD a sa propre fenêtre, plus de boutons Barres / CVD
+            self.assertNotIn(x, panes, x)
+        for x in ("sel('deltaThr'", "deltaThr: s.deltaThr === true", "sel('cvdMode'"):
             self.assertIn(x, desk, x)
+        self.assertNotIn("a === 'bars' || a === 'line'", desk)
 
-    def test_toggles_keep_one(self):
+    def test_cvd_moves_to_its_own_pane(self):
+        """V55 : un onglet qui avait le delta et son CVD passe une fois à la disposition à fenêtres séparées (le CVD garde son réglage)."""
         js = ("globalThis.setTimeout = () => 0; globalThis.clearTimeout = () => {};\n"
-              "const set = {els: {delta: true}, cvdMode: 'both'};\n"
+              "const set = {els: {delta: true, fund: true}, cvdMode: 'perp', paneH: {delta: 0.4}, deltaBars: false};\n"
               "globalThis.LTX = {st: {layout: 'u1', utabs: [{id: 'u1', name: 'Option', set}], mainOpts: {}, symbol: 'BTCUSDT', ws: {}}, savePrefs() {}, syncAllTools() {}, refreshAll() {},\n"
               "  updatePlan() {}, pollFlow() {}, api: () => new Promise(() => {}), panels: () => []};\n"
               + read("desk.js").replace("let LT = null,", "let LT = globalThis.LTX,") + "\n"
               "const out = [];\n"
-              "Desk.paneAct('delta', 'line'); out.push([set.cvdMode, set.deltaBars !== false]);\n"         # CVD retiré : barres seules
-              "Desk.paneAct('delta', 'bars'); out.push([set.cvdMode, set.deltaBars]);\n"                   # dernières retirées : le CVD revient (le même qu'avant)
-              "Desk.paneAct('delta', 'bars'); out.push([set.cvdMode, set.deltaBars]);\n"
-              "Desk.paneAct('delta', 'bars'); out.push([set.cvdMode, set.deltaBars, LTX.st.mainOpts.deltaBars]);\n"
+              "Desk.apply(); const e = set.els;\n"
+              "out.push([e.delta, e.dspot, e.cvd, e.oi, e.liq, e.fund, set.cvdMode, set.paneOrder, 'paneH' in set, 'deltaBars' in set, set.v55]);\n"
+              "e.cvd = false; set.paneOrder = ['oi']; Desk.apply(); out.push([e.cvd, set.paneOrder, LTX.st.mainOpts.cvdMode, LTX.st.mainOpts.oiColor]);\n"   # une seule fois
               "console.log(JSON.stringify(out));")
         r = json.loads(node(js))
-        self.assertEqual(r[0], ["off", True])
-        self.assertEqual(r[1], ["both", False])
-        self.assertEqual(r[2], ["both", True])
-        self.assertEqual(r[3], ["both", False, False])
+        self.assertEqual(r[0], [True, True, True, True, True, False, "perp", ["delta", "dspot", "cvd", "oi", "liq"], False, False, 1])
+        self.assertEqual(r[1], [False, ["oi"], "perp", "dir"])
 
 
 if __name__ == "__main__":
