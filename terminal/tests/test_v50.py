@@ -77,7 +77,7 @@ class PageTest(unittest.TestCase):
             self.assertIn(f"{k}: false", app)
         self.assertIn("data-copt=\"${key}\"", desk)
         self.assertIn("sel('vpDelta'", desk)
-        self.assertIn("'vpDelta'].includes(t.dataset.copt)", desk)
+        self.assertIn("'vpDelta', 'heatContrast', 'heatScale'].includes(t.dataset.copt)", desk)
         self.assertIn("static longKinds(o)", panels)
         self.assertIn("delta === 'side'", panels)
         self.assertIn("/api/profiles?symbol=", app)
